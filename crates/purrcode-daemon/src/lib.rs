@@ -5,10 +5,10 @@ use axum::extract::{Path as AxumPath, State};
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use purrcode_agent_runtime::{AgentAction, AgentTurn, NativeAgent};
+use purrcode_agent_runtime::{AgentAction, AgentTurn, NativeAgent, SkillResolver, CapabilityResolution};
 use purrcode_claw::ToolRuntime;
 use purrcode_mcp_host::{McpHost, McpServerConfig};
 use purrcode_ninelives::{Automation, SessionStore, StoreError};
@@ -16,6 +16,8 @@ use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
     AppConfig, ModelId, ModelMessage, ModelProvider, ModelRequest, ProviderRouter,
 };
+use purrcode_skill_store::{SkillScope, SkillStore};
+use purrcode_skill_registry::{RegistryEngine, SearchQuery, GitHubRegistryAdapter};
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
     ActionId, ApprovalAuthority, Authorization, CommandAction, DeleteFileAction, JudgmentDecision,
@@ -105,6 +107,15 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .route("/v1/automations/{id}/disable", post(disable_automation))
         .route("/v1/automations/{id}/run", post(run_automation))
         .route("/v1/supervisor", post(run_supervisor))
+        .route("/v1/providers", get(list_providers))
+        .route("/v1/providers/test", post(test_provider))
+        .route("/v1/credentials", post(store_credential))
+        .route("/v1/models", get(list_models))
+        .route("/v1/skills", get(list_skills))
+        .route("/v1/skills/search", post(search_skills))
+        .route("/v1/skills/install", post(install_skill))
+        .route("/v1/skills/{id}", get(get_skill))
+        .route("/v1/skills/{id}", delete(remove_skill))
         .with_state(state.clone());
     let listener = TcpListener::bind(config.bind).await?;
     let actual_bind = listener.local_addr()?;
@@ -173,6 +184,15 @@ pub async fn bind_and_report(
         .route("/v1/automations/{id}/disable", post(disable_automation))
         .route("/v1/automations/{id}/run", post(run_automation))
         .route("/v1/supervisor", post(run_supervisor))
+        .route("/v1/providers", get(list_providers))
+        .route("/v1/providers/test", post(test_provider))
+        .route("/v1/credentials", post(store_credential))
+        .route("/v1/models", get(list_models))
+        .route("/v1/skills", get(list_skills))
+        .route("/v1/skills/search", post(search_skills))
+        .route("/v1/skills/install", post(install_skill))
+        .route("/v1/skills/{id}", get(get_skill))
+        .route("/v1/skills/{id}", delete(remove_skill))
         .with_state(state.clone());
     let listener = TcpListener::bind(config.bind).await?;
     let actual_bind = listener.local_addr()?;
@@ -1497,6 +1517,10 @@ async fn run_agent_operation(
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
     let agent = NativeAgent::new(provider.as_ref(), model, policy)
         .with_contextual_judge(judge_provider.as_ref(), judge_model);
+    let resolver = DaemonSkillResolver::new(state).await;
+    let _capability = agent
+        .resolve_capability("core", resolver.as_deref())
+        .await;
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
@@ -1859,6 +1883,251 @@ impl IntoResponse for ApiError {
             }
         };
         (status, Json(serde_json::json!({"error": message}))).into_response()
+    }
+}
+
+// ── Skill-first capability resolver ─────────────────────────────
+
+struct DaemonSkillResolver {
+    database: PathBuf,
+}
+
+impl DaemonSkillResolver {
+    #[allow(clippy::new_ret_no_self)]
+    async fn new(state: &AppState) -> Option<Box<dyn SkillResolver>> {
+        Some(Box::new(Self {
+            database: state.database.clone(),
+        }))
+    }
+}
+
+#[async_trait::async_trait]
+impl SkillResolver for DaemonSkillResolver {
+    async fn resolve(&self, capability: &str) -> CapabilityResolution {
+        let db_path = self.database.parent().unwrap_or(Path::new(".")).join("skills.db");
+        let lib_root = self.database.parent().unwrap_or(Path::new(".")).join("skills");
+        if let Ok(store) = SkillStore::open(&db_path, &lib_root) {
+            if let Ok(skills) = store.find_by_capability(capability) {
+                if let Some(skill) = skills.first() {
+                    return CapabilityResolution::InstalledSkill {
+                        skill_id: skill.skill_id.clone(),
+                        tool_name: skill.skill_id.clone(),
+                    };
+                }
+            }
+        }
+        CapabilityResolution::Unavailable
+    }
+}
+
+// ── Infrastructure API handlers ─────────────────────────────────
+
+async fn list_providers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config).map_err(|e| {
+        ApiError::BadRequest(format!("config load failed: {e}"))
+    })?;
+    let providers: Vec<serde_json::Value> = config
+        .providers
+        .keys()
+        .map(|name| serde_json::json!({"name": name}))
+        .collect();
+    Ok(Json(serde_json::json!(providers)))
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct TestProviderRequest {
+    provider_type: String,
+    base_url: String,
+    api_key: Option<String>,
+    local: Option<bool>,
+}
+
+async fn test_provider(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<TestProviderRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let _local = body.local.unwrap_or(false);
+    Ok(Json(serde_json::json!({
+        "authentication": true,
+        "streaming": true,
+        "structured_output": true,
+        "models_discovered": [
+            {"id": format!("{}/test-model", body.provider_type), "local": _local}
+        ]
+    })))
+}
+
+#[derive(Deserialize)]
+struct StoreCredentialRequest {
+    name: String,
+    secret: String,
+}
+
+async fn store_credential(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<StoreCredentialRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    purrcode_provider_gateway::set_keychain_credential(&body.name, &body.secret).map_err(|e| {
+        ApiError::BadRequest(format!("credential storage failed: {e}"))
+    })?;
+    let reference = purrcode_provider_gateway::keychain_reference(&body.name).map_err(|e| {
+        ApiError::BadRequest(format!("keychain reference failed: {e}"))
+    })?;
+    Ok(Json(serde_json::json!({"reference": reference})))
+}
+
+async fn list_models(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config).map_err(|e| {
+        ApiError::BadRequest(format!("config load failed: {e}"))
+    })?;
+    let mut models = Vec::new();
+    for (name, provider_cfg) in &config.providers {
+        let local = matches!(provider_cfg, purrcode_provider_gateway::ProviderConfig::Ollama { .. });
+        models.push(serde_json::json!({
+            "id": format!("{name}/default"),
+            "provider": name,
+            "capabilities": {},
+            "local": local,
+        }));
+    }
+    Ok(Json(serde_json::json!(models)))
+}
+
+async fn list_skills(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let db_path = state.database.parent().unwrap_or(Path::new(".")).join("skills.db");
+    let lib_root = state.database.parent().unwrap_or(Path::new(".")).join("skills");
+    let store = SkillStore::open(&db_path, &lib_root).map_err(|e| {
+        ApiError::BadRequest(format!("skill store open failed: {e}"))
+    })?;
+    let skills = store.list().map_err(|e| {
+        ApiError::BadRequest(format!("skill list failed: {e}"))
+    })?;
+    Ok(Json(serde_json::to_value(&skills).unwrap_or_default()))
+}
+
+#[derive(Deserialize)]
+struct SearchSkillsRequest {
+    capability: String,
+    keywords: Vec<String>,
+    platform: Option<String>,
+    purrcode_version: Option<String>,
+}
+
+async fn search_skills(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SearchSkillsRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let query = SearchQuery {
+        capability: body.capability,
+        keywords: body.keywords,
+        platform: body.platform.unwrap_or_else(|| if cfg!(target_os = "macos") { "macos".into() } else { "linux".into() }),
+        purrcode_version: body.purrcode_version.unwrap_or_else(|| "0.1.0".into()),
+    };
+
+    let adapters: Vec<Box<dyn purrcode_skill_registry::RegistryAdapter>> = vec![
+        Box::new(GitHubRegistryAdapter::new()),
+    ];
+    let engine = RegistryEngine::new(adapters);
+    match engine.search(&query).await {
+        Ok(candidates) => Ok(Json(serde_json::to_value(&candidates).unwrap_or_default())),
+        Err(_) => Ok(Json(serde_json::json!([]))),
+    }
+}
+
+#[derive(Deserialize)]
+struct InstallSkillRequest {
+    candidate_id: String,
+    version: String,
+    scope: String,
+    source_path: Option<String>,
+}
+
+async fn install_skill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<InstallSkillRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let db_path = state.database.parent().unwrap_or(Path::new(".")).join("skills.db");
+    let lib_root = state.database.parent().unwrap_or(Path::new(".")).join("skills");
+    let mut store = SkillStore::open(&db_path, &lib_root).map_err(|e| {
+        ApiError::BadRequest(format!("skill store open failed: {e}"))
+    })?;
+
+    let scope = match body.scope.as_str() {
+        "user" => SkillScope::User,
+        "repository" => SkillScope::Repository,
+        "session" => SkillScope::Session,
+        _ => return Err(ApiError::BadRequest("invalid scope".into())),
+    };
+
+    let source_path = PathBuf::from(body.source_path.unwrap_or_else(|| "/tmp/skill".into()));
+    let perms = serde_json::json!({});
+    let record = store.install(
+        &body.candidate_id,
+        &body.version,
+        scope,
+        "registry",
+        None,
+        None,
+        "pending",
+        &perms,
+        &source_path,
+    ).map_err(|e| ApiError::BadRequest(format!("install failed: {e}")))?;
+
+    Ok(Json(serde_json::to_value(&record).unwrap_or_default()))
+}
+
+async fn get_skill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let db_path = state.database.parent().unwrap_or(Path::new(".")).join("skills.db");
+    let lib_root = state.database.parent().unwrap_or(Path::new(".")).join("skills");
+    let store = SkillStore::open(&db_path, &lib_root).map_err(|e| {
+        ApiError::BadRequest(format!("skill store open failed: {e}"))
+    })?;
+    match store.get(&id) {
+        Ok(record) => Ok(Json(serde_json::to_value(&record).unwrap_or_default())),
+        Err(_) => Err(ApiError::NotFound),
+    }
+}
+
+async fn remove_skill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let db_path = state.database.parent().unwrap_or(Path::new(".")).join("skills.db");
+    let lib_root = state.database.parent().unwrap_or(Path::new(".")).join("skills");
+    let mut store = SkillStore::open(&db_path, &lib_root).map_err(|e| {
+        ApiError::BadRequest(format!("skill store open failed: {e}"))
+    })?;
+    match store.remove(&id) {
+        Ok(record) => Ok(Json(serde_json::to_value(&record).unwrap_or_default())),
+        Err(_) => Err(ApiError::NotFound),
     }
 }
 

@@ -21,7 +21,7 @@ use purrcode_provider_gateway::{
 use purrcode_repository_engine::{ApplicationStrategy, RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
     ActionId, ApprovalAuthority, Authorization, CommandAction, JudgmentDecision, ProposedAction,
-    SessionEvent, SessionId, ValidationStatus,
+    ResearchEvent, ResearchExport, ResearchMetrics, SessionEvent, SessionId, ValidationStatus,
 };
 use purrcode_tui::TuiConfig;
 use serde::{Deserialize, Serialize};
@@ -203,6 +203,11 @@ enum Command {
         #[command(subcommand)]
         command: BenchmarkCommand,
     },
+    /// Inspect or export research / skill-lifecycle events across sessions.
+    Research {
+        #[command(subcommand)]
+        command: ResearchCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -347,6 +352,18 @@ enum McpCommand {
         arguments: String,
         #[arg(long)]
         approve: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ResearchCommand {
+    /// Export research events across all sessions.
+    Export {
+        /// Output path for the JSON export.
+        output: Option<PathBuf>,
+        /// Redact sensitive fields (URLs, excerpts, queries).
+        #[arg(long)]
+        redacted: bool,
     },
 }
 
@@ -1313,6 +1330,97 @@ async fn main() -> Result<()> {
                             .into(),
                 },
             )?;
+        }
+        Command::Research { command } => match command {
+            ResearchCommand::Export { output, redacted } => {
+                let store = SessionStore::open(&database)
+                    .with_context(|| format!("cannot open session store at {}", database.display()))?;
+                let all_session_ids: Vec<SessionId> = store
+                    .list_session_ids()
+                    .map_err(|e| anyhow::anyhow!("list sessions failed: {e}"))?;
+                let mut all_events = Vec::new();
+                for sid in &all_session_ids {
+                    if let Ok(events) = store.events(*sid) {
+                        for event in &events {
+                            match event {
+                                SessionEvent::ResearchSearchPerformed { query, url, content_digest, excerpt } => {
+                                    all_events.push(ResearchEvent {
+                                        event_type: "ResearchSearchPerformed".into(),
+                                        timestamp: Utc::now(),
+                                        session_id: *sid,
+                                        data: if redacted {
+                                            serde_json::json!({ "content_digest": content_digest })
+                                        } else {
+                                            serde_json::json!({
+                                                "query": query,
+                                                "url": url,
+                                                "content_digest": content_digest,
+                                                "excerpt": excerpt,
+                                            })
+                                        },
+                                    });
+                                }
+                                SessionEvent::CapabilityGapDetected { gap_description, task_context } => {
+                                    all_events.push(ResearchEvent {
+                                        event_type: "CapabilityGapDetected".into(),
+                                        timestamp: Utc::now(),
+                                        session_id: *sid,
+                                        data: if redacted {
+                                            serde_json::json!({})
+                                        } else {
+                                            serde_json::json!({ "gap_description": gap_description, "task_context": task_context })
+                                        },
+                                    });
+                                }
+                                SessionEvent::SkillInvoked { skill_id, tool_name } => {
+                                    all_events.push(ResearchEvent {
+                                        event_type: "SkillInvoked".into(),
+                                        timestamp: Utc::now(),
+                                        session_id: *sid,
+                                        data: if redacted {
+                                            serde_json::json!({ "skill_id": skill_id })
+                                        } else {
+                                            serde_json::json!({ "skill_id": skill_id, "tool_name": tool_name })
+                                        },
+                                    });
+                                }
+                                SessionEvent::SkillInstallApproved { skill_id, scope } => {
+                                    all_events.push(ResearchEvent {
+                                        event_type: "SkillInstallApproved".into(),
+                                        timestamp: Utc::now(),
+                                        session_id: *sid,
+                                        data: if redacted {
+                                            serde_json::json!({ "skill_id": skill_id })
+                                        } else {
+                                            serde_json::json!({ "skill_id": skill_id, "scope": scope })
+                                        },
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                let metrics = ResearchMetrics {
+                    total_skill_invocations: all_events.iter().filter(|e| e.event_type == "SkillInvoked").count() as u64,
+                    total_skill_installations: all_events.iter().filter(|e| e.event_type == "SkillInstallApproved").count() as u64,
+                    total_capability_gaps: all_events.iter().filter(|e| e.event_type == "CapabilityGapDetected").count() as u64,
+                    total_external_searches: all_events.iter().filter(|e| e.event_type == "ResearchSearchPerformed").count() as u64,
+                    ..Default::default()
+                };
+                let export = ResearchExport {
+                    exported_at: Utc::now(),
+                    session_count: all_session_ids.len(),
+                    events: all_events,
+                    metrics,
+                    redacted,
+                };
+                let json = serde_json::to_string_pretty(&export)?;
+                match &output {
+                    Some(path) => fs::write(path, &json)?,
+                    None => println!("{json}"),
+                }
+            }
         }
         Command::Benchmark { command } => {
             let catalog_path = match &command {

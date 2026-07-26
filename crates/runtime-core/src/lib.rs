@@ -411,6 +411,81 @@ pub enum SessionEvent {
     SessionFailed {
         reason: String,
     },
+    // ── Research / skill lifecycle events ─────────────────
+    CapabilityGapDetected {
+        gap_description: String,
+        task_context: String,
+    },
+    SkillSearchStarted {
+        query: String,
+        sources: Vec<String>,
+    },
+    SkillCandidateDiscovered {
+        candidate_id: String,
+        source: String,
+        rank: u32,
+    },
+    SkillCandidateRanked {
+        candidate_id: String,
+        rank: u32,
+        signals: serde_json::Value,
+    },
+    SkillInspectionOpened {
+        skill_id: String,
+        duration_ms: u64,
+    },
+    SkillInstallApproved {
+        skill_id: String,
+        scope: String,
+    },
+    SkillInstallRejected {
+        skill_id: String,
+        reason: String,
+    },
+    SkillQualified {
+        skill_id: String,
+        status: QualificationStatus,
+        latency_ms: u64,
+    },
+    SkillQualificationFailed {
+        skill_id: String,
+        failures: Vec<String>,
+    },
+    SkillInvoked {
+        skill_id: String,
+        tool_name: String,
+    },
+    SkillInvocationSucceeded {
+        skill_id: String,
+        latency_ms: u64,
+    },
+    SkillInvocationFailed {
+        skill_id: String,
+        error: String,
+    },
+    InstalledSkillReused {
+        skill_id: String,
+        previous_uses: u32,
+    },
+    ExternalSearchAvoided {
+        skill_id: String,
+        matched_capability: String,
+    },
+    SkillUpdated {
+        skill_id: String,
+        old_version: String,
+        new_version: String,
+    },
+    SkillRemoved {
+        skill_id: String,
+        reason: String,
+    },
+    ResearchSearchPerformed {
+        query: String,
+        url: String,
+        content_digest: String,
+        excerpt: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
@@ -556,6 +631,109 @@ impl SessionState {
             _ => {}
         }
     }
+}
+
+// ── Conversation types ────────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationMessage {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
+    #[serde(default)]
+    pub tool_calls: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub tool_results: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationState {
+    pub session_id: SessionId,
+    pub messages: Vec<ConversationMessage>,
+    pub mode: ConversationMode,
+    pub selected_model: Option<String>,
+    /// "local_only" or "mixed" — matches provider-gateway PrivacyMode but avoids a cross-crate dependency.
+    pub privacy: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum ConversationMode {
+    Plan,
+    #[default]
+    Build,
+    Review,
+    Ask,
+}
+
+
+// ── Qualification types ───────────────────────────────────────────
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QualificationStatus {
+    Qualified,
+    QualifiedWithConstraints,
+    Unverified,
+    Failed,
+    Blocked,
+    Outdated,
+    Incompatible,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct QualificationReport {
+    pub skill_id: String,
+    pub version: String,
+    pub status: QualificationStatus,
+    pub cases: Vec<QualificationCaseResult>,
+    pub overall_latency_ms: u64,
+    pub constraints: Option<ActionConstraints>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct QualificationCaseResult {
+    pub name: String,
+    pub passed: bool,
+    pub latency_ms: u64,
+    pub detail: String,
+}
+
+// ── Research / evidence types ─────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ResearchEvent {
+    pub event_type: String,
+    pub timestamp: DateTime<Utc>,
+    pub session_id: SessionId,
+    pub data: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ResearchExport {
+    pub exported_at: DateTime<Utc>,
+    pub session_count: usize,
+    pub events: Vec<ResearchEvent>,
+    pub metrics: ResearchMetrics,
+    pub redacted: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ResearchMetrics {
+    pub skill_discovery_success_rate: Option<f64>,
+    pub skill_reuse_rate: Option<f64>,
+    pub external_search_avoidance: Option<f64>,
+    pub total_skill_invocations: u64,
+    pub total_skill_installations: u64,
+    pub total_capability_gaps: u64,
+    pub total_external_searches: u64,
+    pub skill_acquisition_overhead_ms: u64,
+    pub qualification_failures: u64,
+    pub invocation_denials: u64,
 }
 
 #[derive(Debug, Error)]

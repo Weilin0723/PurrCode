@@ -16,7 +16,32 @@ Read `docs/architecture.md`, `docs/implementation-status.md`, and the ADRs befor
 ## Required checks
 
 Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`.
+Also run `cargo check -p purrcode-skill-store -p purrcode-skill-registry -p purrcode-web-research` when those crates change.
 Update `docs/implementation-status.md` when a milestone changes.
+
+## Epic: Conversational UX, Provider Setup, and Skill Discovery
+
+- No remote skill installs automatically. Every installation requires explicit user approval.
+- No credential enters model context, events, config, or child-process environments.
+  Credential input uses hidden-mode crossterm + zeroize.
+- Qualification gates execution: Unverified/Failed/Blocked skills cannot be invoked.
+- Every skill invocation passes through PawGate independently of installation approval.
+- Research events (CapabilityGapDetected, SkillInstalled, SkillReused, etc.) are durable events
+  in the NineLives session store.
+- Agent-triggered skill discovery checks installed skills (skill-store) before searching externally.
+- TUI is daemon-backed: all TUI actions route through daemon API; no TUI component creates a
+  second execution path or holds a provider credential.
+- New crate checks: skill-store, skill-registry, and web-research must be checked along with
+  the rest of the workspace.
+
+### Skill lifecycle reference
+
+  Discovery → manifest fetch → user inspection → install approval
+      → qualification (Claw sandbox) → storage (skill-store)
+      → invocation (PawGate judgment → Claw execution)
+
+Installation does NOT grant execution rights.
+Qualification is NOT optional for network-discovered skills.
 
 ---
 

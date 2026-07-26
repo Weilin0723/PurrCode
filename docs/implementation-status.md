@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated: 2026-07-25
+Updated: 2026-07-25 (Epic: Conversational UX, Provider Setup, Skill Discovery — in progress)
 
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary
@@ -220,6 +220,50 @@ execution beyond carefully audited command forms.
 - Durable interval automations are stored in schema migration 2, claimed before daemon launch,
   survive restart, preserve last-session linkage, and expose create/list/enable/disable/run through
   CLI and SDKs. Scheduled sessions retain normal approval boundaries.
+
+## Epic: Conversational UX, Provider Setup, and Skill Discovery — in progress
+
+### New crates
+- `purrcode-skill-store` — persistent skill library with global/repository/session scopes,
+  SQLite metadata, usage tracking, capability-based lookup, and atomic install/remove.
+- `purrcode-skill-registry` — registry adapters (official, GitHub, web), candidate ranking
+  by source trust, signature validity, publisher, permissions, and license; manifest
+  validation and compatibility evaluation.
+- `purrcode-web-research` — governed web search with domain policy (allow/deny/approval),
+  content sanitization, bounded page retrieval, evidence caching with TTL, and SHA-256
+  content digests.
+
+### TUI rewrite
+- Conversational interface replaces the session-list view as the primary workspace.
+- Message composer with /command detection, history navigation, and Enter-to-send.
+- Provider setup wizard (`/connect`) in TUI: select provider type, enter credentials
+  via hidden input with zeroize, test connection, select model.
+- Skill browser (`/skills`, `/skill-search`): list installed/available skills, inspect
+  publisher, permissions, signature, and risk; install with explicit approval.
+- Status bar showing model, privacy mode, local/remote indicator, and conversation mode.
+- Slash commands: /help, /connect, /providers, /models, /model, /privacy, /plan,
+  /build, /review, /diff, /skills, /skill-search, /new, /compact, /cancel, /quit.
+
+### Daemon API expansion
+- `GET /v1/providers` — list configured providers
+- `POST /v1/providers/test` — test provider connection (redacted output)
+- `POST /v1/credentials` — store credential in OS keychain, return opaque reference
+- `GET /v1/models` — list available models with local/remote classification
+- `GET /v1/skills` — list installed skills from skill-store
+- `POST /v1/skills/search` — search registries for matching skills
+- `POST /v1/skills/install` — install a candidate skill
+- `GET /v1/skills/{id}` — get skill detail
+- `DELETE /v1/skills/{id}` — remove skill
+
+### Runtime-core additions
+- Conversation types: `Message`, `ConversationState`, `ConversationMode`
+- Research/skill lifecycle events: `CapabilityGapDetected`, `SkillInvoked`, etc.
+- Qualification types: `QualificationStatus`, `QualificationReport`, `QualificationCaseResult`
+
+### AGENTS.md
+- Added epic-specific rules: no auto-install, no credential-in-context,
+  qualification gates execution, PawGate per-invocation, research events durable,
+  installed-skill-first discovery, TUI is daemon-backed.
 
 ## Enterprise signed policy
 

@@ -26,6 +26,8 @@ purrcode-runtime-core = { path = "../runtime-core" }
 purrcode-ninelives = { path = "../ninelives-recovery" }
 purrcode-supervisor-runtime = { path = "../supervisor-runtime" }
 purrcode-claw = { path = "../claw-sandbox" }
+purrcode-skill-store = { path = "../skill-store" }
+purrcode-skill-registry = { path = "../skill-registry" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

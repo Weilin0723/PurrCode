@@ -2111,6 +2111,8 @@ dependencies = [
  "purrcode-provider-gateway",
  "purrcode-repository-engine",
  "purrcode-runtime-core",
+ "purrcode-skill-registry",
+ "purrcode-skill-store",
  "purrcode-supervisor-runtime",
  "reqwest",
  "schemars",
@@ -2235,6 +2237,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "purrcode-skill-registry"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "purrcode-runtime-core",
+ "purrcode-skill-store",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "purrcode-skill-store"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "purrcode-runtime-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "purrcode-supervisor-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2253,12 +2284,17 @@ name = "purrcode-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "crossterm",
+ "futures",
+ "purrcode-runtime-core",
  "ratatui",
  "reqwest",
+ "rpassword",
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2272,6 +2308,21 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "purrcode-web-research"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "purrcode-runtime-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "thiserror",
  "tokio",
 ]

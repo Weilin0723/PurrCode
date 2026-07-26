@@ -477,6 +477,7 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::RecoveryRequired { .. } => "recovery_required",
         SessionEvent::SessionCompleted => "session_completed",
         SessionEvent::SessionFailed { .. } => "session_failed",
+        _ => "research_event",
     }
 }
 

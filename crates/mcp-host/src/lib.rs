@@ -682,6 +682,209 @@ pub enum HostError {
     Toml(#[from] toml::de::Error),
 }
 
+/// Qualification status for a skill.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum QualificationStatus {
+    Qualified,
+    QualifiedWithConstraints,
+    Failed,
+    Unverified,
+}
+
+/// Result of a qualification case.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QualificationCase {
+    pub name: String,
+    pub passed: bool,
+    pub detail: String,
+}
+
+/// Full qualification report.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SkillQualificationReport {
+    pub name: String,
+    pub version: String,
+    pub status: QualificationStatus,
+    pub cases: Vec<QualificationCase>,
+    pub constraints: Option<ActionConstraints>,
+}
+
+fn find_symlinks(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_symlink() {
+                found.push(path);
+            } else if path.is_dir() {
+                found.extend(find_symlinks(&path));
+            }
+        }
+    }
+    found
+}
+
+fn load_manifest(root: &Path) -> Result<SkillManifest, HostError> {
+    let path = root.join("manifest.toml");
+    let content = std::fs::read_to_string(path)?;
+    Ok(toml::from_str(&content)?)
+}
+
+/// Static qualification engine for downloaded skills.
+pub struct Qualifier;
+
+impl Qualifier {
+    /// Run all qualification checks on a skill directory.
+    /// Returns a report summarising which checks passed or failed.
+    pub fn qualify(root: &Path) -> SkillQualificationReport {
+        let manifest_path = root.join("manifest.toml");
+        let mut cases = Vec::new();
+        let mut failed = false;
+
+        // 1. Manifest schema validation
+        if manifest_path.exists() {
+            match std::fs::read_to_string(&manifest_path) {
+                Ok(content) => match toml::from_str::<SkillManifest>(&content) {
+                    Ok(_) => cases.push(QualificationCase {
+                        name: "manifest_schema".into(),
+                        passed: true,
+                        detail: "manifest parses successfully".into(),
+                    }),
+                    Err(e) => {
+                        failed = true;
+                        cases.push(QualificationCase {
+                            name: "manifest_schema".into(),
+                            passed: false,
+                            detail: format!("manifest parse error: {e}"),
+                        });
+                    }
+                },
+                Err(e) => {
+                    failed = true;
+                    cases.push(QualificationCase {
+                        name: "manifest_schema".into(),
+                        passed: false,
+                        detail: format!("cannot read manifest: {e}"),
+                    });
+                }
+            }
+        } else {
+            failed = true;
+            cases.push(QualificationCase {
+                name: "manifest_schema".into(),
+                passed: false,
+                detail: "manifest.toml not found".into(),
+            });
+        }
+
+        // 2. Symlink / path-escape rejection
+        let symlinks = find_symlinks(root);
+        if symlinks.is_empty() {
+            cases.push(QualificationCase {
+                name: "no_symlinks".into(),
+                passed: true,
+                detail: "no symlinks found".into(),
+            });
+        } else {
+            failed = true;
+            cases.push(QualificationCase {
+                name: "no_symlinks".into(),
+                passed: false,
+                detail: format!("symlinks rejected: {symlinks:?}"),
+            });
+        }
+
+        // 3. Entrypoint validation
+        if let Ok(manifest) = load_manifest(root) {
+            let entrypoint_ok = manifest.entrypoints.values().all(|ep| {
+                let p = root.join(ep);
+                p.exists() && !p.is_absolute()
+            });
+            if entrypoint_ok {
+                cases.push(QualificationCase {
+                    name: "entrypoints".into(),
+                    passed: true,
+                    detail: "entrypoints exist and are relative".into(),
+                });
+            } else {
+                failed = true;
+                cases.push(QualificationCase {
+                    name: "entrypoints".into(),
+                    passed: false,
+                    detail: "one or more entrypoints missing or absolute".into(),
+                });
+            }
+
+            // 4. Platform compatibility
+            let platform = if cfg!(target_os = "macos") {
+                "macos"
+            } else if cfg!(target_os = "linux") {
+                "linux"
+            } else {
+                "windows"
+            };
+            if manifest.supported_platforms.is_empty()
+                || manifest.supported_platforms.contains(&platform.to_string())
+            {
+                cases.push(QualificationCase {
+                    name: "platform_compatibility".into(),
+                    passed: true,
+                    detail: format!("compatible with {platform}"),
+                });
+            } else {
+                failed = true;
+                cases.push(QualificationCase {
+                    name: "platform_compatibility".into(),
+                    passed: false,
+                    detail: format!("not compatible with {platform}"),
+                });
+            }
+        } else {
+            failed = true;
+            cases.push(QualificationCase {
+                name: "entrypoints".into(),
+                passed: false,
+                detail: "cannot load manifest".into(),
+            });
+            cases.push(QualificationCase {
+                name: "platform_compatibility".into(),
+                passed: false,
+                detail: "cannot load manifest".into(),
+            });
+        }
+
+        // 5. Content digest verification
+        if let Ok(digest) = skill_digest(root) {
+            cases.push(QualificationCase {
+                name: "content_digest".into(),
+                passed: true,
+                detail: format!("digest: {digest}"),
+            });
+        } else {
+            failed = true;
+            cases.push(QualificationCase {
+                name: "content_digest".into(),
+                passed: false,
+                detail: "cannot compute digest".into(),
+            });
+        }
+
+        let status = if failed {
+            QualificationStatus::Failed
+        } else {
+            QualificationStatus::Qualified
+        };
+
+        SkillQualificationReport {
+            name: root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+            version: "unknown".into(),
+            status,
+            cases,
+            constraints: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 blake3.workspace = true
 chrono.workspace = true
 purrcode-whisker = { path = "../whisker-context-engine" }

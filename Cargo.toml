@@ -16,6 +16,9 @@ members = [
   "crates/purrcode-daemon",
   "crates/purrcode-cli",
   "crates/purrcode-tui",
+  "crates/skill-store",
+  "crates/skill-registry",
+  "crates/web-research",
   "crates/golden-suite",
 ]
 resolver = "2"

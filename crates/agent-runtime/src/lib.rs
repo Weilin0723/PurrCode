@@ -1300,6 +1300,46 @@ pub enum AgentError {
     UnsafeUnconstrainedAllow,
 }
 
+// ── Skill-first capability resolution ───────────────────────────
+
+/// A capability resolution: either a matching installed skill, external candidates, or unavailable.
+#[derive(Clone, Debug)]
+pub enum CapabilityResolution {
+    /// An installed skill was found and should be preferred.
+    InstalledSkill { skill_id: String, tool_name: String },
+    /// External candidates were discovered.
+    CandidatesFound(Vec<serde_json::Value>),
+    /// No resolution possible with current configuration.
+    Unavailable,
+}
+
+/// Optional trait the daemon can implement to let the agent resolve capabilities
+/// against installed skills before falling back to core tools or external search.
+#[async_trait::async_trait]
+pub trait SkillResolver: Send + Sync {
+    async fn resolve(&self, capability: &str) -> CapabilityResolution;
+}
+
+impl<'a> NativeAgent<'a> {
+    /// Resolve a required capability, checking installed skills first.
+    /// Returns the resolution without mutating agent state.
+    pub async fn resolve_capability(
+        &self,
+        capability: &str,
+        resolver: Option<&dyn SkillResolver>,
+    ) -> CapabilityResolution {
+        if let Some(resolver) = resolver {
+            let result = resolver.resolve(capability).await;
+            match &result {
+                CapabilityResolution::InstalledSkill { .. } => return result,
+                CapabilityResolution::CandidatesFound(_) => return result,
+                CapabilityResolution::Unavailable => {}
+            }
+        }
+        CapabilityResolution::Unavailable
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
