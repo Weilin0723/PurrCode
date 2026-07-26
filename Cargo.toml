@@ -6,6 +6,7 @@ members = [
   "crates/ninelives-recovery",
   "crates/claw-sandbox",
   "crates/provider-gateway",
+  "crates/provider-import",
   "crates/repository-engine",
   "crates/whisker-context-engine",
   "crates/codex-bridge",
@@ -53,6 +54,7 @@ hex = "0.4"
 rusqlite = { version = "0.32", features = ["backup", "bundled", "chrono", "uuid"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 ratatui = "0.29"
+regex = "1"
 unicode-segmentation = "1"
 unicode-width = "0.2"
 rpassword = "7.5.4"

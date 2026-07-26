@@ -149,7 +149,7 @@ impl Conversation {
     pub fn current_objective(&self) -> String {
         self.messages
             .first()
-            .map(|m| m.content.chars().take(80).collect())
+            .map(|message| message.content.clone())
             .unwrap_or_default()
     }
 }

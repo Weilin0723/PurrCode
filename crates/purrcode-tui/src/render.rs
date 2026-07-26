@@ -11,11 +11,33 @@ use unicode_width::UnicodeWidthStr;
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
     match app.mode {
+        AppMode::SecretReview => draw_secret_review(frame, app),
         AppMode::ProviderSetup => draw_setup(frame, app),
         AppMode::SkillBrowse => draw_skills(frame, app),
         AppMode::DiffView => draw_diff(frame, app),
         AppMode::Conversation => draw_conversation(frame, app),
     }
+}
+
+fn draw_secret_review(frame: &mut Frame<'_>, app: &App) {
+    let Some(review) = &app.secret_review else {
+        return;
+    };
+    let import = if review.provider_candidate {
+        "\nProvider configuration signals were detected. Press I to review as a provider import."
+    } else {
+        ""
+    };
+    let text = format!(
+        "Sensitive content detected\n\n{} secret-like value(s) are hidden. Raw values have not been added to conversation history or sent to the daemon.{}\n\nR  Redact and send\nI  Import as provider configuration\nEsc  Cancel and keep draft",
+        review.finding_count, import
+    );
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().title("Secret guard").borders(Borders::ALL)),
+        frame.area(),
+    );
 }
 
 fn layout_full(frame: &Frame<'_>, app: &App) -> [Rect; 4] {

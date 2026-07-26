@@ -2164,6 +2164,7 @@ dependencies = [
  "purrcode-ninelives",
  "purrcode-pawgate",
  "purrcode-provider-gateway",
+ "purrcode-provider-import",
  "purrcode-repository-engine",
  "purrcode-runtime-core",
  "purrcode-skill-registry",
@@ -2271,6 +2272,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "purrcode-provider-import"
+version = "0.2.1"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
 name = "purrcode-repository-engine"
 version = "0.2.1"
 dependencies = [
@@ -2349,6 +2361,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "futures",
+ "purrcode-provider-import",
  "purrcode-runtime-core",
  "ratatui",
  "reqwest",
