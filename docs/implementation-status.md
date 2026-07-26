@@ -291,20 +291,26 @@ execution beyond carefully audited command forms.
   Unsupported isolation is reported as `Unverified`, never passed.
 - Web policy enforces allow, deny, and approval-required domains on search/fetch; local-only mode
   rejects outbound calls; queries reject credential/path/private-source material; redirects and
-  literal loopback/private/link-local targets are denied; evidence is bounded, content-addressed,
-  timestamp-preserving, and cached durably.
+  literal and DNS-resolved loopback/private/link-local targets are denied. Validated DNS answers
+  are pinned to the request to close rebinding races. Evidence is bounded, content-addressed,
+  timestamp-preserving, pseudonymized in redacted exports, and cached durably.
 - Capability resolution derives task capabilities instead of using a fixed `core` label, prefers a
   qualified installed skill, and durably records matched/reused/external-search-avoided lifecycle
   events. External search, archive download, installation, and invocation remain separate approval
   boundaries.
 
-### Remaining external evidence gates
-- The published artifact must still be used for the complete provider-backed 18-step acceptance
-  demo. No qualified provider report was available during this pass: LM Studio was not running and
-  local Ollama qualification attempts did not complete. These are recorded as unavailable/failed
-  attempts, not successes.
-- Official and organization registries, DNS-resolution/rebinding enforcement beyond redirect and
-  literal-address denial, and cross-platform interactive TUI automation remain follow-up gates.
+### Issue #1 closing qualification (2026-07-26)
+- A real local Ollama `llama3.2:1b` run passed daemon discovery, provider configuration, provider
+  health, and two provider-backed streamed conversation turns.
+- Deterministic coverage now exercises installed-skill-first reuse after reopening the daemon skill
+  resolver, durable `InstalledSkillMatched`, `InstalledSkillReused`, and `ExternalSearchAvoided`
+  evidence, and the absence of an external skill-search event.
+- PawGate invocation coverage proves missing and mismatched authorizations deny, an exact serialized
+  authorization allows once, and replay denies. Dynamic qualification additionally rejects
+  undeclared contained entrypoints and output-schema mismatches.
+- The complete Issue #1 acceptance evidence and exact commands are archived in
+  `docs/issue-1-demo.md`. Cross-platform interactive TUI automation remains a later portability
+  gate rather than a claim made by this macOS run.
 
 ### AGENTS.md
 - Added epic-specific rules: no auto-install, no credential-in-context,

@@ -985,7 +985,13 @@ impl Qualifier {
             }
         };
         let declared = Path::new(&request.entrypoint);
-        let resolved = if declared.is_absolute() {
+        let entrypoint_is_declared = load_manifest(root).ok().is_some_and(|manifest| {
+            manifest
+                .entrypoints
+                .values()
+                .any(|entrypoint| entrypoint == &request.entrypoint)
+        });
+        let resolved = if declared.is_absolute() || !entrypoint_is_declared {
             None
         } else {
             canonical_root
@@ -999,7 +1005,7 @@ impl Qualifier {
             report.cases.push(QualificationCase {
                 name: "dynamic_entrypoint_containment".into(),
                 passed: false,
-                detail: "entrypoint escapes the canonical skill root".into(),
+                detail: "entrypoint is undeclared or escapes the canonical skill root".into(),
             });
             return report;
         };
@@ -1299,6 +1305,39 @@ mod tests {
         assert!(discover_skills(&installed).unwrap().is_empty());
     }
 
+    #[test]
+    fn qualification_reports_blocked_incompatible_and_failed_states() {
+        let temporary = tempfile::tempdir().unwrap();
+        let missing = temporary.path().join("missing");
+        std::fs::create_dir(&missing).unwrap();
+        assert_eq!(
+            Qualifier::qualify(&missing).status,
+            QualificationStatus::Blocked
+        );
+
+        let incompatible = temporary.path().join("incompatible");
+        std::fs::create_dir(&incompatible).unwrap();
+        std::fs::write(incompatible.join("SKILL.md"), "# incompatible").unwrap();
+        std::fs::write(incompatible.join("run"), "fixture").unwrap();
+        std::fs::write(
+            incompatible.join("manifest.toml"),
+            "name='incompatible'\nversion='1.0.0'\nsupported_platforms=['not-this-platform']\n[entrypoints]\nrun='run'\n",
+        )
+        .unwrap();
+        assert_eq!(
+            Qualifier::qualify(&incompatible).status,
+            QualificationStatus::Incompatible
+        );
+
+        let invalid = temporary.path().join("invalid");
+        std::fs::create_dir(&invalid).unwrap();
+        std::fs::write(invalid.join("manifest.toml"), "this is not toml = [").unwrap();
+        assert_eq!(
+            Qualifier::qualify(&invalid).status,
+            QualificationStatus::Failed
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn dynamic_qualification_runs_only_contained_entrypoint_with_exact_authorization() {
@@ -1367,6 +1406,47 @@ mod tests {
         )
         .await;
         assert_eq!(blocked.status, QualificationStatus::Blocked);
+
+        let undeclared = skill.join("undeclared");
+        std::fs::write(&undeclared, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(&undeclared).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&undeclared, permissions).unwrap();
+        let blocked = Qualifier::qualify_dynamic(
+            &mut store,
+            session_id,
+            &skill,
+            &DynamicQualificationRequest {
+                entrypoint: "undeclared".into(),
+                arguments: Vec::new(),
+                timeout_seconds: 2,
+                expected_output_schema: None,
+            },
+        )
+        .await;
+        assert_eq!(blocked.status, QualificationStatus::Blocked);
+
+        let schema_mismatch = Qualifier::qualify_dynamic(
+            &mut store,
+            session_id,
+            &skill,
+            &DynamicQualificationRequest {
+                entrypoint: "run".into(),
+                arguments: Vec::new(),
+                timeout_seconds: 2,
+                expected_output_schema: Some(serde_json::json!({"missing": true})),
+            },
+        )
+        .await;
+        if purrcode_claw::sandbox_capability().network_isolation {
+            assert_eq!(schema_mismatch.status, QualificationStatus::Failed);
+            assert!(schema_mismatch
+                .cases
+                .iter()
+                .any(|case| case.name == "output_schema" && !case.passed));
+        } else {
+            assert_eq!(schema_mismatch.status, QualificationStatus::Unverified);
+        }
     }
 
     #[cfg(unix)]
@@ -1403,6 +1483,33 @@ mod tests {
             maximum_changed_files: 0,
         };
         let action_id = ActionId::new();
+        let mut denied_store = SessionStore::in_memory().unwrap();
+        assert!(matches!(
+            McpHost::call(&mut denied_store, action_id, &action, &constraints, &server).await,
+            Err(HostError::Store(StoreError::AuthorizationUnavailable))
+        ));
+
+        let mut mismatch_store = SessionStore::in_memory().unwrap();
+        mismatch_store
+            .authorize(&Authorization {
+                action_id,
+                session_id: SessionId::new(),
+                action_digest: "not-the-serialized-action-digest".into(),
+                constraints: constraints.clone(),
+                authorized_at: Utc::now(),
+                approved_by: ApprovalAuthority::Human,
+            })
+            .unwrap();
+        assert!(McpHost::call(
+            &mut mismatch_store,
+            action_id,
+            &action,
+            &constraints,
+            &server
+        )
+        .await
+        .is_err());
+
         let mut store = SessionStore::in_memory().unwrap();
         store
             .authorize(&Authorization {
