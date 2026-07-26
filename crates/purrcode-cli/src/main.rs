@@ -32,6 +32,10 @@ use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 use zeroize::Zeroize;
 
+fn redacted_identifier(value: &str) -> String {
+    format!("anon-{}", hex::encode(Sha256::digest(value.as_bytes())))
+}
+
 #[derive(Parser)]
 #[command(
     name = "purrcode",
@@ -1390,7 +1394,7 @@ async fn main() -> Result<()> {
                                         timestamp: *timestamp,
                                         session_id: *sid,
                                         data: if redacted {
-                                            serde_json::json!({ "skill_id": skill_id })
+                                            serde_json::json!({ "skill_id": redacted_identifier(skill_id) })
                                         } else {
                                             serde_json::json!({ "skill_id": skill_id, "tool_name": tool_name })
                                         },
@@ -1402,7 +1406,7 @@ async fn main() -> Result<()> {
                                         timestamp: *timestamp,
                                         session_id: *sid,
                                         data: if redacted {
-                                            serde_json::json!({ "skill_id": skill_id })
+                                            serde_json::json!({ "skill_id": redacted_identifier(skill_id) })
                                         } else {
                                             serde_json::json!({ "skill_id": skill_id, "scope": scope })
                                         },
@@ -1414,35 +1418,35 @@ async fn main() -> Result<()> {
                                 }),
                                 SessionEvent::SkillCandidateDiscovered { candidate_id, source, rank } => all_events.push(ResearchEvent {
                                     event_type: "SkillCandidateDiscovered".into(), timestamp: *timestamp, session_id: *sid,
-                                    data: serde_json::json!({"candidate_id": candidate_id, "source": source, "rank": rank}),
+                                    data: if redacted { serde_json::json!({"candidate_id": redacted_identifier(candidate_id), "rank": rank}) } else { serde_json::json!({"candidate_id": candidate_id, "source": source, "rank": rank}) },
                                 }),
                                 SessionEvent::SkillInspectionOpened { skill_id, duration_ms } => all_events.push(ResearchEvent {
                                     event_type: "SkillInspectionOpened".into(), timestamp: *timestamp, session_id: *sid,
-                                    data: serde_json::json!({"skill_id": skill_id, "duration_ms": duration_ms}),
+                                    data: serde_json::json!({"skill_id": if redacted { redacted_identifier(skill_id) } else { skill_id.clone() }, "duration_ms": duration_ms}),
                                 }),
                                 SessionEvent::SkillQualified { skill_id, status, latency_ms } => all_events.push(ResearchEvent {
                                     event_type: "SkillQualified".into(), timestamp: *timestamp, session_id: *sid,
-                                    data: serde_json::json!({"skill_id": skill_id, "status": status, "latency_ms": latency_ms}),
+                                    data: serde_json::json!({"skill_id": if redacted { redacted_identifier(skill_id) } else { skill_id.clone() }, "status": status, "latency_ms": latency_ms}),
                                 }),
                                 SessionEvent::SkillQualificationStarted { skill_id } => all_events.push(ResearchEvent {
                                     event_type: "SkillQualificationStarted".into(), timestamp: *timestamp, session_id: *sid,
-                                    data: serde_json::json!({"skill_id": skill_id}),
+                                    data: serde_json::json!({"skill_id": if redacted { redacted_identifier(skill_id) } else { skill_id.clone() }}),
                                 }),
                                 SessionEvent::SkillInvocationSucceeded { skill_id, latency_ms } => all_events.push(ResearchEvent {
                                     event_type: "SkillInvocationSucceeded".into(), timestamp: *timestamp, session_id: *sid,
-                                    data: serde_json::json!({"skill_id": skill_id, "latency_ms": latency_ms}),
+                                    data: serde_json::json!({"skill_id": if redacted { redacted_identifier(skill_id) } else { skill_id.clone() }, "latency_ms": latency_ms}),
                                 }),
                                 SessionEvent::InstalledSkillMatched { skill_id, matched_capability } => all_events.push(ResearchEvent {
                                     event_type: "InstalledSkillMatched".into(), timestamp: *timestamp, session_id: *sid,
-                                    data: if redacted { serde_json::json!({"skill_id": skill_id}) } else { serde_json::json!({"skill_id": skill_id, "matched_capability": matched_capability}) },
+                                    data: if redacted { serde_json::json!({"skill_id": redacted_identifier(skill_id)}) } else { serde_json::json!({"skill_id": skill_id, "matched_capability": matched_capability}) },
                                 }),
                                 SessionEvent::InstalledSkillReused { skill_id, previous_uses } => all_events.push(ResearchEvent {
                                     event_type: "InstalledSkillReused".into(), timestamp: *timestamp, session_id: *sid,
-                                    data: serde_json::json!({"skill_id": skill_id, "previous_uses": previous_uses}),
+                                    data: serde_json::json!({"skill_id": if redacted { redacted_identifier(skill_id) } else { skill_id.clone() }, "previous_uses": previous_uses}),
                                 }),
                                 SessionEvent::ExternalSearchAvoided { skill_id, matched_capability } => all_events.push(ResearchEvent {
                                     event_type: "ExternalSearchAvoided".into(), timestamp: *timestamp, session_id: *sid,
-                                    data: if redacted { serde_json::json!({"skill_id": skill_id}) } else { serde_json::json!({"skill_id": skill_id, "matched_capability": matched_capability}) },
+                                    data: if redacted { serde_json::json!({"skill_id": redacted_identifier(skill_id)}) } else { serde_json::json!({"skill_id": skill_id, "matched_capability": matched_capability}) },
                                 }),
                                 SessionEvent::SessionCompleted => all_events.push(ResearchEvent {
                                     event_type: "TaskCompleted".into(), timestamp: *timestamp, session_id: *sid, data: serde_json::json!({}),
@@ -2871,5 +2875,38 @@ mod cli_tests {
         );
         assert!(tool_available_on_path("git"));
         assert!(!tool_available_on_path("../git"));
+    }
+
+    #[test]
+    fn research_redaction_pseudonymizes_identifiers_deterministically() {
+        let private = "private-org/secret-skill";
+        let first = redacted_identifier(private);
+        assert_eq!(first, redacted_identifier(private));
+        assert!(first.starts_with("anon-"));
+        assert!(!first.contains(private));
+    }
+
+    #[test]
+    fn research_export_source_events_keep_their_durable_timestamps() {
+        let session_id = SessionId::new();
+        let mut store = SessionStore::in_memory().unwrap();
+        let before = Utc::now();
+        store
+            .append(
+                session_id,
+                &SessionEvent::CapabilityGapDetected {
+                    gap_description: "private capability".into(),
+                    task_context: "private prompt".into(),
+                },
+            )
+            .unwrap();
+        let after = Utc::now();
+        let timestamped = store.timestamped_events(session_id).unwrap();
+        assert_eq!(timestamped.len(), 1);
+        assert!(timestamped[0].0 >= before && timestamped[0].0 <= after);
+        assert!(matches!(
+            timestamped[0].1,
+            SessionEvent::CapabilityGapDetected { .. }
+        ));
     }
 }

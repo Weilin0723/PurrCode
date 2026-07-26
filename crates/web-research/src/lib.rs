@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
@@ -70,6 +70,8 @@ pub enum ResearchError {
     PrivateQuery,
     #[error("URL is not an allowed public HTTP(S) target: {0}")]
     UnsafeUrl(String),
+    #[error("public DNS resolution failed closed: {0}")]
+    DnsResolution(String),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("cache I/O error: {0}")]
@@ -81,7 +83,6 @@ const MAX_EXCERPT_CHARS: usize = 2000;
 const CACHE_TTL: Duration = Duration::from_secs(3600); // 1 hour
 
 pub struct ResearchEngine {
-    client: reqwest::Client,
     policy: DomainPolicy,
     cache: HashMap<String, EvidenceRecord>,
     cache_path: Option<PathBuf>,
@@ -94,14 +95,12 @@ pub trait SearchProvider: Send + Sync {
 }
 
 pub struct WebSearchProvider {
-    client: reqwest::Client,
     endpoint: String,
 }
 
 impl WebSearchProvider {
     pub fn new(endpoint: &str) -> Self {
         Self {
-            client: reqwest::Client::new(),
             endpoint: endpoint.trim_end_matches('/').to_string(),
         }
     }
@@ -111,7 +110,9 @@ impl WebSearchProvider {
 impl SearchProvider for WebSearchProvider {
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, ResearchError> {
         let url = format!("{}/search", self.endpoint);
-        let resp = self.client.post(&url).json(query).send().await?;
+        let (domain, addresses) = resolve_public_url(&url).await?;
+        let client = pinned_client(&domain, &addresses)?;
+        let resp = client.post(&url).json(query).send().await?;
         let results: Vec<SearchResult> = resp.json().await?;
         Ok(results)
     }
@@ -129,12 +130,6 @@ impl SearchProvider for StubSearchProvider {
 impl ResearchEngine {
     pub fn new(search_provider: Box<dyn SearchProvider>, policy: DomainPolicy) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .connect_timeout(Duration::from_secs(10))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .unwrap_or_default(),
             policy,
             cache: HashMap::new(),
             cache_path: None,
@@ -173,7 +168,7 @@ impl ResearchEngine {
         let mut evidence = Vec::new();
 
         for result in results {
-            let domain = validate_public_url(&result.url)?;
+            let (domain, _) = resolve_public_url(&result.url).await?;
             enforce_domain_policy(&self.policy, &domain)?;
 
             let record = EvidenceRecord {
@@ -196,10 +191,11 @@ impl ResearchEngine {
     }
 
     pub async fn fetch_page(&self, url: &str) -> Result<FetchedPage, ResearchError> {
-        let domain = validate_public_url(url)?;
+        let (domain, addresses) = resolve_public_url(url).await?;
         enforce_domain_policy(&self.policy, &domain)?;
 
-        let resp = self.client.get(url).send().await?;
+        let client = pinned_client(&domain, &addresses)?;
+        let resp = client.get(url).send().await?;
         if resp.status().is_redirection() {
             return Err(ResearchError::UnsafeUrl(format!(
                 "redirects require a separately validated request: {url}"
@@ -347,30 +343,77 @@ fn validate_public_url(raw: &str) -> Result<String, ResearchError> {
         return Err(ResearchError::UnsafeUrl(raw.to_owned()));
     }
     if let Ok(address) = host.parse::<IpAddr>() {
-        let unsafe_address = match address {
-            IpAddr::V4(v4) => {
-                v4.is_private()
-                    || v4.is_loopback()
-                    || v4.is_link_local()
-                    || v4.is_broadcast()
-                    || v4.is_documentation()
-                    || v4.is_unspecified()
-                    || v4.is_multicast()
-            }
-            IpAddr::V6(v6) => {
-                let segments = v6.segments();
-                v6.is_loopback()
-                    || v6.is_unspecified()
-                    || v6.is_multicast()
-                    || (segments[0] & 0xfe00) == 0xfc00
-                    || (segments[0] & 0xffc0) == 0xfe80
-            }
-        };
-        if unsafe_address {
+        if !is_public_address(address) {
             return Err(ResearchError::UnsafeUrl(raw.to_owned()));
         }
     }
     Ok(host)
+}
+
+fn is_public_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            !(octets[0] == 0
+                || v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+                || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+                || (octets[0] == 198 && (octets[1] == 18 || octets[1] == 19))
+                || octets[0] >= 240)
+        }
+        IpAddr::V6(v6) => {
+            let segments = v6.segments();
+            v6.to_ipv4_mapped()
+                .map(|mapped| is_public_address(IpAddr::V4(mapped)))
+                .unwrap_or_else(|| {
+                    !(v6.is_loopback()
+                        || v6.is_unspecified()
+                        || v6.is_multicast()
+                        || (segments[0] & 0xfe00) == 0xfc00
+                        || (segments[0] & 0xffc0) == 0xfe80
+                        || (segments[0] & 0xffc0) == 0xfec0
+                        || (segments[0] == 0x2001 && segments[1] == 0x0db8))
+                })
+        }
+    }
+}
+
+fn validate_resolved_addresses(
+    raw: &str,
+    addresses: Vec<SocketAddr>,
+) -> Result<Vec<SocketAddr>, ResearchError> {
+    if addresses.is_empty() || addresses.iter().any(|entry| !is_public_address(entry.ip())) {
+        return Err(ResearchError::UnsafeUrl(raw.to_owned()));
+    }
+    Ok(addresses)
+}
+
+async fn resolve_public_url(raw: &str) -> Result<(String, Vec<SocketAddr>), ResearchError> {
+    let domain = validate_public_url(raw)?;
+    let url = reqwest::Url::parse(raw).map_err(|_| ResearchError::UnsafeUrl(raw.to_owned()))?;
+    let port = url.port_or_known_default().ok_or_else(|| {
+        ResearchError::DnsResolution("HTTP(S) URL does not have a resolvable port".into())
+    })?;
+    let addresses = tokio::net::lookup_host((domain.as_str(), port))
+        .await
+        .map_err(|error| ResearchError::DnsResolution(error.to_string()))?
+        .collect::<Vec<_>>();
+    Ok((domain, validate_resolved_addresses(raw, addresses)?))
+}
+
+fn pinned_client(domain: &str, addresses: &[SocketAddr]) -> Result<reqwest::Client, ResearchError> {
+    Ok(reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve_to_addrs(domain, addresses)
+        .build()?)
 }
 
 fn validate_query(query: &str) -> Result<(), ResearchError> {
@@ -490,6 +533,31 @@ mod tests {
         assert!(validate_query("Authorization: Bearer token-value").is_err());
         assert!(validate_query("error in /Users/alice/private/repo").is_err());
         assert!(validate_query("rust axum sse example").is_ok());
+    }
+
+    #[test]
+    fn dns_answers_fail_closed_when_any_address_is_not_public() {
+        let public: SocketAddr = "93.184.216.34:443".parse().unwrap();
+        let loopback: SocketAddr = "127.0.0.1:443".parse().unwrap();
+        let mapped_loopback: SocketAddr = "[::ffff:127.0.0.1]:443".parse().unwrap();
+        let carrier_nat: SocketAddr = "100.64.0.1:443".parse().unwrap();
+        assert!(validate_resolved_addresses("https://example.com", vec![public]).is_ok());
+        assert!(validate_resolved_addresses("https://example.com", Vec::new()).is_err());
+        assert!(
+            validate_resolved_addresses("https://rebind.example", vec![public, loopback]).is_err()
+        );
+        assert!(
+            validate_resolved_addresses("https://mapped.example", vec![mapped_loopback]).is_err()
+        );
+        assert!(validate_resolved_addresses("https://cgnat.example", vec![carrier_nat]).is_err());
+    }
+
+    #[tokio::test]
+    async fn dns_resolution_rejects_localhost_before_http() {
+        assert!(matches!(
+            resolve_public_url("http://localhost:8080/private").await,
+            Err(ResearchError::UnsafeUrl(_))
+        ));
     }
 
     #[test]

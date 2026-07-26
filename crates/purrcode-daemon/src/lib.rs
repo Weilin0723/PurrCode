@@ -3512,9 +3512,10 @@ async fn remove_skill(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::stream;
+    use futures::{stream, StreamExt};
     use purrcode_provider_gateway::{
-        ModelCapabilities, ModelEventStream, ProviderError, ProviderHealth, TokenEstimate,
+        ModelCapabilities, ModelEvent, ModelEventStream, ProviderError, ProviderHealth,
+        TokenEstimate,
     };
     use schemars::schema::RootSchema;
     use std::sync::Mutex as StdMutex;
@@ -3587,6 +3588,96 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[tokio::test]
+    async fn installed_skill_is_reused_first_after_daemon_resolver_restart() {
+        let temporary = tempfile::tempdir().unwrap();
+        let database = temporary.path().join("sessions.db");
+        let skills_database = temporary.path().join("skills.db");
+        let library = temporary.path().join("skills");
+        let source = temporary.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# Terraform inspector").unwrap();
+        let mut store = SkillStore::open(&skills_database, &library).unwrap();
+        store
+            .install(
+                "terraform-inspector",
+                "1.0.0",
+                SkillScope::User,
+                "registry",
+                None,
+                Some("fixture"),
+                "fixture-digest",
+                &serde_json::json!({}),
+                &source,
+            )
+            .unwrap();
+        store.record_use("terraform-inspector", true).unwrap();
+        drop(store);
+
+        let before_restart = DaemonSkillResolver {
+            database: database.clone(),
+        };
+        assert!(matches!(
+            before_restart.resolve("terraform").await,
+            CapabilityResolution::InstalledSkill { ref skill_id, .. }
+                if skill_id == "terraform-inspector"
+        ));
+        drop(before_restart);
+
+        let after_restart = DaemonSkillResolver { database };
+        let CapabilityResolution::InstalledSkill { skill_id, .. } =
+            after_restart.resolve("terraform").await
+        else {
+            panic!("persisted installed skill was not selected before external search");
+        };
+        let reopened = SkillStore::open(&skills_database, &library).unwrap();
+        let persisted = reopened.get(&skill_id).unwrap();
+        assert_eq!(persisted.successful_uses, 1);
+
+        let session_id = SessionId::new();
+        let mut events = SessionStore::in_memory().unwrap();
+        events
+            .append(
+                session_id,
+                &SessionEvent::InstalledSkillMatched {
+                    skill_id: skill_id.clone(),
+                    matched_capability: "terraform".into(),
+                },
+            )
+            .unwrap();
+        events
+            .append(
+                session_id,
+                &SessionEvent::InstalledSkillReused {
+                    skill_id: skill_id.clone(),
+                    previous_uses: 1,
+                },
+            )
+            .unwrap();
+        events
+            .append(
+                session_id,
+                &SessionEvent::ExternalSearchAvoided {
+                    skill_id,
+                    matched_capability: "terraform".into(),
+                },
+            )
+            .unwrap();
+        let durable = events.events(session_id).unwrap();
+        assert!(durable
+            .iter()
+            .any(|event| matches!(event, SessionEvent::InstalledSkillMatched { .. })));
+        assert!(durable
+            .iter()
+            .any(|event| matches!(event, SessionEvent::InstalledSkillReused { .. })));
+        assert!(durable
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ExternalSearchAvoided { .. })));
+        assert!(!durable
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SkillSearchStarted { .. })));
     }
 
     #[tokio::test]
@@ -3745,6 +3836,123 @@ local = true
 
         handle.abort();
         provider_server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running local Ollama provider"]
+    async fn live_ollama_connect_and_provider_backed_multiturn_streaming() {
+        let model =
+            std::env::var("PURRCODE_LIVE_OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2:1b".into());
+        let temporary = tempfile::tempdir().unwrap();
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(
+            &app_config,
+            "schema_version = 1\n[privacy]\nmode = 'local-only'\n",
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: app_config.clone(),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        let discovery = client
+            .post(format!("http://{}/v1/providers/discover", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"provider_type": "ollama"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(discovery.status(), StatusCode::OK);
+        let discovered: serde_json::Value = discovery.json().await.unwrap();
+        assert!(discovered["models"]
+            .as_array()
+            .is_some_and(|models| models.iter().any(|entry| entry == &model)));
+
+        let connected = client
+            .post(format!("http://{}/v1/providers", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "name": "ollama",
+                "provider_type": "ollama",
+                "base_url": "http://127.0.0.1:11434/v1/",
+                "model": model,
+                "credential_name": null
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(connected.status(), StatusCode::OK);
+        let health = client
+            .post(format!("http://{}/v1/providers/test", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"provider": "ollama"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        let config = AppConfig::load(&app_config).unwrap();
+        let router = ProviderRouter::from_config(&config).unwrap();
+        let model_id = ModelId::parse(&format!("ollama/{model}")).unwrap();
+        let provider = router.provider(&model_id).unwrap();
+        let first_messages = vec![ModelMessage {
+            role: "user".into(),
+            content: "Reply with the exact token PURR_TURN_ONE.".into(),
+        }];
+        let mut first_stream = provider
+            .stream(ModelRequest {
+                model: model_id.clone(),
+                messages: first_messages.clone(),
+                tools: Vec::new(),
+                max_output_tokens: Some(32),
+                reasoning_effort: None,
+            })
+            .await
+            .unwrap();
+        let mut first = String::new();
+        while let Some(event) = first_stream.next().await {
+            if let ModelEvent::TextDelta(delta) = event.unwrap() {
+                first.push_str(&delta);
+            }
+        }
+        assert!(!first.trim().is_empty());
+
+        let mut second_messages = first_messages;
+        second_messages.push(ModelMessage {
+            role: "assistant".into(),
+            content: first,
+        });
+        second_messages.push(ModelMessage {
+            role: "user".into(),
+            content: "This is turn two. Reply with the exact token PURR_TURN_TWO.".into(),
+        });
+        let mut second_stream = provider
+            .stream(ModelRequest {
+                model: model_id,
+                messages: second_messages,
+                tools: Vec::new(),
+                max_output_tokens: Some(32),
+                reasoning_effort: None,
+            })
+            .await
+            .unwrap();
+        let mut second = String::new();
+        while let Some(event) = second_stream.next().await {
+            if let ModelEvent::TextDelta(delta) = event.unwrap() {
+                second.push_str(&delta);
+            }
+        }
+        assert!(!second.trim().is_empty());
+        handle.abort();
     }
 
     #[tokio::test]
