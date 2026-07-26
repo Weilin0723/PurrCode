@@ -3,13 +3,26 @@
 ## Signed release (macOS and Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.2.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.2.1/scripts/install.sh | sh
 ```
 
 The installer detects the host platform, downloads both PurrCode binaries, verifies the archive
 against the release `SHA256SUMS`, and installs to `~/.local/bin`. Set `PURRCODE_INSTALL_DIR` to use
 another destination. Windows users should download and extract the
 `purrcode-x86_64-pc-windows-msvc.zip` release asset.
+
+## npm-compatible package
+
+Node.js 18 or newer can install the cross-platform launcher directly from the GitHub release:
+
+```bash
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.2.1/purrcode-0.2.1.tgz
+```
+
+The package downloads only the matching native archive, checks it against the digest pinned inside
+the npm package, and installs both `purrcode` and `purrcoded`. Publishing the same package name to
+the public npm registry additionally requires the repository owner to configure npm trusted
+publishing or authenticate an npm account; GitHub authentication alone cannot grant that access.
 
 ## From source
 

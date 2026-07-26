@@ -1,0 +1,37 @@
+{
+  "name": "purrcode",
+  "version": "0.2.1",
+  "description": "Secure installer and launcher for the PurrCode coding agent",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/Weilin0723/PurrCode",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Weilin0723/PurrCode.git"
+  },
+  "bugs": "https://github.com/Weilin0723/PurrCode/issues",
+  "bin": {
+    "purrcode": "bin/purrcode.js",
+    "purrcoded": "bin/purrcode.js"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "checksums.json"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

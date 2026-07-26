@@ -84,11 +84,17 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: purrcode-*
           merge-multiple: true
           path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Package npm-compatible launcher
+        run: npm pack ./packages/purrcode --ignore-scripts --pack-destination dist
       - name: Create checksum manifest
         working-directory: dist
         run: sha256sum purrcode-* > SHA256SUMS

@@ -312,6 +312,16 @@ execution beyond carefully audited command forms.
   `docs/issue-1-demo.md`. Cross-platform interactive TUI automation remains a later portability
   gate rather than a claim made by this macOS run.
 
+### Distribution and documentation cleanup (2026-07-26)
+- The repository no longer tracks macOS metadata files, and generated Rust, npm, and Python build
+  outputs remain ignored rather than becoming release inputs.
+- A dependency-free `purrcode` npm-compatible launcher selects the published native target,
+  restricts downloads to GitHub release hosts, verifies a package-pinned SHA-256 digest, and exposes
+  both executables. Release automation includes the launcher tarball in checksums, Sigstore signing,
+  provenance, and release upload.
+- Homebrew and winget metadata now targets `v0.2.1` with real release digests. The main README is a
+  concise English entry point linked to a complete Simplified Chinese translation.
+
 ### AGENTS.md
 - Added epic-specific rules: no auto-install, no credential-in-context,
   qualification gates execution, PawGate per-invocation, research events durable,

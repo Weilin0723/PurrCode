@@ -1,94 +1,114 @@
 # PurrCode
 
-**A local-first coding agent with an independent, auditable judgment runtime.**
+[简体中文](README.zh-CN.md) · [Documentation](docs/) · [Latest release](https://github.com/Weilin0723/PurrCode/releases/latest)
 
-Official repository: [Weilin0723/PurrCode](https://github.com/Weilin0723/PurrCode)
+[![CI](https://github.com/Weilin0723/PurrCode/actions/workflows/ci.yml/badge.svg)](https://github.com/Weilin0723/PurrCode/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Weilin0723/PurrCode)](https://github.com/Weilin0723/PurrCode/releases/latest)
+[![License](https://img.shields.io/github/license/Weilin0723/PurrCode)](LICENSE)
+
+**A local-first coding agent with an independent, auditable judgment runtime.**
 
 > Models propose. PawGate authorizes. Claw executes. Evidence decides.
 
-PurrCode works in isolated Git worktrees, binds every native action to a durable authorization,
-and requires recorded validation before a task can complete. Repository content and model output
-are treated as untrusted data, provider credentials are kept out of tool processes, and interrupted
-work is recovered conservatively.
-
-PurrCode is the formal product and repository name. Its primary executables are `purrcode` and
-`purrcoded`; Rust crates, SDK packages, editor commands, configuration paths, release artifacts,
-and package-manager metadata use the same namespace.
-
-## The PurrCode runtime
-
-```text
-PurrCode
-├── PawGate Judgment Runtime
-├── Claw Sandbox
-├── Whisker Context Engine
-└── NineLives Recovery
-```
-
-| Component | Responsibility |
-|---|---|
-| **PawGate** | Deterministic policy, independent semantic review, exact authorization binding, and human approval gates |
-| **Claw** | Shell-free, credential-scrubbed execution inside a worktree-scoped OS sandbox when the host supports one |
-| **Whisker** | Bounded repository indexing, context retrieval, sensitive-file filtering, and risk signals |
-| **NineLives** | Durable events, checkpoints, restart reconciliation, rollback, and resumable sessions |
-
-中文命名：**PurrCode** 是产品；**PawGate** 是判断与授权层；**Whisker** 负责上下文感知与风险探测；**Claw** 负责受控执行与 sandbox；**NineLives** 负责 checkpoint、recovery 与 rollback。
+PurrCode is a terminal coding agent that works in isolated Git worktrees. Every native action is
+bound to a durable authorization, checked again immediately before execution, and followed by
+recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
 ## Why PurrCode
 
-- **Authorization is enforceable.** A native tool runs only after PawGate durably records the exact
-  serialized action and constraints. Claw independently verifies and atomically consumes that
-  authorization immediately before execution.
-- **Your working tree stays yours.** Agent changes happen in detached session worktrees. PurrCode
-  never silently stashes, resets, discards, or overwrites existing work.
-- **Completion requires evidence.** Validation can pass, fail, time out, be unavailable, or remain
-  undetected; skipped checks are never presented as success.
-- **Recovery fails closed.** NineLives reconstructs sessions from an append-only SQLite event log
-  and marks interrupted model or tool operations for review instead of replaying uncertain effects.
-- **Providers do not become authorities.** Ollama, LM Studio, OpenAI-compatible services,
-  enterprise gateways, and the Codex bridge may propose work, but cannot bypass PawGate.
+- **Enforceable authorization:** PawGate approves the exact serialized action and constraints;
+  callers cannot bypass the execution adapter's second check.
+- **Protected working trees:** agent changes stay in isolated worktrees until you review and apply
+  them. Existing uncommitted work is never silently stashed or discarded.
+- **Evidence-based completion:** passed, failed, timed-out, unavailable, and skipped validation are
+  distinct states. Skipped work is never reported as success.
+- **Conservative recovery:** NineLives restores durable sessions and flags uncertain interrupted
+  effects for review instead of replaying them.
+- **Provider choice without provider authority:** use Ollama, LM Studio, OpenAI-compatible APIs,
+  enterprise gateways, or the Codex bridge without letting a model approve its own actions.
+- **Governed skills and research:** inspect, qualify, authorize, persist, and reuse skills while
+  keeping public web access behind explicit policy.
 
 ## Install
 
-macOS and Linux users can download, verify, and install both `v0.2.0` binaries with one command:
+### npm-compatible package
+
+Node.js 18 or newer can install the signed-release launcher directly from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.2.0/scripts/install.sh | sh
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.2.1/purrcode-0.2.1.tgz
 ```
 
-The installer verifies the release archive against `SHA256SUMS` and installs into
-`~/.local/bin`. Override the destination with `PURRCODE_INSTALL_DIR` if needed. Windows users can
-download the `purrcode-x86_64-pc-windows-msvc.zip` asset directly from the GitHub Release.
+The package selects the correct macOS, Linux, or Windows binary, verifies its pinned SHA-256 digest,
+and exposes both `purrcode` and `purrcoded`.
 
-Then run `purrcode init` and `purrcode`.
+### macOS and Linux installer
 
-### Install from source
+```bash
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.2.1/scripts/install.sh | sh
+```
+
+This installer verifies the release archive against `SHA256SUMS` and installs into `~/.local/bin`.
+Set `PURRCODE_INSTALL_DIR` to choose another destination.
+
+### Build from source
 
 Rust 1.88 or newer is required:
 
 ```bash
 cargo install --locked --path crates/purrcode-cli
 cargo install --locked --path crates/purrcode-daemon
-purrcode init
 ```
 
-`purrcode init` discovers local providers, creates secure local configuration and persistence,
-starts the authenticated loopback daemon, and prepares a managed workspace. Run `purrcode`
-without a subcommand to open the terminal interface.
+## Start in three steps
 
-### Migrating from LocalJudge / judgeinagent
+```bash
+# 1. Discover local providers and create secure defaults
+purrcode init
 
-This repository is the continuation of the earlier LocalJudge/judgeinagent prototype. Before
-upgrading, keep a copy of any legacy configuration and session database. The formal PurrCode build
-uses the platform PurrCode application directory, `.purrcode/` repository state, `purrcode.toml`,
-the `purrcode` Python module, and the `@purrcode/client` TypeScript package. Existing historical
-audit records remain valid evidence; they are not rewritten or silently moved.
+# 2. Enter a repository
+cd your-project
 
-## Daily workflow
+# 3. Open the conversation-first terminal interface
+purrcode
+```
+
+Use `/connect` inside the interface to discover Ollama or LM Studio, or configure a remote provider
+without editing TOML. Credentials use the operating-system secret store and are not passed to model
+context or tool processes.
+
+## Runtime model
+
+```text
+Model proposal
+  → PawGate policy and independent judgment
+  → durable exact-action authorization
+  → Claw verification and isolated execution
+  → validation evidence
+  → reviewed application or rollback
+```
+
+| Component | Responsibility |
+|---|---|
+| **PawGate** | Deterministic policy, semantic review, constraints, and human approval gates |
+| **Claw** | Credential-scrubbed execution inside a worktree-scoped OS sandbox |
+| **Whisker** | Bounded context retrieval, sensitive-file filtering, and risk signals |
+| **NineLives** | Durable events, checkpoints, restart reconciliation, and rollback |
+
+## Interfaces
+
+- Conversation-first Ratatui terminal and headless CLI
+- Authenticated loopback daemon with server-sent events
+- VS Code extension
+- TypeScript and Python clients
+- MCP and persistent skill host
+- Ollama, LM Studio, OpenAI-compatible, and enterprise providers
+
+## Common commands
 
 ```bash
 purrcode plan "Add pagination to the orders API"
-purrcode run "Add pagination to the orders API and update tests"
+purrcode run "Implement pagination and update tests"
 purrcode sessions
 purrcode review
 purrcode approve
@@ -96,91 +116,37 @@ purrcode resume
 purrcode rollback
 ```
 
-Review the isolated diff before explicitly applying or exporting it to your active branch.
+## Security and verification
 
-## Security model
+PurrCode uses `sandbox-exec` on macOS and Bubblewrap on supported Linux hosts. Weaker host isolation
+is reported accurately and never presented as a full sandbox. Read the [security model](docs/security.md),
+[architecture](docs/architecture.md), and [production acceptance audit](docs/production-acceptance.md)
+before using PurrCode for sensitive repositories.
 
-The trusted path is deliberately small:
-
-```text
-Proposed action
-  → deterministic PawGate policy
-  → judgment and constraints
-  → durable exact-action authorization
-  → independent verification and single-use consumption
-  → Claw execution
-  → validation evidence
-```
-
-On macOS, PurrCode uses `sandbox-exec`; on Linux it uses Bubblewrap when available. A host without a
-supported OS sandbox is reported as restricted process filtering, not as full isolation. See the
-[security model](docs/security.md) and [architecture](docs/architecture.md) for exact boundaries.
-
-Provider secrets should be stored with the hidden credential prompt:
-
-```bash
-purrcode credential set openai
-```
-
-Secrets are stored in macOS Keychain, Windows Credential Manager, or Linux Secret Service.
-Configuration keeps only a reference, and tool/plugin processes do not inherit provider
-credentials. Environment references remain available for ephemeral CI environments.
-
-## Providers and interfaces
-
-- Local Ollama and LM Studio servers
-- OpenAI and OpenAI-compatible APIs
-- Enterprise gateways with mTLS, custom CAs, proxies, and external credential commands
-- Ratatui terminal interface and headless CLI
-- Authenticated loopback daemon with server-sent events
-- VS Code extension
-- Typed TypeScript and Python SDKs
-- MCP/skill host and isolated Codex bridge
-
-Provider setup is documented in [docs/providers.md](docs/providers.md).
-
-## Verification
-
-Run the repository gates:
+Repository checks:
 
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+npm test --prefix packages/purrcode
 npm test --prefix sdk/typescript
 npm test --prefix apps/vscode-extension
 PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
-purrcode benchmark audit
-purrcode benchmark baseline
 ```
-
-With a qualified provider and running daemon:
-
-```bash
-purrcode benchmark live --timeout-seconds 300 --max-tasks 5
-```
-
-The report records path accuracy, forbidden mutations, validation status, model calls, approvals,
-latency, aggregate accuracy, and safety. External provider qualification, upstream signed-release
-execution, and cross-platform runs remain explicit release gates until real evidence exists.
-
-## Project status
-
-PurrCode is currently an **0.1 release candidate**, not a production-approved release. Trusted
-runtime contracts and core recovery are implemented; provider qualification, live golden benchmark
-quality, and upstream release execution still require environment-specific evidence. The exact,
-fail-closed status is maintained in [docs/implementation-status.md](docs/implementation-status.md)
-and [docs/production-acceptance.md](docs/production-acceptance.md).
 
 ## Documentation
 
 - [Installation](docs/installation.md)
+- [Provider setup](docs/providers.md)
 - [Architecture](docs/architecture.md)
 - [Security](docs/security.md)
-- [Providers](docs/providers.md)
 - [Recovery](docs/recovery.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Production acceptance](docs/production-acceptance.md)
+- [Implementation status](docs/implementation-status.md)
+
+PurrCode is under active development. Consult the implementation status and release notes for
+verified capabilities and remaining platform-specific gates.
 
 ## License
 

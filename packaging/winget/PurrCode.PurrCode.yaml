@@ -1,5 +1,5 @@
 PackageIdentifier: PurrCode.PurrCode
-PackageVersion: 0.1.0
+PackageVersion: 0.2.1
 PackageLocale: en-US
 Publisher: PurrCode
 PackageName: PurrCode
@@ -16,5 +16,5 @@ Installers:
         PortableCommandAlias: purrcode
       - RelativeFilePath: purrcode-x86_64-pc-windows-msvc\purrcoded.exe
         PortableCommandAlias: purrcoded
-    InstallerUrl: https://github.com/Weilin0723/PurrCode/releases/download/v0.1.0/purrcode-x86_64-pc-windows-msvc.zip
-    InstallerSha256: RELEASE_AUTOMATION_REPLACES_THIS_VALUE
+    InstallerUrl: https://github.com/Weilin0723/PurrCode/releases/download/v0.2.1/purrcode-x86_64-pc-windows-msvc.zip
+    InstallerSha256: 271875DFBEAC4A43E3FDC57735F2AC4637827AD55E09F84D7C2C815DDBB3016
