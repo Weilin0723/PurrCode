@@ -23,7 +23,7 @@ impl CommandPalette {
 
         match cmd.as_str() {
             "help" => {
-                app.message_bar = "/help /connect /providers /models /model /privacy /plan /build /review /diff /skills /skill-search /skill-install /settings /session /new /compact /quit".into();
+                app.message_bar = "/help /connect /providers /models /model <id> /role <role> <provider/model> /privacy /plan /build /review /diff /approve /deny <reason> /pause /resume /rollback /skills /skill-search <query> /skill-block <publisher> /settings /session /new /compact /cancel /quit".into();
             }
             "connect" => {
                 app.provider_setup = Some(ProviderSetup::new());
@@ -69,16 +69,40 @@ impl CommandPalette {
                     browser.load(&client, &daemon_url, &token).await;
                 }
             }
+            "role" => {
+                let mut parts = args.split_whitespace();
+                let (Some(role), Some(model), None) = (parts.next(), parts.next(), parts.next())
+                else {
+                    app.message_bar =
+                        "Usage: /role <coding_worker|judge|planner|reviewer> <provider/model>"
+                            .into();
+                    return;
+                };
+                match app
+                    .request(
+                        reqwest::Method::POST,
+                        "/v1/models/roles",
+                        Some(serde_json::json!({"role": role, "model": model})),
+                    )
+                    .await
+                {
+                    Ok(_) => app.message_bar = format!("Assigned {model} to {role}"),
+                    Err(error) => app.message_bar = format!("Error: {error}"),
+                }
+            }
             "skill-search" => {
                 let query = if args.is_empty() { "all" } else { args };
                 app.message_bar = format!("Searching skills for: {query}...");
                 let token = app.token.clone();
                 let daemon_url = app.daemon_url().to_string();
+                let session_id = app.session_id.clone();
                 let client = reqwest::Client::new();
                 app.skill_browser = Some(SkillBrowser::new());
                 app.switch_mode(AppMode::SkillBrowse);
                 if let Some(ref mut browser) = app.skill_browser {
-                    browser.search(&client, &daemon_url, &token, query).await;
+                    browser
+                        .search(&client, &daemon_url, &token, query, session_id.as_deref())
+                        .await;
                 }
             }
             "diff" => {
@@ -128,6 +152,43 @@ impl CommandPalette {
                 app.conversation = crate::conversation::Conversation::new();
                 app.message_bar = "New session started.".into();
             }
+            "session" => {
+                if let Some(id) = &app.session_id {
+                    match app
+                        .request(reqwest::Method::GET, &format!("/v1/sessions/{id}"), None)
+                        .await
+                    {
+                        Ok(value) => {
+                            app.message_bar =
+                                serde_json::to_string_pretty(&value).unwrap_or_default()
+                        }
+                        Err(error) => app.message_bar = format!("Error: {error}"),
+                    }
+                } else {
+                    app.message_bar = "No active session.".into();
+                }
+            }
+            "settings" => {
+                let providers = app
+                    .request(reqwest::Method::GET, "/v1/providers", None)
+                    .await;
+                let models = app.request(reqwest::Method::GET, "/v1/models", None).await;
+                app.message_bar = format!(
+                    "Providers: {}\nModels: {}",
+                    providers.map_or_else(|e| format!("error: {e}"), |v| v.to_string()),
+                    models.map_or_else(|e| format!("error: {e}"), |v| v.to_string())
+                );
+            }
+            "skill-block" => {
+                if args.is_empty() {
+                    app.message_bar = "Usage: /skill-block <publisher>".into();
+                } else {
+                    match app.request(reqwest::Method::POST, "/v1/skills/publishers/block", Some(serde_json::json!({"publisher": args, "reason": "blocked from TUI"}))).await {
+                        Ok(_) => app.message_bar = format!("Blocked skill publisher: {args}"),
+                        Err(error) => app.message_bar = format!("Error: {error}"),
+                    }
+                }
+            }
             "compact" => {
                 if let Some(id) = &app.session_id {
                     match app
@@ -145,6 +206,33 @@ impl CommandPalette {
                     app.message_bar = "No active session.".into();
                 }
             }
+            "approve" | "resume" | "rollback" | "pause" | "deny" => {
+                let Some(id) = app.session_id.clone() else {
+                    app.message_bar = "No active session.".into();
+                    return;
+                };
+                let (endpoint, body) = match cmd.as_str() {
+                    "approve" => ("approve", serde_json::json!({})),
+                    "resume" => ("resume", serde_json::json!({})),
+                    "rollback" => ("rollback", serde_json::json!({})),
+                    "pause" => ("pause", serde_json::json!({"reason": "paused from TUI"})),
+                    _ => (
+                        "reject",
+                        serde_json::json!({"reason": if args.is_empty() { "denied from TUI" } else { args }}),
+                    ),
+                };
+                match app
+                    .request(
+                        reqwest::Method::POST,
+                        &format!("/v1/sessions/{id}/{endpoint}"),
+                        Some(body),
+                    )
+                    .await
+                {
+                    Ok(_) => app.message_bar = format!("Session command accepted: {cmd}"),
+                    Err(error) => app.message_bar = format!("Error: {error}"),
+                }
+            }
             "cancel" => {
                 app.conversation.cancel_streaming();
                 app.stream.stop();
@@ -152,6 +240,7 @@ impl CommandPalette {
             }
             "quit" => {
                 app.message_bar = "Goodbye.".into();
+                app.quit_requested = true;
             }
             _ => {
                 app.message_bar = format!("Unknown command: /{cmd}. Type /help for commands.");

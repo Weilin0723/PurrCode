@@ -615,6 +615,20 @@ impl AppConfig {
         }
         Ok(())
     }
+
+    pub fn assign_model_role(&mut self, role: &str, model: &ModelId) -> Result<(), ProviderError> {
+        if !matches!(role, "coding_worker" | "judge" | "planner" | "reviewer") {
+            return Err(ProviderError::Configuration(format!(
+                "unsupported model role `{role}`"
+            )));
+        }
+        self.register_model(model)?;
+        self.models.roles.insert(
+            role.to_owned(),
+            format!("{}/{}", model.provider, model.model),
+        );
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

@@ -9,6 +9,35 @@ pub struct Composer {
     pub history_pos: Option<usize>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn composer_supports_editing_submission_and_history() {
+        let mut composer = Composer::new();
+        for character in "hello".chars() {
+            composer.insert_char(character);
+        }
+        composer.move_left();
+        composer.delete_before();
+        composer.insert_char('!');
+        assert_eq!(composer.submit(), "hel!o");
+        composer.history_up();
+        assert_eq!(composer.buffer, "hel!o");
+    }
+
+    #[test]
+    fn slash_commands_are_detected_without_execution() {
+        let mut composer = Composer::new();
+        for character in "/connect".chars() {
+            composer.insert_char(character);
+        }
+        assert!(composer.is_command());
+        assert_eq!(composer.submit(), "/connect");
+    }
+}
+
 impl Composer {
     pub fn new() -> Self {
         Self {

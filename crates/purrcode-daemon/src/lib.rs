@@ -12,7 +12,7 @@ use purrcode_agent_runtime::{
     AgentAction, AgentTurn, CapabilityResolution, NativeAgent, SkillResolver,
 };
 use purrcode_claw::ToolRuntime;
-use purrcode_mcp_host::{skill_digest, McpHost, McpServerConfig};
+use purrcode_mcp_host::{skill_digest, McpHost, McpServerConfig, Qualifier as SkillQualifier};
 use purrcode_ninelives::{Automation, SessionStore, StoreError};
 use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
@@ -123,6 +123,7 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .route("/v1/providers/discover", post(discover_provider_models))
         .route("/v1/credentials", post(store_credential))
         .route("/v1/models", get(list_models))
+        .route("/v1/models/roles", post(assign_model_role))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
         .route("/v1/skills/install", post(install_skill))
@@ -212,6 +213,7 @@ pub async fn bind_and_report(
         .route("/v1/providers/discover", post(discover_provider_models))
         .route("/v1/credentials", post(store_credential))
         .route("/v1/models", get(list_models))
+        .route("/v1/models/roles", post(assign_model_role))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
         .route("/v1/skills/install", post(install_skill))
@@ -1346,6 +1348,25 @@ async fn invoke_mcp(
         },
     )?;
     store.append(id, &SessionEvent::ExecutionStarted { action_id })?;
+    let skill_started = std::time::Instant::now();
+    let skill_parent = state.database.parent().unwrap_or(Path::new("."));
+    let mut skill_store = SkillStore::open(
+        &skill_parent.join("skills.db"),
+        &skill_parent.join("skills"),
+    )
+    .ok();
+    let installed_skill = skill_store
+        .as_ref()
+        .and_then(|library| library.get(&request.server).ok());
+    if let Some(skill) = &installed_skill {
+        store.append(
+            id,
+            &SessionEvent::SkillInvoked {
+                skill_id: skill.skill_id.clone(),
+                tool_name: request.tool.clone(),
+            },
+        )?;
+    }
     let value = if discovery {
         serde_json::to_value(
             McpHost::discover_tools(&mut store, action_id, &action, &constraints, server)
@@ -1370,6 +1391,20 @@ async fn invoke_mcp(
             sandbox_backend: Some("mcp-host-child".into()),
         },
     )?;
+    if let Some(skill) = installed_skill {
+        if let Some(library) = &mut skill_store {
+            library
+                .record_use(&skill.skill_id, true)
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        }
+        store.append(
+            id,
+            &SessionEvent::SkillInvocationSucceeded {
+                skill_id: skill.skill_id,
+                latency_ms: skill_started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            },
+        )?;
+    }
     store.append(
         id,
         &SessionEvent::ValidationRecorded {
@@ -2306,6 +2341,32 @@ async fn list_models(
     Ok(Json(serde_json::json!(models)))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AssignModelRoleRequest {
+    role: String,
+    model: String,
+}
+
+async fn assign_model_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<AssignModelRoleRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let model =
+        ModelId::parse(&body.model).map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let mut config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    config
+        .assign_model_role(&body.role, &model)
+        .and_then(|()| config.save(&state.app_config))
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(
+        serde_json::json!({"role": body.role, "model": body.model}),
+    ))
+}
+
 async fn list_skills(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2331,6 +2392,7 @@ async fn list_skills(
 
 #[derive(Deserialize)]
 struct SearchSkillsRequest {
+    session_id: Option<String>,
     capability: String,
     keywords: Vec<String>,
     platform: Option<String>,
@@ -2343,6 +2405,28 @@ async fn search_skills(
     Json(body): Json<SearchSkillsRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    let research_session = body
+        .session_id
+        .as_deref()
+        .map(parse_session_id)
+        .transpose()?;
+    if let Some(session_id) = research_session {
+        ensure_session_exists(&state, session_id).await?;
+        state.store.lock().await.append(
+            session_id,
+            &SessionEvent::CapabilityGapDetected {
+                gap_description: body.capability.clone(),
+                task_context: "user-requested skill search".into(),
+            },
+        )?;
+        state.store.lock().await.append(
+            session_id,
+            &SessionEvent::SkillSearchStarted {
+                query: body.capability.clone(),
+                sources: vec!["github".into()],
+            },
+        )?;
+    }
     let query = SearchQuery {
         capability: body.capability,
         keywords: body.keywords,
@@ -2371,6 +2455,28 @@ async fn search_skills(
                     .as_deref()
                     .is_none_or(|publisher| !store.is_publisher_blocked(publisher).unwrap_or(true))
             });
+            if let Some(session_id) = research_session {
+                let mut session_store = state.store.lock().await;
+                for (index, candidate) in candidates.iter().enumerate() {
+                    let rank = (index + 1).min(u32::MAX as usize) as u32;
+                    session_store.append(
+                        session_id,
+                        &SessionEvent::SkillCandidateDiscovered {
+                            candidate_id: candidate.manifest.candidate_id.clone(),
+                            source: candidate.manifest.source_type.clone(),
+                            rank,
+                        },
+                    )?;
+                    session_store.append(
+                        session_id,
+                        &SessionEvent::SkillCandidateRanked {
+                            candidate_id: candidate.manifest.candidate_id.clone(),
+                            rank,
+                            signals: serde_json::to_value(&candidate.signals).unwrap_or_default(),
+                        },
+                    )?;
+                }
+            }
             Ok(Json(serde_json::to_value(&candidates).unwrap_or_default()))
         }
         Err(_) => Ok(Json(serde_json::json!([]))),
@@ -2489,6 +2595,13 @@ async fn propose_skill_install(
             },
         },
     )?;
+    store.append(
+        session_id,
+        &SessionEvent::SkillInspectionOpened {
+            skill_id: spec.candidate_id.clone(),
+            duration_ms: 0,
+        },
+    )?;
     Ok(Json(
         serde_json::json!({"action_id": action_id.0, "action_digest": digest, "status": "requires_approval"}),
     ))
@@ -2536,6 +2649,22 @@ async fn approve_skill_install(
         authorized_at: Utc::now(),
         approved_by: ApprovalAuthority::Human,
     })?;
+    let skill_id = match action {
+        ProposedAction::ExternalTool(external) => external
+            .arguments
+            .get("candidate_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned(),
+        _ => "unknown".into(),
+    };
+    state.store.lock().await.append(
+        session_id,
+        &SessionEvent::SkillInstallApproved {
+            skill_id,
+            scope: "authorized exact install action".into(),
+        },
+    )?;
     Ok(Json(
         serde_json::json!({"action_id": action_id.0, "action_digest": action_digest, "status": "approved"}),
     ))
@@ -2600,6 +2729,30 @@ async fn install_skill(
             "skill content changed after approval".into(),
         ));
     }
+    let qualification_started = std::time::Instant::now();
+    let qualification = SkillQualifier::qualify(&spec.source_path);
+    let qualification_status = map_skill_qualification(&qualification.status);
+    state.store.lock().await.append(
+        session_id,
+        &SessionEvent::SkillQualified {
+            skill_id: spec.candidate_id.clone(),
+            status: qualification_status.clone(),
+            latency_ms: qualification_started
+                .elapsed()
+                .as_millis()
+                .min(u64::MAX as u128) as u64,
+        },
+    )?;
+    if !matches!(
+        qualification_status,
+        purrcode_runtime_core::QualificationStatus::Qualified
+            | purrcode_runtime_core::QualificationStatus::QualifiedWithConstraints
+    ) {
+        return Err(ApiError::BadRequest(format!(
+            "skill qualification did not pass: {:?}",
+            qualification.status
+        )));
+    }
     let db_path = state
         .database
         .parent()
@@ -2645,9 +2798,40 @@ async fn install_skill(
             .update_signature_status(&spec.candidate_id, &scope, "verified")
             .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     }
+    store
+        .update_qualification(&spec.candidate_id, &qualification_status)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
 
     let record = store.get(&record.skill_id).unwrap_or(record);
     Ok(Json(serde_json::to_value(&record).unwrap_or_default()))
+}
+
+fn map_skill_qualification(
+    status: &purrcode_mcp_host::QualificationStatus,
+) -> purrcode_runtime_core::QualificationStatus {
+    match status {
+        purrcode_mcp_host::QualificationStatus::Qualified => {
+            purrcode_runtime_core::QualificationStatus::Qualified
+        }
+        purrcode_mcp_host::QualificationStatus::QualifiedWithConstraints => {
+            purrcode_runtime_core::QualificationStatus::QualifiedWithConstraints
+        }
+        purrcode_mcp_host::QualificationStatus::Unverified => {
+            purrcode_runtime_core::QualificationStatus::Unverified
+        }
+        purrcode_mcp_host::QualificationStatus::Failed => {
+            purrcode_runtime_core::QualificationStatus::Failed
+        }
+        purrcode_mcp_host::QualificationStatus::Blocked => {
+            purrcode_runtime_core::QualificationStatus::Blocked
+        }
+        purrcode_mcp_host::QualificationStatus::Outdated => {
+            purrcode_runtime_core::QualificationStatus::Outdated
+        }
+        purrcode_mcp_host::QualificationStatus::Incompatible => {
+            purrcode_runtime_core::QualificationStatus::Incompatible
+        }
+    }
 }
 
 async fn get_skill(
@@ -3045,6 +3229,25 @@ judge = "fixture/judge"
             reached_terminal,
             "daemon-owned task did not persist failure"
         );
+        let follow_up = client
+            .post(format!("http://{}/v1/sessions/{id}/messages", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"content": "follow-up after restart boundary"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(follow_up.status(), StatusCode::ACCEPTED);
+        let messages: Vec<ConversationMessage> = client
+            .get(format!("http://{}/v1/sessions/{id}/messages", report.bind))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1].content, "follow-up after restart boundary");
         let store = SessionStore::open(&database).unwrap();
         let session_id = SessionId(Uuid::parse_str(id).unwrap());
         assert_eq!(

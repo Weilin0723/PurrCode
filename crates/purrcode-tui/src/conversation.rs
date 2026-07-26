@@ -59,7 +59,12 @@ impl Conversation {
 
     pub fn finalize_streaming(&mut self) {
         if let Some(msg) = self.streaming_message.take() {
-            if !msg.content.is_empty() {
+            if !msg.content.is_empty()
+                && !self
+                    .messages
+                    .iter()
+                    .any(|existing| existing.role == msg.role && existing.content == msg.content)
+            {
                 self.messages.push(msg);
             }
         }

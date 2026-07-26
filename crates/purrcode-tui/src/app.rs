@@ -59,6 +59,7 @@ pub struct App {
     pub pending_command: Option<String>,
     pub pending_user_message: bool,
     pub running_command: bool,
+    pub quit_requested: bool,
 }
 
 pub async fn run(config: TuiConfig) -> Result<()> {
@@ -89,6 +90,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         pending_command: None,
         pending_user_message: false,
         running_command: false,
+        quit_requested: false,
     };
 
     app.check_provider().await;
@@ -161,6 +163,9 @@ async fn event_loop(
             app.running_command = true;
             CommandPalette::new().execute(app, &cmd).await;
             app.running_command = false;
+            if app.quit_requested {
+                return Ok(());
+            }
         }
 
         // Process pending user message

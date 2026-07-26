@@ -55,10 +55,11 @@ impl SkillBrowser {
         daemon_url: &str,
         token: &str,
         query: &str,
+        session_id: Option<&str>,
     ) {
         self.loading = true;
         let url = format!("{}/v1/skills/search", daemon_url.trim_end_matches('/'));
-        let body = serde_json::json!({"capability": query, "keywords": [query], "platform": "macos", "purrcode_version": "0.1.0"});
+        let body = serde_json::json!({"session_id": session_id, "capability": query, "keywords": [query], "platform": std::env::consts::OS, "purrcode_version": env!("CARGO_PKG_VERSION")});
         let req = client.post(&url).bearer_auth(token).json(&body);
         match req.send().await {
             Ok(resp) => {
