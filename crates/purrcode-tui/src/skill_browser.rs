@@ -56,16 +56,22 @@ impl SkillBrowser {
         token: &str,
         query: &str,
         session_id: Option<&str>,
+        approved: bool,
     ) {
         self.loading = true;
         let url = format!("{}/v1/skills/search", daemon_url.trim_end_matches('/'));
-        let body = serde_json::json!({"session_id": session_id, "capability": query, "keywords": [query], "platform": std::env::consts::OS, "purrcode_version": env!("CARGO_PKG_VERSION")});
+        let body = serde_json::json!({"session_id": session_id, "approved": approved, "capability": query, "keywords": [query], "platform": std::env::consts::OS, "purrcode_version": env!("CARGO_PKG_VERSION")});
         let req = client.post(&url).bearer_auth(token).json(&body);
         match req.send().await {
             Ok(resp) => {
                 if let Ok(val) = resp.json::<Value>().await {
-                    self.skills = parse_candidates(&val);
-                    self.error = None;
+                    if val["requires_approval"].as_bool() == Some(true) {
+                        self.skills.clear();
+                        self.error = Some("Network approval required. Return to chat and use /skill-search-approve <query>.".into());
+                    } else {
+                        self.skills = parse_candidates(&val);
+                        self.error = None;
+                    }
                 }
             }
             Err(e) => {

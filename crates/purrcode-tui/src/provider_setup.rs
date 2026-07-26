@@ -9,35 +9,6 @@ pub enum ProviderType {
     EnterpriseGateway,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_provider_requires_a_real_model_selection() {
-        let mut setup = ProviderSetup::new();
-        setup.select_provider(ProviderType::Ollama);
-        assert!(setup.discovery_requested);
-        setup.advance();
-        assert!(!setup.complete);
-        setup.model_id = "qwen3-coder".into();
-        setup.advance();
-        assert!(setup.complete);
-    }
-
-    #[test]
-    fn openai_secret_and_model_are_separate_steps() {
-        let mut setup = ProviderSetup::new();
-        setup.select_provider(ProviderType::Openai);
-        setup.api_key = "test-only-secret".into();
-        setup.advance();
-        assert_eq!(setup.step, 1);
-        setup.model_id = "gpt-test".into();
-        setup.advance();
-        assert!(setup.complete);
-    }
-}
-
 #[derive(Debug)]
 pub struct ProviderSetup {
     pub step: usize,
@@ -165,5 +136,34 @@ impl ProviderSetup {
             }
         }
         self.discovery_requested = matches!(pt, ProviderType::Ollama | ProviderType::LmStudio);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_provider_requires_a_real_model_selection() {
+        let mut setup = ProviderSetup::new();
+        setup.select_provider(ProviderType::Ollama);
+        assert!(setup.discovery_requested);
+        setup.advance();
+        assert!(!setup.complete);
+        setup.model_id = "qwen3-coder".into();
+        setup.advance();
+        assert!(setup.complete);
+    }
+
+    #[test]
+    fn openai_secret_and_model_are_separate_steps() {
+        let mut setup = ProviderSetup::new();
+        setup.select_provider(ProviderType::Openai);
+        setup.api_key = "test-only-secret".into();
+        setup.advance();
+        assert_eq!(setup.step, 1);
+        setup.model_id = "gpt-test".into();
+        setup.advance();
+        assert!(setup.complete);
     }
 }

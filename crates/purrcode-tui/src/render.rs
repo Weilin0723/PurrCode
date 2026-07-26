@@ -3,7 +3,7 @@
 use crate::app::{App, AppMode};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
@@ -85,6 +85,7 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .conversation
         .messages
         .iter()
+        .skip(app.conversation.scroll)
         .map(|msg| {
             let prefix = match msg.role.as_str() {
                 "user" => "You: ",
@@ -96,8 +97,7 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 "assistant" => Style::default().fg(Color::White),
                 _ => Style::default().fg(Color::DarkGray),
             };
-            let text = format!("{prefix}{}", msg.content);
-            ListItem::new(text).style(style)
+            ListItem::new(render_markdown(prefix, &msg.content, style))
         })
         .collect();
 
@@ -118,6 +118,38 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
     );
 }
 
+fn render_markdown<'a>(prefix: &str, content: &'a str, base: Style) -> Text<'a> {
+    let mut in_code = false;
+    let mut lines = Vec::new();
+    for (index, raw) in content.lines().enumerate() {
+        if raw.trim_start().starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        let prefix = if index == 0 { prefix } else { "  " };
+        let (text, style) = if in_code {
+            (raw, Style::default().fg(Color::Green))
+        } else if raw.starts_with('#') {
+            (
+                raw.trim_start_matches('#').trim_start(),
+                base.add_modifier(Modifier::BOLD),
+            )
+        } else if raw.starts_with("- ") || raw.starts_with("* ") {
+            (raw, base.fg(Color::Cyan))
+        } else {
+            (raw, base)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(prefix.to_owned(), base.add_modifier(Modifier::BOLD)),
+            Span::styled(text.to_owned(), style),
+        ]));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(prefix.to_owned(), base)));
+    }
+    Text::from(lines)
+}
+
 fn draw_action_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let mut text = String::new();
     if !app.message_bar.is_empty() {
@@ -126,6 +158,15 @@ fn draw_action_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
     if app.stream.active {
         text.push_str("● Streaming...");
+    }
+    if let Some(action) = &app.conversation.pending_action {
+        text.push_str(&format!(
+            "\nPending action: {action}\nUse /approve or /deny <reason>."
+        ));
+    }
+    for evidence in &app.conversation.evidence {
+        text.push('\n');
+        text.push_str(evidence);
     }
 
     frame.render_widget(
@@ -223,7 +264,7 @@ fn draw_skills(frame: &mut Frame<'_>, app: &App) {
         return;
     };
 
-    let items: Vec<ListItem> = browser
+    let mut items: Vec<ListItem> = browser
         .skills
         .iter()
         .enumerate()
@@ -243,6 +284,14 @@ fn draw_skills(frame: &mut Frame<'_>, app: &App) {
             ))
         })
         .collect();
+    if items.is_empty() {
+        items.push(ListItem::new(
+            browser
+                .error
+                .as_deref()
+                .unwrap_or("No matching skills were returned."),
+        ));
+    }
 
     frame.render_widget(
         List::new(items).block(

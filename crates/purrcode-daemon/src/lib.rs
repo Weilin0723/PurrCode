@@ -12,11 +12,14 @@ use purrcode_agent_runtime::{
     AgentAction, AgentTurn, CapabilityResolution, NativeAgent, SkillResolver,
 };
 use purrcode_claw::ToolRuntime;
-use purrcode_mcp_host::{skill_digest, McpHost, McpServerConfig, Qualifier as SkillQualifier};
+use purrcode_mcp_host::{
+    read_skill_manifest, skill_digest, DynamicQualificationRequest, McpHost, McpServerConfig,
+    Qualifier as SkillQualifier,
+};
 use purrcode_ninelives::{Automation, SessionStore, StoreError};
 use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
-    AppConfig, ModelId, ModelMessage, ModelProvider, ModelRequest, ProviderRouter,
+    AppConfig, ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode, ProviderRouter,
 };
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
@@ -32,6 +35,7 @@ use purrcode_supervisor_runtime::{
     IsolatedWorker, ParallelismConfig, Supervisor, WorkerOutput, WorkerSpec, WorkerStatus,
     WorkerWorkspace,
 };
+use purrcode_web_research::{DomainPolicy, ResearchEngine, StubSearchProvider};
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -98,6 +102,7 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         )
         .route("/v1/sessions/{id}/events/stream", get(event_stream))
         .route("/v1/sessions/{id}/hunks", get(review_hunks))
+        .route("/v1/sessions/{id}/diff", get(session_diff))
         .route("/v1/sessions/{id}/hunks/apply", post(apply_review_hunk))
         .route("/v1/sessions/{id}/hunks/reject", post(reject_review_hunk))
         .route("/v1/sessions/{id}/resume", post(resume_session))
@@ -126,6 +131,7 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .route("/v1/models/roles", post(assign_model_role))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
+        .route("/v1/skills/download", post(download_skill))
         .route("/v1/skills/install", post(install_skill))
         .route("/v1/skills/install/propose", post(propose_skill_install))
         .route(
@@ -134,6 +140,7 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         )
         .route("/v1/skills/{id}", get(get_skill))
         .route("/v1/skills/{id}", delete(remove_skill))
+        .route("/v1/research/fetch", post(fetch_research_page))
         .route("/v1/skills/publishers/block", post(block_skill_publisher))
         .with_state(state.clone());
     let listener = TcpListener::bind(config.bind).await?;
@@ -188,6 +195,7 @@ pub async fn bind_and_report(
         )
         .route("/v1/sessions/{id}/events/stream", get(event_stream))
         .route("/v1/sessions/{id}/hunks", get(review_hunks))
+        .route("/v1/sessions/{id}/diff", get(session_diff))
         .route("/v1/sessions/{id}/hunks/apply", post(apply_review_hunk))
         .route("/v1/sessions/{id}/hunks/reject", post(reject_review_hunk))
         .route("/v1/sessions/{id}/resume", post(resume_session))
@@ -216,6 +224,7 @@ pub async fn bind_and_report(
         .route("/v1/models/roles", post(assign_model_role))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
+        .route("/v1/skills/download", post(download_skill))
         .route("/v1/skills/install", post(install_skill))
         .route("/v1/skills/install/propose", post(propose_skill_install))
         .route(
@@ -224,6 +233,7 @@ pub async fn bind_and_report(
         )
         .route("/v1/skills/{id}", get(get_skill))
         .route("/v1/skills/{id}", delete(remove_skill))
+        .route("/v1/research/fetch", post(fetch_research_page))
         .route("/v1/skills/publishers/block", post(block_skill_publisher))
         .with_state(state.clone());
     let listener = TcpListener::bind(config.bind).await?;
@@ -1833,6 +1843,25 @@ async fn review_hunks(
     }))
 }
 
+async fn session_diff(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let effects = RepositoryEngine::effects(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "patch": String::from_utf8_lossy(&effects.binary_patch),
+        "changed_files": effects.changed_files,
+        "status": effects.status_porcelain,
+    })))
+}
+
 #[derive(Deserialize)]
 struct ReviewHunkRequest {
     index: usize,
@@ -2393,6 +2422,8 @@ async fn list_skills(
 #[derive(Deserialize)]
 struct SearchSkillsRequest {
     session_id: Option<String>,
+    #[serde(default)]
+    approved: bool,
     capability: String,
     keywords: Vec<String>,
     platform: Option<String>,
@@ -2410,8 +2441,81 @@ async fn search_skills(
         .as_deref()
         .map(parse_session_id)
         .transpose()?;
-    if let Some(session_id) = research_session {
-        ensure_session_exists(&state, session_id).await?;
+    let session_id = research_session.ok_or_else(|| {
+        ApiError::BadRequest("skill search requires an active session for authorization".into())
+    })?;
+    ensure_session_exists(&state, session_id).await?;
+    let session = state.store.lock().await.load(session_id)?;
+    let repository = session
+        .repository
+        .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
+    let action = ProposedAction::ExternalTool(ExternalToolAction {
+        server_id: "purrcode.skill-registry".into(),
+        tool_name: "search".into(),
+        arguments: serde_json::json!({
+            "capability": body.capability.clone(),
+            "keywords": body.keywords.clone(),
+            "platform": body.platform.clone(),
+            "purrcode_version": body.purrcode_version.clone(),
+        }),
+        working_directory: repository.clone(),
+    });
+    let constraints = ActionConstraints {
+        working_directory: repository,
+        network: true,
+        timeout_seconds: 30,
+        maximum_output_bytes: 1_048_576,
+        allowed_write_globs: Vec::new(),
+        maximum_changed_files: 0,
+    };
+    let action_id = ActionId::new();
+    let action_digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    {
+        let mut session_store = state.store.lock().await;
+        session_store.append(
+            session_id,
+            &SessionEvent::ActionProposed {
+                action_id,
+                action: action.clone(),
+            },
+        )?;
+        session_store.append(
+            session_id,
+            &SessionEvent::JudgmentRecorded {
+                action_id,
+                decision: JudgmentDecision::RequireApproval {
+                    reason: "remote skill registry search requires explicit network approval"
+                        .into(),
+                    constraints: constraints.clone(),
+                },
+            },
+        )?;
+    }
+    if !body.approved {
+        return Ok(Json(serde_json::json!({
+            "requires_approval": true,
+            "action_id": action_id.0,
+            "action_digest": action_digest,
+        })));
+    }
+    {
+        let mut session_store = state.store.lock().await;
+        session_store.authorize(&Authorization {
+            action_id,
+            session_id,
+            action_digest: action_digest.clone(),
+            constraints: constraints.clone(),
+            authorized_at: Utc::now(),
+            approved_by: ApprovalAuthority::Human,
+        })?;
+        session_store
+            .consume_authorization(action_id, &action_digest)
+            .map_err(|_| ApiError::Conflict("registry search authorization unavailable".into()))?;
+        session_store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+    }
+    {
         state.store.lock().await.append(
             session_id,
             &SessionEvent::CapabilityGapDetected {
@@ -2437,7 +2541,9 @@ async fn search_skills(
                 "linux".into()
             }
         }),
-        purrcode_version: body.purrcode_version.unwrap_or_else(|| "0.1.0".into()),
+        purrcode_version: body
+            .purrcode_version
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").into()),
     };
 
     let adapters: Vec<Box<dyn purrcode_skill_registry::RegistryAdapter>> =
@@ -2477,10 +2583,499 @@ async fn search_skills(
                     )?;
                 }
             }
+            state.store.lock().await.append(
+                session_id,
+                &SessionEvent::ExecutionFinished {
+                    action_id,
+                    exit_code: Some(0),
+                    truncated: false,
+                    sandbox_level: Some("governed-network-adapter".into()),
+                    sandbox_backend: Some("skill-registry".into()),
+                },
+            )?;
+            state.store.lock().await.append(
+                session_id,
+                &SessionEvent::ValidationRecorded {
+                    action_id,
+                    status: ValidationStatus::Passed,
+                    evidence: format!(
+                        "authorized registry search returned {} candidates",
+                        candidates.len()
+                    ),
+                },
+            )?;
             Ok(Json(serde_json::to_value(&candidates).unwrap_or_default()))
         }
-        Err(_) => Ok(Json(serde_json::json!([]))),
+        Err(error) => {
+            let mut session_store = state.store.lock().await;
+            session_store.append(
+                session_id,
+                &SessionEvent::ExecutionFinished {
+                    action_id,
+                    exit_code: Some(1),
+                    truncated: false,
+                    sandbox_level: Some("governed-network-adapter".into()),
+                    sandbox_backend: Some("skill-registry".into()),
+                },
+            )?;
+            session_store.append(
+                session_id,
+                &SessionEvent::ValidationRecorded {
+                    action_id,
+                    status: ValidationStatus::Failed,
+                    evidence: format!("registry search failed: {error}"),
+                },
+            )?;
+            Err(ApiError::BadRequest(format!(
+                "registry search failed: {error}"
+            )))
+        }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DownloadSkillRequest {
+    session_id: String,
+    candidate_id: String,
+    #[serde(default)]
+    approved: bool,
+}
+
+async fn download_skill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<DownloadSkillRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let session_id = parse_session_id(&body.session_id)?;
+    let session = state.store.lock().await.load(session_id)?;
+    let repository = session
+        .repository
+        .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
+    let repository_name = body.candidate_id.strip_prefix("github:").ok_or_else(|| {
+        ApiError::BadRequest("only inspected GitHub candidates are downloadable".into())
+    })?;
+    let parts = repository_name.split('/').collect::<Vec<_>>();
+    if parts.len() != 2
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+                })
+        })
+    {
+        return Err(ApiError::BadRequest(
+            "invalid GitHub candidate identity".into(),
+        ));
+    }
+    let urls = ["main", "master"].map(|branch| {
+        format!("https://codeload.github.com/{repository_name}/zip/refs/heads/{branch}")
+    });
+    let constraints = ActionConstraints {
+        working_directory: repository,
+        network: true,
+        timeout_seconds: 30,
+        maximum_output_bytes: 10 * 1024 * 1024,
+        allowed_write_globs: Vec::new(),
+        maximum_changed_files: 0,
+    };
+    let action_id = ActionId::new();
+    let action = ProposedAction::ExternalTool(ExternalToolAction {
+        server_id: "purrcode.skill-registry".into(),
+        tool_name: "download-source-archive".into(),
+        arguments: serde_json::json!({"candidate_id": body.candidate_id, "urls": urls}),
+        working_directory: constraints.working_directory.clone(),
+    });
+    let action_digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    {
+        let mut store = state.store.lock().await;
+        store.append(
+            session_id,
+            &SessionEvent::ActionProposed {
+                action_id,
+                action: action.clone(),
+            },
+        )?;
+        store.append(
+            session_id,
+            &SessionEvent::JudgmentRecorded {
+                action_id,
+                decision: JudgmentDecision::RequireApproval {
+                    reason: "downloading an executable skill archive requires separate approval"
+                        .into(),
+                    constraints: constraints.clone(),
+                },
+            },
+        )?;
+    }
+    if !body.approved {
+        return Ok(Json(serde_json::json!({
+            "requires_approval": true,
+            "action_id": action_id.0,
+            "action_digest": action_digest,
+        })));
+    }
+    {
+        let mut store = state.store.lock().await;
+        store.authorize(&Authorization {
+            action_id,
+            session_id,
+            action_digest: action_digest.clone(),
+            constraints: constraints.clone(),
+            authorized_at: Utc::now(),
+            approved_by: ApprovalAuthority::Human,
+        })?;
+        store
+            .consume_authorization(action_id, &action_digest)
+            .map_err(|_| ApiError::Conflict("download authorization unavailable".into()))?;
+        store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+    }
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(constraints.timeout_seconds))
+        .build()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let mut archive = None;
+    for url in &urls {
+        let response = client
+            .get(url)
+            .header(
+                "User-Agent",
+                concat!("PurrCode/", env!("CARGO_PKG_VERSION")),
+            )
+            .send()
+            .await
+            .map_err(|error| ApiError::BadRequest(format!("skill download failed: {error}")))?;
+        if response.status() == StatusCode::NOT_FOUND {
+            continue;
+        }
+        if !response.status().is_success() || response.status().is_redirection() {
+            return Err(ApiError::BadRequest(format!(
+                "skill archive returned HTTP {}",
+                response.status()
+            )));
+        }
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+            let chunk = chunk
+                .map_err(|error| ApiError::BadRequest(format!("skill download failed: {error}")))?;
+            if bytes.len().saturating_add(chunk.len()) > constraints.maximum_output_bytes {
+                return Err(ApiError::BadRequest(
+                    "skill archive exceeds 10 MiB limit".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        archive = Some(bytes);
+        break;
+    }
+    let archive = archive.ok_or_else(|| ApiError::NotFound)?;
+    let download_root = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skill-downloads")
+        .join(Uuid::new_v4().to_string());
+    let archive_for_extract = archive.clone();
+    let extracted = download_root.clone();
+    let source_path = tokio::task::spawn_blocking(move || {
+        safe_extract_skill_archive(&archive_for_extract, &extracted)
+    })
+    .await
+    .map_err(|error| ApiError::BadRequest(format!("archive extraction task failed: {error}")))?
+    .map_err(ApiError::BadRequest)?;
+    let digest = skill_digest(&source_path)
+        .map_err(|error| ApiError::BadRequest(format!("skill digest failed: {error}")))?;
+    let manifest = read_skill_manifest(&source_path)
+        .map_err(|error| ApiError::BadRequest(format!("skill manifest failed: {error}")))?;
+    let mut store = state.store.lock().await;
+    store.append(
+        session_id,
+        &SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code: Some(0),
+            truncated: false,
+            sandbox_level: Some("safe-archive-extraction".into()),
+            sandbox_backend: Some("zip-enclosed-path".into()),
+        },
+    )?;
+    store.append(
+        session_id,
+        &SessionEvent::ValidationRecorded {
+            action_id,
+            status: ValidationStatus::Passed,
+            evidence: format!("archive safely extracted; content digest {digest}"),
+        },
+    )?;
+    Ok(Json(serde_json::json!({
+        "candidate_id": body.candidate_id,
+        "source_path": source_path,
+        "content_digest": digest,
+        "archive_digest": blake3::hash(&archive).to_hex().to_string(),
+        "name": manifest.name,
+        "version": manifest.version,
+        "publisher": parts[0],
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FetchResearchRequest {
+    session_id: String,
+    url: String,
+    #[serde(default)]
+    approved: bool,
+    #[serde(default)]
+    domain_approved: bool,
+}
+
+#[derive(Default, Deserialize)]
+struct WebResearchSection {
+    #[serde(default)]
+    allow_list: Vec<String>,
+    #[serde(default)]
+    deny_list: Vec<String>,
+    #[serde(default)]
+    approval_required: Vec<String>,
+}
+
+async fn fetch_research_page(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<FetchResearchRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let session_id = parse_session_id(&body.session_id)?;
+    let session = state.store.lock().await.load(session_id)?;
+    let repository = session
+        .repository
+        .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if matches!(config.privacy.mode, PrivacyMode::LocalOnly) {
+        return Err(ApiError::Conflict(
+            "public research is disabled in local-only mode".into(),
+        ));
+    }
+    let action = ProposedAction::ExternalTool(ExternalToolAction {
+        server_id: "purrcode.web-research".into(),
+        tool_name: "fetch-page".into(),
+        arguments: serde_json::json!({
+            "url": body.url.clone(),
+            "domain_approved": body.domain_approved,
+        }),
+        working_directory: repository.clone(),
+    });
+    let constraints = ActionConstraints {
+        working_directory: repository,
+        network: true,
+        timeout_seconds: 30,
+        maximum_output_bytes: 2 * 1024 * 1024,
+        allowed_write_globs: Vec::new(),
+        maximum_changed_files: 0,
+    };
+    let action_id = ActionId::new();
+    let digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    {
+        let mut store = state.store.lock().await;
+        store.append(
+            session_id,
+            &SessionEvent::ActionProposed {
+                action_id,
+                action: action.clone(),
+            },
+        )?;
+        store.append(
+            session_id,
+            &SessionEvent::JudgmentRecorded {
+                action_id,
+                decision: JudgmentDecision::RequireApproval {
+                    reason: "fetching untrusted public content requires explicit approval".into(),
+                    constraints: constraints.clone(),
+                },
+            },
+        )?;
+    }
+    if !body.approved {
+        return Ok(Json(serde_json::json!({
+            "requires_approval": true,
+            "action_id": action_id.0,
+            "action_digest": digest,
+        })));
+    }
+    {
+        let mut store = state.store.lock().await;
+        store.authorize(&Authorization {
+            action_id,
+            session_id,
+            action_digest: digest.clone(),
+            constraints: constraints.clone(),
+            authorized_at: Utc::now(),
+            approved_by: ApprovalAuthority::Human,
+        })?;
+        store
+            .consume_authorization(action_id, &digest)
+            .map_err(|_| ApiError::Conflict("research authorization unavailable".into()))?;
+        store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+    }
+    let section: WebResearchSection = config
+        .extensions
+        .get("web_research")
+        .cloned()
+        .unwrap_or_else(|| toml::Value::Table(Default::default()))
+        .try_into()
+        .map_err(|error| ApiError::BadRequest(format!("invalid web research policy: {error}")))?;
+    let policy = DomainPolicy {
+        allow_list: section.allow_list,
+        deny_list: section.deny_list,
+        approval_required: if body.domain_approved {
+            Vec::new()
+        } else {
+            section.approval_required
+        },
+    };
+    let engine = ResearchEngine::new(Box::new(StubSearchProvider), policy);
+    let page = match engine.fetch_page(&body.url).await {
+        Ok(page) => page,
+        Err(error) => {
+            let mut store = state.store.lock().await;
+            store.append(
+                session_id,
+                &SessionEvent::ExecutionFinished {
+                    action_id,
+                    exit_code: Some(1),
+                    truncated: false,
+                    sandbox_level: Some("governed-network-adapter".into()),
+                    sandbox_backend: Some("web-research".into()),
+                },
+            )?;
+            return Err(ApiError::BadRequest(error.to_string()));
+        }
+    };
+    let mut store = state.store.lock().await;
+    store.append(
+        session_id,
+        &SessionEvent::ResearchSearchPerformed {
+            query: "direct approved fetch".into(),
+            url: page.url.clone(),
+            content_digest: page.content_digest.clone(),
+            excerpt: page.content.clone(),
+        },
+    )?;
+    store.append(
+        session_id,
+        &SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code: Some(0),
+            truncated: page.truncated,
+            sandbox_level: Some("governed-network-adapter".into()),
+            sandbox_backend: Some("web-research".into()),
+        },
+    )?;
+    Ok(Json(serde_json::to_value(page).unwrap_or_default()))
+}
+
+fn safe_extract_skill_archive(bytes: &[u8], destination: &Path) -> Result<PathBuf, String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "download destination has no parent".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let staging = parent.join(format!(".extract-{}", Uuid::new_v4()));
+    std::fs::create_dir(&staging).map_err(|error| error.to_string())?;
+    let extraction = (|| {
+        let reader = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(reader).map_err(|error| error.to_string())?;
+        if archive.len() > 512 {
+            return Err("skill archive contains more than 512 entries".into());
+        }
+        let mut total_size = 0_u64;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+            let enclosed = entry
+                .enclosed_name()
+                .ok_or_else(|| "archive contains an unsafe path".to_string())?;
+            if entry
+                .unix_mode()
+                .is_some_and(|mode| mode & 0o170000 == 0o120000)
+            {
+                return Err("archive symlinks are forbidden".into());
+            }
+            total_size = total_size.saturating_add(entry.size());
+            if total_size > 20 * 1024 * 1024 {
+                return Err("expanded skill archive exceeds 20 MiB".into());
+            }
+            let output = staging.join(enclosed);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&output).map_err(|error| error.to_string())?;
+            } else {
+                if let Some(parent) = output.parent() {
+                    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                }
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&output)
+                    .map_err(|error| error.to_string())?;
+                std::io::copy(&mut entry, &mut file).map_err(|error| error.to_string())?;
+                #[cfg(unix)]
+                if entry.unix_mode().is_some_and(|mode| mode & 0o111 != 0) {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&output, std::fs::Permissions::from_mode(0o700))
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        Ok::<(), String>(())
+    })();
+    if let Err(error) = extraction {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    std::fs::rename(&staging, destination).map_err(|error| error.to_string())?;
+    let mut manifests = Vec::new();
+    if let Err(error) = find_manifests(destination, destination, 0, &mut manifests) {
+        let _ = std::fs::remove_dir_all(destination);
+        return Err(error);
+    }
+    if manifests.len() != 1 {
+        let _ = std::fs::remove_dir_all(destination);
+        return Err("skill archive must contain exactly one manifest.toml".into());
+    }
+    Ok(manifests[0]
+        .parent()
+        .ok_or_else(|| "manifest has no parent".to_string())?
+        .to_owned())
+}
+
+fn find_manifests(
+    root: &Path,
+    directory: &Path,
+    depth: usize,
+    found: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    if depth > 4 {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if !path.starts_with(root) {
+            return Err("extracted path escaped destination".into());
+        }
+        if path.is_dir() {
+            find_manifests(root, &path, depth + 1, found)?;
+        } else if path.file_name().and_then(|name| name.to_str()) == Some("manifest.toml") {
+            found.push(path);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -2730,7 +3325,39 @@ async fn install_skill(
         ));
     }
     let qualification_started = std::time::Instant::now();
-    let qualification = SkillQualifier::qualify(&spec.source_path);
+    state.store.lock().await.append(
+        session_id,
+        &SessionEvent::SkillQualificationStarted {
+            skill_id: spec.candidate_id.clone(),
+        },
+    )?;
+    let static_qualification = SkillQualifier::qualify(&spec.source_path);
+    let qualification = if matches!(
+        static_qualification.status,
+        purrcode_mcp_host::QualificationStatus::Qualified
+            | purrcode_mcp_host::QualificationStatus::QualifiedWithConstraints
+    ) {
+        let manifest = read_skill_manifest(&spec.source_path)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        let fixture = manifest.qualification.ok_or_else(|| {
+            ApiError::BadRequest("skill does not declare a dynamic qualification fixture".into())
+        })?;
+        let mut session_store = state.store.lock().await;
+        SkillQualifier::qualify_dynamic(
+            &mut session_store,
+            session_id,
+            &spec.source_path,
+            &DynamicQualificationRequest {
+                entrypoint: fixture.entrypoint,
+                arguments: fixture.arguments,
+                timeout_seconds: fixture.timeout_seconds,
+                expected_output_schema: fixture.expected_output_schema,
+            },
+        )
+        .await
+    } else {
+        static_qualification
+    };
     let qualification_status = map_skill_qualification(&qualification.status);
     state.store.lock().await.append(
         session_id,
@@ -3352,6 +3979,110 @@ judge = "fixture/judge"
             .unwrap();
         assert_eq!(replay.status(), StatusCode::CONFLICT);
         handle.abort();
+    }
+
+    #[tokio::test]
+    async fn registry_search_does_not_touch_network_before_exact_approval() {
+        let temporary = tempfile::tempdir().unwrap();
+        let database = temporary.path().join("sessions.db");
+        let repository = temporary.path().join("repo");
+        std::fs::create_dir(&repository).unwrap();
+        let session_id = SessionId::new();
+        SessionStore::open(&database)
+            .unwrap()
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "find a terraform skill".into(),
+                    repository,
+                },
+            )
+            .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: database.clone(),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("unused.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let response = reqwest::Client::new()
+            .post(format!("http://{}/v1/skills/search", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "session_id": session_id.0,
+                "approved": false,
+                "capability": "terraform-schema-inspection",
+                "keywords": ["terraform"],
+                "platform": "macos",
+                "purrcode_version": env!("CARGO_PKG_VERSION")
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(value["requires_approval"], true);
+        let events = SessionStore::open(&database)
+            .unwrap()
+            .events(session_id)
+            .unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SessionEvent::JudgmentRecorded {
+                decision: JudgmentDecision::RequireApproval { .. },
+                ..
+            }
+        )));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ExecutionStarted { .. })));
+        handle.abort();
+    }
+
+    #[test]
+    fn downloaded_skill_archives_reject_traversal_and_extract_one_manifest() {
+        use std::io::Write as _;
+        use zip::write::SimpleFileOptions;
+
+        let mut safe_bytes = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut safe_bytes);
+            writer
+                .start_file("skill/manifest.toml", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"name='safe'\nversion='1.0.0'\n").unwrap();
+            writer
+                .start_file("skill/SKILL.md", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"# Safe").unwrap();
+            writer.finish().unwrap();
+        }
+        let temporary = tempfile::tempdir().unwrap();
+        let source =
+            safe_extract_skill_archive(safe_bytes.get_ref(), &temporary.path().join("safe"))
+                .unwrap();
+        assert!(source.join("manifest.toml").is_file());
+
+        let mut unsafe_bytes = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut unsafe_bytes);
+            writer
+                .start_file("../escape", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"escape").unwrap();
+            writer.finish().unwrap();
+        }
+        assert!(safe_extract_skill_archive(
+            unsafe_bytes.get_ref(),
+            &temporary.path().join("unsafe")
+        )
+        .is_err());
+        assert!(!temporary.path().join("escape").exists());
     }
 
     fn git(repository: &Path, arguments: &[&str]) {

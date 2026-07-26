@@ -218,9 +218,16 @@ fn sandboxed_command(
                 .ok_or_else(|| ExecutionError::Sandbox("worktree path is not UTF-8".into()))?
                 .replace('\\', "\\\\")
                 .replace('"', "\\\"");
+            let worktree_write = if constraints.allowed_write_globs.is_empty()
+                && constraints.maximum_changed_files == 0
+            {
+                String::new()
+            } else {
+                format!("(allow file-write* (subpath \"{writable}\"))")
+            };
             let profile = format!(
                 "(version 1) (deny default) (allow process*) (allow sysctl-read) \
-                 (allow file-read*) (allow file-write* (subpath \"{writable}\")) \
+                 (allow file-read*) {worktree_write} \
                  (allow file-write* (subpath \"/private/tmp\")) \
                  (allow file-write* (literal \"/dev/null\")) (deny network*)"
             );
@@ -241,9 +248,17 @@ fn sandboxed_command(
     {
         if executable_on_path("bwrap") && !constraints.network {
             let mut command = Command::new("bwrap");
+            command.args(["--die-with-parent", "--unshare-net", "--ro-bind", "/", "/"]);
             command
-                .args(["--die-with-parent", "--unshare-net", "--ro-bind", "/", "/"])
-                .arg("--bind")
+                .arg(
+                    if constraints.allowed_write_globs.is_empty()
+                        && constraints.maximum_changed_files == 0
+                    {
+                        "--ro-bind"
+                    } else {
+                        "--bind"
+                    },
+                )
                 .arg(&action.working_directory)
                 .arg(&action.working_directory)
                 .arg("--chdir")
@@ -566,8 +581,8 @@ mod tests {
             network: false,
             timeout_seconds: 1,
             maximum_output_bytes: 1024,
-            allowed_write_globs: Vec::new(),
-            maximum_changed_files: 0,
+            allowed_write_globs: vec!["child.pid".into()],
+            maximum_changed_files: 1,
         };
         let action_id = ActionId::new();
         let mut store = SessionStore::in_memory().unwrap();

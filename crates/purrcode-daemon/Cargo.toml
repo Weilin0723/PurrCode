@@ -29,6 +29,7 @@ purrcode-supervisor-runtime = { path = "../supervisor-runtime" }
 purrcode-claw = { path = "../claw-sandbox" }
 purrcode-skill-store = { path = "../skill-store" }
 purrcode-skill-registry = { path = "../skill-registry" }
+purrcode-web-research = { path = "../web-research" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -38,6 +39,7 @@ toml.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

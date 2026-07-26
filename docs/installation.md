@@ -3,7 +3,7 @@
 ## Signed release (macOS and Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.1.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.2.0/scripts/install.sh | sh
 ```
 
 The installer detects the host platform, downloads both PurrCode binaries, verifies the archive

@@ -450,6 +450,9 @@ pub enum SessionEvent {
         status: QualificationStatus,
         latency_ms: u64,
     },
+    SkillQualificationStarted {
+        skill_id: String,
+    },
     SkillQualificationFailed {
         skill_id: String,
         failures: Vec<String>,

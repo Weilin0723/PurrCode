@@ -11,7 +11,9 @@ use crate::skill_browser::SkillBrowser;
 use crate::status_bar::StatusBar;
 use crate::streaming::{StreamController, StreamEvent};
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -60,6 +62,8 @@ pub struct App {
     pub pending_user_message: bool,
     pub running_command: bool,
     pub quit_requested: bool,
+    pub downloaded_skill: Option<Value>,
+    pub pending_skill_install_action: Option<String>,
 }
 
 pub async fn run(config: TuiConfig) -> Result<()> {
@@ -91,18 +95,24 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         pending_user_message: false,
         running_command: false,
         quit_requested: false,
+        downloaded_skill: None,
+        pending_skill_install_action: None,
     };
 
     app.check_provider().await;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let result = event_loop(&mut terminal, &mut app).await;
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
     result
 }
@@ -324,9 +334,20 @@ async fn event_loop(
             continue;
         }
 
-        let Event::Key(key) = event::read()? else {
+        let input = event::read()?;
+        if let Event::Mouse(mouse) = input {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    app.conversation.scroll = app.conversation.scroll.saturating_sub(3)
+                }
+                MouseEventKind::ScrollDown => {
+                    app.conversation.scroll = app.conversation.scroll.saturating_add(3)
+                }
+                _ => {}
+            }
             continue;
-        };
+        }
+        let Event::Key(key) = input else { continue };
         if key.kind != KeyEventKind::Press {
             continue;
         }

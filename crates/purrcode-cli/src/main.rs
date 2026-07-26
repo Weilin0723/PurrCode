@@ -1424,6 +1424,10 @@ async fn main() -> Result<()> {
                                     event_type: "SkillQualified".into(), timestamp: *timestamp, session_id: *sid,
                                     data: serde_json::json!({"skill_id": skill_id, "status": status, "latency_ms": latency_ms}),
                                 }),
+                                SessionEvent::SkillQualificationStarted { skill_id } => all_events.push(ResearchEvent {
+                                    event_type: "SkillQualificationStarted".into(), timestamp: *timestamp, session_id: *sid,
+                                    data: serde_json::json!({"skill_id": skill_id}),
+                                }),
                                 SessionEvent::SkillInvocationSucceeded { skill_id, latency_ms } => all_events.push(ResearchEvent {
                                     event_type: "SkillInvocationSucceeded".into(), timestamp: *timestamp, session_id: *sid,
                                     data: serde_json::json!({"skill_id": skill_id, "latency_ms": latency_ms}),

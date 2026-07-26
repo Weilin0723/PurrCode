@@ -73,6 +73,8 @@ pub enum RegistryError {
     InvalidManifest(String),
     #[error("signature verification failed: {0}")]
     InvalidSignature(String),
+    #[error("search query contains private or credential-like data")]
+    UnsafeQuery,
 }
 
 #[async_trait]
@@ -92,6 +94,7 @@ impl RegistryEngine {
     }
 
     pub async fn search(&self, query: &SearchQuery) -> Result<Vec<RankedCandidate>, RegistryError> {
+        validate_search_query(query)?;
         let mut all_candidates: Vec<(CandidateManifest, &str)> = Vec::new();
 
         for adapter in &self.adapters {
@@ -196,6 +199,30 @@ impl RegistryEngine {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         ranked
+    }
+}
+
+fn validate_search_query(query: &SearchQuery) -> Result<(), RegistryError> {
+    let combined = format!("{} {}", query.capability, query.keywords.join(" "));
+    let lower = combined.to_ascii_lowercase();
+    let unsafe_query = combined.len() > 512
+        || combined.lines().count() > 3
+        || combined.contains("/Users/")
+        || combined.contains("C:\\Users\\")
+        || [
+            "api_key=",
+            "apikey=",
+            "authorization:",
+            "bearer ",
+            "password=",
+            "secret=",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker));
+    if unsafe_query {
+        Err(RegistryError::UnsafeQuery)
+    } else {
+        Ok(())
     }
 }
 
@@ -577,6 +604,27 @@ mod tests {
         assert!(Qualifier::verify_signature(&manifest).is_ok());
         manifest.content_digest = Some("tampered".into());
         assert!(Qualifier::verify_signature(&manifest).is_err());
+    }
+
+    #[test]
+    fn registry_query_rejects_private_paths_and_credentials() {
+        let unsafe_path = SearchQuery {
+            capability: "error in /Users/alice/private-repository".into(),
+            keywords: Vec::new(),
+            platform: "macos".into(),
+            purrcode_version: "0.1.0".into(),
+        };
+        assert!(matches!(
+            validate_search_query(&unsafe_path),
+            Err(RegistryError::UnsafeQuery)
+        ));
+        let safe = SearchQuery {
+            capability: "terraform-schema-inspection".into(),
+            keywords: vec!["terraform".into()],
+            platform: "macos".into(),
+            purrcode_version: "0.1.0".into(),
+        };
+        assert!(validate_search_query(&safe).is_ok());
     }
 
     impl CandidateManifest {

@@ -1,6 +1,7 @@
 # Implementation status
 
-Updated: 2026-07-25 (Epic: Conversational UX, Provider Setup, Skill Discovery — in progress)
+Updated: 2026-07-25 (Epic: Conversational UX, Provider Setup, Skill Discovery — implemented;
+provider-backed acceptance remains an external gate)
 
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary
@@ -37,8 +38,9 @@ commands use the PurrCode namespace.
   acceptance using a stable idempotency key and bounded backoff.
 - `model qualify` measures seven exact-output capabilities, latency, estimated throughput,
   reliable context, and recommended roles.
-- Live OpenAI/OpenAI-compatible/Ollama integration tests and installed-model capability discovery
-  remain incomplete.
+- Local Ollama and LM Studio model discovery is available through the daemon and conversational
+  TUI. Live provider qualification remains an external evidence gate: LM Studio was unavailable
+  on the qualification host, and two local Ollama attempts did not produce a completed report.
 
 ## Milestone 3: repository isolation — in progress
 
@@ -164,7 +166,11 @@ execution beyond carefully audited command forms.
 - `skill list`, `mcp discover --approve`, and `mcp call --approve` provide auditable CLI surfaces.
 - Local skill packages install atomically with SemVer validation, file/byte limits, symlink
   rejection, a deterministic content digest, integrity verification, and recoverable uninstall.
-- Remote marketplace signature resolution and Windows plugin memory limits remain incomplete.
+- Remote GitHub discovery and archive acquisition are separate exact-authorized actions. Downloads
+  are size bounded, deny redirects, reject unsafe ZIP paths/symlinks, verify one manifest and a
+  deterministic digest, and remain untrusted until a separately approved install passes static and
+  dynamic qualification. Publisher digest signatures and the durable blocklist are enforced.
+  Official/organization catalog configuration and Windows plugin memory limits remain incomplete.
 
 ## Parallel workers — in progress
 
@@ -199,13 +205,13 @@ execution beyond carefully audited command forms.
   build/unit-test evidence.
 - The TUI and daemon support pause/resume, manual checkpoint, isolated rollback, explicit
   compaction, model switch, bounded terminal evidence, and durable plan-only sessions.
-- Provider secrets can be entered through a hidden prompt and stored in macOS Keychain, Windows
+- Provider secrets can be entered through a hidden TUI field and stored in macOS Keychain, Windows
   Credential Manager, or Linux Secret Service. Configuration stores references only and secret
   input is zeroized after transfer.
 - The daemon provider-test endpoint now probes an already configured provider and reports observed
   health only. It rejects inline secret fields, and model listing no longer invents a default model
-  or unknown capabilities. Provider registration and the conversational `/connect` flow remain
-  incomplete.
+  or unknown capabilities. Provider registration, local model discovery, model selection, and role
+  assignment are available from the conversational `/connect`, `/model`, and `/role` flows.
 - A daemon-backed VS Code extension builds with strict TypeScript and provides repository/selection
   context, task/plan creation, evidence, approval, lifecycle controls, model selection, and
   current-file isolated diff review.
@@ -227,7 +233,7 @@ execution beyond carefully audited command forms.
   survive restart, preserve last-session linkage, and expose create/list/enable/disable/run through
   CLI and SDKs. Scheduled sessions retain normal approval boundaries.
 
-## Epic: Conversational UX, Provider Setup, and Skill Discovery — in progress
+## Epic: Conversational UX, Provider Setup, and Skill Discovery — implemented locally
 
 ### New crates
 - `purrcode-skill-store` — persistent skill library with global/repository/session scopes,
@@ -240,11 +246,16 @@ execution beyond carefully audited command forms.
   content digests.
 
 ### TUI rewrite
-- A conversational interface, composer, provider wizard, skill browser, status bar, and slash-command
-  modules exist as scaffolding, but they are not wired into the production `purrcode` entry point.
-- The production TUI remains the daemon-backed session/action/approval/validation/diff interface.
-- The dormant conversational modules contain placeholder command/provider behavior and are not
-  counted as implemented or release evidence.
+- The production `purrcode` entry point now opens a daemon-backed conversation-first workspace with
+  durable multi-turn messages, streamed assistant deltas, a composer/history, slash commands,
+  provider and skill views, action/evidence status, real isolated diffs, mouse scrolling, and
+  lightweight Markdown/code-block rendering.
+- `/connect` performs provider selection, hidden secret entry, local model discovery, provider
+  configuration and health testing. `/model` and `/role` select the active model and assign
+  planner/coding/judge/reviewer roles. Configuration persists only keychain or environment
+  references, never a secret value.
+- `/sessions` and `/session <id>` reconnect the conversation UI to durable daemon state; the prior
+  session lifecycle, approvals, validation, rollback, and diff controls remain available.
 
 ### Daemon API expansion
 - `GET /v1/providers` — list configured providers
@@ -252,15 +263,44 @@ execution beyond carefully audited command forms.
 - `POST /v1/credentials` — store credential in OS keychain, return opaque reference
 - `GET /v1/models` — list available models with local/remote classification
 - `GET /v1/skills` — list installed skills from skill-store
-- `POST /v1/skills/search` — search registries for matching skills
-- `POST /v1/skills/install` — install a candidate skill
+- `POST /v1/skills/search` — propose or execute an exact-authorized registry search
+- `POST /v1/skills/download` — propose or execute a separately authorized bounded archive download
+- `POST /v1/skills/install/propose` and approval route — inspect and authorize the exact package
+- `POST /v1/skills/install` — consume authorization, recheck digest, dynamically qualify, and install
 - `GET /v1/skills/{id}` — get skill detail
 - `DELETE /v1/skills/{id}` — remove skill
+- `POST /v1/research/fetch` — propose or execute a governed, durable-evidence web fetch
+- `GET/POST /v1/sessions/{id}/messages` — durable conversation history
+- `GET /v1/sessions/{id}/diff` — isolated worktree patch
 
 ### Runtime-core additions
 - Conversation types: `Message`, `ConversationState`, `ConversationMode`
 - Research/skill lifecycle events: `CapabilityGapDetected`, `SkillInvoked`, etc.
 - Qualification types: `QualificationStatus`, `QualificationReport`, `QualificationCaseResult`
+
+### Review-closing security and lifecycle work
+- Skill storage identity is scope-aware and installs stage, verify, and atomically rename without
+  deleting orphaned content. Publisher blocks are durable and case-insensitive.
+- Dynamic qualification canonicalizes entrypoints inside the package, requires a strong
+  network-isolated Claw backend, binds an exact durable authorization, scrubs inherited secrets,
+  snapshots filesystem effects, applies a timeout, and validates the declared output schema.
+  Unsupported isolation is reported as `Unverified`, never passed.
+- Web policy enforces allow, deny, and approval-required domains on search/fetch; local-only mode
+  rejects outbound calls; queries reject credential/path/private-source material; redirects and
+  literal loopback/private/link-local targets are denied; evidence is bounded, content-addressed,
+  timestamp-preserving, and cached durably.
+- Capability resolution derives task capabilities instead of using a fixed `core` label, prefers a
+  qualified installed skill, and durably records matched/reused/external-search-avoided lifecycle
+  events. External search, archive download, installation, and invocation remain separate approval
+  boundaries.
+
+### Remaining external evidence gates
+- The published artifact must still be used for the complete provider-backed 18-step acceptance
+  demo. No qualified provider report was available during this pass: LM Studio was not running and
+  local Ollama qualification attempts did not complete. These are recorded as unavailable/failed
+  attempts, not successes.
+- Official and organization registries, DNS-resolution/rebinding enforcement beyond redirect and
+  literal-address denial, and cross-platform interactive TUI automation remain follow-up gates.
 
 ### AGENTS.md
 - Added epic-specific rules: no auto-install, no credential-in-context,

@@ -19,6 +19,8 @@ pub struct Conversation {
     pub streaming_message: Option<Message>,
     pub pending_action: Option<Value>,
     pub mode: ConversationMode,
+    pub scroll: usize,
+    pub evidence: Vec<String>,
 }
 
 impl Conversation {
@@ -28,6 +30,8 @@ impl Conversation {
             streaming_message: None,
             pending_action: None,
             mode: ConversationMode::Build,
+            scroll: 0,
+            evidence: Vec::new(),
         }
     }
 
@@ -97,6 +101,47 @@ impl Conversation {
                 if let Ok(messages) = response.json::<Vec<Message>>().await {
                     self.messages = messages;
                 }
+            }
+        }
+        let events_url = format!(
+            "{}/v1/sessions/{session_id}/events",
+            daemon_url.trim_end_matches('/')
+        );
+        if let Ok(response) = reqwest::Client::new()
+            .get(events_url)
+            .bearer_auth(token)
+            .send()
+            .await
+        {
+            if let Ok(events) = response.json::<Vec<Value>>().await {
+                self.pending_action = events.iter().rev().find_map(|event| {
+                    (event["event"] == "action_proposed")
+                        .then(|| event.pointer("/data/action").cloned())
+                        .flatten()
+                });
+                self.evidence = events
+                    .iter()
+                    .filter_map(|event| match event["event"].as_str() {
+                        Some("judgment_recorded") => Some(format!(
+                            "Judgment: {}",
+                            event.pointer("/data/decision").unwrap_or(&Value::Null)
+                        )),
+                        Some("validation_recorded") => Some(format!(
+                            "Validation: {} — {}",
+                            event
+                                .pointer("/data/status")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown"),
+                            event
+                                .pointer("/data/evidence")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                        )),
+                        _ => None,
+                    })
+                    .rev()
+                    .take(3)
+                    .collect();
             }
         }
     }
