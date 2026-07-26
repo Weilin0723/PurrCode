@@ -436,4 +436,12 @@ mod tests {
             .push(json!({"event":"approval_rejected","data":{"action_id":"one","reason":"no"}}));
         assert!(pending_action_from_events(&resolved).is_none());
     }
+
+    #[test]
+    fn large_event_timeline_mapping_is_bounded_and_fast() {
+        let events = (0..10_000).map(|index| serde_json::json!({"event":"validation_recorded","data":{"action_id":index.to_string(),"status":"passed","evidence":"ok"}})).collect::<Vec<_>>();
+        let started = std::time::Instant::now();
+        assert_eq!(cards_from_events(&events).len(), 10_000);
+        assert!(started.elapsed() < std::time::Duration::from_millis(250));
+    }
 }

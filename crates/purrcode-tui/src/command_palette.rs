@@ -6,6 +6,77 @@ use crate::skill_browser::SkillBrowser;
 
 pub struct CommandPalette;
 
+pub const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
+    (
+        "Connect provider",
+        "Configure or import a model provider",
+        "/connect",
+    ),
+    (
+        "Import provider from script",
+        "Parse pasted configuration without execution",
+        "/connect import",
+    ),
+    (
+        "Switch model",
+        "List and select a discovered model",
+        "/models",
+    ),
+    (
+        "New task",
+        "Preserve history and begin a new session",
+        "/new",
+    ),
+    ("Open session", "List durable sessions", "/sessions"),
+    ("Resume", "Resume the selected session", "/resume"),
+    ("Pause", "Pause the selected session", "/pause"),
+    ("Cancel", "Cancel while preserving evidence", "/cancel"),
+    ("Review diff", "Open the full daemon-backed diff", "/diff"),
+    (
+        "Approve action",
+        "Approve the exact pending action",
+        "/approve",
+    ),
+    (
+        "Reject action",
+        "Reject the exact pending action",
+        "/deny rejected from command palette",
+    ),
+    (
+        "Roll back",
+        "Discard agent-owned isolated changes",
+        "/rollback",
+    ),
+    (
+        "Browse skills",
+        "Inspect discovered and installed skills",
+        "/skills",
+    ),
+    (
+        "Settings",
+        "Show current provider and policy settings",
+        "/settings",
+    ),
+    (
+        "Keyboard shortcuts",
+        "Show primary keys and commands",
+        "/help",
+    ),
+];
+
+pub fn filtered_actions(query: &str) -> Vec<&'static (&'static str, &'static str, &'static str)> {
+    let query = query.trim().to_ascii_lowercase();
+    PALETTE_ACTIONS
+        .iter()
+        .filter(|(name, detail, command)| {
+            query.is_empty()
+                || name.to_ascii_lowercase().contains(&query)
+                || detail.to_ascii_lowercase().contains(&query)
+                || command.contains(&query)
+        })
+        .collect()
+}
+
 impl CommandPalette {
     pub fn new() -> Self {
         Self
@@ -23,7 +94,7 @@ impl CommandPalette {
 
         match cmd.as_str() {
             "help" => {
-                app.message_bar = "/help /connect [import] /provider [list|edit|test|remove] /models /model <id> /role <role> <provider/model> /privacy /plan /build /review /diff /approve /deny <reason> /pause /resume /rollback /research <url> /research-approve <url> /skills /skill-search <query> /skill-search-approve <query> /skill-download <github:owner/repo> /skill-download-approve <github:owner/repo> /skill-install <user|repository|session> /skill-install-approve /skill-block <publisher> /settings /sessions /session [id] /new /compact /cancel /quit".into();
+                app.switch_mode(AppMode::Help);
             }
             "connect" => {
                 app.provider_setup = Some(if args.trim() == "import" {
@@ -493,5 +564,16 @@ impl CommandPalette {
                 app.message_bar = format!("Unknown command: /{cmd}. Type /help for commands.");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn command_palette_searches_names_details_and_commands() {
+        assert_eq!(filtered_actions("provider").len(), 3);
+        assert_eq!(filtered_actions("/diff")[0].0, "Review diff");
+        assert_eq!(filtered_actions("exact pending").len(), 2);
     }
 }

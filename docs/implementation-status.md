@@ -1,9 +1,9 @@
 # Implementation status
 
-Updated: 2026-07-25 (Epic: Conversational UX, Provider Setup, Skill Discovery — implemented;
-provider-backed acceptance remains an external gate)
+Updated: 2026-07-26 (v0.4 redesign implementation complete; cross-platform and provider evidence
+is recorded below)
 
-## v0.4 product redesign — in progress
+## v0.4 product redesign — implemented, provider model qualification failed
 
 - Phase 1 replaces the single-line, byte-indexed TUI composer with a Unicode grapheme-safe
   multiline editor model.
@@ -12,9 +12,10 @@ provider-backed acceptance remains an external gate)
 - Multiline history, vertical and word movement, cross-line deletion, indentation/outdent,
   selection replacement, undo/redo, CRLF normalization, and growing scrollable rendering are
   covered by TUI tests.
-- Content/secret detection, provider import, provider onboarding redesign, workspace redesign,
-  structured runtime cards, and lease-conflict UX remain incomplete and must not be represented as
-  delivered.
+- Content/secret detection, provider import, provider onboarding, responsive workspace, structured
+  runtime cards, and lease-conflict recovery are implemented in the staged Phase 1–7 PR series.
+  The running local Ollama service passed real connect and multi-turn streaming tests on 2026-07-26;
+  `qwen2.5-coder:7b` failed the complete capability qualification at 2/7 and is not recommended.
 
 ### Phase 2 content and secret guard
 
@@ -73,6 +74,18 @@ provider-backed acceptance remains an external gate)
   capped, while Ctrl+D continues to open the complete daemon-backed diff flow.
 - Pending approvals expose exact-action-bound A approve and R reject shortcuts; both use the daemon
   approval endpoints and preserve PawGate authorization enforcement.
+
+### Phase 7 recovery and polish
+
+- HTTP 409 session lease conflicts stop streaming and open an actionable recovery overlay with
+  reconnect, read-only attach, new-session, and technical-detail choices. No competing loop starts.
+- Repository-scoped selected-session and unsent-draft state restores after restart. Recovery state
+  is written atomically; secret-like values are redacted before disk persistence.
+- Ctrl+P and `?` open a keyboard-first command palette with live name/detail/command filtering,
+  Up/Down selection, and Enter execution. `NO_COLOR` and dumb terminals receive
+  plain-color and ASCII status fallbacks without relying on color alone.
+- Composer selection supports Shift+arrows and Page Up/Down. Performance regressions cover a 256 KB
+  draft and a 10,000-event timeline with bounded interactive latency.
 
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary

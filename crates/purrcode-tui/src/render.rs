@@ -16,8 +16,61 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         AppMode::ProviderSetup => draw_setup(frame, app),
         AppMode::SkillBrowse => draw_skills(frame, app),
         AppMode::DiffView => draw_diff(frame, app),
+        AppMode::Help => draw_help(frame, app),
+        AppMode::LeaseConflict => draw_lease_conflict(frame),
         AppMode::Conversation => draw_conversation(frame, app),
     }
+    if !app.theme.colors_enabled {
+        for cell in frame.buffer_mut().content.iter_mut() {
+            cell.set_fg(Color::Reset).set_bg(Color::Reset);
+        }
+    }
+}
+
+fn draw_help(frame: &mut Frame<'_>, app: &App) {
+    let actions = crate::command_palette::filtered_actions(&app.palette_query);
+    let mut text = format!("Search actions: {}_\n\n", app.palette_query);
+    for (index, (name, detail, command)) in actions.iter().enumerate() {
+        let marker = if index == app.palette_selected {
+            ">"
+        } else {
+            " "
+        };
+        text.push_str(&format!("{marker} {name:<28} {command:<18} {detail}\n"));
+    }
+    if actions.is_empty() {
+        text.push_str("  No matching actions.\n");
+    }
+    text.push_str("\nType to filter · Up/Down select · Enter run · Esc close");
+    frame.render_widget(
+        Paragraph::new(text).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title("Command palette")
+                .borders(Borders::ALL),
+        ),
+        centered(frame.area(), 100, 24),
+    );
+}
+
+fn draw_lease_conflict(frame: &mut Frame<'_>) {
+    let text = "Session already active\n\nAnother PurrCode client currently owns this session's daemon lease.\nNo new action was started and your draft is safe.\n\nR  Reconnect and refresh durable state\nO  Open read-only\nN  Start a new session\nD  Technical details\nEsc  Keep draft and return";
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().title("Recovery").borders(Borders::ALL)),
+        centered(frame.area(), 76, 15),
+    );
+}
+
+fn centered(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
 }
 
 fn draw_secret_review(frame: &mut Frame<'_>, app: &App) {
@@ -108,9 +161,15 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     };
 
     let privacy_indicator = if app.status_bar.privacy == "local-only" {
-        "🔒"
-    } else {
+        if app.theme.unicode_enabled {
+            "🔒"
+        } else {
+            "[locked]"
+        }
+    } else if app.theme.unicode_enabled {
         "🌐"
+    } else {
+        "[network]"
     };
 
     let local_indicator = if app.status_bar.local {
@@ -648,6 +707,8 @@ fn draw_diff(frame: &mut Frame<'_>, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
 
     #[test]
     fn workspace_breakpoints_match_the_product_contract() {
@@ -657,5 +718,81 @@ mod tests {
         assert_eq!(workspace_layout(80), WorkspaceLayout::Compact);
         assert_eq!(workspace_layout(79), WorkspaceLayout::Narrow);
         assert_eq!(workspace_layout(40), WorkspaceLayout::Narrow);
+    }
+
+    #[test]
+    fn lease_conflict_snapshot_has_state_impact_and_recovery_actions() {
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(draw_lease_conflict).unwrap();
+        let snapshot = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(snapshot.contains("Session already active"));
+        assert!(snapshot.contains("No new action was started and your draft is safe"));
+        assert!(snapshot.contains("Reconnect"));
+        assert!(snapshot.contains("Open read-only"));
+        assert!(snapshot.contains("Start a new session"));
+    }
+
+    #[test]
+    fn help_snapshot_exposes_primary_keyboard_actions_without_secrets() {
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = test_app();
+        terminal.draw(|frame| draw_help(frame, &app)).unwrap();
+        let snapshot = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        for expected in ["Search actions", "/connect", "/approve", "Type to filter"] {
+            assert!(snapshot.contains(expected));
+        }
+        assert!(!snapshot.contains("sk-"));
+    }
+
+    fn test_app() -> App {
+        App {
+            config: crate::app::TuiConfig {
+                daemon_url: "http://127.0.0.1:7377".into(),
+                token_file: "/tmp/token".into(),
+                repository: "/tmp".into(),
+            },
+            client: reqwest::Client::new(),
+            token: String::new(),
+            mode: AppMode::Help,
+            conversation: crate::conversation::Conversation::new(),
+            composer: crate::composer::Composer::new(),
+            secret_review: None,
+            status_bar: crate::status_bar::StatusBar::new(),
+            workspace: crate::workspace::WorkspaceContext::inspect(std::path::Path::new("/tmp")),
+            provider_setup: None,
+            skill_browser: None,
+            diff_view: None,
+            stream: crate::streaming::StreamController::new(),
+            last_refresh: std::time::Instant::now(),
+            message_bar: String::new(),
+            session_id: None,
+            has_provider: false,
+            pending_command: None,
+            pending_user_message: false,
+            running_command: false,
+            quit_requested: false,
+            downloaded_skill: None,
+            pending_skill_install_action: None,
+            theme: crate::theme::Theme {
+                colors_enabled: true,
+                unicode_enabled: true,
+            },
+            palette_query: String::new(),
+            palette_selected: 0,
+        }
     }
 }

@@ -1,6 +1,6 @@
 # PurrCode Provider Qualification Report
 
-Date: 2026-07-25
+Date: 2026-07-26
 
 ## Ollama
 
@@ -12,12 +12,16 @@ ending in `/v1` without a trailing slash was resolved as `/chat/completions`, pr
 all seven cases. `purrcode-provider-gateway` now normalizes the base path before joining the endpoint,
 and a regression test verifies `/v1/chat/completions`.
 
-A second qualification attempt using `purrcode.toml.example` progressed without the 404 response.
-It did not complete within 150 seconds and was interrupted rather than left running indefinitely.
-No capability passed/failed claims are inferred from an interrupted run.
+A real daemon `/connect` smoke test and provider-backed multi-turn streaming test completed against
+the running service. The complete `purrcode model qualify ollama/qwen2.5-coder:7b` suite then ran to
+completion: structured output and context retention passed; tool schema, multi-file reasoning,
+patch generation, test-failure interpretation, and judgment calibration failed because the model
+omitted the required `answer` field. Accuracy was 2/7 (28.57%), mean latency 11,808 ms, and no role
+was recommended.
 
-**Status: INCOMPLETE** — transport routing fixed; model capability and latency qualification still
-requires a completed run.
+**Status: FAILED QUALIFICATION** — connectivity and multi-turn streaming are verified, but this
+installed model is not release-qualified. The failure is preserved rather than represented as a
+pass.
 
 ## NVIDIA NIM and LM Studio
 

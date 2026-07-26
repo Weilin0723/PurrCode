@@ -2368,6 +2368,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "crossterm",
+ "directories",
  "futures",
  "purrcode-provider-import",
  "purrcode-runtime-core",
