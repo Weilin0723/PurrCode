@@ -814,6 +814,7 @@ async fn start_session(
     if request.objective.trim().is_empty() {
         return Err(ApiError::BadRequest("objective cannot be empty".into()));
     }
+    reject_secret_content(&request.objective)?;
     let repository = request
         .repository
         .canonicalize()
@@ -884,12 +885,13 @@ async fn append_message(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     ensure_session_exists(&state, id).await?;
-    let content = request.content.trim();
-    if content.is_empty() {
+    if request.content.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "message content cannot be empty".into(),
         ));
     }
+    reject_secret_content(&request.content)?;
+    let content = request.content.trim_end_matches([' ', '\t']);
     state.store.lock().await.append(
         id,
         &SessionEvent::ConversationMessageAdded {
@@ -912,6 +914,18 @@ async fn append_message(
             status: "message accepted",
         }),
     ))
+}
+
+fn reject_secret_content(content: &str) -> Result<(), ApiError> {
+    let redacted = purrcode_provider_import::redact_source(content)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if !redacted.findings.is_empty() {
+        return Err(ApiError::BadRequest(
+            "message contains secret-like content; redact it or store it as a credential reference"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 async fn resume_session(
@@ -3519,6 +3533,17 @@ mod tests {
     };
     use schemars::schema::RootSchema;
     use std::sync::Mutex as StdMutex;
+
+    #[test]
+    fn secret_content_is_rejected_without_echoing_or_redaction_leaks() {
+        let secret = "sk-example123456789";
+        let error = reject_secret_content(&format!("api_key={secret}"))
+            .expect_err("secret-like message must fail closed");
+        let rendered = format!("{error:?}");
+        assert!(!rendered.contains(secret));
+        assert!(rendered.contains("secret-like content"));
+        assert!(reject_secret_content("normal multiline\n    code").is_ok());
+    }
 
     struct SupervisorProvider {
         responses: StdMutex<Vec<serde_json::Value>>,

@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use unicode_segmentation::UnicodeSegmentation;
+use zeroize::Zeroize;
 
 const HISTORY_LIMIT: usize = 50;
 const UNDO_LIMIT: usize = 100;
@@ -16,6 +17,12 @@ pub struct ComposerViewport {
 struct Snapshot {
     buffer: String,
     cursor: usize,
+}
+
+impl Drop for Snapshot {
+    fn drop(&mut self) {
+        self.buffer.zeroize();
+    }
 }
 
 pub struct Composer {
@@ -286,6 +293,22 @@ impl Composer {
         message
     }
 
+    /// Replaces potentially sensitive draft data and every edit snapshot before submission.
+    pub fn replace_sensitive_with(&mut self, safe_content: String) {
+        self.buffer.zeroize();
+        for snapshot in &mut self.undo_stack {
+            snapshot.buffer.zeroize();
+        }
+        for snapshot in &mut self.redo_stack {
+            snapshot.buffer.zeroize();
+        }
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.buffer = safe_content;
+        self.cursor = self.grapheme_count();
+        self.selection_anchor = None;
+    }
+
     pub fn is_command(&self) -> bool {
         !self.pasted_since_submit && !self.buffer.contains('\n') && self.buffer.starts_with('/')
     }
@@ -381,11 +404,20 @@ impl Composer {
             cursor: self.cursor,
         }
     }
-    fn restore(&mut self, snapshot: Snapshot) {
-        self.buffer = snapshot.buffer;
+    fn restore(&mut self, mut snapshot: Snapshot) {
+        self.buffer = std::mem::take(&mut snapshot.buffer);
         self.cursor = snapshot.cursor;
         self.selection_anchor = None;
         self.preferred_column = None;
+    }
+}
+
+impl Drop for Composer {
+    fn drop(&mut self) {
+        self.buffer.zeroize();
+        for entry in &mut self.history {
+            entry.zeroize();
+        }
     }
 }
 

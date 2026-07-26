@@ -10,6 +10,7 @@ chrono.workspace = true
 crossterm.workspace = true
 futures.workspace = true
 purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-provider-import = { path = "../provider-import" }
 ratatui.workspace = true
 reqwest.workspace = true
 rpassword.workspace = true

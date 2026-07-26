@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     match app.mode {
+        AppMode::SecretReview => handle_secret_review_key(app, key),
         AppMode::ProviderSetup => handle_setup_key(app, key),
         AppMode::SkillBrowse => handle_skill_key(app, key),
         AppMode::DiffView => handle_diff_key(app, key),
@@ -19,6 +20,20 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::ALT);
     if submit {
+        if let Ok(detection) = purrcode_provider_import::detect_content(&app.composer.buffer) {
+            if !detection.secret_findings.is_empty() {
+                let redacted = purrcode_provider_import::redact_source(&app.composer.buffer)
+                    .expect("content was already size-checked");
+                app.secret_review = Some(crate::app::SecretReview {
+                    redacted_source: redacted.display,
+                    finding_count: redacted.findings.len(),
+                    provider_candidate: detection.kind
+                        == purrcode_provider_import::ContentKind::ProviderConfiguration,
+                });
+                app.switch_mode(AppMode::SecretReview);
+                return true;
+            }
+        }
         let msg = app.composer.submit();
         if msg.starts_with('/') && !msg.contains('\n') {
             app.pending_command = Some(msg);
@@ -78,6 +93,35 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::BackTab => app.composer.outdent_current_line(),
         KeyCode::Tab => app.composer.insert_tab(),
+        _ => {}
+    }
+    true
+}
+
+fn handle_secret_review_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            let Some(review) = app.secret_review.take() else {
+                return true;
+            };
+            app.composer.replace_sensitive_with(review.redacted_source);
+            let message = app.composer.submit();
+            app.conversation.add_user_message(&message);
+            app.pending_user_message = true;
+            app.switch_mode(AppMode::Conversation);
+            app.message_bar = "Secret-like values were redacted before sending.".into();
+        }
+        KeyCode::Char('i') | KeyCode::Char('I') => {
+            app.secret_review = None;
+            app.provider_setup = Some(crate::provider_setup::ProviderSetup::new());
+            app.switch_mode(AppMode::ProviderSetup);
+            app.message_bar = "Provider import review will use the protected draft.".into();
+        }
+        KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('C') => {
+            app.secret_review = None;
+            app.switch_mode(AppMode::Conversation);
+            app.message_bar = "Send cancelled; draft preserved.".into();
+        }
         _ => {}
     }
     true

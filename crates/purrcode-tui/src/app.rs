@@ -38,9 +38,17 @@ pub struct TuiConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AppMode {
     Conversation,
+    SecretReview,
     ProviderSetup,
     SkillBrowse,
     DiffView,
+}
+
+#[derive(Clone, Debug)]
+pub struct SecretReview {
+    pub redacted_source: String,
+    pub finding_count: usize,
+    pub provider_candidate: bool,
 }
 
 pub struct App {
@@ -50,6 +58,7 @@ pub struct App {
     pub mode: AppMode,
     pub conversation: Conversation,
     pub composer: Composer,
+    pub secret_review: Option<SecretReview>,
     pub status_bar: StatusBar,
     pub provider_setup: Option<ProviderSetup>,
     pub skill_browser: Option<SkillBrowser>,
@@ -83,6 +92,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         mode: AppMode::Conversation,
         conversation: Conversation::new(),
         composer: Composer::new(),
+        secret_review: None,
         status_bar: StatusBar::new(),
         provider_setup: None,
         skill_browser: None,

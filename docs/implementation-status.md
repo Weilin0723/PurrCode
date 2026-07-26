@@ -16,6 +16,18 @@ provider-backed acceptance remains an external gate)
   structured runtime cards, and lease-conflict UX remain incomplete and must not be represented as
   delivered.
 
+### Phase 2 content and secret guard
+
+- A bounded parse-only `purrcode-provider-import` foundation classifies prose, code, logs, and
+  provider configuration candidates without executing imported input.
+- Common provider keys, named secrets, authorization headers, URL credentials, and nested
+  configuration secrets are replaced with a stable redaction token; finding metadata contains
+  source spans but never secret values.
+- The TUI blocks secret-bearing submissions behind a redaction/import/cancel decision. The daemon
+  independently rejects raw secret-like message content before appending a durable event.
+- Parser-specific provider field extraction and the editable provider import review remain Phase 3
+  and Phase 4 work.
+
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary
 commands, crate packages, SDK namespaces, configuration paths, release artifacts, and editor
