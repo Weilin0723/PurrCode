@@ -332,6 +332,7 @@ pub enum CodexBridgeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::process::Command as StdCommand;
 
     #[test]
