@@ -53,6 +53,8 @@ hex = "0.4"
 rusqlite = { version = "0.32", features = ["backup", "bundled", "chrono", "uuid"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 ratatui = "0.29"
+unicode-segmentation = "1"
+unicode-width = "0.2"
 rpassword = "7.5.4"
 schemars = { version = "0.8", features = ["uuid1", "chrono"] }
 serde = { version = "1", features = ["derive"] }

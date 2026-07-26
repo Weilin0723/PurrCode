@@ -6,6 +6,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
     match app.mode {
@@ -16,15 +18,16 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     }
 }
 
-fn layout_full(frame: &Frame<'_>) -> [Rect; 4] {
+fn layout_full(frame: &Frame<'_>, app: &App) -> [Rect; 4] {
     let area = frame.area();
+    let composer_height = (app.composer.line_count().clamp(3, 10) as u16).saturating_add(2);
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(5),
             Constraint::Length(4),
-            Constraint::Length(3),
+            Constraint::Length(composer_height),
         ])
         .split(area);
     [rows[0], rows[1], rows[2], rows[3]]
@@ -33,7 +36,7 @@ fn layout_full(frame: &Frame<'_>) -> [Rect; 4] {
 // ── Conversation mode ────────────────────────────────────────────
 
 fn draw_conversation(frame: &mut Frame<'_>, app: &App) {
-    let [header, body, action_area, input_area] = layout_full(frame);
+    let [header, body, action_area, input_area] = layout_full(frame, app);
 
     draw_header(frame, header, app);
     draw_messages(frame, body, app);
@@ -178,20 +181,70 @@ fn draw_action_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn draw_composer(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let prefix = if app.composer.is_command() { "" } else { "> " };
-    let display = format!("{}{}", prefix, app.composer.buffer);
-
     let style = if app.composer.is_command() {
         Style::default().fg(Color::Green)
     } else {
         Style::default()
     };
 
+    let content_height = area.height.saturating_sub(2).max(1) as usize;
+    let content_width = area.width.saturating_sub(2).max(1) as usize;
+    let (cursor_line, cursor_column) = app.composer.cursor_line_column();
+    let first_line = cursor_line.saturating_sub(content_height.saturating_sub(1));
+    let first_column = cursor_column.saturating_sub(content_width.saturating_sub(1));
+    let lines: Vec<Line<'_>> = app
+        .composer
+        .buffer
+        .split('\n')
+        .skip(first_line)
+        .take(content_height)
+        .map(|line| {
+            let visible: String = line
+                .graphemes(true)
+                .skip(first_column)
+                .take(content_width)
+                .collect();
+            Line::from(Span::styled(visible, style))
+        })
+        .collect();
+    let paste_badge = if app.composer.pasted_since_submit() {
+        " · pasted"
+    } else {
+        ""
+    };
+    let title = format!(
+        "Composer · {} lines · {} chars{} · Ctrl+Enter send · Enter newline",
+        app.composer.line_count(),
+        app.composer.grapheme_count(),
+        paste_badge
+    );
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(display, style)))
-            .block(Block::default().borders(Borders::ALL)),
+        Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
         area,
     );
+
+    let current_line = app
+        .composer
+        .buffer
+        .split('\n')
+        .nth(cursor_line)
+        .unwrap_or("");
+    let visible_prefix: String = current_line
+        .graphemes(true)
+        .skip(first_column)
+        .take(cursor_column.saturating_sub(first_column))
+        .collect();
+    let x = area
+        .x
+        .saturating_add(1)
+        .saturating_add(UnicodeWidthStr::width(visible_prefix.as_str()) as u16)
+        .min(area.right().saturating_sub(2));
+    let y = area
+        .y
+        .saturating_add(1)
+        .saturating_add(cursor_line.saturating_sub(first_line) as u16)
+        .min(area.bottom().saturating_sub(2));
+    frame.set_cursor_position((x, y));
 }
 
 // ── Provider Setup mode ──────────────────────────────────────────
