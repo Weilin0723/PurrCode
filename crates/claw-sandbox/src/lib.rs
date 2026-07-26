@@ -178,6 +178,8 @@ struct ProcessGroupGuard {
 
 impl ProcessGroupGuard {
     fn new(pid: Option<u32>) -> Self {
+        #[cfg(not(unix))]
+        let _ = pid;
         Self {
             #[cfg(unix)]
             pid,

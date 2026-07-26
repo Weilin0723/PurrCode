@@ -2023,7 +2023,7 @@ async fn try_approve<T: serde::de::DeserializeOwned>(
             String::from_utf8_lossy(&bytes)
         );
     }
-    serde_json::from_slice(&bytes).with_context(|| format!("decode approve response for {}", id))
+    serde_json::from_slice(&bytes).with_context(|| format!("decode approve response for {id}"))
 }
 
 async fn benchmark_request<T: serde::de::DeserializeOwned>(
