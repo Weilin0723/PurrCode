@@ -232,6 +232,12 @@ enum ModelCommand {
 #[derive(Subcommand)]
 enum ProviderCommand {
     Doctor,
+    /// Parse a provider SDK/config example without executing it and print a redacted candidate.
+    Import {
+        path: Option<PathBuf>,
+        #[arg(long, conflicts_with = "path")]
+        stdin: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -893,6 +899,25 @@ async fn main() -> Result<()> {
             }
         }
         Command::Provider { command } => match command {
+            ProviderCommand::Import { path, stdin } => {
+                let source = match (path, stdin) {
+                    (Some(path), false) => std::fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?,
+                    (None, true) => {
+                        use std::io::Read;
+                        let mut source = String::new();
+                        std::io::stdin().read_to_string(&mut source)?;
+                        source
+                    }
+                    _ => bail!("provide a file path or --stdin"),
+                };
+                let candidate = purrcode_provider_import::import_provider(&source, None)?;
+                println!("{}", serde_json::to_string_pretty(&candidate)?);
+                println!("review_required: true");
+                println!(
+                    "next: review fields in `purrcode` → /connect import; no configuration was saved"
+                );
+            }
             ProviderCommand::Doctor => {
                 let config = load_app_config(&config_path)?;
                 let router = ProviderRouter::from_config(&config)?;

@@ -617,7 +617,16 @@ impl AppConfig {
     }
 
     pub fn assign_model_role(&mut self, role: &str, model: &ModelId) -> Result<(), ProviderError> {
-        if !matches!(role, "coding_worker" | "judge" | "planner" | "reviewer") {
+        if !matches!(
+            role,
+            "coding_worker"
+                | "judge"
+                | "planner"
+                | "reviewer"
+                | "summarizer"
+                | "utility"
+                | "embedding"
+        ) {
             return Err(ProviderError::Configuration(format!(
                 "unsupported model role `{role}`"
             )));
