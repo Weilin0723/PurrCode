@@ -3,6 +3,19 @@
 Updated: 2026-07-25 (Epic: Conversational UX, Provider Setup, Skill Discovery — implemented;
 provider-backed acceptance remains an external gate)
 
+## v0.4 product redesign — in progress
+
+- Phase 1 replaces the single-line, byte-indexed TUI composer with a Unicode grapheme-safe
+  multiline editor model.
+- Enter inserts a newline; Ctrl/Cmd/Alt+Enter explicitly submits. Terminal bracketed paste is
+  enabled and a complete paste is inserted as one undoable operation without executing commands.
+- Multiline history, vertical and word movement, cross-line deletion, indentation/outdent,
+  selection replacement, undo/redo, CRLF normalization, and growing scrollable rendering are
+  covered by TUI tests.
+- Content/secret detection, provider import, provider onboarding redesign, workspace redesign,
+  structured runtime cards, and lease-conflict UX remain incomplete and must not be represented as
+  delivered.
+
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary
 commands, crate packages, SDK namespaces, configuration paths, release artifacts, and editor

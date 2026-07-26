@@ -12,7 +12,8 @@ use crate::status_bar::StatusBar;
 use crate::streaming::{StreamController, StreamEvent};
 use anyhow::Result;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyEventKind, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -103,13 +104,19 @@ pub async fn run(config: TuiConfig) -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let result = event_loop(&mut terminal, &mut app).await;
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
+        DisableBracketedPaste,
         DisableMouseCapture,
         LeaveAlternateScreen
     )?;
@@ -344,6 +351,12 @@ async fn event_loop(
                     app.conversation.scroll = app.conversation.scroll.saturating_add(3)
                 }
                 _ => {}
+            }
+            continue;
+        }
+        if let Event::Paste(content) = input {
+            if app.mode == AppMode::Conversation {
+                app.composer.insert_paste(&content);
             }
             continue;
         }
