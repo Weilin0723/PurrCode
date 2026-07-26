@@ -25,8 +25,15 @@ provider-backed acceptance remains an external gate)
   source spans but never secret values.
 - The TUI blocks secret-bearing submissions behind a redaction/import/cancel decision. The daemon
   independently rejects raw secret-like message content before appending a durable event.
-- Parser-specific provider field extraction and the editable provider import review remain Phase 3
-  and Phase 4 work.
+- Python and JavaScript imports are syntax-checked with Tree-sitter and only syntax-tree literal
+  spans are accepted for static fields. cURL is tokenized without a shell; dotenv, JSON, YAML, and
+  TOML use parse-only format-specific paths.
+- Imported candidates include provider kind, suggested name, base URL, model, authentication
+  reference, API mode, request defaults, custom headers, extra body, local/remote inference,
+  confidence, source spans, warnings, and redacted source. Normalization reuses the existing
+  provider-gateway configuration types and refuses detected secrets until converted to a reference.
+- Fixture tests cover Python, JavaScript, cURL, dotenv, JSON, YAML, TOML, and malformed/dynamic
+  source. The editable provider import review remains Phase 4 work.
 
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary
