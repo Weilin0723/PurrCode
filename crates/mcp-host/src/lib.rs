@@ -685,7 +685,9 @@ pub enum HostError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use chrono::Utc;
+    #[cfg(unix)]
     use purrcode_runtime_core::{ApprovalAuthority, Authorization, SessionId};
 
     #[test]

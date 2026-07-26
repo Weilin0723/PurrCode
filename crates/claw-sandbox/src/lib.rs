@@ -285,11 +285,14 @@ async fn terminate_process_tree(child: &mut tokio::process::Child) -> Result<(),
         unsafe {
             libc::kill(-(pid as i32), libc::SIGTERM);
         }
-        if timeout(Duration::from_secs(1), child.wait()).await.is_ok() {
-            return Ok(());
-        }
+        let leader_status = timeout(Duration::from_secs(1), child.wait()).await;
+        // The group leader can exit before one of its descendants. Always follow the grace period
+        // with SIGKILL for the original process group; ESRCH simply means the group is already gone.
         unsafe {
             libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+        if let Ok(status) = leader_status {
+            return status.map(|_| ());
         }
     }
     child.wait().await.map(|_| ())
@@ -587,10 +590,31 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
-        let exists = unsafe { libc::kill(pid, 0) } == 0;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while process_is_running(pid) && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let exists = process_is_running(pid);
         assert!(
             !exists,
             "background child {pid} survived process-group timeout"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn process_is_running(pid: i32) -> bool {
+        let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat,
+            Err(_) => return false,
+        };
+        // A zombie has terminated and cannot execute; it only awaits collection by its adopter.
+        stat.rsplit_once(") ")
+            .and_then(|(_, fields)| fields.chars().next())
+            .is_some_and(|state| state != 'Z')
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn process_is_running(pid: i32) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
     }
 }
