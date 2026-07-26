@@ -11,17 +11,6 @@ impl CommandPalette {
         Self
     }
 
-    /// Execute a command using fresh client/url/token (no App dependency).
-    pub async fn execute_detached(
-        _client: &reqwest::Client,
-        _daemon_url: &str,
-        _token: &str,
-        _input: &str,
-    ) {
-        // Static API call — no App mutation needed for simple commands.
-        // Full implementation will parse the command and call daemon endpoints.
-    }
-
     pub async fn execute(&self, app: &mut App, input: &str) {
         let input = input.trim().to_string();
         let (cmd, args) = input
@@ -52,7 +41,21 @@ impl CommandPalette {
             }
             "models" | "model" => {
                 match app.request(reqwest::Method::GET, "/v1/models", None).await {
-                    Ok(val) => app.message_bar = format!("Models: {val}"),
+                    Ok(val) => {
+                        if cmd == "model" && !args.is_empty() {
+                            app.status_bar.set_model(args);
+                            if let Some(id) = &app.session_id {
+                                let _ = app
+                                    .request(
+                                        reqwest::Method::POST,
+                                        &format!("/v1/sessions/{id}/model"),
+                                        Some(serde_json::json!({"model": args})),
+                                    )
+                                    .await;
+                            }
+                        }
+                        app.message_bar = format!("Models: {val}");
+                    }
                     Err(e) => app.message_bar = format!("Error: {e}"),
                 }
             }
@@ -85,8 +88,10 @@ impl CommandPalette {
                         .await
                     {
                         Ok(session) => {
-                            app.message_bar =
-                                format!("Session diff available: {:?}", session.get("status_code"));
+                            app.diff_view = Some(crate::diff_view::DiffView {
+                                content: serde_json::to_string_pretty(&session).unwrap_or_default(),
+                            });
+                            app.switch_mode(AppMode::DiffView);
                         }
                         Err(e) => app.message_bar = format!("Error: {e}"),
                     }

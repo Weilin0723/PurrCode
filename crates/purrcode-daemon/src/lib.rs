@@ -1,7 +1,7 @@
 //! Authenticated loopback API and durable session owner.
 
 use async_trait::async_trait;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -12,7 +12,7 @@ use purrcode_agent_runtime::{
     AgentAction, AgentTurn, CapabilityResolution, NativeAgent, SkillResolver,
 };
 use purrcode_claw::ToolRuntime;
-use purrcode_mcp_host::{McpHost, McpServerConfig};
+use purrcode_mcp_host::{skill_digest, McpHost, McpServerConfig};
 use purrcode_ninelives::{Automation, SessionStore, StoreError};
 use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
@@ -20,10 +20,13 @@ use purrcode_provider_gateway::{
 };
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
-    ActionId, ApprovalAuthority, Authorization, CommandAction, DeleteFileAction, JudgmentDecision,
-    ProposedAction, SessionEvent, SessionId, SessionStatus, ValidationStatus, WriteFileAction,
+    ActionConstraints, ActionId, ApprovalAuthority, Authorization, CommandAction,
+    ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
+    SessionEvent, SessionId, SessionStatus, ValidationStatus, WriteFileAction,
 };
-use purrcode_skill_registry::{GitHubRegistryAdapter, RegistryEngine, SearchQuery};
+use purrcode_skill_registry::{
+    GitHubRegistryAdapter, Qualifier as RegistryQualifier, RegistryEngine, SearchQuery,
+};
 use purrcode_skill_store::{SkillScope, SkillStore};
 use purrcode_supervisor_runtime::{
     IsolatedWorker, ParallelismConfig, Supervisor, WorkerOutput, WorkerSpec, WorkerStatus,
@@ -40,6 +43,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+use zeroize::Zeroize;
 
 #[derive(Clone)]
 struct AppState {
@@ -88,6 +92,10 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .route("/v1/sessions", post(start_session))
         .route("/v1/sessions/{id}", get(session))
         .route("/v1/sessions/{id}/events", get(events))
+        .route(
+            "/v1/sessions/{id}/messages",
+            get(messages).post(append_message),
+        )
         .route("/v1/sessions/{id}/events/stream", get(event_stream))
         .route("/v1/sessions/{id}/hunks", get(review_hunks))
         .route("/v1/sessions/{id}/hunks/apply", post(apply_review_hunk))
@@ -110,14 +118,22 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .route("/v1/automations/{id}/run", post(run_automation))
         .route("/v1/supervisor", post(run_supervisor))
         .route("/v1/providers", get(list_providers))
+        .route("/v1/providers", post(configure_provider))
         .route("/v1/providers/test", post(test_provider))
+        .route("/v1/providers/discover", post(discover_provider_models))
         .route("/v1/credentials", post(store_credential))
         .route("/v1/models", get(list_models))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
         .route("/v1/skills/install", post(install_skill))
+        .route("/v1/skills/install/propose", post(propose_skill_install))
+        .route(
+            "/v1/skills/install/{action_id}/approve",
+            post(approve_skill_install),
+        )
         .route("/v1/skills/{id}", get(get_skill))
         .route("/v1/skills/{id}", delete(remove_skill))
+        .route("/v1/skills/publishers/block", post(block_skill_publisher))
         .with_state(state.clone());
     let listener = TcpListener::bind(config.bind).await?;
     let actual_bind = listener.local_addr()?;
@@ -165,6 +181,10 @@ pub async fn bind_and_report(
         .route("/v1/sessions", post(start_session))
         .route("/v1/sessions/{id}", get(session))
         .route("/v1/sessions/{id}/events", get(events))
+        .route(
+            "/v1/sessions/{id}/messages",
+            get(messages).post(append_message),
+        )
         .route("/v1/sessions/{id}/events/stream", get(event_stream))
         .route("/v1/sessions/{id}/hunks", get(review_hunks))
         .route("/v1/sessions/{id}/hunks/apply", post(apply_review_hunk))
@@ -187,14 +207,22 @@ pub async fn bind_and_report(
         .route("/v1/automations/{id}/run", post(run_automation))
         .route("/v1/supervisor", post(run_supervisor))
         .route("/v1/providers", get(list_providers))
+        .route("/v1/providers", post(configure_provider))
         .route("/v1/providers/test", post(test_provider))
+        .route("/v1/providers/discover", post(discover_provider_models))
         .route("/v1/credentials", post(store_credential))
         .route("/v1/models", get(list_models))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
         .route("/v1/skills/install", post(install_skill))
+        .route("/v1/skills/install/propose", post(propose_skill_install))
+        .route(
+            "/v1/skills/install/{action_id}/approve",
+            post(approve_skill_install),
+        )
         .route("/v1/skills/{id}", get(get_skill))
         .route("/v1/skills/{id}", delete(remove_skill))
+        .route("/v1/skills/publishers/block", post(block_skill_publisher))
         .with_state(state.clone());
     let listener = TcpListener::bind(config.bind).await?;
     let actual_bind = listener.local_addr()?;
@@ -779,13 +807,30 @@ async fn start_session(
         .canonicalize()
         .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
     let id = SessionId::new();
-    state.store.lock().await.append(
+    let objective = request.objective;
+    let mut store = state.store.lock().await;
+    store.append(
         id,
         &SessionEvent::SessionCreated {
-            objective: request.objective,
+            objective: objective.clone(),
             repository,
         },
     )?;
+    store.append(
+        id,
+        &SessionEvent::ConversationMessageAdded {
+            message: ConversationMessage {
+                id: Uuid::new_v4().to_string(),
+                role: "user".into(),
+                content: objective,
+                timestamp: Utc::now(),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                model: None,
+            },
+        },
+    )?;
+    drop(store);
     let operation = if request.plan_only {
         AgentOperation::Plan
     } else {
@@ -797,6 +842,62 @@ async fn start_session(
         Json(AcceptedSession {
             id: id.0.to_string(),
             status: "accepted",
+        }),
+    ))
+}
+
+async fn messages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Vec<ConversationMessage>>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    Ok(Json(session.conversation_messages))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AppendMessageRequest {
+    content: String,
+}
+
+async fn append_message(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<AppendMessageRequest>,
+) -> Result<(StatusCode, Json<AcceptedSession>), ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    ensure_session_exists(&state, id).await?;
+    let content = request.content.trim();
+    if content.is_empty() {
+        return Err(ApiError::BadRequest(
+            "message content cannot be empty".into(),
+        ));
+    }
+    state.store.lock().await.append(
+        id,
+        &SessionEvent::ConversationMessageAdded {
+            message: ConversationMessage {
+                id: Uuid::new_v4().to_string(),
+                role: "user".into(),
+                content: content.to_owned(),
+                timestamp: Utc::now(),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                model: None,
+            },
+        },
+    )?;
+    spawn_agent_operation(state, id, AgentOperation::Resume).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedSession {
+            id: id.0.to_string(),
+            status: "message accepted",
         }),
     ))
 }
@@ -1512,6 +1613,7 @@ async fn run_agent_operation(
     let judge_provider = router
         .provider(&judge_model)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    let objective = session.objective.clone().unwrap_or_default();
     let repository = session
         .repository
         .ok_or_else(|| DaemonError::AgentConfiguration("session repository is missing".into()))?;
@@ -1520,7 +1622,36 @@ async fn run_agent_operation(
     let agent = NativeAgent::new(provider.as_ref(), model, policy)
         .with_contextual_judge(judge_provider.as_ref(), judge_model);
     let resolver = DaemonSkillResolver::new(state).await;
-    let _capability = agent.resolve_capability("core", resolver.as_deref()).await;
+    let capability = infer_capability(&objective);
+    if let CapabilityResolution::InstalledSkill { skill_id, .. } = agent
+        .resolve_capability(&capability, resolver.as_deref())
+        .await
+    {
+        let previous_uses = skill_usage_count(state, &skill_id).unwrap_or(0);
+        store.append(
+            id,
+            &SessionEvent::InstalledSkillMatched {
+                skill_id: skill_id.clone(),
+                matched_capability: capability.clone(),
+            },
+        )?;
+        if previous_uses > 0 {
+            store.append(
+                id,
+                &SessionEvent::InstalledSkillReused {
+                    skill_id: skill_id.clone(),
+                    previous_uses: previous_uses.min(u32::MAX as u64) as u32,
+                },
+            )?;
+        }
+        store.append(
+            id,
+            &SessionEvent::ExternalSearchAvoided {
+                skill_id,
+                matched_capability: capability,
+            },
+        )?;
+    }
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
@@ -1530,6 +1661,35 @@ async fn run_agent_operation(
     state.leases.lock().await.remove(&id);
     result.map_err(|error| DaemonError::Agent(error.to_string()))?;
     Ok(())
+}
+
+fn infer_capability(objective: &str) -> String {
+    let normalized = objective.to_ascii_lowercase();
+    for capability in [
+        "terraform-schema-inspection",
+        "terraform",
+        "kubernetes",
+        "python",
+        "rust",
+    ] {
+        if normalized.contains(capability) {
+            return capability.into();
+        }
+    }
+    normalized
+        .split_whitespace()
+        .take(4)
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn skill_usage_count(state: &AppState, skill_id: &str) -> Option<u64> {
+    let parent = state.database.parent().unwrap_or(Path::new("."));
+    SkillStore::open(&parent.join("skills.db"), &parent.join("skills"))
+        .ok()?
+        .get(skill_id)
+        .ok()
+        .map(|skill| skill.successful_uses + skill.failed_uses)
 }
 
 fn effective_policy(
@@ -1711,6 +1871,7 @@ async fn event_stream(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
+    Query(query): Query<EventStreamQuery>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
@@ -1718,12 +1879,24 @@ async fn event_stream(
         return Err(ApiError::NotFound);
     }
     let stream = async_stream::stream! {
-        let mut delivered = 0_usize;
+        let mut delivered = query.after.unwrap_or(0);
         loop {
             let snapshot = state.store.lock().await.events(id);
             match snapshot {
                 Ok(events) => {
                     for (offset, event) in events.iter().enumerate().skip(delivered) {
+                        if let SessionEvent::ConversationMessageAdded { message } = event {
+                            if message.role == "assistant" {
+                                let characters = message.content.chars().collect::<Vec<_>>();
+                                for chunk in characters.chunks(24) {
+                                    let delta = chunk.iter().collect::<String>();
+                                    yield Ok(Event::default()
+                                        .event("assistant_delta")
+                                        .data(serde_json::json!({"delta": delta}).to_string()));
+                                    tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+                                }
+                            }
+                        }
                         let data = serde_json::to_string(event)
                             .unwrap_or_else(|_| "{\"type\":\"serialization_error\"}".into());
                         yield Ok(Event::default().id((offset + 1).to_string()).data(data));
@@ -1739,6 +1912,11 @@ async fn event_stream(
         }
     };
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+#[derive(Deserialize)]
+struct EventStreamQuery {
+    after: Option<usize>,
 }
 
 fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
@@ -1947,8 +2125,99 @@ async fn list_providers(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ConfigureProviderRequest {
+    name: String,
+    provider_type: String,
+    base_url: String,
+    model: String,
+    credential_name: Option<String>,
+}
+
+async fn configure_provider(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ConfigureProviderRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let mut config = AppConfig::load(&state.app_config)
+        .map_err(|e| ApiError::BadRequest(format!("config load failed: {e}")))?;
+    config
+        .configure_provider(
+            &body.name,
+            &body.provider_type,
+            &body.base_url,
+            &body.model,
+            body.credential_name.as_deref(),
+        )
+        .and_then(|()| config.save(&state.app_config))
+        .map_err(|e| ApiError::BadRequest(format!("provider configuration failed: {e}")))?;
+    Ok(Json(
+        serde_json::json!({"name": body.name, "configured": true}),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TestProviderRequest {
     provider: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscoverProviderRequest {
+    provider_type: String,
+}
+
+async fn discover_provider_models(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<DiscoverProviderRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let (url, pointer) = match body.provider_type.as_str() {
+        "ollama" => ("http://127.0.0.1:11434/api/tags", "/models"),
+        "lm-studio" => ("http://127.0.0.1:1234/v1/models", "/data"),
+        _ => {
+            return Err(ApiError::BadRequest(
+                "discovery is limited to local providers".into(),
+            ))
+        }
+    };
+    let response = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| {
+            ApiError::BadRequest(format!("local provider discovery failed: {error}"))
+        })?;
+    if !response.status().is_success() {
+        return Err(ApiError::BadRequest(format!(
+            "local provider returned HTTP {}",
+            response.status()
+        )));
+    }
+    let value: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("invalid discovery response: {error}")))?;
+    let models = value
+        .pointer(pointer)
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|model| {
+            model
+                .get("id")
+                .or_else(|| model.get("name"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    Ok(Json(serde_json::json!({"models": models})))
 }
 
 async fn test_provider(
@@ -1995,6 +2264,7 @@ async fn test_provider(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StoreCredentialRequest {
     name: String,
     secret: String,
@@ -2003,11 +2273,12 @@ struct StoreCredentialRequest {
 async fn store_credential(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<StoreCredentialRequest>,
+    Json(mut body): Json<StoreCredentialRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    purrcode_provider_gateway::set_keychain_credential(&body.name, &body.secret)
-        .map_err(|e| ApiError::BadRequest(format!("credential storage failed: {e}")))?;
+    let stored = purrcode_provider_gateway::set_keychain_credential(&body.name, &body.secret);
+    body.secret.zeroize();
+    stored.map_err(|e| ApiError::BadRequest(format!("credential storage failed: {e}")))?;
     let reference = purrcode_provider_gateway::keychain_reference(&body.name)
         .map_err(|e| ApiError::BadRequest(format!("keychain reference failed: {e}")))?;
     Ok(Json(serde_json::json!({"reference": reference})))
@@ -2089,17 +2360,192 @@ async fn search_skills(
         vec![Box::new(GitHubRegistryAdapter::new())];
     let engine = RegistryEngine::new(adapters);
     match engine.search(&query).await {
-        Ok(candidates) => Ok(Json(serde_json::to_value(&candidates).unwrap_or_default())),
+        Ok(mut candidates) => {
+            let parent = state.database.parent().unwrap_or(Path::new("."));
+            let store = SkillStore::open(&parent.join("skills.db"), &parent.join("skills"))
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+            candidates.retain(|candidate| {
+                candidate
+                    .manifest
+                    .publisher
+                    .as_deref()
+                    .is_none_or(|publisher| !store.is_publisher_blocked(publisher).unwrap_or(true))
+            });
+            Ok(Json(serde_json::to_value(&candidates).unwrap_or_default()))
+        }
         Err(_) => Ok(Json(serde_json::json!([]))),
     }
 }
 
 #[derive(Deserialize)]
-struct InstallSkillRequest {
+#[serde(deny_unknown_fields)]
+struct BlockPublisherRequest {
+    publisher: String,
+    reason: String,
+}
+
+async fn block_skill_publisher(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<BlockPublisherRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let parent = state.database.parent().unwrap_or(Path::new("."));
+    let mut store = SkillStore::open(&parent.join("skills.db"), &parent.join("skills"))
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    store
+        .block_publisher(&body.publisher, &body.reason)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(
+        serde_json::json!({"publisher": body.publisher, "blocked": true}),
+    ))
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SkillInstallSpec {
     candidate_id: String,
     version: String,
     scope: String,
-    source_path: Option<String>,
+    source_path: PathBuf,
+    content_digest: String,
+    publisher: Option<String>,
+    approved_permissions: serde_json::Value,
+    signature: Option<String>,
+    publisher_public_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProposeSkillInstallRequest {
+    session_id: String,
+    #[serde(flatten)]
+    spec: SkillInstallSpec,
+}
+
+async fn propose_skill_install(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ProposeSkillInstallRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let session_id = parse_session_id(&body.session_id)?;
+    ensure_session_exists(&state, session_id).await?;
+    let source_path = body
+        .spec
+        .source_path
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("skill source path does not exist".into()))?;
+    if !source_path.is_dir() {
+        return Err(ApiError::BadRequest(
+            "skill source must be a directory".into(),
+        ));
+    }
+    let mut spec = body.spec;
+    spec.source_path = source_path.clone();
+    let actual_digest = skill_digest(&source_path)
+        .map_err(|error| ApiError::BadRequest(format!("skill digest failed: {error}")))?;
+    if actual_digest != spec.content_digest {
+        return Err(ApiError::BadRequest(
+            "publisher digest does not match skill content".into(),
+        ));
+    }
+    match (&spec.signature, &spec.publisher_public_key) {
+        (Some(signature), Some(public_key)) => {
+            RegistryQualifier::verify_digest_signature(&spec.content_digest, public_key, signature)
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?
+        }
+        (None, None) => {}
+        _ => {
+            return Err(ApiError::BadRequest(
+                "signature and publisher public key must be supplied together".into(),
+            ))
+        }
+    }
+    let constraints = ActionConstraints::read_only(source_path.clone());
+    let action = ProposedAction::ExternalTool(ExternalToolAction {
+        server_id: "purrcode.skill-store".into(),
+        tool_name: "install".into(),
+        arguments: serde_json::to_value(&spec)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        working_directory: source_path,
+    });
+    let action_id = ActionId::new();
+    let digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let mut store = state.store.lock().await;
+    store.append(
+        session_id,
+        &SessionEvent::ActionProposed { action_id, action },
+    )?;
+    store.append(
+        session_id,
+        &SessionEvent::JudgmentRecorded {
+            action_id,
+            decision: JudgmentDecision::RequireApproval {
+                reason: "installing executable skill content requires explicit approval".into(),
+                constraints,
+            },
+        },
+    )?;
+    Ok(Json(
+        serde_json::json!({"action_id": action_id.0, "action_digest": digest, "status": "requires_approval"}),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApproveSkillInstallRequest {
+    session_id: String,
+}
+
+async fn approve_skill_install(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(action_id): AxumPath<String>,
+    Json(body): Json<ApproveSkillInstallRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let session_id = parse_session_id(&body.session_id)?;
+    let action_id = ActionId(
+        Uuid::parse_str(&action_id)
+            .map_err(|_| ApiError::BadRequest("invalid action id".into()))?,
+    );
+    let session = state.store.lock().await.load(session_id)?;
+    let action = session
+        .proposed_actions
+        .get(&action_id)
+        .ok_or_else(|| ApiError::NotFound)?;
+    let constraints = match session.judgments.get(&action_id) {
+        Some(JudgmentDecision::RequireApproval { constraints, .. }) => constraints.clone(),
+        _ => {
+            return Err(ApiError::Conflict(
+                "install action is not awaiting approval".into(),
+            ))
+        }
+    };
+    let action_digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    state.store.lock().await.authorize(&Authorization {
+        action_id,
+        session_id,
+        action_digest: action_digest.clone(),
+        constraints,
+        authorized_at: Utc::now(),
+        approved_by: ApprovalAuthority::Human,
+    })?;
+    Ok(Json(
+        serde_json::json!({"action_id": action_id.0, "action_digest": action_digest, "status": "approved"}),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstallSkillRequest {
+    session_id: String,
+    action_id: String,
 }
 
 async fn install_skill(
@@ -2108,6 +2554,52 @@ async fn install_skill(
     Json(body): Json<InstallSkillRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    let session_id = parse_session_id(&body.session_id)?;
+    let action_id = ActionId(
+        Uuid::parse_str(&body.action_id)
+            .map_err(|_| ApiError::BadRequest("invalid action id".into()))?,
+    );
+    let session = state.store.lock().await.load(session_id)?;
+    let action = session
+        .proposed_actions
+        .get(&action_id)
+        .ok_or(ApiError::NotFound)?;
+    let constraints = match session.judgments.get(&action_id) {
+        Some(JudgmentDecision::RequireApproval { constraints, .. }) => constraints.clone(),
+        _ => {
+            return Err(ApiError::Conflict(
+                "install action was not judged for approval".into(),
+            ))
+        }
+    };
+    let ProposedAction::ExternalTool(external) = action else {
+        return Err(ApiError::Conflict(
+            "authorized action is not a skill install".into(),
+        ));
+    };
+    if external.server_id != "purrcode.skill-store" || external.tool_name != "install" {
+        return Err(ApiError::Conflict(
+            "authorized action is not a skill install".into(),
+        ));
+    }
+    let spec: SkillInstallSpec = serde_json::from_value(external.arguments.clone())
+        .map_err(|error| ApiError::BadRequest(format!("invalid authorized install: {error}")))?;
+    let digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    state
+        .store
+        .lock()
+        .await
+        .consume_authorization(action_id, &digest)
+        .map_err(|_| ApiError::Conflict("exact install authorization is unavailable".into()))?;
+    let actual_digest = skill_digest(&spec.source_path)
+        .map_err(|error| ApiError::BadRequest(format!("skill digest failed: {error}")))?;
+    if actual_digest != spec.content_digest {
+        return Err(ApiError::Conflict(
+            "skill content changed after approval".into(),
+        ));
+    }
     let db_path = state
         .database
         .parent()
@@ -2120,30 +2612,41 @@ async fn install_skill(
         .join("skills");
     let mut store = SkillStore::open(&db_path, &lib_root)
         .map_err(|e| ApiError::BadRequest(format!("skill store open failed: {e}")))?;
+    if spec
+        .publisher
+        .as_deref()
+        .is_some_and(|publisher| store.is_publisher_blocked(publisher).unwrap_or(true))
+    {
+        return Err(ApiError::Conflict("skill publisher is blocked".into()));
+    }
 
-    let scope = match body.scope.as_str() {
+    let scope = match spec.scope.as_str() {
         "user" => SkillScope::User,
         "repository" => SkillScope::Repository,
         "session" => SkillScope::Session,
         _ => return Err(ApiError::BadRequest("invalid scope".into())),
     };
 
-    let source_path = PathBuf::from(body.source_path.unwrap_or_else(|| "/tmp/skill".into()));
-    let perms = serde_json::json!({});
     let record = store
         .install(
-            &body.candidate_id,
-            &body.version,
-            scope,
+            &spec.candidate_id,
+            &spec.version,
+            scope.clone(),
             "registry",
             None,
-            None,
-            "pending",
-            &perms,
-            &source_path,
+            spec.publisher.as_deref(),
+            &spec.content_digest,
+            &spec.approved_permissions,
+            &spec.source_path,
         )
         .map_err(|e| ApiError::BadRequest(format!("install failed: {e}")))?;
+    if spec.signature.is_some() {
+        store
+            .update_signature_status(&spec.candidate_id, &scope, "verified")
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    }
 
+    let record = store.get(&record.skill_id).unwrap_or(record);
     Ok(Json(serde_json::to_value(&record).unwrap_or_default()))
 }
 
@@ -2508,6 +3011,18 @@ judge = "fixture/judge"
         assert_eq!(response.status(), StatusCode::ACCEPTED);
         let accepted: serde_json::Value = response.json().await.unwrap();
         let id = accepted["id"].as_str().unwrap();
+        let messages: Vec<ConversationMessage> = client
+            .get(format!("http://{}/v1/sessions/{id}/messages", report.bind))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "inspect fixture");
         let mut reached_terminal = false;
         for _ in 0..40 {
             let session = client
@@ -2532,13 +3047,108 @@ judge = "fixture/judge"
         );
         let store = SessionStore::open(&database).unwrap();
         let session_id = SessionId(Uuid::parse_str(id).unwrap());
-        assert!(store
-            .events(session_id)
-            .unwrap()
-            .iter()
-            .any(|event| matches!(event, SessionEvent::WorktreeCreated { .. })));
+        assert_eq!(
+            store.load(session_id).unwrap().conversation_messages,
+            messages
+        );
+        let durable_events = store.events(session_id).unwrap();
+        assert!(
+            durable_events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::WorktreeCreated { .. })),
+            "durable events: {durable_events:?}"
+        );
         handle.abort();
         provider_server.abort();
+    }
+
+    #[tokio::test]
+    async fn skill_install_requires_exact_single_use_authorization_and_rechecks_digest() {
+        let temporary = tempfile::tempdir().unwrap();
+        let database = temporary.path().join("sessions.db");
+        let repository = temporary.path().join("repo");
+        let source = temporary.path().join("skill-source");
+        std::fs::create_dir_all(&repository).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# safe").unwrap();
+        std::fs::write(
+            source.join("manifest.toml"),
+            "name='safe'\nversion='1.0.0'\n",
+        )
+        .unwrap();
+        let session_id = SessionId::new();
+        SessionStore::open(&database)
+            .unwrap()
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "install safe skill".into(),
+                    repository,
+                },
+            )
+            .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database,
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("unused-config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let digest = skill_digest(&source).unwrap();
+        let proposal = client
+            .post(format!("http://{}/v1/skills/install/propose", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "session_id": session_id.0,
+                "candidate_id": "safe",
+                "version": "1.0.0",
+                "scope": "repository",
+                "source_path": source,
+                "content_digest": digest,
+                "publisher": "fixture",
+                "approved_permissions": {}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(proposal.status(), StatusCode::OK);
+        let proposal: serde_json::Value = proposal.json().await.unwrap();
+        let action_id = proposal["action_id"].as_str().unwrap();
+        let approval = client
+            .post(format!(
+                "http://{}/v1/skills/install/{action_id}/approve",
+                report.bind
+            ))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"session_id": session_id.0}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(approval.status(), StatusCode::OK);
+        std::fs::write(source.join("SKILL.md"), "# tampered").unwrap();
+        let rejected = client
+            .post(format!("http://{}/v1/skills/install", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"session_id": session_id.0, "action_id": action_id}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::CONFLICT);
+        let replay = client
+            .post(format!("http://{}/v1/skills/install", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"session_id": session_id.0, "action_id": action_id}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::CONFLICT);
+        handle.abort();
     }
 
     fn git(repository: &Path, arguments: &[&str]) {

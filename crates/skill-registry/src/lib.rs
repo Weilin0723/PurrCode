@@ -24,6 +24,10 @@ pub struct CandidateManifest {
     pub source_url: Option<String>,
     pub description: String,
     pub signature_status: String,
+    #[serde(default)]
+    pub signature: Option<String>,
+    #[serde(default)]
+    pub publisher_public_key: Option<String>,
     pub permissions: BTreeMap<String, Vec<String>>,
     pub network_access: Option<String>,
     pub dependencies: Vec<String>,
@@ -67,6 +71,8 @@ pub enum RegistryError {
     NoCandidates,
     #[error("invalid manifest: {0}")]
     InvalidManifest(String),
+    #[error("signature verification failed: {0}")]
+    InvalidSignature(String),
 }
 
 #[async_trait]
@@ -237,6 +243,43 @@ fn default_platform() -> String {
 pub struct Qualifier;
 
 impl Qualifier {
+    pub fn verify_signature(manifest: &CandidateManifest) -> Result<(), RegistryError> {
+        let digest = manifest.content_digest.as_deref().ok_or_else(|| {
+            RegistryError::InvalidSignature("publisher content digest is missing".into())
+        })?;
+        let public_key = manifest.publisher_public_key.as_deref().ok_or_else(|| {
+            RegistryError::InvalidSignature("publisher public key is missing".into())
+        })?;
+        let signature = manifest.signature.as_deref().ok_or_else(|| {
+            RegistryError::InvalidSignature("publisher signature is missing".into())
+        })?;
+        Self::verify_digest_signature(digest, public_key, signature)
+    }
+
+    pub fn verify_digest_signature(
+        digest: &str,
+        public_key: &str,
+        signature: &str,
+    ) -> Result<(), RegistryError> {
+        use base64::Engine;
+
+        let key_bytes = hex::decode(public_key)
+            .map_err(|_| RegistryError::InvalidSignature("public key is not hex".into()))?;
+        let key_array: [u8; 32] = key_bytes.try_into().map_err(|_| {
+            RegistryError::InvalidSignature("public key must contain 32 bytes".into())
+        })?;
+        let key = ed25519_dalek::VerifyingKey::from_bytes(&key_array)
+            .map_err(|_| RegistryError::InvalidSignature("public key is invalid".into()))?;
+        let signature_bytes = base64::engine::general_purpose::STANDARD
+            .decode(signature)
+            .map_err(|_| RegistryError::InvalidSignature("signature is not base64".into()))?;
+        let signature = ed25519_dalek::Signature::from_slice(&signature_bytes).map_err(|_| {
+            RegistryError::InvalidSignature("signature must contain 64 bytes".into())
+        })?;
+        key.verify_strict(digest.as_bytes(), &signature)
+            .map_err(|_| RegistryError::InvalidSignature("signature does not match digest".into()))
+    }
+
     pub fn validate_manifest(manifest: &CandidateManifest) -> Result<(), RegistryError> {
         if manifest.name.is_empty() {
             return Err(RegistryError::InvalidManifest("name is empty".into()));
@@ -386,6 +429,8 @@ impl RegistryAdapter for GitHubRegistryAdapter {
                         source_url: Some(item["html_url"].as_str()?.to_string()),
                         description: description.to_string(),
                         signature_status: "unavailable".into(),
+                        signature: None,
+                        publisher_public_key: None,
                         permissions: BTreeMap::new(),
                         network_access: None,
                         dependencies: Vec::new(),
@@ -449,6 +494,8 @@ mod tests {
             source_url: None,
             description: "".into(),
             signature_status: "unavailable".into(),
+            signature: None,
+            publisher_public_key: None,
             permissions: BTreeMap::new(),
             network_access: None,
             dependencies: Vec::new(),
@@ -473,6 +520,8 @@ mod tests {
             source_url: None,
             description: "A test skill".into(),
             signature_status: "unavailable".into(),
+            signature: None,
+            publisher_public_key: None,
             permissions: {
                 let mut p = BTreeMap::new();
                 p.insert("read".into(), vec!["**/*.tf".into()]);
@@ -512,6 +561,24 @@ mod tests {
         assert_eq!(limited_permissions_score(&full_access), 0.0);
     }
 
+    #[test]
+    fn publisher_signature_is_verified_against_declared_digest() {
+        use base64::Engine;
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+        let mut manifest = CandidateManifest::default_for_test();
+        manifest.content_digest = Some("digest-value".into());
+        manifest.publisher_public_key = Some(hex::encode(signing_key.verifying_key().as_bytes()));
+        manifest.signature = Some(
+            base64::engine::general_purpose::STANDARD
+                .encode(signing_key.sign(b"digest-value").to_bytes()),
+        );
+        assert!(Qualifier::verify_signature(&manifest).is_ok());
+        manifest.content_digest = Some("tampered".into());
+        assert!(Qualifier::verify_signature(&manifest).is_err());
+    }
+
     impl CandidateManifest {
         fn default_for_test() -> Self {
             Self {
@@ -523,6 +590,8 @@ mod tests {
                 source_url: None,
                 description: String::new(),
                 signature_status: String::new(),
+                signature: None,
+                publisher_public_key: None,
                 permissions: BTreeMap::new(),
                 network_access: None,
                 dependencies: Vec::new(),

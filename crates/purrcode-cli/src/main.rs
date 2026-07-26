@@ -1341,8 +1341,8 @@ async fn main() -> Result<()> {
                     .map_err(|e| anyhow::anyhow!("list sessions failed: {e}"))?;
                 let mut all_events = Vec::new();
                 for sid in &all_session_ids {
-                    if let Ok(events) = store.events(*sid) {
-                        for event in &events {
+                    if let Ok(events) = store.timestamped_events(*sid) {
+                        for (timestamp, event) in &events {
                             match event {
                                 SessionEvent::ResearchSearchPerformed {
                                     query,
@@ -1352,7 +1352,7 @@ async fn main() -> Result<()> {
                                 } => {
                                     all_events.push(ResearchEvent {
                                         event_type: "ResearchSearchPerformed".into(),
-                                        timestamp: Utc::now(),
+                                        timestamp: *timestamp,
                                         session_id: *sid,
                                         data: if redacted {
                                             serde_json::json!({ "content_digest": content_digest })
@@ -1372,7 +1372,7 @@ async fn main() -> Result<()> {
                                 } => {
                                     all_events.push(ResearchEvent {
                                         event_type: "CapabilityGapDetected".into(),
-                                        timestamp: Utc::now(),
+                                        timestamp: *timestamp,
                                         session_id: *sid,
                                         data: if redacted {
                                             serde_json::json!({})
@@ -1387,7 +1387,7 @@ async fn main() -> Result<()> {
                                 } => {
                                     all_events.push(ResearchEvent {
                                         event_type: "SkillInvoked".into(),
-                                        timestamp: Utc::now(),
+                                        timestamp: *timestamp,
                                         session_id: *sid,
                                         data: if redacted {
                                             serde_json::json!({ "skill_id": skill_id })
@@ -1399,7 +1399,7 @@ async fn main() -> Result<()> {
                                 SessionEvent::SkillInstallApproved { skill_id, scope } => {
                                     all_events.push(ResearchEvent {
                                         event_type: "SkillInstallApproved".into(),
-                                        timestamp: Utc::now(),
+                                        timestamp: *timestamp,
                                         session_id: *sid,
                                         data: if redacted {
                                             serde_json::json!({ "skill_id": skill_id })
@@ -1408,6 +1408,41 @@ async fn main() -> Result<()> {
                                         },
                                     });
                                 }
+                                SessionEvent::SkillSearchStarted { query, sources } => all_events.push(ResearchEvent {
+                                    event_type: "SkillSearchStarted".into(), timestamp: *timestamp, session_id: *sid,
+                                    data: if redacted { serde_json::json!({"source_count": sources.len()}) } else { serde_json::json!({"query": query, "sources": sources}) },
+                                }),
+                                SessionEvent::SkillCandidateDiscovered { candidate_id, source, rank } => all_events.push(ResearchEvent {
+                                    event_type: "SkillCandidateDiscovered".into(), timestamp: *timestamp, session_id: *sid,
+                                    data: serde_json::json!({"candidate_id": candidate_id, "source": source, "rank": rank}),
+                                }),
+                                SessionEvent::SkillInspectionOpened { skill_id, duration_ms } => all_events.push(ResearchEvent {
+                                    event_type: "SkillInspectionOpened".into(), timestamp: *timestamp, session_id: *sid,
+                                    data: serde_json::json!({"skill_id": skill_id, "duration_ms": duration_ms}),
+                                }),
+                                SessionEvent::SkillQualified { skill_id, status, latency_ms } => all_events.push(ResearchEvent {
+                                    event_type: "SkillQualified".into(), timestamp: *timestamp, session_id: *sid,
+                                    data: serde_json::json!({"skill_id": skill_id, "status": status, "latency_ms": latency_ms}),
+                                }),
+                                SessionEvent::SkillInvocationSucceeded { skill_id, latency_ms } => all_events.push(ResearchEvent {
+                                    event_type: "SkillInvocationSucceeded".into(), timestamp: *timestamp, session_id: *sid,
+                                    data: serde_json::json!({"skill_id": skill_id, "latency_ms": latency_ms}),
+                                }),
+                                SessionEvent::InstalledSkillMatched { skill_id, matched_capability } => all_events.push(ResearchEvent {
+                                    event_type: "InstalledSkillMatched".into(), timestamp: *timestamp, session_id: *sid,
+                                    data: if redacted { serde_json::json!({"skill_id": skill_id}) } else { serde_json::json!({"skill_id": skill_id, "matched_capability": matched_capability}) },
+                                }),
+                                SessionEvent::InstalledSkillReused { skill_id, previous_uses } => all_events.push(ResearchEvent {
+                                    event_type: "InstalledSkillReused".into(), timestamp: *timestamp, session_id: *sid,
+                                    data: serde_json::json!({"skill_id": skill_id, "previous_uses": previous_uses}),
+                                }),
+                                SessionEvent::ExternalSearchAvoided { skill_id, matched_capability } => all_events.push(ResearchEvent {
+                                    event_type: "ExternalSearchAvoided".into(), timestamp: *timestamp, session_id: *sid,
+                                    data: if redacted { serde_json::json!({"skill_id": skill_id}) } else { serde_json::json!({"skill_id": skill_id, "matched_capability": matched_capability}) },
+                                }),
+                                SessionEvent::SessionCompleted => all_events.push(ResearchEvent {
+                                    event_type: "TaskCompleted".into(), timestamp: *timestamp, session_id: *sid, data: serde_json::json!({}),
+                                }),
                                 _ => {}
                             }
                         }

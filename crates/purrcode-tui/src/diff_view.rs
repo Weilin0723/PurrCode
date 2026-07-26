@@ -2,5 +2,4 @@
 
 pub struct DiffView {
     pub content: String,
-    pub session_id: String,
 }

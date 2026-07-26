@@ -6,7 +6,10 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+base64.workspace = true
 chrono.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
 purrcode-runtime-core = { path = "../runtime-core" }
 purrcode-skill-store = { path = "../skill-store" }
 reqwest.workspace = true

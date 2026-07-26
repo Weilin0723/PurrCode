@@ -1,7 +1,10 @@
 //! Isolated skill discovery and judgment-bound MCP JSON-RPC execution.
 
 use purrcode_ninelives::{SessionStore, StoreError};
-use purrcode_runtime_core::{ActionConstraints, ActionId, ExternalToolAction, ProposedAction};
+use purrcode_runtime_core::{
+    ActionConstraints, ActionId, ApprovalAuthority, Authorization, CommandAction,
+    ExternalToolAction, ProposedAction, SessionId,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -205,7 +208,7 @@ fn copy_skill_tree(source: &Path, destination: &Path) -> Result<(), HostError> {
     visit(source, destination, &mut files, &mut bytes)
 }
 
-fn skill_digest(root: &Path) -> Result<String, HostError> {
+pub fn skill_digest(root: &Path) -> Result<String, HostError> {
     fn paths(root: &Path, current: &Path, output: &mut Vec<PathBuf>) -> Result<(), HostError> {
         for entry in std::fs::read_dir(current)? {
             let path = entry?.path();
@@ -689,6 +692,9 @@ pub enum QualificationStatus {
     QualifiedWithConstraints,
     Failed,
     Unverified,
+    Blocked,
+    Outdated,
+    Incompatible,
 }
 
 /// Result of a qualification case.
@@ -732,6 +738,16 @@ fn load_manifest(root: &Path) -> Result<SkillManifest, HostError> {
 
 /// Static qualification engine for downloaded skills.
 pub struct Qualifier;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DynamicQualificationRequest {
+    pub entrypoint: String,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+    pub timeout_seconds: u64,
+    #[serde(default)]
+    pub expected_output_schema: Option<Value>,
+}
 
 impl Qualifier {
     /// Run all qualification checks on a skill directory.
@@ -796,9 +812,16 @@ impl Qualifier {
 
         // 3. Entrypoint validation
         if let Ok(manifest) = load_manifest(root) {
-            let entrypoint_ok = manifest.entrypoints.values().all(|ep| {
-                let p = root.join(ep);
-                p.exists() && !p.is_absolute()
+            let canonical_root = root.canonicalize().ok();
+            let entrypoint_ok = canonical_root.as_ref().is_some_and(|canonical_root| {
+                manifest.entrypoints.values().all(|ep| {
+                    let declared = Path::new(ep);
+                    !declared.is_absolute()
+                        && root
+                            .join(declared)
+                            .canonicalize()
+                            .is_ok_and(|resolved| resolved.starts_with(canonical_root))
+                })
             });
             if entrypoint_ok {
                 cases.push(QualificationCase {
@@ -880,11 +903,151 @@ impl Qualifier {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default(),
-            version: "unknown".into(),
+            version: load_manifest(root)
+                .map(|manifest| manifest.version)
+                .unwrap_or_else(|_| "unknown".into()),
             status,
             cases,
             constraints: None,
         }
+    }
+
+    pub async fn qualify_dynamic(
+        store: &mut SessionStore,
+        session_id: SessionId,
+        root: &Path,
+        request: &DynamicQualificationRequest,
+    ) -> SkillQualificationReport {
+        let mut report = Self::qualify(root);
+        let canonical_root = match root.canonicalize() {
+            Ok(root) => root,
+            Err(error) => {
+                report.status = QualificationStatus::Failed;
+                report.cases.push(QualificationCase {
+                    name: "dynamic_claw".into(),
+                    passed: false,
+                    detail: format!("skill root unavailable: {error}"),
+                });
+                return report;
+            }
+        };
+        let declared = Path::new(&request.entrypoint);
+        let resolved = if declared.is_absolute() {
+            None
+        } else {
+            canonical_root
+                .join(declared)
+                .canonicalize()
+                .ok()
+                .filter(|path| path.starts_with(&canonical_root))
+        };
+        let Some(program) = resolved else {
+            report.status = QualificationStatus::Blocked;
+            report.cases.push(QualificationCase {
+                name: "dynamic_entrypoint_containment".into(),
+                passed: false,
+                detail: "entrypoint escapes the canonical skill root".into(),
+            });
+            return report;
+        };
+        let constraints = ActionConstraints {
+            working_directory: canonical_root.clone(),
+            network: false,
+            timeout_seconds: request.timeout_seconds.clamp(1, 300),
+            maximum_output_bytes: 1_048_576,
+            allowed_write_globs: vec!["**/*".into()],
+            maximum_changed_files: 100,
+        };
+        let action_id = ActionId::new();
+        let action = ProposedAction::Command(CommandAction {
+            program,
+            arguments: request.arguments.clone(),
+            working_directory: canonical_root,
+            environment: BTreeMap::new(),
+        });
+        let digest = match action.digest(&constraints) {
+            Ok(digest) => digest,
+            Err(error) => {
+                report.status = QualificationStatus::Failed;
+                report.cases.push(QualificationCase {
+                    name: "dynamic_authorization".into(),
+                    passed: false,
+                    detail: error.to_string(),
+                });
+                return report;
+            }
+        };
+        if let Err(error) = store.authorize(&Authorization {
+            action_id,
+            session_id,
+            action_digest: digest,
+            constraints: constraints.clone(),
+            authorized_at: chrono::Utc::now(),
+            approved_by: ApprovalAuthority::DeterministicPolicy,
+        }) {
+            report.status = QualificationStatus::Failed;
+            report.cases.push(QualificationCase {
+                name: "dynamic_authorization".into(),
+                passed: false,
+                detail: error.to_string(),
+            });
+            return report;
+        }
+        match purrcode_claw::ToolRuntime::execute(store, action_id, &action, &constraints).await {
+            Ok(result) => {
+                let output = String::from_utf8_lossy(&result.stdout);
+                let schema_valid = request
+                    .expected_output_schema
+                    .as_ref()
+                    .is_none_or(|schema| {
+                        serde_json::from_str::<Value>(&output).is_ok_and(|value| {
+                            schema.as_object().is_none_or(|expected| {
+                                expected.keys().all(|key| value.get(key).is_some())
+                            })
+                        })
+                    });
+                report.cases.push(QualificationCase {
+                    name: "dynamic_claw".into(),
+                    passed: result.exit_code == Some(0),
+                    detail: format!(
+                        "exit={:?}; backend={}; network_isolation={}",
+                        result.exit_code,
+                        result.sandbox_backend,
+                        matches!(
+                            result.sandbox_level,
+                            purrcode_claw::SandboxLevel::RestrictedProcessNoNetwork
+                        )
+                    ),
+                });
+                report.cases.push(QualificationCase {
+                    name: "output_schema".into(),
+                    passed: schema_valid,
+                    detail: if schema_valid {
+                        "output schema satisfied".into()
+                    } else {
+                        "output schema mismatch".into()
+                    },
+                });
+                if result.exit_code != Some(0) || !schema_valid {
+                    report.status = QualificationStatus::Failed;
+                } else if !matches!(
+                    result.sandbox_level,
+                    purrcode_claw::SandboxLevel::RestrictedProcessNoNetwork
+                ) {
+                    report.status = QualificationStatus::QualifiedWithConstraints;
+                    report.constraints = Some(constraints);
+                }
+            }
+            Err(error) => {
+                report.status = QualificationStatus::Failed;
+                report.cases.push(QualificationCase {
+                    name: "dynamic_claw".into(),
+                    passed: false,
+                    detail: error.to_string(),
+                });
+            }
+        }
+        report
     }
 }
 
@@ -940,6 +1103,72 @@ mod tests {
         assert!(trash.is_dir());
         assert!(!path.exists());
         assert!(discover_skills(&installed).unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dynamic_qualification_runs_only_contained_entrypoint_with_exact_authorization() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let skill = temporary.path().join("dynamic");
+        std::fs::create_dir(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "# Dynamic").unwrap();
+        std::fs::write(
+            skill.join("manifest.toml"),
+            "name='dynamic'\nversion='1.0.0'\n[entrypoints]\nrun='run'\n",
+        )
+        .unwrap();
+        let entrypoint = skill.join("run");
+        std::fs::write(&entrypoint, "#!/bin/sh\nprintf '{\"ok\":true}'\n").unwrap();
+        let mut permissions = std::fs::metadata(&entrypoint).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&entrypoint, permissions).unwrap();
+        let session_id = SessionId::new();
+        let mut store = SessionStore::in_memory().unwrap();
+        store
+            .append(
+                session_id,
+                &purrcode_runtime_core::SessionEvent::SessionCreated {
+                    objective: "qualify fixture".into(),
+                    repository: skill.clone(),
+                },
+            )
+            .unwrap();
+        let report = Qualifier::qualify_dynamic(
+            &mut store,
+            session_id,
+            &skill,
+            &DynamicQualificationRequest {
+                entrypoint: "run".into(),
+                arguments: Vec::new(),
+                timeout_seconds: 2,
+                expected_output_schema: Some(serde_json::json!({"ok": true})),
+            },
+        )
+        .await;
+        assert!(matches!(
+            report.status,
+            QualificationStatus::Qualified | QualificationStatus::QualifiedWithConstraints
+        ));
+        assert!(report
+            .cases
+            .iter()
+            .any(|case| case.name == "dynamic_claw" && case.passed));
+
+        let blocked = Qualifier::qualify_dynamic(
+            &mut store,
+            session_id,
+            &skill,
+            &DynamicQualificationRequest {
+                entrypoint: "../escape".into(),
+                arguments: Vec::new(),
+                timeout_seconds: 2,
+                expected_output_schema: None,
+            },
+        )
+        .await;
+        assert_eq!(blocked.status, QualificationStatus::Blocked);
     }
 
     #[cfg(unix)]

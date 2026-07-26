@@ -102,22 +102,4 @@ impl Composer {
     pub fn is_command(&self) -> bool {
         self.buffer.starts_with('/')
     }
-
-    pub fn command_text(&self) -> &str {
-        self.buffer
-            .strip_prefix('/')
-            .unwrap_or(&self.buffer)
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-    }
-
-    pub fn command_args(&self) -> &str {
-        self.buffer
-            .strip_prefix('/')
-            .unwrap_or(&self.buffer)
-            .split_once(' ')
-            .map(|x| x.1)
-            .unwrap_or("")
-    }
 }

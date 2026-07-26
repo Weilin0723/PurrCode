@@ -71,11 +71,29 @@ impl Conversation {
 
     pub async fn refresh_events(
         &mut self,
-        _daemon_url: &str,
-        _token: &str,
-        _session_id: Option<String>,
+        daemon_url: &str,
+        token: &str,
+        session_id: Option<String>,
     ) {
-        // TODO: poll /v1/sessions/{id}/events and update pending_action, etc.
+        let Some(session_id) = session_id else {
+            return;
+        };
+        let url = format!(
+            "{}/v1/sessions/{session_id}/messages",
+            daemon_url.trim_end_matches('/')
+        );
+        if let Ok(response) = reqwest::Client::new()
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+        {
+            if response.status().is_success() {
+                if let Ok(messages) = response.json::<Vec<Message>>().await {
+                    self.messages = messages;
+                }
+            }
+        }
     }
 
     pub fn current_objective(&self) -> String {

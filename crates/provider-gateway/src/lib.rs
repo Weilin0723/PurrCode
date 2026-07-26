@@ -382,6 +382,59 @@ pub struct JudgmentRuntimeConfig {
 }
 
 impl AppConfig {
+    pub fn configure_provider(
+        &mut self,
+        name: &str,
+        provider_type: &str,
+        base_url: &str,
+        model: &str,
+        credential_name: Option<&str>,
+    ) -> Result<(), ProviderError> {
+        if name.trim().is_empty() || model.trim().is_empty() {
+            return Err(ProviderError::Configuration(
+                "provider name and model are required".into(),
+            ));
+        }
+        let base_url = Url::parse(base_url)
+            .map_err(|error| ProviderError::Configuration(format!("invalid base URL: {error}")))?;
+        let mut capabilities = BTreeMap::new();
+        capabilities.insert(
+            model.to_owned(),
+            ModelCapabilities::unknown(provider_type != "openai"),
+        );
+        let provider = match provider_type {
+            "ollama" => ProviderConfig::Ollama {
+                base_url,
+                capabilities,
+            },
+            "lm-studio" | "openai-compatible" => ProviderConfig::OpenaiCompatible {
+                base_url,
+                api_key_env: credential_name.map(keychain_reference).transpose()?,
+                local: provider_type == "lm-studio",
+                headers: BTreeMap::new(),
+                capabilities,
+            },
+            "openai" => ProviderConfig::Openai {
+                base_url,
+                api_key_env: keychain_reference(credential_name.unwrap_or(name))?,
+                capabilities,
+            },
+            _ => {
+                return Err(ProviderError::Configuration(format!(
+                    "unsupported provider type `{provider_type}`"
+                )))
+            }
+        };
+        self.providers.insert(name.to_owned(), provider);
+        let model_id = format!("{name}/{model}");
+        self.models.default.get_or_insert_with(|| model_id.clone());
+        self.models
+            .roles
+            .entry("coding_worker".into())
+            .or_insert(model_id);
+        Ok(())
+    }
+
     pub fn load(path: &Path) -> Result<Self, ProviderError> {
         let config: Self = toml::from_str(&fs::read_to_string(path)?)?;
         if config.schema_version == 0 {

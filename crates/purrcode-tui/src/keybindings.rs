@@ -1,6 +1,7 @@
 //! Keyboard dispatch for the TUI.
 
 use crate::app::{App, AppMode};
+use crate::provider_setup::ProviderType;
 use crossterm::event::{KeyCode, KeyEvent};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
@@ -8,7 +9,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         AppMode::ProviderSetup => handle_setup_key(app, key),
         AppMode::SkillBrowse => handle_skill_key(app, key),
         AppMode::DiffView => handle_diff_key(app, key),
-        AppMode::ModelPicker => handle_model_key(app, key),
         AppMode::Conversation => handle_conversation_key(app, key),
     }
 }
@@ -64,13 +64,44 @@ fn handle_setup_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Enter => {
             if let Some(ref mut setup) = app.provider_setup {
-                if setup.complete {
-                    app.provider_setup = None;
-                    app.switch_mode(AppMode::Conversation);
-                    app.has_provider = true;
-                    app.message_bar = "Provider configured. Type a message to start.".into();
-                } else {
+                if !setup.complete {
                     setup.advance();
+                }
+            }
+        }
+        KeyCode::Char(choice @ '1'..='5')
+            if app
+                .provider_setup
+                .as_ref()
+                .is_some_and(|s| s.provider_type.is_none()) =>
+        {
+            let provider = match choice {
+                '1' => ProviderType::Ollama,
+                '2' => ProviderType::LmStudio,
+                '3' => ProviderType::Openai,
+                '4' => ProviderType::OpenaiCompatible,
+                _ => ProviderType::EnterpriseGateway,
+            };
+            if let Some(setup) = &mut app.provider_setup {
+                setup.select_provider(provider);
+            }
+        }
+        KeyCode::Char(character) => {
+            if let Some(setup) = &mut app.provider_setup {
+                if setup.provider_type == Some(ProviderType::Openai) && setup.step == 0 {
+                    setup.api_key.push(character);
+                } else {
+                    setup.model_id.push(character);
+                }
+                setup.error = None;
+            }
+        }
+        KeyCode::Backspace => {
+            if let Some(setup) = &mut app.provider_setup {
+                if setup.provider_type == Some(ProviderType::Openai) && setup.step == 0 {
+                    setup.api_key.pop();
+                } else {
+                    setup.model_id.pop();
                 }
             }
         }
@@ -106,13 +137,5 @@ fn handle_skill_key(app: &mut App, key: KeyEvent) -> bool {
 fn handle_diff_key(app: &mut App, _key: KeyEvent) -> bool {
     app.diff_view = None;
     app.switch_mode(AppMode::Conversation);
-    true
-}
-
-fn handle_model_key(app: &mut App, key: KeyEvent) -> bool {
-    if key.code == KeyCode::Esc {
-        app.model_picker_visible = false;
-        app.switch_mode(AppMode::Conversation);
-    }
     true
 }

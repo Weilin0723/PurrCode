@@ -4,7 +4,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,8 +66,14 @@ pub enum ResearchError {
     LocalOnlyMode,
     #[error("cache miss")]
     CacheMiss,
+    #[error("search query contains private or credential-like data")]
+    PrivateQuery,
+    #[error("URL is not an allowed public HTTP(S) target: {0}")]
+    UnsafeUrl(String),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("cache I/O error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 const MAX_PAGE_BYTES: u64 = 2 * 1024 * 1024; // 2 MB
@@ -76,7 +84,7 @@ pub struct ResearchEngine {
     client: reqwest::Client,
     policy: DomainPolicy,
     cache: HashMap<String, EvidenceRecord>,
-    cache_timestamps: HashMap<String, Instant>,
+    cache_path: Option<PathBuf>,
     search_provider: Box<dyn SearchProvider>,
 }
 
@@ -124,13 +132,31 @@ impl ResearchEngine {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .connect_timeout(Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default(),
             policy,
             cache: HashMap::new(),
-            cache_timestamps: HashMap::new(),
+            cache_path: None,
             search_provider,
         }
+    }
+
+    pub fn with_durable_cache(
+        search_provider: Box<dyn SearchProvider>,
+        policy: DomainPolicy,
+        cache_path: &Path,
+    ) -> Result<Self, ResearchError> {
+        let mut engine = Self::new(search_provider, policy);
+        engine.cache_path = Some(cache_path.to_owned());
+        if cache_path.is_file() {
+            let records: Vec<EvidenceRecord> = serde_json::from_slice(&std::fs::read(cache_path)?)?;
+            engine.cache = records
+                .into_iter()
+                .map(|record| (record.id.clone(), record))
+                .collect();
+        }
+        Ok(engine)
     }
 
     pub async fn search(
@@ -141,23 +167,14 @@ impl ResearchEngine {
         if local_only {
             return Err(ResearchError::LocalOnlyMode);
         }
+        validate_query(&query.query)?;
 
         let results = self.search_provider.search(query).await?;
         let mut evidence = Vec::new();
 
         for result in results {
-            let domain = extract_domain(&result.url);
-            if self.policy.deny_list.iter().any(|d| domain.contains(d)) {
-                continue;
-            }
-            if self
-                .policy
-                .approval_required
-                .iter()
-                .any(|d| domain.contains(d))
-            {
-                continue;
-            }
+            let domain = validate_public_url(&result.url)?;
+            enforce_domain_policy(&self.policy, &domain)?;
 
             let record = EvidenceRecord {
                 id: format!("ev-{}", sha256_hex(&result.url)),
@@ -170,21 +187,24 @@ impl ResearchEngine {
             };
 
             self.cache.insert(record.id.clone(), record.clone());
-            self.cache_timestamps
-                .insert(record.id.clone(), Instant::now());
             evidence.push(record);
         }
+
+        self.persist_cache()?;
 
         Ok(evidence)
     }
 
     pub async fn fetch_page(&self, url: &str) -> Result<FetchedPage, ResearchError> {
-        let domain = extract_domain(url);
-        if self.policy.deny_list.iter().any(|d| domain.contains(d)) {
-            return Err(ResearchError::DomainDenied(url.to_string()));
-        }
+        let domain = validate_public_url(url)?;
+        enforce_domain_policy(&self.policy, &domain)?;
 
         let resp = self.client.get(url).send().await?;
+        if resp.status().is_redirection() {
+            return Err(ResearchError::UnsafeUrl(format!(
+                "redirects require a separately validated request: {url}"
+            )));
+        }
 
         let content_type = resp
             .headers()
@@ -231,23 +251,40 @@ impl ResearchEngine {
     }
 
     pub fn get_cached(&self, id: &str) -> Option<&EvidenceRecord> {
-        let timestamp = self.cache_timestamps.get(id)?;
-        if timestamp.elapsed() > CACHE_TTL {
+        let record = self.cache.get(id)?;
+        if Utc::now().signed_duration_since(record.retrieved_at)
+            > chrono::Duration::from_std(CACHE_TTL).ok()?
+        {
             return None;
         }
-        self.cache.get(id)
+        Some(record)
     }
 
     pub fn clear_cache(&mut self) {
         self.cache.clear();
-        self.cache_timestamps.clear();
+        let _ = self.persist_cache();
     }
 
     pub fn evidence_count(&self) -> usize {
         self.cache.len()
     }
+
+    fn persist_cache(&self) -> Result<(), ResearchError> {
+        let Some(path) = &self.cache_path else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let temporary = path.with_extension("json.tmp");
+        let records = self.cache.values().collect::<Vec<_>>();
+        std::fs::write(&temporary, serde_json::to_vec_pretty(&records)?)?;
+        std::fs::rename(temporary, path)?;
+        Ok(())
+    }
 }
 
+#[cfg(test)]
 fn extract_domain(url: &str) -> String {
     url.trim_start_matches("https://")
         .trim_start_matches("http://")
@@ -258,6 +295,108 @@ fn extract_domain(url: &str) -> String {
         .next()
         .unwrap_or("")
         .to_lowercase()
+}
+
+fn domain_matches(domain: &str, rule: &str) -> bool {
+    let rule = rule.trim().trim_start_matches('.').to_ascii_lowercase();
+    domain == rule || domain.ends_with(&format!(".{rule}"))
+}
+
+fn enforce_domain_policy(policy: &DomainPolicy, domain: &str) -> Result<(), ResearchError> {
+    if policy
+        .deny_list
+        .iter()
+        .any(|rule| domain_matches(domain, rule))
+    {
+        return Err(ResearchError::DomainDenied(domain.to_owned()));
+    }
+    if !policy.allow_list.is_empty()
+        && !policy
+            .allow_list
+            .iter()
+            .any(|rule| domain_matches(domain, rule))
+    {
+        return Err(ResearchError::DomainDenied(domain.to_owned()));
+    }
+    if policy
+        .approval_required
+        .iter()
+        .any(|rule| domain_matches(domain, rule))
+    {
+        return Err(ResearchError::DomainRequiresApproval(domain.to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_public_url(raw: &str) -> Result<String, ResearchError> {
+    let url = reqwest::Url::parse(raw).map_err(|_| ResearchError::UnsafeUrl(raw.to_owned()))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(ResearchError::UnsafeUrl(raw.to_owned()));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| ResearchError::UnsafeUrl(raw.to_owned()))?
+        .trim_end_matches('.')
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") {
+        return Err(ResearchError::UnsafeUrl(raw.to_owned()));
+    }
+    if let Ok(address) = host.parse::<IpAddr>() {
+        let unsafe_address = match address {
+            IpAddr::V4(v4) => {
+                v4.is_private()
+                    || v4.is_loopback()
+                    || v4.is_link_local()
+                    || v4.is_broadcast()
+                    || v4.is_documentation()
+                    || v4.is_unspecified()
+                    || v4.is_multicast()
+            }
+            IpAddr::V6(v6) => {
+                let segments = v6.segments();
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || v6.is_multicast()
+                    || (segments[0] & 0xfe00) == 0xfc00
+                    || (segments[0] & 0xffc0) == 0xfe80
+            }
+        };
+        if unsafe_address {
+            return Err(ResearchError::UnsafeUrl(raw.to_owned()));
+        }
+    }
+    Ok(host)
+}
+
+fn validate_query(query: &str) -> Result<(), ResearchError> {
+    let lower = query.to_ascii_lowercase();
+    let credential_markers = [
+        "api_key=",
+        "apikey=",
+        "authorization:",
+        "bearer ",
+        "password=",
+        "secret=",
+        "-----begin private key-----",
+    ];
+    let path_or_code = query.contains("/Users/")
+        || query.contains("C:\\Users\\")
+        || query.contains("BEGIN PRIVATE")
+        || query.lines().count() > 3
+        || query.len() > 512;
+    if path_or_code
+        || credential_markers
+            .iter()
+            .any(|marker| lower.contains(marker))
+    {
+        return Err(ResearchError::PrivateQuery);
+    }
+    Ok(())
 }
 
 fn sha256_hex(data: impl AsRef<[u8]>) -> String {
@@ -326,6 +465,34 @@ mod tests {
     }
 
     #[test]
+    fn domain_policy_enforces_allow_approval_and_label_boundaries() {
+        let policy = DomainPolicy {
+            allow_list: vec!["example.com".into(), "approval.example".into()],
+            deny_list: vec!["blocked.example.com".into()],
+            approval_required: vec!["approval.example".into()],
+        };
+        assert!(enforce_domain_policy(&policy, "docs.example.com").is_ok());
+        assert!(matches!(
+            enforce_domain_policy(&policy, "approval.example"),
+            Err(ResearchError::DomainRequiresApproval(_))
+        ));
+        assert!(matches!(
+            enforce_domain_policy(&policy, "notexample.com"),
+            Err(ResearchError::DomainDenied(_))
+        ));
+    }
+
+    #[test]
+    fn private_targets_and_queries_are_rejected() {
+        assert!(validate_public_url("file:///etc/passwd").is_err());
+        assert!(validate_public_url("http://127.0.0.1/admin").is_err());
+        assert!(validate_public_url("http://[::1]/admin").is_err());
+        assert!(validate_query("Authorization: Bearer token-value").is_err());
+        assert!(validate_query("error in /Users/alice/private/repo").is_err());
+        assert!(validate_query("rust axum sse example").is_ok());
+    }
+
+    #[test]
     fn evidence_cache_honors_ttl() {
         let mut engine = ResearchEngine::new(Box::new(StubSearchProvider), DomainPolicy::default());
 
@@ -339,10 +506,38 @@ mod tests {
             retrieved_at: Utc::now(),
         };
         engine.cache.insert("ev-test".into(), record.clone());
-        engine
-            .cache_timestamps
-            .insert("ev-test".into(), Instant::now());
 
         assert!(engine.get_cached("ev-test").is_some());
+    }
+
+    #[test]
+    fn durable_evidence_cache_survives_restart() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("research-cache.json");
+        let mut engine = ResearchEngine::with_durable_cache(
+            Box::new(StubSearchProvider),
+            DomainPolicy::default(),
+            &path,
+        )
+        .unwrap();
+        let record = EvidenceRecord {
+            id: "ev-persisted".into(),
+            query: "public docs".into(),
+            url: "https://example.com".into(),
+            title: "Example".into(),
+            content_digest: "abc".into(),
+            excerpt: "excerpt".into(),
+            retrieved_at: Utc::now(),
+        };
+        engine.cache.insert(record.id.clone(), record);
+        engine.persist_cache().unwrap();
+        drop(engine);
+        let restored = ResearchEngine::with_durable_cache(
+            Box::new(StubSearchProvider),
+            DomainPolicy::default(),
+            &path,
+        )
+        .unwrap();
+        assert!(restored.get_cached("ev-persisted").is_some());
     }
 }

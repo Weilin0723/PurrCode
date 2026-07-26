@@ -17,7 +17,6 @@ pub struct SkillEntry {
 pub struct SkillBrowser {
     pub skills: Vec<SkillEntry>,
     pub selected: usize,
-    pub inspected: Option<SkillEntry>,
     pub loading: bool,
     pub error: Option<String>,
 }
@@ -27,7 +26,6 @@ impl SkillBrowser {
         Self {
             skills: Vec::new(),
             selected: 0,
-            inspected: None,
             loading: false,
             error: None,
         }
@@ -105,9 +103,9 @@ fn parse_skills(val: &Value) -> Vec<SkillEntry> {
 fn parse_candidates(val: &Value) -> Vec<SkillEntry> {
     let arr = val.as_array().map(|a| a.to_vec()).unwrap_or_default();
     arr.iter()
-        .filter_map(|v| {
+        .map(|v| {
             let manifest = &v["manifest"];
-            Some(SkillEntry {
+            SkillEntry {
                 skill_id: manifest["name"].as_str().unwrap_or("unknown").to_string(),
                 version: manifest["version"].as_str().unwrap_or("?").to_string(),
                 publisher: manifest["publisher"]
@@ -126,7 +124,7 @@ fn parse_candidates(val: &Value) -> Vec<SkillEntry> {
                     .to_string(),
                 risk: format!("{:.1}", v["score"].as_f64().unwrap_or(0.0)),
                 installed: false,
-            })
+            }
         })
         .collect()
 }

@@ -13,7 +13,6 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         AppMode::SkillBrowse => draw_skills(frame, app),
         AppMode::DiffView => draw_diff(frame, app),
         AppMode::Conversation => draw_conversation(frame, app),
-        AppMode::ModelPicker => draw_conversation(frame, app),
     }
 }
 
@@ -193,17 +192,23 @@ fn setup_text(
     pt: &crate::provider_setup::ProviderType,
 ) -> String {
     let base = match pt {
-        crate::provider_setup::ProviderType::Ollama => format!("Provider: Ollama\nBase URL: {}\n\nPress Enter to discover models, Esc to cancel.", setup.base_url),
-        crate::provider_setup::ProviderType::LmStudio => format!("Provider: LM Studio\nBase URL: {}\n\nPress Enter to discover models, Esc to cancel.", setup.base_url),
+        crate::provider_setup::ProviderType::Ollama => format!("Provider: Ollama\nBase URL: {}\nDiscovered: {}\nModel ID: {}\n\nEdit the discovered model ID if needed and press Enter.", setup.base_url, setup.discovered_models.join(", "), setup.model_id),
+        crate::provider_setup::ProviderType::LmStudio => format!("Provider: LM Studio\nBase URL: {}\nDiscovered: {}\nModel ID: {}\n\nEdit the discovered model ID if needed and press Enter.", setup.base_url, setup.discovered_models.join(", "), setup.model_id),
         crate::provider_setup::ProviderType::Openai => {
             let key_status = if setup.api_key.is_empty() { "not set" } else { "✓ set" };
-            format!("Provider: OpenAI\nAPI key: {key_status}\n\nEnter API key, then press Enter to test connection.")
+            if setup.step == 0 {
+                format!("Provider: OpenAI\nAPI key: {key_status}\n\nEnter API key (input hidden), then press Enter.")
+            } else {
+                format!("Provider: OpenAI\nAPI key: ✓ stored in memory for keychain transfer\nModel ID: {}\n\nType a model ID and press Enter to connect.", setup.model_id)
+            }
         }
         crate::provider_setup::ProviderType::OpenaiCompatible => format!("Provider: OpenAI-compatible\nBase URL: {}\nAPI key: {}\nModel: {}\n\nPress Enter to test connection.", setup.base_url, if setup.api_key.is_empty() { "not set" } else { "✓ set" }, setup.model_id),
         crate::provider_setup::ProviderType::EnterpriseGateway => format!("Provider: Enterprise Gateway\nBase URL: {}\n\nPress Enter to configure.", setup.base_url),
     };
 
-    if let Some(ref result) = setup.test_result {
+    if let Some(ref error) = setup.error {
+        format!("{base}\n\nError: {error}")
+    } else if let Some(ref result) = setup.test_result {
         format!("{base}\n\n{result}")
     } else {
         base
@@ -226,12 +231,15 @@ fn draw_skills(frame: &mut Frame<'_>, app: &App) {
             let marker = if i == browser.selected { "▶" } else { " " };
             let status = if skill.installed { " [installed]" } else { "" };
             ListItem::new(format!(
-                "{marker} {name} v{ver}{status}\n  Publisher: {pub} · {sig} · Risk: {risk}",
+                "{marker} {name} v{ver}{status}\n  Publisher: {pub} · {sig} · Risk: {risk}\n  Source: {source} · Permissions: {permissions} · Network: {network}",
                 name = skill.skill_id,
                 ver = skill.version,
                 pub = skill.publisher,
                 sig = skill.signature,
                 risk = skill.risk,
+                source = skill.source,
+                permissions = skill.permissions,
+                network = skill.network,
             ))
         })
         .collect();

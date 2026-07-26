@@ -1,7 +1,5 @@
 //! In-TUI provider onboarding wizard.
 
-use serde::{Deserialize, Serialize};
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderType {
     Ollama,
@@ -17,12 +15,13 @@ pub struct ProviderSetup {
     pub provider_type: Option<ProviderType>,
     pub base_url: String,
     pub api_key: String,
-    pub api_key_env: String,
     pub model_id: String,
     pub local: bool,
     pub complete: bool,
     pub test_result: Option<String>,
     pub error: Option<String>,
+    pub discovered_models: Vec<String>,
+    pub discovery_requested: bool,
 }
 
 impl ProviderSetup {
@@ -32,12 +31,13 @@ impl ProviderSetup {
             provider_type: None,
             base_url: String::new(),
             api_key: String::new(),
-            api_key_env: "OPENAI_API_KEY".into(),
             model_id: String::new(),
             local: false,
             complete: false,
             test_result: None,
             error: None,
+            discovered_models: Vec::new(),
+            discovery_requested: false,
         }
     }
 
@@ -55,23 +55,23 @@ impl ProviderSetup {
     }
 
     fn advance_local(&mut self) {
-        match self.step {
-            0 => self.step = 1, // Confirm discovery
-            1 => {
-                self.complete = true;
-            }
-            _ => {}
+        if self.model_id.trim().is_empty() {
+            self.error = Some("Enter a model ID before continuing".into());
+        } else {
+            self.complete = true;
         }
     }
 
     fn advance_openai(&mut self) {
         match self.step {
-            0 => self.step = 1, // API key entered
-            1 => self.step = 2, // Storage chosen
-            2 => {
-                self.test_result = Some("✓ Authentication succeeded\n✓ Models discovered\n✓ Streaming supported\n✓ Structured output supported".into());
-                self.complete = true;
+            0 if self.api_key.trim().is_empty() => {
+                self.error = Some("Enter an API key before continuing".into())
             }
+            0 => self.step = 1,
+            1 if self.model_id.trim().is_empty() => {
+                self.error = Some("Enter a model ID before continuing".into())
+            }
+            1 => self.complete = true,
             _ => {}
         }
     }
@@ -129,13 +129,6 @@ impl ProviderSetup {
                 self.local = false;
             }
         }
+        self.discovery_requested = matches!(pt, ProviderType::Ollama | ProviderType::LmStudio);
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProviderConfigResponse {
-    pub name: String,
-    pub provider_type: String,
-    pub base_url: String,
-    pub local: bool,
 }

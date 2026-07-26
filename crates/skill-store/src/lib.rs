@@ -76,6 +76,8 @@ pub enum StoreError {
     AlreadyInstalled(String),
     #[error("invalid scope: {0}")]
     InvalidScope(String),
+    #[error("invalid publisher: {0}")]
+    InvalidPublisher(String),
 }
 
 pub struct SkillStore {
@@ -98,7 +100,7 @@ impl SkillStore {
     fn migrate(&self) -> Result<(), StoreError> {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS skill_store (
-                skill_id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
                 version TEXT NOT NULL,
                 scope TEXT NOT NULL,
                 source_type TEXT NOT NULL,
@@ -112,9 +114,40 @@ impl SkillStore {
                 last_used_at TEXT,
                 successful_uses INTEGER NOT NULL DEFAULT 0,
                 failed_uses INTEGER NOT NULL DEFAULT 0,
-                pinned INTEGER NOT NULL DEFAULT 0
+                pinned INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (skill_id, scope)
+            );
+            CREATE TABLE IF NOT EXISTS blocked_publishers (
+                publisher TEXT PRIMARY KEY,
+                blocked_at TEXT NOT NULL,
+                reason TEXT NOT NULL
             );",
         )?;
+        let scope_is_key = self
+            .conn
+            .prepare("PRAGMA table_info(skill_store)")?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+            })?
+            .filter_map(Result::ok)
+            .any(|(name, key_order)| name == "scope" && key_order > 0);
+        if !scope_is_key {
+            self.conn.execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE skill_store RENAME TO skill_store_v1;
+                 CREATE TABLE skill_store (
+                    skill_id TEXT NOT NULL, version TEXT NOT NULL, scope TEXT NOT NULL,
+                    source_type TEXT NOT NULL, source_location TEXT, publisher TEXT,
+                    content_digest TEXT NOT NULL, signature_status TEXT NOT NULL DEFAULT 'unavailable',
+                    installed_at TEXT NOT NULL, approved_permissions TEXT NOT NULL DEFAULT '{}',
+                    qualification_status TEXT NOT NULL DEFAULT 'unverified', last_used_at TEXT,
+                    successful_uses INTEGER NOT NULL DEFAULT 0, failed_uses INTEGER NOT NULL DEFAULT 0,
+                    pinned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (skill_id, scope));
+                 INSERT INTO skill_store SELECT * FROM skill_store_v1;
+                 DROP TABLE skill_store_v1;
+                 COMMIT;",
+            )?;
+        }
         Ok(())
     }
 
@@ -134,8 +167,8 @@ impl SkillStore {
         if self
             .conn
             .query_row(
-                "SELECT 1 FROM skill_store WHERE skill_id = ?1",
-                params![skill_id],
+                "SELECT 1 FROM skill_store WHERE skill_id = ?1 AND scope = ?2",
+                params![skill_id, scope.to_string()],
                 |_| Ok(()),
             )
             .is_ok()
@@ -144,18 +177,26 @@ impl SkillStore {
         }
 
         let scope_str = scope.to_string();
-        let dest = self.scope_root(&scope).join(skill_id);
+        let scope_root = self.scope_root(&scope);
+        std::fs::create_dir_all(&scope_root)?;
+        let dest = scope_root.join(skill_id);
         if dest.exists() {
-            std::fs::remove_dir_all(&dest)?;
+            return Err(StoreError::AlreadyInstalled(format!(
+                "{skill_id} ({scope})"
+            )));
         }
-        std::fs::create_dir_all(&dest)?;
-
-        Self::copy_dir(source_path, &dest)?;
+        let staging = scope_root.join(format!(".{skill_id}.install-{}", Uuid::new_v4()));
+        std::fs::create_dir(&staging)?;
+        if let Err(error) = Self::copy_dir(source_path, &staging) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(error.into());
+        }
+        std::fs::rename(&staging, &dest)?;
 
         let now = Utc::now();
         let perms_json = serde_json::to_string(approved_permissions)?;
 
-        self.conn.execute(
+        if let Err(error) = self.conn.execute(
             "INSERT INTO skill_store
                 (skill_id, version, scope, source_type, source_location, publisher,
                  content_digest, signature_status, installed_at, approved_permissions,
@@ -172,7 +213,15 @@ impl SkillStore {
                 now.to_rfc3339(),
                 perms_json,
             ],
-        )?;
+        ) {
+            let trash = self.library_root.join(".trash");
+            std::fs::create_dir_all(&trash)?;
+            std::fs::rename(
+                &dest,
+                trash.join(format!("failed-{skill_id}-{}", Uuid::new_v4())),
+            )?;
+            return Err(error.into());
+        }
 
         Ok(SkillRecord {
             skill_id: skill_id.to_string(),
@@ -271,7 +320,9 @@ impl SkillStore {
             "SELECT skill_id, version, scope, source_type, source_location, publisher,
                     content_digest, signature_status, installed_at, approved_permissions,
                     qualification_status, last_used_at, successful_uses, failed_uses, pinned
-             FROM skill_store WHERE skill_id = ?1",
+             FROM skill_store WHERE skill_id = ?1
+             ORDER BY CASE scope WHEN 'session' THEN 0 WHEN 'repository' THEN 1 ELSE 2 END
+             LIMIT 1",
         )?;
 
         stmt.query_row(params![skill_id], |row| {
@@ -367,6 +418,19 @@ impl SkillStore {
         Ok(())
     }
 
+    pub fn update_signature_status(
+        &mut self,
+        skill_id: &str,
+        scope: &SkillScope,
+        status: &str,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE skill_store SET signature_status = ?1 WHERE skill_id = ?2 AND scope = ?3",
+            params![status, skill_id, scope.to_string()],
+        )?;
+        Ok(())
+    }
+
     pub fn pin(&mut self, skill_id: &str, pinned: bool) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE skill_store SET pinned = ?1 WHERE skill_id = ?2",
@@ -377,6 +441,32 @@ impl SkillStore {
 
     pub fn path_for(&self, skill_id: &str, scope: &SkillScope) -> PathBuf {
         self.scope_root(scope).join(skill_id)
+    }
+
+    pub fn block_publisher(&mut self, publisher: &str, reason: &str) -> Result<(), StoreError> {
+        let publisher = publisher.trim().to_ascii_lowercase();
+        if publisher.is_empty() {
+            return Err(StoreError::InvalidPublisher(
+                "publisher cannot be empty".into(),
+            ));
+        }
+        self.conn.execute(
+            "INSERT INTO blocked_publishers(publisher, blocked_at, reason) VALUES (?1, ?2, ?3)
+             ON CONFLICT(publisher) DO UPDATE SET blocked_at = excluded.blocked_at, reason = excluded.reason",
+            params![publisher, Utc::now().to_rfc3339(), reason],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_publisher_blocked(&self, publisher: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM blocked_publishers WHERE publisher = ?1",
+                params![publisher.trim().to_ascii_lowercase()],
+                |_| Ok(()),
+            )
+            .is_ok())
     }
 
     fn scope_root(&self, scope: &SkillScope) -> PathBuf {
@@ -503,6 +593,52 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, StoreError::AlreadyInstalled(_)));
+    }
+
+    #[test]
+    fn same_skill_can_be_installed_in_distinct_scopes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SkillStore::open(&dir.path().join("db"), &dir.path().join("lib")).unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# scoped").unwrap();
+        for scope in [
+            SkillScope::User,
+            SkillScope::Repository,
+            SkillScope::Session,
+        ] {
+            store
+                .install(
+                    "scoped",
+                    "1.0.0",
+                    scope,
+                    "local",
+                    None,
+                    None,
+                    "digest",
+                    &serde_json::json!({}),
+                    &source,
+                )
+                .unwrap();
+        }
+        assert_eq!(store.list().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn publisher_blocklist_is_case_insensitive_and_durable() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("db");
+        let library = dir.path().join("lib");
+        let mut store = SkillStore::open(&database, &library).unwrap();
+        store
+            .block_publisher("Untrusted-Publisher", "reviewed by user")
+            .unwrap();
+        assert!(store.is_publisher_blocked("untrusted-publisher").unwrap());
+        drop(store);
+        assert!(SkillStore::open(&database, &library)
+            .unwrap()
+            .is_publisher_blocked("UNTRUSTED-PUBLISHER")
+            .unwrap());
     }
 
     #[test]

@@ -277,6 +277,9 @@ pub enum SessionEvent {
         objective: String,
         repository: PathBuf,
     },
+    ConversationMessageAdded {
+        message: ConversationMessage,
+    },
     WorktreeCreated {
         path: PathBuf,
         base_head: String,
@@ -467,6 +470,10 @@ pub enum SessionEvent {
         skill_id: String,
         previous_uses: u32,
     },
+    InstalledSkillMatched {
+        skill_id: String,
+        matched_capability: String,
+    },
     ExternalSearchAvoided {
         skill_id: String,
         matched_capability: String,
@@ -526,6 +533,7 @@ pub struct SessionState {
     pub plan_steps: Vec<String>,
     pub context_summary: Option<String>,
     pub selected_model: Option<String>,
+    pub conversation_messages: Vec<ConversationMessage>,
     pub proposed_actions: BTreeMap<ActionId, ProposedAction>,
     pub judgments: BTreeMap<ActionId, JudgmentDecision>,
     pub contextual_judgments: BTreeMap<ActionId, ContextualJudgment>,
@@ -545,6 +553,7 @@ impl SessionState {
             plan_steps: Vec::new(),
             context_summary: None,
             selected_model: None,
+            conversation_messages: Vec::new(),
             proposed_actions: BTreeMap::new(),
             judgments: BTreeMap::new(),
             contextual_judgments: BTreeMap::new(),
@@ -594,6 +603,9 @@ impl SessionState {
             SessionEvent::SessionPaused { .. } => self.status = SessionStatus::Paused,
             SessionEvent::SessionResumed => self.status = SessionStatus::Active,
             SessionEvent::ModelSelected { model } => self.selected_model = Some(model.clone()),
+            SessionEvent::ConversationMessageAdded { message } => {
+                self.conversation_messages.push(message.clone());
+            }
             SessionEvent::JudgmentRecorded {
                 action_id,
                 decision,
@@ -635,7 +647,7 @@ impl SessionState {
 
 // ── Conversation types ────────────────────────────────────────────
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ConversationMessage {
     pub id: String,
     pub role: String,

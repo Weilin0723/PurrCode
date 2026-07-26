@@ -23,7 +23,7 @@ use serde_json::Value;
 use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use zeroize::Zeroize;
 
 #[derive(Clone, Debug)]
 pub struct TuiConfig {
@@ -38,7 +38,6 @@ pub enum AppMode {
     ProviderSetup,
     SkillBrowse,
     DiffView,
-    ModelPicker,
 }
 
 pub struct App {
@@ -49,11 +48,9 @@ pub struct App {
     pub conversation: Conversation,
     pub composer: Composer,
     pub status_bar: StatusBar,
-    pub command_palette: CommandPalette,
     pub provider_setup: Option<ProviderSetup>,
     pub skill_browser: Option<SkillBrowser>,
     pub diff_view: Option<DiffView>,
-    pub model_picker_visible: bool,
     pub stream: StreamController,
     pub last_refresh: Instant,
     pub message_bar: String,
@@ -81,11 +78,9 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         conversation: Conversation::new(),
         composer: Composer::new(),
         status_bar: StatusBar::new(),
-        command_palette: CommandPalette::new(),
         provider_setup: None,
         skill_browser: None,
         diff_view: None,
-        model_picker_visible: false,
         stream: StreamController::new(),
         last_refresh: Instant::now(),
         message_bar: String::new(),
@@ -114,9 +109,21 @@ async fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<()> {
-    let mut stream_rx: Option<mpsc::Receiver<StreamEvent>> = None;
-
     loop {
+        if app
+            .provider_setup
+            .as_ref()
+            .is_some_and(|setup| setup.discovery_requested)
+        {
+            app.discover_local_models().await;
+        }
+        if app
+            .provider_setup
+            .as_ref()
+            .is_some_and(|setup| setup.complete)
+        {
+            app.finish_provider_setup().await;
+        }
         // Refresh state
         if app.last_refresh.elapsed() >= Duration::from_millis(100) {
             app.refresh().await;
@@ -124,7 +131,7 @@ async fn event_loop(
         }
 
         // Poll SSE stream
-        if let Some(ref mut rx) = stream_rx {
+        if let Some(ref mut rx) = app.stream.receiver {
             match rx.try_recv() {
                 Ok(StreamEvent::Delta(text)) => {
                     app.conversation.append_streaming(&text);
@@ -134,14 +141,12 @@ async fn event_loop(
                 }
                 Ok(StreamEvent::Done) => {
                     app.conversation.finalize_streaming();
-                    stream_rx = None;
-                    app.stream.stop();
+                    app.stream.active = false;
                     app.message_bar = "Done.".into();
                 }
                 Ok(StreamEvent::Error(e)) => {
                     app.conversation.cancel_streaming();
-                    stream_rx = None;
-                    app.stream.stop();
+                    app.stream.active = false;
                     app.message_bar = format!("Stream error: {e}");
                 }
                 Ok(StreamEvent::Usage { input, output }) => {
@@ -153,19 +158,9 @@ async fn event_loop(
 
         // Process pending command
         if let Some(cmd) = app.pending_command.take() {
-            let cmd_clone = cmd.clone();
-            let daemon_url = app.daemon_url().to_string();
-            let token = app.token.clone();
-            let client = reqwest::Client::new();
-
             app.running_command = true;
-            tokio::spawn(async move {
-                let cp = CommandPalette::new();
-                // We execute via a separate method that doesn't require &mut App
-                cp.execute_detached(&client, &daemon_url, &token, &cmd_clone)
-                    .await;
-            });
-            app.message_bar = format!("Running: {cmd}");
+            CommandPalette::new().execute(app, &cmd).await;
+            app.running_command = false;
         }
 
         // Process pending user message
@@ -177,12 +172,44 @@ async fn event_loop(
             if objective.is_empty() {
                 app.message_bar = "No objective set. Type a task first.".into();
             } else {
-                app.ensure_session().await;
+                let mut stream_after = 0_u64;
+                let existing_session = app.session_id.clone();
+                let Some(session_id) = app.ensure_session().await else {
+                    continue;
+                };
+                if existing_session.is_some() {
+                    stream_after = app
+                        .request(
+                            reqwest::Method::GET,
+                            &format!("/v1/sessions/{session_id}"),
+                            None,
+                        )
+                        .await
+                        .ok()
+                        .and_then(|value| value["event_count"].as_u64())
+                        .unwrap_or(0);
+                    let content = app
+                        .conversation
+                        .messages
+                        .last()
+                        .map(|message| message.content.clone())
+                        .unwrap_or_default();
+                    if let Err(error) = app
+                        .request(
+                            reqwest::Method::POST,
+                            &format!("/v1/sessions/{session_id}/messages"),
+                            Some(serde_json::json!({"content": content})),
+                        )
+                        .await
+                    {
+                        app.message_bar = format!("Message error: {error}");
+                        continue;
+                    }
+                }
                 app.conversation
                     .start_streaming(Some(app.status_bar.model.clone()));
 
                 let tx = app.stream.start();
-                stream_rx = Some(tx);
 
                 let daemon_url = app.daemon_url().to_string();
                 let token = app.token.clone();
@@ -192,7 +219,7 @@ async fn event_loop(
                 tokio::spawn(async move {
                     let sid = session_id.unwrap_or_default();
                     let url = format!(
-                        "{}/v1/sessions/{}/events/stream",
+                        "{}/v1/sessions/{}/events/stream?after={stream_after}",
                         daemon_url.trim_end_matches('/'),
                         sid
                     );
@@ -210,24 +237,24 @@ async fn event_loop(
                                             buffer = buffer[pos + 2..].to_string();
                                             for line in event_block.lines() {
                                                 if let Some(data) = line.strip_prefix("data: ") {
-                                                    if data == "[DONE]" {
-                                                        let _ = tx.send(StreamEvent::Done).await;
-                                                    } else if let Ok(val) =
+                                                    if let Ok(val) =
                                                         serde_json::from_str::<serde_json::Value>(
                                                             data,
                                                         )
                                                     {
                                                         if let Some(delta) = val
                                                             .get("delta")
-                                                            .and_then(|d| d.as_str())
+                                                            .and_then(|value| value.as_str())
                                                         {
                                                             let _ = tx
                                                                 .send(StreamEvent::Delta(
-                                                                    delta.to_string(),
+                                                                    delta.to_owned(),
                                                                 ))
                                                                 .await;
                                                         }
-                                                        if let Some(tc) = val.get("tool_call") {
+                                                        if let Some(tc) =
+                                                            val.pointer("/data/action")
+                                                        {
                                                             let _ = tx
                                                                 .send(StreamEvent::ToolCall(
                                                                     tc.clone(),
@@ -250,6 +277,19 @@ async fn event_loop(
                                                                 })
                                                                 .await;
                                                         }
+                                                        if matches!(
+                                                            val.get("event")
+                                                                .and_then(|v| v.as_str()),
+                                                            Some(
+                                                                "session_completed"
+                                                                    | "session_failed"
+                                                                    | "outcome_review_required"
+                                                            )
+                                                        ) {
+                                                            let _ =
+                                                                tx.send(StreamEvent::Done).await;
+                                                            return;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -261,8 +301,6 @@ async fn event_loop(
                                     }
                                 }
                             }
-                            // Done if stream closes cleanly after loop
-                            let _ = tx.send(StreamEvent::Done).await;
                         }
                         Err(e) => {
                             let _ = tx.send(StreamEvent::Error(e.to_string())).await;
@@ -376,5 +414,127 @@ impl App {
 
     pub fn switch_mode(&mut self, mode: AppMode) {
         self.mode = mode;
+    }
+
+    async fn finish_provider_setup(&mut self) {
+        let Some(mut setup) = self.provider_setup.take() else {
+            return;
+        };
+        let Some(provider_type) = setup.provider_type else {
+            self.provider_setup = Some(setup);
+            return;
+        };
+        let (name, kind) = match provider_type {
+            crate::provider_setup::ProviderType::Ollama => ("ollama", "ollama"),
+            crate::provider_setup::ProviderType::LmStudio => ("lm-studio", "lm-studio"),
+            crate::provider_setup::ProviderType::Openai => ("openai", "openai"),
+            crate::provider_setup::ProviderType::OpenaiCompatible => {
+                ("openai-compatible", "openai-compatible")
+            }
+            crate::provider_setup::ProviderType::EnterpriseGateway => {
+                setup.error =
+                    Some("Enterprise gateway setup requires configuration-file policy".into());
+                setup.complete = false;
+                self.provider_setup = Some(setup);
+                return;
+            }
+        };
+        let credential_name = if setup.api_key.is_empty() {
+            None
+        } else {
+            let result = self
+                .request(
+                    reqwest::Method::POST,
+                    "/v1/credentials",
+                    Some(serde_json::json!({"name": name, "secret": setup.api_key})),
+                )
+                .await;
+            setup.api_key.zeroize();
+            if let Err(error) = result {
+                setup.error = Some(format!("Credential storage failed: {error}"));
+                setup.complete = false;
+                self.provider_setup = Some(setup);
+                return;
+            }
+            Some(name)
+        };
+        let configured = self
+            .request(
+                reqwest::Method::POST,
+                "/v1/providers",
+                Some(serde_json::json!({
+                    "name": name,
+                    "provider_type": kind,
+                    "base_url": setup.base_url.clone(),
+                    "model": setup.model_id.clone(),
+                    "credential_name": credential_name,
+                })),
+            )
+            .await;
+        if let Err(error) = configured {
+            setup.error = Some(format!("Provider configuration failed: {error}"));
+            setup.complete = false;
+            self.provider_setup = Some(setup);
+            return;
+        }
+        match self
+            .request(
+                reqwest::Method::POST,
+                "/v1/providers/test",
+                Some(serde_json::json!({"provider": name})),
+            )
+            .await
+        {
+            Ok(_) => {
+                self.has_provider = true;
+                self.mode = AppMode::Conversation;
+                self.message_bar = format!("Provider {name} connected and verified.");
+            }
+            Err(error) => {
+                setup.error = Some(format!("Connection test failed: {error}"));
+                setup.complete = false;
+                self.provider_setup = Some(setup);
+            }
+        }
+    }
+
+    async fn discover_local_models(&mut self) {
+        let Some(mut setup) = self.provider_setup.take() else {
+            return;
+        };
+        setup.discovery_requested = false;
+        let provider_type = match setup.provider_type {
+            Some(crate::provider_setup::ProviderType::Ollama) => "ollama",
+            Some(crate::provider_setup::ProviderType::LmStudio) => "lm-studio",
+            _ => {
+                self.provider_setup = Some(setup);
+                return;
+            }
+        };
+        match self
+            .request(
+                reqwest::Method::POST,
+                "/v1/providers/discover",
+                Some(serde_json::json!({"provider_type": provider_type})),
+            )
+            .await
+        {
+            Ok(value) => {
+                setup.discovered_models = value["models"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|model| model.as_str().map(str::to_owned))
+                    .collect();
+                if setup.model_id.is_empty() {
+                    setup.model_id = setup.discovered_models.first().cloned().unwrap_or_default();
+                }
+                if setup.discovered_models.is_empty() {
+                    setup.error = Some("Provider is reachable but reported no models".into());
+                }
+            }
+            Err(error) => setup.error = Some(error.to_string()),
+        }
+        self.provider_setup = Some(setup);
     }
 }

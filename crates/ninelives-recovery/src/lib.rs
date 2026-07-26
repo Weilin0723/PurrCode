@@ -208,6 +208,24 @@ impl SessionStore {
         Ok(events)
     }
 
+    pub fn timestamped_events(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<(DateTime<Utc>, SessionEvent)>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT occurred_at, payload FROM session_events WHERE session_id = ?1 ORDER BY sequence",
+        )?;
+        let rows = statement.query_map([session_id.0.to_string()], |row| {
+            Ok((row.get::<_, DateTime<Utc>>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut events = Vec::new();
+        for row in rows {
+            let (timestamp, payload) = row?;
+            events.push((timestamp, serde_json::from_str(&payload)?));
+        }
+        Ok(events)
+    }
+
     pub fn integrity_check(&self) -> Result<bool, StoreError> {
         let result: String = self
             .connection

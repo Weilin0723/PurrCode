@@ -2124,6 +2124,7 @@ dependencies = [
  "toml",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -2147,6 +2148,7 @@ dependencies = [
  "blake3",
  "chrono",
  "libc",
+ "purrcode-claw",
  "purrcode-ninelives",
  "purrcode-runtime-core",
  "schemars",
@@ -2241,7 +2243,10 @@ name = "purrcode-skill-registry"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "chrono",
+ "ed25519-dalek",
+ "hex",
  "purrcode-runtime-core",
  "purrcode-skill-store",
  "reqwest",
@@ -2295,6 +2300,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -2323,6 +2329,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
