@@ -50,6 +50,20 @@ provider-backed acceptance remains an external gate)
 - The CLI supports `purrcode provider import <path>` and `purrcode provider import --stdin`; it
   emits a redacted review candidate and never saves implicitly.
 
+### Phase 5 repository-first workspace
+
+- The main TUI has wide (120+), compact (80–119), and narrow (<80) layouts. Wide terminals show a
+  bounded workspace path panel beside the timeline; compact/narrow layouts toggle it with Ctrl+B.
+- The top bar reports product version, repository/branch, active model, mode, privacy/locality,
+  daemon-managed sandbox, session identity, and current runtime phase. Authenticated daemon
+  repository inspection reports clean/dirty state without creating a second TUI execution path.
+- The workspace panel reads path metadata only, never file contents, is bounded by depth/count,
+  skips tool/build directories, and marks sensitive path names. The source tree remains preserved.
+- Contextual footer hints change for normal, file, and approval states. Ctrl+D opens the daemon-backed
+  diff flow, `?` opens help, and the empty state explains the PawGate → Claw → evidence lifecycle.
+- Runtime phase derives from durable daemon events and distinguishes thinking, retrieval, proposal,
+  approval, execution, validation, completion, failure, cancellation, and recovery.
+
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary
 commands, crate packages, SDK namespaces, configuration paths, release artifacts, and editor
