@@ -1,9 +1,9 @@
 # Implementation status
 
-Updated: 2026-07-25 (Epic: Conversational UX, Provider Setup, Skill Discovery — implemented;
-provider-backed acceptance remains an external gate)
+Updated: 2026-07-26 (v0.4 redesign implementation complete; cross-platform and provider evidence
+is recorded below)
 
-## v0.4 product redesign — in progress
+## v0.4 product redesign — implemented, provider model qualification failed
 
 - Phase 1 replaces the single-line, byte-indexed TUI composer with a Unicode grapheme-safe
   multiline editor model.
@@ -12,9 +12,10 @@ provider-backed acceptance remains an external gate)
 - Multiline history, vertical and word movement, cross-line deletion, indentation/outdent,
   selection replacement, undo/redo, CRLF normalization, and growing scrollable rendering are
   covered by TUI tests.
-- Content/secret detection, provider import, provider onboarding redesign, workspace redesign,
-  structured runtime cards, and lease-conflict UX remain incomplete and must not be represented as
-  delivered.
+- Content/secret detection, provider import, provider onboarding, responsive workspace, structured
+  runtime cards, and lease-conflict recovery are implemented in the staged Phase 1–7 PR series.
+  The running local Ollama service passed real connect and multi-turn streaming tests on 2026-07-26;
+  `qwen2.5-coder:7b` failed the complete capability qualification at 2/7 and is not recommended.
 
 ### Phase 2 content and secret guard
 

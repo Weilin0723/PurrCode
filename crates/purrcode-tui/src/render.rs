@@ -696,6 +696,8 @@ fn draw_diff(frame: &mut Frame<'_>, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
 
     #[test]
     fn workspace_breakpoints_match_the_product_contract() {
@@ -705,5 +707,42 @@ mod tests {
         assert_eq!(workspace_layout(80), WorkspaceLayout::Compact);
         assert_eq!(workspace_layout(79), WorkspaceLayout::Narrow);
         assert_eq!(workspace_layout(40), WorkspaceLayout::Narrow);
+    }
+
+    #[test]
+    fn lease_conflict_snapshot_has_state_impact_and_recovery_actions() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(draw_lease_conflict).unwrap();
+        let snapshot = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(snapshot.contains("Session already active"));
+        assert!(snapshot.contains("No new action was started and your draft is safe"));
+        assert!(snapshot.contains("Reconnect"));
+        assert!(snapshot.contains("Open read-only"));
+        assert!(snapshot.contains("Start a new session"));
+    }
+
+    #[test]
+    fn help_snapshot_exposes_primary_keyboard_actions_without_secrets() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(draw_help).unwrap();
+        let snapshot = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        for expected in ["Ctrl+Enter", "Ctrl+P", "Ctrl+D", "/connect", "/approve"] {
+            assert!(snapshot.contains(expected));
+        }
+        assert!(!snapshot.contains("sk-"));
     }
 }
