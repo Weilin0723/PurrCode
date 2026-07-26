@@ -373,7 +373,7 @@ impl RegistryAdapter for GitHubRegistryAdapter {
                     let _pushed_at = item["pushed_at"].as_str().unwrap_or("");
 
                     Some(CandidateManifest {
-                        candidate_id: format!("github:{}", full_name),
+                        candidate_id: format!("github:{full_name}"),
                         name: name.to_string(),
                         version: "0.1.0".into(),
                         publisher: Some(
@@ -405,10 +405,7 @@ impl RegistryAdapter for GitHubRegistryAdapter {
 
     async fn fetch_manifest(&self, candidate_id: &str) -> Result<CandidateManifest, RegistryError> {
         let path = candidate_id.strip_prefix("github:").unwrap_or(candidate_id);
-        let url = format!(
-            "https://api.github.com/repos/{}/contents/manifest.toml",
-            path
-        );
+        let url = format!("https://api.github.com/repos/{path}/contents/manifest.toml");
 
         let resp = self
             .client
