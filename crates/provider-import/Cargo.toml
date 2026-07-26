@@ -6,8 +6,14 @@ license.workspace = true
 
 [dependencies]
 regex.workspace = true
+purrcode-provider-gateway = { path = "../provider-gateway" }
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 thiserror.workspace = true
+toml.workspace = true
+tree-sitter.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-python.workspace = true
+url.workspace = true
 zeroize.workspace = true
-

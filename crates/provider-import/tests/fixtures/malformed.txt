@@ -1,0 +1,1 @@
+OpenAI(base_url="https://example.com/v1", model=dynamic_model(

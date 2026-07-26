@@ -9,6 +9,12 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 use thiserror::Error;
 
+mod parser;
+pub use parser::{import_provider, InputFormat};
+
+mod normalizer;
+pub use normalizer::{normalize_candidate, NormalizedProviderProfile};
+
 pub const DEFAULT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const REDACTION_TOKEN: &str = "[REDACTED_SECRET]";
 
@@ -116,6 +122,10 @@ pub struct ImportWarning {
 pub enum ImportError {
     #[error("provider import exceeds the {maximum_bytes}-byte limit")]
     InputTooLarge { maximum_bytes: usize },
+    #[error("input does not contain a supported provider configuration")]
+    Unsupported,
+    #[error("{format} input is malformed: {message}")]
+    Malformed { format: String, message: String },
 }
 
 /// Classifies bounded, untrusted source without executing or evaluating it.
@@ -177,6 +187,9 @@ pub fn redact_source(input: &str) -> Result<RedactedSource, ImportError> {
     for (kind, regex) in secret_patterns() {
         for captures in regex.captures_iter(input) {
             if let Some(secret) = captures.name("secret") {
+                if *kind == "named_secret" && looks_like_secret_reference(secret.as_str()) {
+                    continue;
+                }
                 findings.push(SecretFinding {
                     kind: (*kind).to_owned(),
                     span: SourceSpan {
@@ -210,6 +223,15 @@ pub fn redact_source(input: &str) -> Result<RedactedSource, ImportError> {
         display.replace_range(finding.span.start..finding.span.end, REDACTION_TOKEN);
     }
     Ok(RedactedSource { display, findings })
+}
+
+fn looks_like_secret_reference(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase();
+    normalized.starts_with("os.getenv(")
+        || normalized.starts_with("os.environ")
+        || normalized.starts_with("process.env.")
+        || normalized.starts_with("get_secret(")
+        || value.starts_with('$')
 }
 
 fn enforce_size(input: &str, maximum_bytes: usize) -> Result<(), ImportError> {
@@ -276,5 +298,20 @@ mod tests {
             detect_content(&input),
             Err(ImportError::InputTooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn environment_and_dynamic_secret_references_are_not_misclassified_as_values() {
+        for source in [
+            r#"api_key=os.getenv("OPENAI_API_KEY")"#,
+            "api_key=process.env.OPENAI_API_KEY",
+            "api_key=$OPENAI_API_KEY",
+            "api_key=get_secret()",
+        ] {
+            assert!(
+                redact_source(source).unwrap().findings.is_empty(),
+                "{source}"
+            );
+        }
     }
 }
