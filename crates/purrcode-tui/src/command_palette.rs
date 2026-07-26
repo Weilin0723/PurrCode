@@ -23,7 +23,7 @@ impl CommandPalette {
 
         match cmd.as_str() {
             "help" => {
-                app.message_bar = "/help /connect [import] /provider [list|edit|test|remove] /models /model <id> /role <role> <provider/model> /privacy /plan /build /review /diff /approve /deny <reason> /pause /resume /rollback /research <url> /research-approve <url> /skills /skill-search <query> /skill-search-approve <query> /skill-download <github:owner/repo> /skill-download-approve <github:owner/repo> /skill-install <user|repository|session> /skill-install-approve /skill-block <publisher> /settings /sessions /session [id] /new /compact /cancel /quit".into();
+                app.switch_mode(AppMode::Help);
             }
             "connect" => {
                 app.provider_setup = Some(if args.trim() == "import" {

@@ -16,8 +16,48 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         AppMode::ProviderSetup => draw_setup(frame, app),
         AppMode::SkillBrowse => draw_skills(frame, app),
         AppMode::DiffView => draw_diff(frame, app),
+        AppMode::Help => draw_help(frame),
+        AppMode::LeaseConflict => draw_lease_conflict(frame),
         AppMode::Conversation => draw_conversation(frame, app),
     }
+    if !app.theme.colors_enabled {
+        for cell in frame.buffer_mut().content.iter_mut() {
+            cell.set_fg(Color::Reset).set_bg(Color::Reset);
+        }
+    }
+}
+
+fn draw_help(frame: &mut Frame<'_>) {
+    let text = "Keyboard help\n\nCtrl+Enter  Send message\nEnter       Insert newline\nCtrl+P / ?  Command palette and help\nCtrl+B      Toggle workspace\nCtrl+D      Full diff\nCtrl+Up/Down Select timeline card\nCtrl+Space  Expand card details\nAlt+Up/Down Draft history\nCtrl+A      Select all\nCtrl+Z/Y    Undo / redo\nEsc         Close overlay\n\nCommands\n/connect  /provider  /models  /model  /plan  /build  /review\n/diff  /approve  /deny  /pause  /resume  /rollback\n/skills  /research  /sessions  /session  /new  /cancel  /quit";
+    frame.render_widget(
+        Paragraph::new(text).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title("Command palette")
+                .borders(Borders::ALL),
+        ),
+        centered(frame.area(), 72, 24),
+    );
+}
+
+fn draw_lease_conflict(frame: &mut Frame<'_>) {
+    let text = "Session already active\n\nAnother PurrCode client currently owns this session's daemon lease.\nNo new action was started and your draft is safe.\n\nR  Reconnect and refresh durable state\nO  Open read-only\nN  Start a new session\nD  Technical details\nEsc  Keep draft and return";
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().title("Recovery").borders(Borders::ALL)),
+        centered(frame.area(), 76, 15),
+    );
+}
+
+fn centered(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
 }
 
 fn draw_secret_review(frame: &mut Frame<'_>, app: &App) {
@@ -108,9 +148,17 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     };
 
     let privacy_indicator = if app.status_bar.privacy == "local-only" {
-        "🔒"
+        if app.theme.unicode_enabled {
+            "🔒"
+        } else {
+            "[locked]"
+        }
     } else {
-        "🌐"
+        if app.theme.unicode_enabled {
+            "🌐"
+        } else {
+            "[network]"
+        }
     };
 
     let local_indicator = if app.status_bar.local {

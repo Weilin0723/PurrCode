@@ -11,7 +11,9 @@ mod render;
 mod skill_browser;
 mod status_bar;
 mod streaming;
+mod theme;
 mod timeline;
+mod ui_state;
 mod workspace;
 
 pub use app::{run, TuiConfig};

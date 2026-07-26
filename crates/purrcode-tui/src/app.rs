@@ -10,6 +10,8 @@ use crate::render::draw;
 use crate::skill_browser::SkillBrowser;
 use crate::status_bar::StatusBar;
 use crate::streaming::{StreamController, StreamEvent};
+use crate::theme::Theme;
+use crate::ui_state::UiState;
 use crate::workspace::WorkspaceContext;
 use anyhow::Result;
 use crossterm::event::{
@@ -43,6 +45,8 @@ pub enum AppMode {
     ProviderSetup,
     SkillBrowse,
     DiffView,
+    Help,
+    LeaseConflict,
 }
 
 #[derive(Clone, Debug)]
@@ -76,6 +80,7 @@ pub struct App {
     pub quit_requested: bool,
     pub downloaded_skill: Option<Value>,
     pub pending_skill_install_action: Option<String>,
+    pub theme: Theme,
 }
 
 pub async fn run(config: TuiConfig) -> Result<()> {
@@ -88,6 +93,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         .build()?;
 
     let workspace = WorkspaceContext::inspect(&config.repository);
+    let recovery = UiState::load(&config.repository);
     let mut app = App {
         config,
         client,
@@ -112,7 +118,9 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         quit_requested: false,
         downloaded_skill: None,
         pending_skill_install_action: None,
+        theme: Theme::detect(),
     };
+    app.session_id = recovery.restore(&mut app.composer);
 
     app.check_provider().await;
     app.check_workspace().await;
@@ -239,7 +247,14 @@ async fn event_loop(
                         )
                         .await
                     {
-                        app.message_bar = format!("Message error: {error}");
+                        app.stream.active = false;
+                        if error.to_string().contains("409 Conflict") {
+                            app.switch_mode(AppMode::LeaseConflict);
+                            app.refresh().await;
+                            app.message_bar = "Session lease conflict; no new action was started and your draft is safe.".into();
+                        } else {
+                            app.message_bar = format!("Message error: {error}");
+                        }
                         continue;
                     }
                 }
@@ -379,6 +394,7 @@ async fn event_loop(
                     }
                 }
             }
+            app.persist_ui_state();
             continue;
         }
         let Event::Key(key) = input else { continue };
@@ -387,12 +403,21 @@ async fn event_loop(
         }
 
         if !handle_key(app, key) {
+            app.persist_ui_state();
             return Ok(());
         }
+        app.persist_ui_state();
     }
 }
 
 impl App {
+    pub fn persist_ui_state(&self) {
+        UiState::save(
+            &self.config.repository,
+            self.session_id.as_deref(),
+            &self.composer,
+        );
+    }
     pub fn daemon_url(&self) -> &str {
         self.config.daemon_url.trim_end_matches('/')
     }

@@ -74,6 +74,17 @@ provider-backed acceptance remains an external gate)
 - Pending approvals expose exact-action-bound A approve and R reject shortcuts; both use the daemon
   approval endpoints and preserve PawGate authorization enforcement.
 
+### Phase 7 recovery and polish
+
+- HTTP 409 session lease conflicts stop streaming and open an actionable recovery overlay with
+  reconnect, read-only attach, new-session, and technical-detail choices. No competing loop starts.
+- Repository-scoped selected-session and unsent-draft state restores after restart. Recovery state
+  is written atomically; secret-like values are redacted before disk persistence.
+- Ctrl+P and `?` open a keyboard-first command/help overlay. `NO_COLOR` and dumb terminals receive
+  plain-color and ASCII status fallbacks without relying on color alone.
+- Composer selection supports Shift+arrows and Page Up/Down. Performance regressions cover a 256 KB
+  draft and a 10,000-event timeline with bounded interactive latency.
+
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary
 commands, crate packages, SDK namespaces, configuration paths, release artifacts, and editor

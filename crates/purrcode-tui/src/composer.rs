@@ -186,6 +186,11 @@ impl Composer {
         self.cursor = self.grapheme_count();
     }
 
+    pub fn restore_draft(&mut self, draft: &str) {
+        self.replace_sensitive_with(draft.to_owned());
+        self.cursor = self.grapheme_count();
+    }
+
     pub fn outdent_current_line(&mut self) {
         let (line, column) = self.cursor_line_column();
         let start = self.position_for_line_column(line, 0);
@@ -234,6 +239,34 @@ impl Composer {
 
     pub fn move_down(&mut self) {
         self.move_vertical(1);
+    }
+
+    pub fn move_page(&mut self, pages: isize) {
+        for _ in 0..pages.unsigned_abs().saturating_mul(8) {
+            if pages < 0 {
+                self.move_up();
+            } else {
+                self.move_down();
+            }
+        }
+    }
+
+    pub fn select_move_left(&mut self) {
+        let anchor = self.selection_anchor.unwrap_or(self.cursor);
+        self.move_left();
+        self.selection_anchor = Some(anchor);
+    }
+
+    pub fn select_move_right(&mut self) {
+        let anchor = self.selection_anchor.unwrap_or(self.cursor);
+        self.move_right();
+        self.selection_anchor = Some(anchor);
+    }
+
+    pub fn select_move_vertical(&mut self, delta: isize) {
+        let anchor = self.selection_anchor.unwrap_or(self.cursor);
+        self.move_vertical(delta);
+        self.selection_anchor = Some(anchor);
     }
 
     pub fn undo(&mut self) {
@@ -494,6 +527,15 @@ mod tests {
         let large = "界".repeat(20_000);
         composer.insert_paste(&large);
         assert_eq!(composer.grapheme_count(), 20_000);
+    }
+
+    #[test]
+    fn large_draft_edit_latency_stays_interactive() {
+        let start = std::time::Instant::now();
+        let mut composer = Composer::new();
+        composer.insert_paste(&"x".repeat(256 * 1024));
+        assert_eq!(composer.grapheme_count(), 256 * 1024);
+        assert!(start.elapsed() < std::time::Duration::from_millis(250));
     }
 
     #[test]

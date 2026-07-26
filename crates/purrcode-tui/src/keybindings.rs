@@ -10,6 +10,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         AppMode::ProviderSetup => handle_setup_key(app, key),
         AppMode::SkillBrowse => handle_skill_key(app, key),
         AppMode::DiffView => handle_diff_key(app, key),
+        AppMode::Help => {
+            app.switch_mode(AppMode::Conversation);
+            true
+        }
+        AppMode::LeaseConflict => handle_lease_conflict_key(app, key),
         AppMode::Conversation => handle_conversation_key(app, key),
     }
 }
@@ -79,8 +84,9 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char(' ') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.conversation.toggle_selected_card()
         }
-        KeyCode::Char('?') if app.composer.buffer.is_empty() => {
-            app.pending_command = Some("/help".into())
+        KeyCode::Char('?') if app.composer.buffer.is_empty() => app.switch_mode(AppMode::Help),
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.switch_mode(AppMode::Help)
         }
         KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => app.composer.undo(),
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => app.composer.redo(),
@@ -99,6 +105,12 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.composer.move_word_right()
         }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.composer.select_move_left()
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.composer.select_move_right()
+        }
         KeyCode::Left => app.composer.move_left(),
         KeyCode::Right => app.composer.move_right(),
         KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -111,6 +123,14 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::End => app.composer.move_end(),
         KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => app.composer.history_up(),
         KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => app.composer.history_down(),
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.composer.select_move_vertical(-1)
+        }
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.composer.select_move_vertical(1)
+        }
+        KeyCode::PageUp => app.composer.move_page(-1),
+        KeyCode::PageDown => app.composer.move_page(1),
         KeyCode::Up => app.composer.move_up(),
         KeyCode::Down => app.composer.move_down(),
         KeyCode::Esc => {
@@ -121,6 +141,30 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::BackTab => app.composer.outdent_current_line(),
         KeyCode::Tab => app.composer.insert_tab(),
+        _ => {}
+    }
+    true
+}
+
+fn handle_lease_conflict_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            app.pending_command = Some("/resume".into());
+            app.switch_mode(AppMode::Conversation);
+        }
+        KeyCode::Char('o') | KeyCode::Char('O') | KeyCode::Esc => {
+            app.switch_mode(AppMode::Conversation);
+            app.message_bar = "Attached read-only; draft preserved.".into();
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            app.session_id = None;
+            app.switch_mode(AppMode::Conversation);
+            app.message_bar = "New session selected; draft preserved.".into();
+        }
+        KeyCode::Char('d') | KeyCode::Char('D') => {
+            app.message_bar =
+                "Daemon returned HTTP 409 Conflict while acquiring the session lease.".into();
+        }
         _ => {}
     }
     true
