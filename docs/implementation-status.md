@@ -64,6 +64,16 @@ provider-backed acceptance remains an external gate)
 - Runtime phase derives from durable daemon events and distinguishes thinking, retrieval, proposal,
   approval, execution, validation, completion, failure, cancellation, and recovery.
 
+### Phase 6 structured runtime timeline
+
+- The conversation surface maps durable session events into semantic plan, action, PawGate,
+  approval, Claw, bounded output, validation, checkpoint, recovery, skill, and completion cards.
+  Raw event JSON is never used as timeline presentation.
+- Ctrl+Up/Down selects timeline cards and Ctrl+Space expands bounded detail. Tool output previews are
+  capped, while Ctrl+D continues to open the complete daemon-backed diff flow.
+- Pending approvals expose exact-action-bound A approve and R reject shortcuts; both use the daemon
+  approval endpoints and preserve PawGate authorization enforcement.
+
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary
 commands, crate packages, SDK namespaces, configuration paths, release artifacts, and editor

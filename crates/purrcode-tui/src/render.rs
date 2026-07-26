@@ -1,6 +1,7 @@
 //! Ratatui rendering for all TUI modes.
 
 use crate::app::{App, AppMode};
+use crate::timeline::{action_summary, CardKind, TimelineCard};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -147,25 +148,41 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let mut items: Vec<ListItem> = app
-        .conversation
-        .messages
-        .iter()
-        .skip(app.conversation.scroll)
-        .map(|msg| {
-            let prefix = match msg.role.as_str() {
-                "user" => "You: ",
-                "assistant" => "PurrCode: ",
-                _ => "System: ",
-            };
-            let style = match msg.role.as_str() {
-                "user" => Style::default().fg(Color::Cyan),
-                "assistant" => Style::default().fg(Color::White),
-                _ => Style::default().fg(Color::DarkGray),
-            };
-            ListItem::new(render_markdown(prefix, &msg.content, style))
-        })
-        .collect();
+    let mut items: Vec<ListItem> = if app.conversation.timeline.is_empty() {
+        app.conversation
+            .messages
+            .iter()
+            .skip(app.conversation.scroll)
+            .map(|msg| {
+                let prefix = match msg.role.as_str() {
+                    "user" => "You: ",
+                    "assistant" => "PurrCode: ",
+                    _ => "System: ",
+                };
+                let style = match msg.role.as_str() {
+                    "user" => Style::default().fg(Color::Cyan),
+                    "assistant" => Style::default().fg(Color::White),
+                    _ => Style::default().fg(Color::DarkGray),
+                };
+                ListItem::new(render_markdown(prefix, &msg.content, style))
+            })
+            .collect()
+    } else {
+        app.conversation
+            .timeline
+            .iter()
+            .enumerate()
+            .skip(app.conversation.scroll)
+            .map(|(index, card)| {
+                timeline_item(
+                    card,
+                    index,
+                    app.conversation.selected_card == Some(index),
+                    app.conversation.expanded_card == Some(index),
+                )
+            })
+            .collect()
+    };
 
     if let Some(ref msg) = app.conversation.streaming_message {
         let text = format!("PurrCode: {}", msg.content);
@@ -192,9 +209,58 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 
     frame.render_widget(
-        List::new(items).block(Block::default().title("Conversation").borders(Borders::ALL)),
+        List::new(items).block(Block::default().title("Timeline").borders(Borders::ALL)),
         area,
     );
+}
+
+fn timeline_item<'a>(
+    card: &'a TimelineCard,
+    index: usize,
+    selected: bool,
+    expanded: bool,
+) -> ListItem<'a> {
+    let (glyph, color) = match card.kind {
+        CardKind::Conversation => ("●", Color::White),
+        CardKind::Plan => ("◆", Color::Blue),
+        CardKind::Action => ("▶", Color::Yellow),
+        CardKind::PawGate => ("◆", Color::Magenta),
+        CardKind::Claw => ("▶", Color::Cyan),
+        CardKind::Output => ("│", Color::DarkGray),
+        CardKind::Validation => ("✓", Color::Green),
+        CardKind::Checkpoint => ("●", Color::Blue),
+        CardKind::Recovery => ("!", Color::Red),
+        CardKind::Completion => ("✓", Color::Green),
+        CardKind::Skill => ("◇", Color::Cyan),
+        CardKind::Context => ("·", Color::DarkGray),
+    };
+    let marker = if selected { "›" } else { " " };
+    let mut lines = vec![Line::from(vec![
+        Span::styled(format!("{marker}{glyph} "), Style::default().fg(color)),
+        Span::styled(
+            &card.title,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    lines.extend(render_markdown("  ", &card.summary, Style::default().fg(Color::White)).lines);
+    if expanded {
+        for detail in &card.details {
+            lines.extend(
+                render_markdown("    ", detail, Style::default().fg(Color::DarkGray)).lines,
+            );
+        }
+    } else if !card.details.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "    {} detail line(s) · Ctrl+Space to expand",
+                card.details.len()
+            ),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines.push(Line::from(""));
+    let _ = index;
+    ListItem::new(Text::from(lines))
 }
 
 fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -302,7 +368,8 @@ fn draw_action_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
     if let Some(action) = &app.conversation.pending_action {
         text.push_str(&format!(
-            "\nPending action: {action}\nUse /approve or /deny <reason>."
+            "\nPending action: {}\nA approve · R reject · Ctrl+D full diff",
+            action_summary(action)
         ));
     }
     for evidence in &app.conversation.evidence {
