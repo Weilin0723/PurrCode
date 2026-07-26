@@ -153,12 +153,10 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
         } else {
             "[locked]"
         }
+    } else if app.theme.unicode_enabled {
+        "🌐"
     } else {
-        if app.theme.unicode_enabled {
-            "🌐"
-        } else {
-            "[network]"
-        }
+        "[network]"
     };
 
     let local_indicator = if app.status_bar.local {
