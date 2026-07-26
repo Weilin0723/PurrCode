@@ -378,7 +378,7 @@ impl App {
         let status = resp.status();
         let value: Value = resp.json().await?;
         if !status.is_success() {
-            anyhow::bail!("daemon HTTP {}: {}", status, value);
+            anyhow::bail!("daemon HTTP {status}: {value}");
         }
         Ok(value)
     }
