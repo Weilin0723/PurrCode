@@ -57,7 +57,7 @@ this release-candidate pass.
 - [x] Set the live benchmark default to 300 seconds and reject a zero timeout.
 - [x] Reduce repeated context reads through explicit progress guidance in `build_messages()`.
 - [ ] Run five live coding tasks with a qualified provider and archive `benchmark.json` plus
-  `benchmark.md`. This is an external gate when no qualified provider is available.
+  `docs/reports/benchmark.md`. This is an external gate when no qualified provider is available.
 
 `MAX_AUTONOMOUS_ITERATIONS` is 32. Do not describe it as 10–20 without new code evidence. Fixture
 `maximum_seconds` applies to the final validation command; it must not silently shorten the agent's
@@ -67,19 +67,19 @@ whole-task deadline.
 
 - [ ] Run `purrcode model qualify` against each configured NVIDIA NIM, Ollama, and LM Studio
   provider.
-- [ ] Produce `provider-report.json` and `provider-report.md` from real provider evidence. Never
+- [ ] Produce `provider-report.json` and `docs/reports/provider-qualification.md` from real provider evidence. Never
   represent an unavailable provider or skipped qualification as passing.
 - [x] Fix OpenAI-compatible endpoint joining when `/v1` lacks a trailing slash; the local Ollama
   qualification no longer fails immediately with HTTP 404.
-- [x] Record the bounded, incomplete local attempt in `provider-report.md`.
+- [x] Record the completed local result in `docs/reports/provider-qualification.md`.
 
 ### Phase 3: Crash recovery — complete
 
-- [x] Evidence is recorded in `recovery-report.md`.
+- [x] Evidence is recorded in `docs/reports/recovery-validation.md`.
 
 ### Phase 4: Fresh installation — complete on macOS
 
-- [x] Evidence is recorded in `installation-report.md`.
+- [x] Evidence is recorded in `docs/reports/installation.md`.
 - [ ] Linux and Windows remain external platform gates.
 
 ### Phase 5: Release pipeline
@@ -88,5 +88,5 @@ whole-task deadline.
 - [x] Validate triggers, build matrix, checksums, signing, provenance, and artifact upload by static
   inspection and local repository checks.
 - [x] Review Homebrew and winget packaging templates.
-- [x] Record verified and external-gate findings in `release-report.md`.
+- [x] Record verified and external-gate findings in `docs/reports/release-pipeline.md`.
 - [ ] Exercise the workflows upstream and smoke-test installation from a produced macOS artifact.
