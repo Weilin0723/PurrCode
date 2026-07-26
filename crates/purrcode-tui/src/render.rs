@@ -261,7 +261,7 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Line::from("PawGate judges → Claw executes → evidence verifies."),
             Line::from(""),
             Line::from(Span::styled(
-                "Ctrl+Enter sends · Enter adds a line · Ctrl+B opens files",
+                "Ctrl+G sends · Enter adds a line · Ctrl+Enter works where supported",
                 Style::default().fg(Color::DarkGray),
             )),
         ])));
@@ -376,7 +376,7 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
     {
         "Ctrl+B Timeline  @file mention  Ctrl+D Diff  ? Help"
     } else {
-        "Ctrl+Enter Send  Enter Newline  Ctrl+P Commands  Ctrl+B Files  Ctrl+D Diff  ? Help"
+        "Ctrl+G Send  Enter Newline  Ctrl+P Commands  Ctrl+B Files  Ctrl+D Diff  ? Help"
     };
     frame.render_widget(
         Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
@@ -477,7 +477,7 @@ fn draw_composer(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ""
     };
     let title = format!(
-        "Composer · {} lines · {} chars{} · Ctrl+Enter send · Enter newline",
+        "Composer · {} lines · {} chars{} · Ctrl+G send · Enter newline",
         app.composer.line_count(),
         app.composer.grapheme_count(),
         paste_badge
@@ -522,7 +522,7 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
     let content = match setup.screen {
         crate::provider_setup::SetupScreen::Discovery => setup_discovery_text(setup),
         crate::provider_setup::SetupScreen::ImportSource => format!(
-            "Import provider configuration\n\nPaste a Python, JavaScript, cURL, dotenv, JSON, YAML, or TOML example.\nThe source is parsed locally and is never executed. Raw secret values are never rendered here.\n\nCaptured: {} bytes · {} lines\n\nCtrl+Enter  Parse and review    Esc  Cancel{}",
+            "Import provider configuration\n\nPaste a Python, JavaScript, cURL, dotenv, JSON, YAML, or TOML example.\nThe source is parsed locally and is never executed. Raw secret values are never rendered here.\n\nCaptured: {} bytes · {} lines\n\nCtrl+G  Parse and review    Esc  Cancel{}",
             setup.import_source.len(),
             setup.import_source.lines().count().max(1),
             setup.error.as_ref().map_or_else(String::new, |error| format!("\n\nError: {error}"))
@@ -622,7 +622,7 @@ fn setup_form_text(setup: &crate::provider_setup::ProviderSetup) -> String {
         String::new()
     };
     format!(
-        "Review provider\n\nProvider: {provider}\n\n{} Profile name  [{}]\n{} Base URL      [{}]\n{} API key       [{}]\n{} Model          [{}]\n{} Role           [{}]\n\nDiscovered models: {}\nNetwork: {}{}{}\n\nTab/Shift+Tab  Field    Ctrl+Enter  Save and run real connection test    Esc  Cancel",
+        "Review provider\n\nProvider: {provider}\n\n{} Profile name  [{}]\n{} Base URL      [{}]\n{} API key       [{}]\n{} Model          [{}]\n{} Role           [{}]\n\nDiscovered models: {}\nNetwork: {}{}{}\n\nTab/Shift+Tab  Field    Ctrl+G  Save and run real connection test    Esc  Cancel",
         marker(0), setup.profile_name,
         marker(1), setup.base_url,
         marker(2), if setup.api_key.is_empty() { "not set" } else { "••••••••" },
