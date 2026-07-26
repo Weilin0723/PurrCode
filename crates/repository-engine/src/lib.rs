@@ -104,12 +104,10 @@ impl RepositoryEngine {
             .parent()
             .ok_or_else(|| RepositoryError::UnsafeWorktreePath(path.clone()))?;
         std::fs::create_dir_all(parent)?;
-        let path_text = path
-            .to_str()
-            .ok_or_else(|| RepositoryError::NonUtf8Path(path.clone()))?;
+        let path_text = git_compatible_path(&path)?;
         git_text(
             &snapshot.root,
-            &["worktree", "add", "--detach", path_text, &snapshot.head],
+            &["worktree", "add", "--detach", &path_text, &snapshot.head],
         )
         .await?;
         let canonical_path = path.canonicalize()?;
@@ -406,13 +404,10 @@ impl RepositoryEngine {
                 detail: format!("worktree retained at {}", worktree.path.display()),
             }),
             ApplicationStrategy::Discard => {
-                let path = worktree
-                    .path
-                    .to_str()
-                    .ok_or_else(|| RepositoryError::NonUtf8Path(worktree.path.clone()))?;
+                let path = git_compatible_path(&worktree.path)?;
                 git_bytes(
                     &worktree.source_repository,
-                    &["worktree", "remove", "--force", path],
+                    &["worktree", "remove", "--force", &path],
                 )
                 .await?;
                 Ok(ApplicationResult {
@@ -555,6 +550,29 @@ fn ensure_session_path(
     Ok(())
 }
 
+fn git_compatible_path(path: &Path) -> Result<String, RepositoryError> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| RepositoryError::NonUtf8Path(path.to_path_buf()))?;
+    #[cfg(windows)]
+    {
+        return Ok(normalize_windows_git_path(path));
+    }
+    #[cfg(not(windows))]
+    Ok(path.to_owned())
+}
+
+#[cfg(any(windows, test))]
+fn normalize_windows_git_path(path: &str) -> String {
+    if let Some(path) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{path}")
+    } else if let Some(path) = path.strip_prefix(r"\\?\") {
+        path.to_owned()
+    } else {
+        path.to_owned()
+    }
+}
+
 async fn git_text(directory: &Path, arguments: &[&str]) -> Result<String, RepositoryError> {
     let bytes = git_bytes(directory, arguments).await?;
     String::from_utf8(bytes).map_err(RepositoryError::GitUtf8)
@@ -667,7 +685,7 @@ async fn initialize_local_submodules(
             arguments.push("-c".into());
             arguments.push(format!(
                 "submodule.{name}.url={}",
-                local_source.to_string_lossy()
+                git_compatible_path(local_source)?
             ));
         }
         arguments.extend(
@@ -705,15 +723,13 @@ async fn submodule_entries(repository: &Path) -> Result<Vec<(String, PathBuf)>, 
         return Ok(Vec::new());
     }
     let file = repository.join(".gitmodules");
-    let file = file
-        .to_str()
-        .ok_or_else(|| RepositoryError::NonUtf8Path(file.clone()))?;
+    let file = git_compatible_path(&file)?;
     let output = git_text(
         repository,
         &[
             "config",
             "-f",
-            file,
+            &file,
             "--get-regexp",
             r"^submodule\..*\.path$",
         ],
@@ -893,6 +909,22 @@ pub enum RepositoryError {
 mod tests {
     use super::*;
     use std::process::Command as StdCommand;
+
+    #[test]
+    fn windows_extended_paths_are_normalized_for_git() {
+        assert_eq!(
+            normalize_windows_git_path(r"\\?\C:\Users\runner\repo"),
+            r"C:\Users\runner\repo"
+        );
+        assert_eq!(
+            normalize_windows_git_path(r"\\?\UNC\server\share\repo"),
+            r"\\server\share\repo"
+        );
+        assert_eq!(
+            normalize_windows_git_path(r"C:\Users\runner\repo"),
+            r"C:\Users\runner\repo"
+        );
+    }
 
     fn git(repository: &Path, arguments: &[&str]) {
         let status = StdCommand::new("git")
