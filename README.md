@@ -50,8 +50,7 @@ PurrCode
 
 ## Install
 
-After the signed `v0.1.0` release is published, macOS and Linux users can download, verify, and
-install both binaries with one command:
+macOS and Linux users can download, verify, and install both `v0.1.0` binaries with one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.1.0/scripts/install.sh | sh

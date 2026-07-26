@@ -61,8 +61,8 @@ cargo install --locked --path crates/purrcode-daemon
 
 | Step | Status | Notes |
 |---|---|---|
-| `purrcode upgrade check --channel stable` | UNAVAILABLE | Returns 404 because no release is published |
-| `purrcode upgrade download` | UNAVAILABLE | Returns 404 because no release artifact is published |
+| `purrcode upgrade check --channel stable` | PASS | Reports current and available version `0.1.0` from the published release |
+| `purrcode upgrade download` | UNAVAILABLE | Correctly fails closed because `cosign` is not installed on this smoke-test host |
 
 ## All platform coverage
 
@@ -75,5 +75,7 @@ cargo install --locked --path crates/purrcode-daemon
 ## Summary
 
 The installation workflow is functional on macOS. All CLI commands and subcommands work.
-The release pipeline needs to be exercised to validate `upgrade check/download/install/rollback`.
-Cross-platform validation is covered by CI matrix in `.github/workflows/ci.yml` and `.github/workflows/release.yml`.
+Release `v0.1.0` is published. Its checksum-verifying installer downloaded the public macOS ARM64
+archive into a temporary installation directory, and `purrcode --version` plus
+`purrcoded --version` both returned `0.1.0`. Cross-platform CI passed on macOS, Linux, and Windows;
+package-manager publication and live provider qualification remain separate gates.

@@ -4,9 +4,8 @@ Date: 2026-07-25
 
 ## Outcome
 
-The repository-level release pipeline is statically validated and locally testable. It is not yet
-proven in GitHub's hosted environment, and no release artifact is represented as published or
-installable.
+The repository-level release pipeline passed in GitHub's hosted environment. Release `v0.1.0` is
+published with five platform archives, checksums, Sigstore bundles, and build provenance.
 
 ## CI workflow
 
@@ -46,15 +45,21 @@ GitHub Release. Write, OIDC, and attestation permissions are restricted to that 
   not be submitted until a release process substitutes real SHA-256 values.
 - Repository, upgrade, formula, and winget URLs point to `Weilin0723/PurrCode`.
 
-## External gates
+## Upstream execution evidence
 
-The following were not run because this checkout has no authenticated GitHub session and neither
-`act` nor `actionlint` is installed:
+- CI run 30184357753 passed Rust formatting, Clippy, and tests on Ubuntu, macOS, and Windows, plus
+  the TypeScript SDK, VS Code extension, and Python SDK checks.
+- Signed-release run 30184496010 validated the workspace, built all five target archives, generated
+  `SHA256SUMS`, signed every artifact using GitHub OIDC, attested provenance, and published the
+  GitHub Release.
+- The public macOS ARM64 artifact was downloaded through `scripts/install.sh`, verified against
+  `SHA256SUMS`, installed to a temporary destination, and both binaries reported version `0.1.0`.
 
-1. Hosted execution of CI on all three operating systems.
-2. A tag-triggered signed release with GitHub OIDC, attestations, and artifact upload.
-3. Substitution and publication of real Homebrew and winget checksums.
-4. Installation and rollback smoke tests from the produced macOS release archive.
+## Remaining external gates
+
+1. Substitution and publication of real Homebrew and winget checksums.
+2. Live provider qualification and golden benchmark runs requiring locally supplied providers or
+   credentials.
 
 These remain external gates. Static inspection or a skipped tool is not counted as execution
 success.

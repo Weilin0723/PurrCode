@@ -209,14 +209,16 @@ execution beyond carefully audited command forms.
 - A daemon-backed VS Code extension builds with strict TypeScript and provides repository/selection
   context, task/plan creation, evidence, approval, lifecycle controls, model selection, and
   current-file isolated diff review.
-- Cross-platform CI, signed-release workflow definitions, Homebrew and winget packaging templates
-  exist but have not yet been exercised in the upstream release environment.
+- Cross-platform CI passed on macOS, Linux, and Windows in run 30184357753. Signed-release run
+  30184496010 published five `v0.1.0` platform archives, SHA-256 checksums, Sigstore bundles, and
+  GitHub provenance; the public macOS ARM64 archive passed the checksum-verifying installer smoke
+  test. Homebrew and winget publication remain deferred.
 - Live golden benchmarks now honor the requested whole-task timeout (300 seconds by default)
   instead of silently capping it from a fixture's validation-command budget. Agent prompting also
   directs small fixes toward minimal implementation and validation rather than repeated reads.
-- Release validation now gates artifact builds, manual dispatch is tag-guarded, and write/OIDC/
-  attestation permissions are scoped to the publish job. Upstream execution remains an external
-  release gate.
+- Release validation gates artifact builds, manual dispatch is tag-guarded, and write/OIDC/
+  attestation permissions are scoped to the publish job. The complete tag-triggered pipeline has
+  now passed upstream for `v0.1.0`.
 - Proposed-command editing and exact apply/reject hunk review are implemented. Signed upgrades
   validate archive paths, atomically rotate both binaries, and preserve a tested rollback version.
   Remote skill marketplace discovery, workflow/calendar expressions, and desktop polish remain
