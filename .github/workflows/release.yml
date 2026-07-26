@@ -93,6 +93,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Pin launcher checksums to this release's native archives
+        run: node packages/purrcode/scripts/write-checksums.js dist
       - name: Package npm-compatible launcher
         run: npm pack ./packages/purrcode --ignore-scripts --pack-destination dist
       - name: Create checksum manifest
