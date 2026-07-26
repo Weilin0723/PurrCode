@@ -2043,22 +2043,38 @@ mod tests {
         std::fs::write(repository.join("README.md"), "fixture").unwrap();
         git(&repository, &["add", "README.md"]);
         git(&repository, &["commit", "-m", "fixture"]);
+        let provider_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let provider_address = provider_listener.local_addr().unwrap();
+        let provider_server = tokio::spawn(async move {
+            axum::serve(
+                provider_listener,
+                Router::new().fallback(|| async {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        "intentional provider failure for daemon ownership test",
+                    )
+                }),
+            )
+            .await
+        });
         let app_config = temporary.path().join("config.toml");
         std::fs::write(
             &app_config,
-            r#"
+            format!(
+                r#"
 schema_version = 1
 [privacy]
 mode = "local-only"
 [providers.fixture]
 type = "openai-compatible"
-base_url = "http://127.0.0.1:9/v1/"
+base_url = "http://{provider_address}/v1/"
 local = true
 [models]
 default = "fixture/test"
 [models.roles]
 judge = "fixture/judge"
-"#,
+"#
+            ),
         )
         .unwrap();
         let token_file = temporary.path().join("daemon.token");
@@ -2118,6 +2134,7 @@ judge = "fixture/judge"
             .iter()
             .any(|event| matches!(event, SessionEvent::WorktreeCreated { .. })));
         handle.abort();
+        provider_server.abort();
     }
 
     fn git(repository: &Path, arguments: &[&str]) {
