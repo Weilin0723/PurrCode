@@ -14,6 +14,10 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. Every 
 bound to a durable authorization, checked again immediately before execution, and followed by
 recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
+The v0.4 workspace adds a Unicode-safe multiline composer, redacted script-aware provider import,
+real provider discovery/testing, a responsive repository panel, structured runtime cards, a
+searchable command palette, and actionable daemon-recovery flows.
+
 ## Why PurrCode
 
 - **Enforceable authorization:** PawGate approves the exact serialized action and constraints;
@@ -144,6 +148,8 @@ PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
 - [Recovery](docs/recovery.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Implementation status](docs/implementation-status.md)
+- [v0.4 redesign acceptance](docs/product-redesign-acceptance.md)
+- [Verification reports](docs/reports/)
 
 PurrCode is under active development. Consult the implementation status and release notes for
 verified capabilities and remaining platform-specific gates.

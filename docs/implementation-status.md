@@ -88,6 +88,8 @@ is recorded below)
   draft and a 10,000-event timeline with bounded interactive latency.
 - The v0.4 release launcher generates its pinned checksums from the exact five native archives in
   the signed-release job before `npm pack`; a stale checksum file cannot silently ship.
+- Historical benchmark, installation, provider, recovery, and release evidence is grouped under
+  `docs/reports/`; generated qualification artifacts no longer clutter the repository root.
 
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary

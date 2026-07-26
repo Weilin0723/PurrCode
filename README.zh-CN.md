@@ -14,6 +14,9 @@ PurrCode 是一个在隔离 Git worktree 中工作的终端编程智能体。每
 持久化授权，并在执行前再次校验，随后记录真实验证结果。仓库内容、模型输出和下载的技能
 始终被视为不可信数据。
 
+v0.4 工作区新增 Unicode 安全的多行编辑器、自动脱敏且仅解析不执行的 Provider 脚本导入、
+真实 Provider 发现与测试、响应式仓库面板、结构化运行卡片、可搜索命令面板和可操作的守护进程恢复流程。
+
 ## 为什么选择 PurrCode
 
 - **可强制执行的授权：** PawGate 对序列化后的具体操作和约束进行审批；执行适配器会再次
@@ -143,6 +146,8 @@ PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
 - [恢复](docs/recovery.md)
 - [故障排查](docs/troubleshooting.md)
 - [实现状态](docs/implementation-status.md)
+- [v0.4 重构验收](docs/product-redesign-acceptance.md)
+- [验证报告](docs/reports/)
 
 PurrCode 仍在积极开发中。请查看实现状态和发布说明，确认已经验证的能力以及仍待完成的
 平台专项验收。
