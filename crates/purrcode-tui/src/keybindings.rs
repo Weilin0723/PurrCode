@@ -1,7 +1,7 @@
 //! Keyboard dispatch for the TUI.
 
 use crate::app::{App, AppMode};
-use crate::provider_setup::ProviderType;
+use crate::provider_setup::{ProviderSetup, SetupScreen};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
@@ -112,10 +112,15 @@ fn handle_secret_review_key(app: &mut App, key: KeyEvent) -> bool {
             app.message_bar = "Secret-like values were redacted before sending.".into();
         }
         KeyCode::Char('i') | KeyCode::Char('I') => {
+            let source = std::mem::take(&mut app.composer.buffer);
+            app.composer.replace_sensitive_with(String::new());
+            let mut setup = ProviderSetup::import_mode();
+            setup.import_source = source;
+            setup.review_import();
             app.secret_review = None;
-            app.provider_setup = Some(crate::provider_setup::ProviderSetup::new());
+            app.provider_setup = Some(setup);
             app.switch_mode(AppMode::ProviderSetup);
-            app.message_bar = "Provider import review will use the protected draft.".into();
+            app.message_bar = "Review imported provider fields before testing.".into();
         }
         KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('C') => {
             app.secret_review = None;
@@ -128,51 +133,80 @@ fn handle_secret_review_key(app: &mut App, key: KeyEvent) -> bool {
 }
 
 fn handle_setup_key(app: &mut App, key: KeyEvent) -> bool {
+    let confirm = key.code == KeyCode::Enter
+        && key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
     match key.code {
         KeyCode::Esc => {
             app.provider_setup = None;
             app.switch_mode(AppMode::Conversation);
         }
-        KeyCode::Enter => {
+        KeyCode::Enter if confirm => {
             if let Some(ref mut setup) = app.provider_setup {
-                if !setup.complete {
-                    setup.advance();
+                if setup.screen == SetupScreen::ImportSource {
+                    setup.review_import();
+                } else {
+                    setup.request_test_and_save();
                 }
             }
         }
-        KeyCode::Char(choice @ '1'..='5')
+        KeyCode::Enter => {
+            if let Some(setup) = &mut app.provider_setup {
+                if setup.screen == SetupScreen::Discovery {
+                    setup.choose_selected();
+                } else if setup.screen == SetupScreen::ImportSource {
+                    setup.insert_import("\n");
+                } else {
+                    setup.next_field(false);
+                }
+            }
+        }
+        KeyCode::Up
             if app
                 .provider_setup
                 .as_ref()
-                .is_some_and(|s| s.provider_type.is_none()) =>
+                .is_some_and(|setup| setup.screen == SetupScreen::Discovery) =>
         {
-            let provider = match choice {
-                '1' => ProviderType::Ollama,
-                '2' => ProviderType::LmStudio,
-                '3' => ProviderType::Openai,
-                '4' => ProviderType::OpenaiCompatible,
-                _ => ProviderType::EnterpriseGateway,
-            };
             if let Some(setup) = &mut app.provider_setup {
-                setup.select_provider(provider);
+                setup.move_selection(-1);
+            }
+        }
+        KeyCode::Down
+            if app
+                .provider_setup
+                .as_ref()
+                .is_some_and(|setup| setup.screen == SetupScreen::Discovery) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.move_selection(1);
+            }
+        }
+        KeyCode::Tab => {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.next_field(false);
+            }
+        }
+        KeyCode::BackTab => {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.next_field(true);
             }
         }
         KeyCode::Char(character) => {
             if let Some(setup) = &mut app.provider_setup {
-                if setup.provider_type == Some(ProviderType::Openai) && setup.step == 0 {
-                    setup.api_key.push(character);
+                if setup.screen == SetupScreen::ImportSource {
+                    setup.insert_import(&character.to_string());
                 } else {
-                    setup.model_id.push(character);
+                    setup.edit_char(character);
                 }
-                setup.error = None;
             }
         }
         KeyCode::Backspace => {
             if let Some(setup) = &mut app.provider_setup {
-                if setup.provider_type == Some(ProviderType::Openai) && setup.step == 0 {
-                    setup.api_key.pop();
+                if setup.screen == SetupScreen::ImportSource {
+                    setup.import_source.pop();
                 } else {
-                    setup.model_id.pop();
+                    setup.backspace();
                 }
             }
         }

@@ -367,6 +367,12 @@ async fn event_loop(
         if let Event::Paste(content) = input {
             if app.mode == AppMode::Conversation {
                 app.composer.insert_paste(&content);
+            } else if app.mode == AppMode::ProviderSetup {
+                if let Some(setup) = &mut app.provider_setup {
+                    if setup.screen == crate::provider_setup::SetupScreen::ImportSource {
+                        setup.insert_import(&content);
+                    }
+                }
             }
             continue;
         }
@@ -473,13 +479,12 @@ impl App {
             self.provider_setup = Some(setup);
             return;
         };
-        let (name, kind) = match provider_type {
-            crate::provider_setup::ProviderType::Ollama => ("ollama", "ollama"),
-            crate::provider_setup::ProviderType::LmStudio => ("lm-studio", "lm-studio"),
-            crate::provider_setup::ProviderType::Openai => ("openai", "openai"),
-            crate::provider_setup::ProviderType::OpenaiCompatible => {
-                ("openai-compatible", "openai-compatible")
-            }
+        let name = setup.profile_name.trim().to_owned();
+        let kind = match provider_type {
+            crate::provider_setup::ProviderType::Ollama => "ollama",
+            crate::provider_setup::ProviderType::LmStudio => "lm-studio",
+            crate::provider_setup::ProviderType::Openai => "openai",
+            crate::provider_setup::ProviderType::OpenaiCompatible => "openai-compatible",
             crate::provider_setup::ProviderType::EnterpriseGateway => {
                 setup.error =
                     Some("Enterprise gateway setup requires configuration-file policy".into());
@@ -505,7 +510,7 @@ impl App {
                 self.provider_setup = Some(setup);
                 return;
             }
-            Some(name)
+            Some(name.clone())
         };
         let configured = self
             .request(
@@ -517,6 +522,7 @@ impl App {
                     "base_url": setup.base_url.clone(),
                     "model": setup.model_id.clone(),
                     "credential_name": credential_name,
+                    "replace": setup.editing_existing,
                 })),
             )
             .await;
@@ -534,10 +540,34 @@ impl App {
             )
             .await
         {
-            Ok(_) => {
+            Ok(result) => {
+                let assigned_model = format!("{}/{}", name, setup.model_id);
+                if !setup.role.trim().is_empty() {
+                    if let Err(error) = self
+                        .request(
+                            reqwest::Method::POST,
+                            "/v1/models/roles",
+                            Some(serde_json::json!({
+                                "role": setup.role,
+                                "model": assigned_model,
+                            })),
+                        )
+                        .await
+                    {
+                        setup.error = Some(format!("Role assignment failed: {error}"));
+                        setup.complete = false;
+                        self.provider_setup = Some(setup);
+                        return;
+                    }
+                }
                 self.has_provider = true;
                 self.mode = AppMode::Conversation;
-                self.message_bar = format!("Provider {name} connected and verified.");
+                self.status_bar.set_model(&assigned_model);
+                self.message_bar = format!(
+                    "Provider {name} verified in {} ms: {}",
+                    result["latency_ms"].as_u64().unwrap_or_default(),
+                    result["detail"].as_str().unwrap_or("healthy response")
+                );
             }
             Err(error) => {
                 setup.error = Some(format!("Connection test failed: {error}"));

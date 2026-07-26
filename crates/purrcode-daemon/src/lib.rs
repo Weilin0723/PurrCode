@@ -124,6 +124,8 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .route("/v1/supervisor", post(run_supervisor))
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers", post(configure_provider))
+        .route("/v1/providers/{name}", get(get_provider))
+        .route("/v1/providers/{name}", delete(remove_provider))
         .route("/v1/providers/test", post(test_provider))
         .route("/v1/providers/discover", post(discover_provider_models))
         .route("/v1/credentials", post(store_credential))
@@ -217,6 +219,8 @@ pub async fn bind_and_report(
         .route("/v1/supervisor", post(run_supervisor))
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers", post(configure_provider))
+        .route("/v1/providers/{name}", get(get_provider))
+        .route("/v1/providers/{name}", delete(remove_provider))
         .route("/v1/providers/test", post(test_provider))
         .route("/v1/providers/discover", post(discover_provider_models))
         .route("/v1/credentials", post(store_credential))
@@ -2201,6 +2205,52 @@ async fn list_providers(
     Ok(Json(serde_json::json!(providers)))
 }
 
+async fn get_provider(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(name): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let provider = config.providers.get(&name).ok_or(ApiError::NotFound)?;
+    Ok(Json(serde_json::json!({
+        "name": name,
+        "configuration": provider,
+        "models": provider.configured_models().keys().collect::<Vec<_>>(),
+    })))
+}
+
+async fn remove_provider(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(name): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let mut config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    if config.providers.remove(&name).is_none() {
+        return Err(ApiError::NotFound);
+    }
+    let prefix = format!("{name}/");
+    config
+        .models
+        .roles
+        .retain(|_, model| !model.starts_with(&prefix));
+    if config
+        .models
+        .default
+        .as_ref()
+        .is_some_and(|model| model.starts_with(&prefix))
+    {
+        config.models.default = None;
+    }
+    config
+        .save(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("provider removal failed: {error}")))?;
+    Ok(Json(serde_json::json!({"name": name, "removed": true})))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigureProviderRequest {
@@ -2209,6 +2259,8 @@ struct ConfigureProviderRequest {
     base_url: String,
     model: String,
     credential_name: Option<String>,
+    #[serde(default)]
+    replace: bool,
 }
 
 async fn configure_provider(
@@ -2219,6 +2271,12 @@ async fn configure_provider(
     authorize(&state, &headers)?;
     let mut config = AppConfig::load(&state.app_config)
         .map_err(|e| ApiError::BadRequest(format!("config load failed: {e}")))?;
+    if config.providers.contains_key(&body.name) && !body.replace {
+        return Err(ApiError::BadRequest(format!(
+            "provider profile `{}` already exists; review it through the edit flow",
+            body.name
+        )));
+    }
     config
         .configure_provider(
             &body.name,
@@ -2326,6 +2384,7 @@ async fn test_provider(
     let provider = router
         .provider(&model)
         .map_err(|e| ApiError::BadRequest(format!("provider routing failed: {e}")))?;
+    let started = std::time::Instant::now();
     let health = provider
         .health_check()
         .await
@@ -2336,6 +2395,7 @@ async fn test_provider(
     Ok(Json(serde_json::json!({
         "available": true,
         "detail": health.detail,
+        "latency_ms": started.elapsed().as_millis(),
         "local": local,
         "models_configured": provider_config.configured_models().keys().collect::<Vec<_>>(),
     })))
@@ -3858,6 +3918,7 @@ local = true
         assert_eq!(result["available"], true);
         assert_eq!(result["local"], true);
         assert_eq!(result["models_configured"], serde_json::json!([]));
+        assert!(result["latency_ms"].is_number());
 
         handle.abort();
         provider_server.abort();

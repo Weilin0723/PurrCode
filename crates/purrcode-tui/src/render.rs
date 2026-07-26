@@ -277,18 +277,16 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
         return;
     };
 
-    let content: String = match setup.provider_type {
-        None => r#"Choose a provider:
-
-  1. Ollama (local)
-  2. LM Studio (local)
-  3. OpenAI
-  4. OpenAI-compatible endpoint
-  5. Enterprise gateway
-
-  Press 1-5 to select, Esc to cancel."#
-            .to_string(),
-        Some(ref pt) => setup_text(setup, pt),
+    let content = match setup.screen {
+        crate::provider_setup::SetupScreen::Discovery => setup_discovery_text(setup),
+        crate::provider_setup::SetupScreen::ImportSource => format!(
+            "Import provider configuration\n\nPaste a Python, JavaScript, cURL, dotenv, JSON, YAML, or TOML example.\nThe source is parsed locally and is never executed. Raw secret values are never rendered here.\n\nCaptured: {} bytes · {} lines\n\nCtrl+Enter  Parse and review    Esc  Cancel{}",
+            setup.import_source.len(),
+            setup.import_source.lines().count().max(1),
+            setup.error.as_ref().map_or_else(String::new, |error| format!("\n\nError: {error}"))
+        ),
+        crate::provider_setup::SetupScreen::Form
+        | crate::provider_setup::SetupScreen::ImportReview => setup_form_text(setup),
     };
 
     frame.render_widget(
@@ -303,32 +301,96 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
     );
 }
 
-fn setup_text(
-    setup: &crate::provider_setup::ProviderSetup,
-    pt: &crate::provider_setup::ProviderType,
-) -> String {
-    let base = match pt {
-        crate::provider_setup::ProviderType::Ollama => format!("Provider: Ollama\nBase URL: {}\nDiscovered: {}\nModel ID: {}\n\nEdit the discovered model ID if needed and press Enter.", setup.base_url, setup.discovered_models.join(", "), setup.model_id),
-        crate::provider_setup::ProviderType::LmStudio => format!("Provider: LM Studio\nBase URL: {}\nDiscovered: {}\nModel ID: {}\n\nEdit the discovered model ID if needed and press Enter.", setup.base_url, setup.discovered_models.join(", "), setup.model_id),
-        crate::provider_setup::ProviderType::Openai => {
-            let key_status = if setup.api_key.is_empty() { "not set" } else { "✓ set" };
-            if setup.step == 0 {
-                format!("Provider: OpenAI\nAPI key: {key_status}\n\nEnter API key (input hidden), then press Enter.")
-            } else {
-                format!("Provider: OpenAI\nAPI key: ✓ stored in memory for keychain transfer\nModel ID: {}\n\nType a model ID and press Enter to connect.", setup.model_id)
-            }
-        }
-        crate::provider_setup::ProviderType::OpenaiCompatible => format!("Provider: OpenAI-compatible\nBase URL: {}\nAPI key: {}\nModel: {}\n\nPress Enter to test connection.", setup.base_url, if setup.api_key.is_empty() { "not set" } else { "✓ set" }, setup.model_id),
-        crate::provider_setup::ProviderType::EnterpriseGateway => format!("Provider: Enterprise Gateway\nBase URL: {}\n\nPress Enter to configure.", setup.base_url),
-    };
+fn setup_discovery_text(setup: &crate::provider_setup::ProviderSetup) -> String {
+    let entries = [
+        (
+            "Ollama",
+            "http://127.0.0.1:11434",
+            "local · model discovery",
+        ),
+        (
+            "LM Studio",
+            "http://127.0.0.1:1234",
+            "local · model discovery",
+        ),
+        ("OpenAI", "https://api.openai.com", "remote"),
+        ("OpenAI-compatible", "custom endpoint", "local or remote"),
+        (
+            "Enterprise gateway",
+            "organization policy",
+            "remote · advanced",
+        ),
+        (
+            "Import from script/config",
+            "Python · JS · cURL · env · JSON · YAML · TOML",
+            "parse only",
+        ),
+    ];
+    let cards = entries
+        .iter()
+        .enumerate()
+        .map(|(index, (name, endpoint, detail))| {
+            let marker = if index == setup.selected { "▶" } else { " " };
+            format!("{marker} {name:<26} {endpoint:<42} {detail}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    format!("Connect a model provider\n\n{cards}\n\n↑↓  Select    Enter  Continue    Esc  Cancel")
+}
 
-    if let Some(ref error) = setup.error {
-        format!("{base}\n\nError: {error}")
-    } else if let Some(ref result) = setup.test_result {
-        format!("{base}\n\n{result}")
+fn setup_form_text(setup: &crate::provider_setup::ProviderSetup) -> String {
+    let marker = |field| {
+        if setup.active_field == field {
+            "▶"
+        } else {
+            " "
+        }
+    };
+    let provider = setup
+        .provider_type
+        .map_or("Unknown", |provider| match provider {
+            crate::provider_setup::ProviderType::Ollama => "Ollama",
+            crate::provider_setup::ProviderType::LmStudio => "LM Studio",
+            crate::provider_setup::ProviderType::Openai => "OpenAI",
+            crate::provider_setup::ProviderType::OpenaiCompatible => "OpenAI-compatible",
+            crate::provider_setup::ProviderType::EnterpriseGateway => "Enterprise gateway",
+        });
+    let import = setup
+        .import_candidate
+        .as_ref()
+        .map_or_else(String::new, |candidate| {
+            let warnings = candidate
+                .warnings
+                .iter()
+                .map(|warning| format!("  ! {}", warning.message))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "\nImported candidate · API mode {:?} · {} warning(s)\n{}",
+                candidate.api_mode.as_ref().map(|mode| mode.value),
+                candidate.warnings.len(),
+                warnings
+            )
+        });
+    let diagnostics = if let Some(error) = &setup.error {
+        format!("\n\nError: {error}")
+    } else if let Some(result) = &setup.test_result {
+        format!("\n\n{result}")
     } else {
-        base
-    }
+        String::new()
+    };
+    format!(
+        "Review provider\n\nProvider: {provider}\n\n{} Profile name  [{}]\n{} Base URL      [{}]\n{} API key       [{}]\n{} Model          [{}]\n{} Role           [{}]\n\nDiscovered models: {}\nNetwork: {}{}{}\n\nTab/Shift+Tab  Field    Ctrl+Enter  Save and run real connection test    Esc  Cancel",
+        marker(0), setup.profile_name,
+        marker(1), setup.base_url,
+        marker(2), if setup.api_key.is_empty() { "not set" } else { "••••••••" },
+        marker(3), setup.model_id,
+        marker(4), setup.role,
+        if setup.discovered_models.is_empty() { "none".into() } else { setup.discovered_models.join(", ") },
+        if setup.local { "local" } else { "remote" },
+        import,
+        diagnostics,
+    )
 }
 
 // ── Skill Browser mode ───────────────────────────────────────────

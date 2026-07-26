@@ -35,6 +35,21 @@ provider-backed acceptance remains an external gate)
 - Fixture tests cover Python, JavaScript, cURL, dotenv, JSON, YAML, TOML, and malformed/dynamic
   source. The editable provider import review remains Phase 4 work.
 
+### Phase 4 provider onboarding
+
+- Provider setup uses a selectable discovery screen and one compact editable form instead of a
+  numbered sparse wizard. Local Ollama and LM Studio choices call daemon model discovery and never
+  claim a service is running without an observed response.
+- `/connect import` and the secret-guard import choice accept bracketed pasted source, parse it
+  locally without execution, erase the transient source after parsing, and show editable redacted
+  candidate fields and warnings.
+- Save performs daemon configuration, a real provider health request with observed latency, and
+  model-role assignment. Optimistic placeholder success strings have been removed.
+- Saved profiles support `/provider list`, `/provider edit <name>`, `/provider test <name>`, and
+  `/provider remove <name>`. Duplicate profile creation requires the explicit edit flow.
+- The CLI supports `purrcode provider import <path>` and `purrcode provider import --stdin`; it
+  emits a redacted review candidate and never saves implicitly.
+
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary
 commands, crate packages, SDK namespaces, configuration paths, release artifacts, and editor

@@ -22,6 +22,7 @@ purrcode-golden-suite = { path = "../golden-suite" }
 purrcode-mcp-host = { path = "../mcp-host" }
 purrcode-tui = { path = "../purrcode-tui" }
 purrcode-provider-gateway = { path = "../provider-gateway" }
+purrcode-provider-import = { path = "../provider-import" }
 purrcode-repository-engine = { path = "../repository-engine" }
 purrcode-runtime-core = { path = "../runtime-core" }
 purrcode-ninelives = { path = "../ninelives-recovery" }

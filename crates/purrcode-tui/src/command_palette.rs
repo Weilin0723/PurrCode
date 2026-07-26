@@ -23,10 +23,14 @@ impl CommandPalette {
 
         match cmd.as_str() {
             "help" => {
-                app.message_bar = "/help /connect /providers /models /model <id> /role <role> <provider/model> /privacy /plan /build /review /diff /approve /deny <reason> /pause /resume /rollback /research <url> /research-approve <url> /skills /skill-search <query> /skill-search-approve <query> /skill-download <github:owner/repo> /skill-download-approve <github:owner/repo> /skill-install <user|repository|session> /skill-install-approve /skill-block <publisher> /settings /sessions /session [id] /new /compact /cancel /quit".into();
+                app.message_bar = "/help /connect [import] /provider [list|edit|test|remove] /models /model <id> /role <role> <provider/model> /privacy /plan /build /review /diff /approve /deny <reason> /pause /resume /rollback /research <url> /research-approve <url> /skills /skill-search <query> /skill-search-approve <query> /skill-download <github:owner/repo> /skill-download-approve <github:owner/repo> /skill-install <user|repository|session> /skill-install-approve /skill-block <publisher> /settings /sessions /session [id] /new /compact /cancel /quit".into();
             }
             "connect" => {
-                app.provider_setup = Some(ProviderSetup::new());
+                app.provider_setup = Some(if args.trim() == "import" {
+                    ProviderSetup::import_mode()
+                } else {
+                    ProviderSetup::new()
+                });
                 app.switch_mode(AppMode::ProviderSetup);
                 app.message_bar = "Setting up provider...".into();
             }
@@ -37,6 +41,66 @@ impl CommandPalette {
                 {
                     Ok(val) => app.message_bar = format!("Providers: {val}"),
                     Err(e) => app.message_bar = format!("Error: {e}"),
+                }
+            }
+            "provider" => {
+                let mut parts = args.split_whitespace();
+                let action = parts.next().unwrap_or("list");
+                let name = parts.next();
+                if parts.next().is_some() {
+                    app.message_bar = "Usage: /provider [list|edit|test|remove] [name]".into();
+                    return;
+                }
+                match (action, name) {
+                    ("list", None) => match app
+                        .request(reqwest::Method::GET, "/v1/providers", None)
+                        .await
+                    {
+                        Ok(value) => app.message_bar = format!("Providers: {value}"),
+                        Err(error) => app.message_bar = format!("Error: {error}"),
+                    },
+                    ("test", Some(name)) => match app
+                        .request(
+                            reqwest::Method::POST,
+                            "/v1/providers/test",
+                            Some(serde_json::json!({"provider": name})),
+                        )
+                        .await
+                    {
+                        Ok(value) => {
+                            app.message_bar = format!(
+                                "{name}: verified in {} ms — {}",
+                                value["latency_ms"].as_u64().unwrap_or_default(),
+                                value["detail"].as_str().unwrap_or("healthy response")
+                            )
+                        }
+                        Err(error) => app.message_bar = format!("Provider test failed: {error}"),
+                    },
+                    ("edit", Some(name)) => match app
+                        .request(reqwest::Method::GET, &format!("/v1/providers/{name}"), None)
+                        .await
+                    {
+                        Ok(value) => match ProviderSetup::from_saved(&value) {
+                            Ok(setup) => {
+                                app.provider_setup = Some(setup);
+                                app.switch_mode(AppMode::ProviderSetup);
+                            }
+                            Err(error) => app.message_bar = error,
+                        },
+                        Err(error) => app.message_bar = format!("Error: {error}"),
+                    },
+                    ("remove", Some(name)) => match app
+                        .request(
+                            reqwest::Method::DELETE,
+                            &format!("/v1/providers/{name}"),
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => app.message_bar = format!("Provider {name} removed."),
+                        Err(error) => app.message_bar = format!("Error: {error}"),
+                    },
+                    _ => app.message_bar = "Usage: /provider [list|edit|test|remove] [name]".into(),
                 }
             }
             "models" | "model" => {

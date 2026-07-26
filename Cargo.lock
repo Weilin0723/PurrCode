@@ -2100,6 +2100,7 @@ dependencies = [
  "purrcode-ninelives",
  "purrcode-pawgate",
  "purrcode-provider-gateway",
+ "purrcode-provider-import",
  "purrcode-repository-engine",
  "purrcode-runtime-core",
  "purrcode-tui",
