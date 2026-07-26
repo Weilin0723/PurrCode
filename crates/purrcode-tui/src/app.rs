@@ -10,6 +10,7 @@ use crate::render::draw;
 use crate::skill_browser::SkillBrowser;
 use crate::status_bar::StatusBar;
 use crate::streaming::{StreamController, StreamEvent};
+use crate::workspace::WorkspaceContext;
 use anyhow::Result;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -60,6 +61,7 @@ pub struct App {
     pub composer: Composer,
     pub secret_review: Option<SecretReview>,
     pub status_bar: StatusBar,
+    pub workspace: WorkspaceContext,
     pub provider_setup: Option<ProviderSetup>,
     pub skill_browser: Option<SkillBrowser>,
     pub diff_view: Option<DiffView>,
@@ -85,6 +87,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         .timeout(Duration::from_secs(60))
         .build()?;
 
+    let workspace = WorkspaceContext::inspect(&config.repository);
     let mut app = App {
         config,
         client,
@@ -94,6 +97,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         composer: Composer::new(),
         secret_review: None,
         status_bar: StatusBar::new(),
+        workspace,
         provider_setup: None,
         skill_browser: None,
         diff_view: None,
@@ -111,6 +115,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
     };
 
     app.check_provider().await;
+    app.check_workspace().await;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -418,6 +423,7 @@ impl App {
             .await
         {
             Ok(val) => {
+                self.workspace.daemon_health = "connected".into();
                 let arr = val.as_array();
                 self.has_provider = arr.is_some_and(|a| !a.is_empty());
                 if !self.has_provider {
@@ -426,8 +432,35 @@ impl App {
                 }
             }
             Err(_) => {
+                self.workspace.daemon_health = "unreachable".into();
                 self.has_provider = false;
                 self.message_bar = "Daemon unreachable. Type /connect to set up.".into();
+            }
+        }
+    }
+
+    pub async fn check_workspace(&mut self) {
+        match self
+            .request(
+                reqwest::Method::POST,
+                "/v1/repository/inspect",
+                Some(serde_json::json!({"repository": self.config.repository})),
+            )
+            .await
+        {
+            Ok(value) => {
+                self.workspace.source_state = if value["dirty"].as_bool() == Some(true) {
+                    "dirty · preserved"
+                } else {
+                    "clean"
+                }
+                .into();
+            }
+            Err(error) => {
+                self.workspace.source_state = "unknown · preserved".into();
+                if self.message_bar.is_empty() {
+                    self.message_bar = format!("Repository inspection unavailable: {error}");
+                }
             }
         }
     }
@@ -440,6 +473,7 @@ impl App {
             self.conversation
                 .refresh_events(&url, &token, session_id)
                 .await;
+            self.workspace.session_phase = self.conversation.phase.clone();
         }
     }
 

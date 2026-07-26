@@ -40,7 +40,24 @@ fn draw_secret_review(frame: &mut Frame<'_>, app: &App) {
     );
 }
 
-fn layout_full(frame: &Frame<'_>, app: &App) -> [Rect; 4] {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceLayout {
+    Wide,
+    Compact,
+    Narrow,
+}
+
+fn workspace_layout(width: u16) -> WorkspaceLayout {
+    if width >= 120 {
+        WorkspaceLayout::Wide
+    } else if width >= 80 {
+        WorkspaceLayout::Compact
+    } else {
+        WorkspaceLayout::Narrow
+    }
+}
+
+fn layout_full(frame: &Frame<'_>, app: &App) -> [Rect; 5] {
     let area = frame.area();
     let composer_height = (app.composer.line_count().clamp(3, 10) as u16).saturating_add(2);
     let rows = Layout::default()
@@ -50,20 +67,35 @@ fn layout_full(frame: &Frame<'_>, app: &App) -> [Rect; 4] {
             Constraint::Min(5),
             Constraint::Length(4),
             Constraint::Length(composer_height),
+            Constraint::Length(1),
         ])
         .split(area);
-    [rows[0], rows[1], rows[2], rows[3]]
+    [rows[0], rows[1], rows[2], rows[3], rows[4]]
 }
 
 // ── Conversation mode ────────────────────────────────────────────
 
 fn draw_conversation(frame: &mut Frame<'_>, app: &App) {
-    let [header, body, action_area, input_area] = layout_full(frame, app);
+    let [header, body, action_area, input_area, footer] = layout_full(frame, app);
 
     draw_header(frame, header, app);
-    draw_messages(frame, body, app);
+    let layout = workspace_layout(frame.area().width);
+    let show_files = layout == WorkspaceLayout::Wide || app.workspace.file_panel_visible;
+    if layout == WorkspaceLayout::Narrow && show_files {
+        draw_workspace_panel(frame, body, app);
+    } else if show_files {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(30), Constraint::Min(40)])
+            .split(body);
+        draw_workspace_panel(frame, columns[0], app);
+        draw_messages(frame, columns[1], app);
+    } else {
+        draw_messages(frame, body, app);
+    }
     draw_action_panel(frame, action_area, app);
     draw_composer(frame, input_area, app);
+    draw_footer(frame, footer, app);
 }
 
 fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -86,18 +118,27 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
         "remote"
     };
 
+    let repository = format!("{}/{}", app.workspace.repository_name, app.workspace.branch);
+    let session = app
+        .session_id
+        .as_deref()
+        .map(|id| id.get(..8).unwrap_or(id))
+        .unwrap_or("new");
     let title = Line::from(vec![
         Span::styled(
-            "PurrCode",
+            concat!("PurrCode ", env!("CARGO_PKG_VERSION")),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" · "),
-        Span::styled(mode_str, Style::default().fg(Color::Green)),
+        Span::styled(repository, Style::default().fg(Color::Blue)),
         Span::raw(" · "),
         Span::styled(&app.status_bar.model, Style::default().fg(Color::Yellow)),
-        Span::raw(format!(" · {local_indicator} · {privacy_indicator}")),
+        Span::raw(format!(
+            " · {mode_str} · {local_indicator} {privacy_indicator} · sandbox:{} · session:{session} {}",
+            app.workspace.sandbox, app.workspace.session_phase
+        )),
     ]);
     frame.render_widget(
         Paragraph::new(title).block(Block::default().borders(Borders::BOTTOM)),
@@ -132,13 +173,88 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 
     if items.is_empty() {
-        items.push(ListItem::new(
-            "No messages yet. Type a message or /connect to set up a provider.",
-        ));
+        items.push(ListItem::new(Text::from(vec![
+            Line::from(Span::styled(
+                "PurrCode is ready.",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("Describe a repository task, paste code or logs, or type /connect."),
+            Line::from("PawGate judges → Claw executes → evidence verifies."),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Ctrl+Enter sends · Enter adds a line · Ctrl+B opens files",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])));
     }
 
     frame.render_widget(
         List::new(items).block(Block::default().title("Conversation").borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Repository  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(&app.workspace.repository_name),
+        ]),
+        Line::from(vec![
+            Span::styled("Branch      ", Style::default().fg(Color::DarkGray)),
+            Span::raw(&app.workspace.branch),
+        ]),
+        Line::from(vec![
+            Span::styled("Source      ", Style::default().fg(Color::DarkGray)),
+            Span::raw(&app.workspace.source_state),
+        ]),
+        Line::from(vec![
+            Span::styled("Daemon      ", Style::default().fg(Color::DarkGray)),
+            Span::raw(&app.workspace.daemon_health),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Files",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ];
+    let available = area.height.saturating_sub(8) as usize;
+    for path in app.workspace.paths.iter().take(available) {
+        let kind = if path.directory { "▸" } else { " " };
+        let sensitive = if path.sensitive { " 🔒" } else { "" };
+        lines.push(Line::from(format!("{kind} {}{sensitive}", path.display)));
+    }
+    if app.workspace.paths.len() > available {
+        lines.push(Line::from(Span::styled(
+            format!("… {} more paths", app.workspace.paths.len() - available),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default().title("Workspace").borders(Borders::ALL))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let text = if app.conversation.pending_action.is_some() {
+        "A Approve  R Reject  Ctrl+D Full diff  /approve and /deny remain exact-action bound"
+    } else if app.workspace.file_panel_visible
+        && workspace_layout(frame.area().width) != WorkspaceLayout::Wide
+    {
+        "Ctrl+B Timeline  @file mention  Ctrl+D Diff  ? Help"
+    } else {
+        "Ctrl+Enter Send  Enter Newline  Ctrl+P Commands  Ctrl+B Files  Ctrl+D Diff  ? Help"
+    };
+    frame.render_widget(
+        Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
         area,
     );
 }
@@ -460,4 +576,19 @@ fn draw_diff(frame: &mut Frame<'_>, app: &App) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_breakpoints_match_the_product_contract() {
+        assert_eq!(workspace_layout(160), WorkspaceLayout::Wide);
+        assert_eq!(workspace_layout(120), WorkspaceLayout::Wide);
+        assert_eq!(workspace_layout(119), WorkspaceLayout::Compact);
+        assert_eq!(workspace_layout(80), WorkspaceLayout::Compact);
+        assert_eq!(workspace_layout(79), WorkspaceLayout::Narrow);
+        assert_eq!(workspace_layout(40), WorkspaceLayout::Narrow);
+    }
 }

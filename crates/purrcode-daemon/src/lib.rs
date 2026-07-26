@@ -131,6 +131,7 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .route("/v1/credentials", post(store_credential))
         .route("/v1/models", get(list_models))
         .route("/v1/models/roles", post(assign_model_role))
+        .route("/v1/repository/inspect", post(inspect_repository))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
         .route("/v1/skills/download", post(download_skill))
@@ -226,6 +227,7 @@ pub async fn bind_and_report(
         .route("/v1/credentials", post(store_credential))
         .route("/v1/models", get(list_models))
         .route("/v1/models/roles", post(assign_model_role))
+        .route("/v1/repository/inspect", post(inspect_repository))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
         .route("/v1/skills/download", post(download_skill))
@@ -2442,6 +2444,28 @@ async fn list_models(
         }
     }
     Ok(Json(serde_json::json!(models)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InspectRepositoryRequest {
+    repository: PathBuf,
+}
+
+async fn inspect_repository(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<InspectRepositoryRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let snapshot = RepositoryEngine::inspect(&body.repository)
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("repository inspection failed: {error}")))?;
+    Ok(Json(serde_json::json!({
+        "root": snapshot.root,
+        "head": snapshot.head,
+        "dirty": snapshot.dirty,
+    })))
 }
 
 #[derive(Deserialize)]

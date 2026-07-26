@@ -54,6 +54,15 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.composer.select_all()
         }
+        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.workspace.toggle_files()
+        }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/diff".into())
+        }
+        KeyCode::Char('?') if app.composer.buffer.is_empty() => {
+            app.pending_command = Some("/help".into())
+        }
         KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => app.composer.undo(),
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => app.composer.redo(),
         KeyCode::Char(c) => app.composer.insert_char(c),

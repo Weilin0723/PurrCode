@@ -21,6 +21,7 @@ pub struct Conversation {
     pub mode: ConversationMode,
     pub scroll: usize,
     pub evidence: Vec<String>,
+    pub phase: String,
 }
 
 impl Conversation {
@@ -32,6 +33,7 @@ impl Conversation {
             mode: ConversationMode::Build,
             scroll: 0,
             evidence: Vec::new(),
+            phase: "ready".into(),
         }
     }
 
@@ -114,6 +116,13 @@ impl Conversation {
             .await
         {
             if let Ok(events) = response.json::<Vec<Value>>().await {
+                self.phase = events
+                    .iter()
+                    .rev()
+                    .find_map(|event| event["event"].as_str())
+                    .map(runtime_phase)
+                    .unwrap_or("ready")
+                    .to_owned();
                 self.pending_action = events.iter().rev().find_map(|event| {
                     (event["event"] == "action_proposed")
                         .then(|| event.pointer("/data/action").cloned())
@@ -151,5 +160,21 @@ impl Conversation {
             .first()
             .map(|message| message.content.clone())
             .unwrap_or_default()
+    }
+}
+
+fn runtime_phase(event: &str) -> &'static str {
+    match event {
+        "provider_request_started" => "thinking",
+        "context_retrieved" => "retrieving",
+        "action_proposed" => "proposing",
+        "approval_requested" | "outcome_review_required" => "awaiting approval",
+        "execution_started" => "executing",
+        "validation_started" | "validation_recorded" => "validating",
+        "session_completed" => "completed",
+        "session_failed" => "failed",
+        "session_cancelled" => "cancelled",
+        "recovery_required" => "recovery required",
+        _ => "active",
     }
 }
