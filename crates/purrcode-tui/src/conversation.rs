@@ -1,5 +1,6 @@
 //! Conversation state, message types, and event polling.
 
+use crate::timeline::{cards_from_events, pending_action_from_events, TimelineCard};
 use chrono::{DateTime, Utc};
 use purrcode_runtime_core::ConversationMode;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,9 @@ pub struct Conversation {
     pub scroll: usize,
     pub evidence: Vec<String>,
     pub phase: String,
+    pub timeline: Vec<TimelineCard>,
+    pub selected_card: Option<usize>,
+    pub expanded_card: Option<usize>,
 }
 
 impl Conversation {
@@ -34,6 +38,9 @@ impl Conversation {
             scroll: 0,
             evidence: Vec::new(),
             phase: "ready".into(),
+            timeline: Vec::new(),
+            selected_card: None,
+            expanded_card: None,
         }
     }
 
@@ -123,11 +130,7 @@ impl Conversation {
                     .map(runtime_phase)
                     .unwrap_or("ready")
                     .to_owned();
-                self.pending_action = events.iter().rev().find_map(|event| {
-                    (event["event"] == "action_proposed")
-                        .then(|| event.pointer("/data/action").cloned())
-                        .flatten()
-                });
+                self.pending_action = pending_action_from_events(&events);
                 self.evidence = events
                     .iter()
                     .filter_map(|event| match event["event"].as_str() {
@@ -151,8 +154,28 @@ impl Conversation {
                     .rev()
                     .take(3)
                     .collect();
+                self.timeline = cards_from_events(&events);
+                self.selected_card = self
+                    .selected_card
+                    .map(|index| index.min(self.timeline.len().saturating_sub(1)));
             }
         }
+    }
+
+    pub fn select_card(&mut self, delta: isize) {
+        if self.timeline.is_empty() {
+            return;
+        }
+        let current = self.selected_card.unwrap_or(self.timeline.len() - 1) as isize;
+        self.selected_card =
+            Some((current + delta).clamp(0, self.timeline.len() as isize - 1) as usize);
+    }
+
+    pub fn toggle_selected_card(&mut self) {
+        let Some(selected) = self.selected_card else {
+            return;
+        };
+        self.expanded_card = (self.expanded_card != Some(selected)).then_some(selected);
     }
 
     pub fn current_objective(&self) -> String {

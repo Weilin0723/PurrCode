@@ -46,6 +46,16 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
 
     match key.code {
         KeyCode::Char('q') if app.composer.buffer.is_empty() => return false,
+        KeyCode::Char('a')
+            if app.composer.buffer.is_empty() && app.conversation.pending_action.is_some() =>
+        {
+            app.pending_command = Some("/approve".into())
+        }
+        KeyCode::Char('r')
+            if app.composer.buffer.is_empty() && app.conversation.pending_action.is_some() =>
+        {
+            app.pending_command = Some("/deny rejected from approval card".into())
+        }
         KeyCode::Char('/') if app.composer.buffer.is_empty() => {
             app.composer.buffer.push('/');
             app.composer.cursor = 1;
@@ -59,6 +69,15 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.pending_command = Some("/diff".into())
+        }
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.conversation.select_card(-1)
+        }
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.conversation.select_card(1)
+        }
+        KeyCode::Char(' ') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.conversation.toggle_selected_card()
         }
         KeyCode::Char('?') if app.composer.buffer.is_empty() => {
             app.pending_command = Some("/help".into())
