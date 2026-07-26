@@ -1,7 +1,32 @@
 # Implementation status
 
-Updated: 2026-07-26 (v0.4 redesign implementation complete; cross-platform and provider evidence
-is recorded below)
+Updated: 2026-07-26 (v0.5 usability recovery Phase 1 complete; later phases remain in progress)
+
+## v0.5 usability recovery — Phase 1 complete
+
+- Daemon and TUI startup remain generation-free and session-free. A deterministic integration test
+  starts the daemon with a live fake Ollama endpoint, performs the same provider-list and repository
+  inspection used by the initial TUI, and proves that no provider request, durable session,
+  worktree, or checkpoint is created.
+- Startup repository presentation is Tier 0: only bounded root metadata is listed. Recursive
+  task-relevant indexing remains deferred until a user submits work.
+- Authenticated daemon APIs and TUI commands inspect installed/loaded Ollama models through
+  `/api/version`, `/api/tags`, and `/api/ps` without generation; `/model unload <model>` and
+  `/model unload-all` send native `keep_alive: 0` requests and verify release through `/api/ps`.
+- Configurable lifecycle policies support `unload_after_request`, bounded `idle_timeout`,
+  opt-in `keep_loaded`, and externally managed lifetime. Native keep-alive updates never load an
+  otherwise absent model. Completion, failure, panic, pause, cancellation, and parallel-supervisor
+  completion all reach the lifecycle boundary; idle unload will not evict a model reused by a
+  different active session.
+- The resource governor reads physical/available memory and swap, includes observed loaded-model
+  memory, and conservatively permits at most one local inference request across normal agent and
+  supervisor paths. It rejects a separate local judge when the detected budget is insufficient.
+  Remote requests do not consume the local inference budget.
+- Agent leases now own the actual agent future rather than a detached child task, so cancelling a
+  lease drops in-flight provider work before durable cancellation and model release.
+- Ollama Native generation, hardware-aware model recommendation/pull, truthful provider streaming,
+  governed external capability discovery, and cancellable Tier 1/2 indexing are intentionally
+  tracked in Phases 2–6 and are not represented as complete here.
 
 ## v0.4 product redesign — implemented, provider model qualification failed
 

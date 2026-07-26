@@ -1,5 +1,7 @@
 //! Authenticated loopback API and durable session owner.
 
+mod local_models;
+
 use async_trait::async_trait;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
@@ -8,6 +10,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use chrono::Utc;
+use futures::FutureExt;
 use purrcode_agent_runtime::{
     AgentAction, AgentTurn, CapabilityResolution, NativeAgent, SkillResolver,
 };
@@ -19,7 +22,8 @@ use purrcode_mcp_host::{
 use purrcode_ninelives::{Automation, SessionStore, StoreError};
 use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
-    AppConfig, ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode, ProviderRouter,
+    AppConfig, ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode, ProviderConfig,
+    ProviderRouter,
 };
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
@@ -42,12 +46,18 @@ use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use uuid::Uuid;
 use zeroize::Zeroize;
+
+use crate::local_models::{
+    LocalModelLifecycle, LocalModelLifecycleSettings, LocalModelRuntime, ResourceSnapshot,
+    UnloadLocalModelRequest,
+};
 
 #[derive(Clone)]
 struct AppState {
@@ -55,7 +65,24 @@ struct AppState {
     bearer_token: Arc<str>,
     database: PathBuf,
     app_config: PathBuf,
-    leases: Arc<Mutex<BTreeMap<SessionId, tokio::task::JoinHandle<()>>>>,
+    leases: Arc<Mutex<BTreeMap<SessionId, AgentLease>>>,
+    lifecycle_epochs: Arc<Mutex<BTreeMap<String, u64>>>,
+    lifecycle_gate: Arc<Mutex<()>>,
+    active_models: Arc<Mutex<BTreeMap<String, usize>>>,
+    local_inference_slots: Arc<Semaphore>,
+    local_inference_limit: usize,
+    interrupting_sessions: Arc<Mutex<BTreeMap<SessionId, Uuid>>>,
+}
+
+struct AgentLease {
+    generation: Uuid,
+    task: tokio::task::JoinHandle<()>,
+    models: Vec<ModelId>,
+}
+
+struct AgentInterruption {
+    token: Uuid,
+    lease_models: Option<Vec<ModelId>>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,12 +110,19 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .into_iter()
         .map(|session| session.0.to_string())
         .collect::<Vec<_>>();
+    let local_inference_limit = ResourceSnapshot::detect(0).maximum_local_inference_requests;
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
         bearer_token: token.into(),
         database: config.database.clone(),
         app_config: config.app_config.clone(),
         leases: Arc::new(Mutex::new(BTreeMap::new())),
+        lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+        lifecycle_gate: Arc::new(Mutex::new(())),
+        active_models: Arc::new(Mutex::new(BTreeMap::new())),
+        local_inference_slots: Arc::new(Semaphore::new(local_inference_limit)),
+        local_inference_limit,
+        interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
     };
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -131,6 +165,12 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .route("/v1/credentials", post(store_credential))
         .route("/v1/models", get(list_models))
         .route("/v1/models/roles", post(assign_model_role))
+        .route("/v1/local-models", get(local_models))
+        .route("/v1/local-models/unload", post(unload_local_model))
+        .route(
+            "/v1/local-models/settings",
+            get(local_model_settings).post(update_local_model_settings),
+        )
         .route("/v1/repository/inspect", post(inspect_repository))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
@@ -179,12 +219,19 @@ pub async fn bind_and_report(
         .into_iter()
         .map(|session| session.0.to_string())
         .collect::<Vec<_>>();
+    let local_inference_limit = ResourceSnapshot::detect(0).maximum_local_inference_requests;
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
         bearer_token: token.into(),
         database: config.database.clone(),
         app_config: config.app_config.clone(),
         leases: Arc::new(Mutex::new(BTreeMap::new())),
+        lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+        lifecycle_gate: Arc::new(Mutex::new(())),
+        active_models: Arc::new(Mutex::new(BTreeMap::new())),
+        local_inference_slots: Arc::new(Semaphore::new(local_inference_limit)),
+        local_inference_limit,
+        interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
     };
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -227,6 +274,12 @@ pub async fn bind_and_report(
         .route("/v1/credentials", post(store_credential))
         .route("/v1/models", get(list_models))
         .route("/v1/models/roles", post(assign_model_role))
+        .route("/v1/local-models", get(local_models))
+        .route("/v1/local-models/unload", post(unload_local_model))
+        .route(
+            "/v1/local-models/settings",
+            get(local_model_settings).post(update_local_model_settings),
+        )
         .route("/v1/repository/inspect", post(inspect_repository))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
@@ -448,6 +501,8 @@ struct JudgedSupervisorWorker {
     model: ModelId,
     policy: Policy,
     database: PathBuf,
+    local_inference: bool,
+    local_inference_slots: Arc<Semaphore>,
 }
 
 #[async_trait]
@@ -494,6 +549,17 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 },
             )
             .map_err(|error| error.to_string())?;
+        let local_permit = if self.local_inference {
+            Some(
+                self.local_inference_slots
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| "local inference governor closed".to_owned())?,
+            )
+        } else {
+            None
+        };
         let value = self
             .provider
             .structured(
@@ -523,6 +589,7 @@ impl IsolatedWorker for JudgedSupervisorWorker {
             )
             .await
             .map_err(|error| error.to_string())?;
+        drop(local_permit);
         let turn: AgentTurn = serde_json::from_value(value)
             .map_err(|error| format!("invalid worker turn: {error}"))?;
         store
@@ -666,6 +733,7 @@ async fn run_supervisor(
         .repository
         .canonicalize()
         .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
+    let lifecycle_gate = state.lifecycle_gate.lock().await;
     let config = AppConfig::load(&state.app_config)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let selected = config
@@ -676,6 +744,11 @@ async fn run_supervisor(
         .ok_or_else(|| ApiError::BadRequest("no coding model is configured".into()))?;
     let model =
         ModelId::parse(selected).map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let local_inference = config
+        .providers
+        .get(&model.provider)
+        .ok_or_else(|| ApiError::BadRequest("coding provider is not configured".into()))?
+        .is_local();
     let router = ProviderRouter::from_config(&config)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let provider = router
@@ -707,10 +780,31 @@ async fn run_supervisor(
         model,
         policy,
         database: state.database.clone(),
+        local_inference,
+        local_inference_slots: state.local_inference_slots.clone(),
     };
-    let report = supervisor
-        .run(&repository, request.workers, &worker)
+    mark_models_active(&state, std::slice::from_ref(&worker.model)).await;
+    drop(lifecycle_gate);
+    let task_state = state.clone();
+    let task_repository = repository.clone();
+    let lifecycle_model = worker.model.clone();
+    let report_task = tokio::spawn(async move {
+        let report = AssertUnwindSafe(supervisor.run(&task_repository, request.workers, &worker))
+            .catch_unwind()
+            .await;
+        release_active_models(&task_state, std::slice::from_ref(&lifecycle_model)).await;
+        report
+    });
+    let report = report_task
         .await
+        .map_err(|error| ApiError::Conflict(format!("supervisor task failed: {error}")))?;
+    let report = report
+        .map_err(|panic| {
+            ApiError::Conflict(format!(
+                "supervisor task panicked: {}",
+                panic_payload_message(panic)
+            ))
+        })?
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
     let mut views = Vec::new();
     let mut store = state.store.lock().await;
@@ -1002,39 +1096,54 @@ async fn pause_session(
             "only an active model loop can be paused; approval/review states are already safely stopped, and executing tools require cancel or an action boundary".into(),
         ));
     }
-    if let Some(handle) = state.leases.lock().await.remove(&id) {
-        handle.abort();
-    }
-    let mut store = state.store.lock().await;
-    let outstanding_model_requests = store
-        .events(id)?
-        .into_iter()
-        .fold(0_i64, |count, event| match event {
-            SessionEvent::ModelRequestStarted { .. } => count + 1,
-            SessionEvent::ModelRequestFinished { .. } => count - 1,
-            _ => count,
-        })
-        .max(0);
-    for _ in 0..outstanding_model_requests {
+    let fallback_models = lifecycle_models_before_interruption(&state, id).await?;
+    let AgentInterruption {
+        token,
+        lease_models,
+    } = abort_agent_lease(&state, id).await?;
+    let models_were_active = lease_models.is_some();
+    let lifecycle_models = lease_models.unwrap_or(fallback_models);
+    let result: Result<Json<AcceptedSession>, ApiError> = async {
+        let mut store = state.store.lock().await;
+        if store.load(id)?.status != SessionStatus::Active {
+            return Err(ApiError::Conflict(
+                "session reached a safe boundary before pause completed".into(),
+            ));
+        }
+        let outstanding_model_requests = store
+            .events(id)?
+            .into_iter()
+            .fold(0_i64, |count, event| match event {
+                SessionEvent::ModelRequestStarted { .. } => count + 1,
+                SessionEvent::ModelRequestFinished { .. } => count - 1,
+                _ => count,
+            })
+            .max(0);
+        for _ in 0..outstanding_model_requests {
+            store.append(
+                id,
+                &SessionEvent::ModelRequestFinished {
+                    role: "interrupted_by_user_pause".into(),
+                    input_tokens: None,
+                    output_tokens: None,
+                },
+            )?;
+        }
         store.append(
             id,
-            &SessionEvent::ModelRequestFinished {
-                role: "interrupted_by_user_pause".into(),
-                input_tokens: None,
-                output_tokens: None,
+            &SessionEvent::SessionPaused {
+                reason: request.reason,
             },
         )?;
+        Ok(Json(AcceptedSession {
+            id: id.0.to_string(),
+            status: "paused",
+        }))
     }
-    store.append(
-        id,
-        &SessionEvent::SessionPaused {
-            reason: request.reason,
-        },
-    )?;
-    Ok(Json(AcceptedSession {
-        id: id.0.to_string(),
-        status: "paused",
-    }))
+    .await;
+    finish_model_lifecycle(&state, &lifecycle_models, models_were_active).await;
+    finish_agent_interruption(&state, id, token).await;
+    result
 }
 
 #[derive(Deserialize)]
@@ -1149,6 +1258,7 @@ async fn select_session_model(
 ) -> Result<Json<AcceptedSession>, ApiError> {
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
+    let _lifecycle_gate = state.lifecycle_gate.lock().await;
     require_idle(&state, id).await?;
     let model =
         ModelId::parse(&request.model).map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -1464,6 +1574,19 @@ async fn require_idle(state: &AppState, id: SessionId) -> Result<(), ApiError> {
     Ok(())
 }
 
+async fn lock_model_configuration(
+    state: &AppState,
+) -> Result<tokio::sync::MutexGuard<'_, ()>, ApiError> {
+    let guard = state.lifecycle_gate.lock().await;
+    if !state.active_models.lock().await.is_empty() || !state.leases.lock().await.is_empty() {
+        return Err(ApiError::Conflict(
+            "provider and model-role configuration cannot change during an active model operation"
+                .into(),
+        ));
+    }
+    Ok(guard)
+}
+
 fn worktree_from_state(
     state: &purrcode_runtime_core::SessionState,
 ) -> Result<SessionWorktree, ApiError> {
@@ -1544,27 +1667,46 @@ async fn cancel_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     ensure_session_exists(&state, id).await?;
-    if let Some(handle) = state.leases.lock().await.remove(&id) {
-        handle.abort();
-    }
-    let mut store = state.store.lock().await;
-    let status = store.load(id)?.status;
+    let status = state.store.lock().await.load(id)?.status;
     if matches!(
         status,
         SessionStatus::Completed | SessionStatus::Cancelled | SessionStatus::Failed
     ) {
         return Err(ApiError::Conflict("session is already terminal".into()));
     }
-    store.append(
-        id,
-        &SessionEvent::SessionCancelled {
-            reason: request.reason,
-        },
-    )?;
-    Ok(Json(AcceptedSession {
-        id: id.0.to_string(),
-        status: "cancelled",
-    }))
+    let fallback_models = lifecycle_models_before_interruption(&state, id).await?;
+    let AgentInterruption {
+        token,
+        lease_models,
+    } = abort_agent_lease(&state, id).await?;
+    let models_were_active = lease_models.is_some();
+    let lifecycle_models = lease_models.unwrap_or(fallback_models);
+    let result: Result<Json<AcceptedSession>, ApiError> = async {
+        let mut store = state.store.lock().await;
+        let terminal_after_abort = matches!(
+            store.load(id)?.status,
+            SessionStatus::Completed | SessionStatus::Cancelled | SessionStatus::Failed
+        );
+        if terminal_after_abort {
+            return Err(ApiError::Conflict(
+                "session became terminal while cancellation was being applied".into(),
+            ));
+        }
+        store.append(
+            id,
+            &SessionEvent::SessionCancelled {
+                reason: request.reason,
+            },
+        )?;
+        Ok(Json(AcceptedSession {
+            id: id.0.to_string(),
+            status: "cancelled",
+        }))
+    }
+    .await;
+    finish_model_lifecycle(&state, &lifecycle_models, models_were_active).await;
+    finish_agent_interruption(&state, id, token).await;
+    result
 }
 
 #[derive(Clone, Copy)]
@@ -1580,23 +1722,62 @@ async fn spawn_agent_operation(
     id: SessionId,
     operation: AgentOperation,
 ) -> Result<(), ApiError> {
+    let _lifecycle_gate = state.lifecycle_gate.lock().await;
+    if state.interrupting_sessions.lock().await.contains_key(&id) {
+        return Err(ApiError::Conflict(
+            "session cancellation or pause is still settling".into(),
+        ));
+    }
+    let budget = inference_budget(&state, id).await?;
+    let local_permit = if budget.local_inference {
+        Some(
+            state
+                .local_inference_slots
+                .clone()
+                .try_acquire_owned()
+                .map_err(|_| {
+                    ApiError::Conflict(format!(
+                        "resource governor allows {} concurrent local inference request(s); wait, unload a model, or switch to a remote provider",
+                        state.local_inference_limit
+                    ))
+                })?,
+        )
+    } else {
+        None
+    };
     let mut leases = state.leases.lock().await;
     if leases.contains_key(&id) {
         return Err(ApiError::Conflict(
             "session already has an active daemon lease".into(),
         ));
     }
+    mark_models_active(&state, &budget.models).await;
     let task_state = state.clone();
+    let lifecycle_models = budget.models.clone();
+    let coding_model = budget.models[0].clone();
+    let operation_config = budget.config.clone();
+    let lease_generation = Uuid::new_v4();
+    let cleanup_generation = lease_generation;
+    let (start_tx, start_rx) = tokio::sync::oneshot::channel();
     let handle = tokio::spawn(async move {
+        if start_rx.await.is_err() {
+            return;
+        }
+        let _local_permit = local_permit;
         let leases = task_state.leases.clone();
         let db = task_state.database.clone();
         let cleanup_id = id;
-        let result =
-            tokio::spawn(
-                async move { run_agent_operation(&task_state, cleanup_id, operation).await },
-            )
-            .await;
-        leases.lock().await.remove(&cleanup_id);
+        let result = AssertUnwindSafe(run_agent_operation(
+            &task_state,
+            cleanup_id,
+            operation,
+            operation_config,
+            coding_model,
+        ))
+        .catch_unwind()
+        .await;
+        remove_agent_lease_if_current(&leases, cleanup_id, cleanup_generation).await;
+        release_active_models(&task_state, &lifecycle_models).await;
         match result {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
@@ -1622,54 +1803,191 @@ async fn spawn_agent_operation(
                     }
                 }
             }
-            Err(join_error) => {
-                eprintln!(
-                    "agent task panicked for session {}: {join_error}",
-                    cleanup_id.0
-                );
+            Err(panic) => {
+                let panic = panic_payload_message(panic);
+                eprintln!("agent task panicked for session {}: {panic}", cleanup_id.0);
                 if let Ok(mut store) = SessionStore::open(&db) {
                     let _ = store.append(
                         cleanup_id,
                         &SessionEvent::SessionFailed {
-                            reason: format!("agent task panicked: {join_error}"),
+                            reason: format!("agent task panicked: {panic}"),
                         },
                     );
                 }
             }
         }
     });
-    leases.insert(id, handle);
+    leases.insert(
+        id,
+        AgentLease {
+            generation: lease_generation,
+            task: handle,
+            models: budget.models,
+        },
+    );
+    let _ = start_tx.send(());
     Ok(())
+}
+
+struct InferenceBudget {
+    models: Vec<ModelId>,
+    local_inference: bool,
+    config: AppConfig,
+}
+
+async fn lifecycle_models_before_interruption(
+    state: &AppState,
+    id: SessionId,
+) -> Result<Vec<ModelId>, ApiError> {
+    if let Some(models) = state
+        .leases
+        .lock()
+        .await
+        .get(&id)
+        .map(|lease| lease.models.clone())
+    {
+        return Ok(models);
+    }
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    configured_session_models(state, id, &config).await
+}
+
+async fn remove_agent_lease_if_current(
+    leases: &Mutex<BTreeMap<SessionId, AgentLease>>,
+    id: SessionId,
+    generation: Uuid,
+) -> bool {
+    let mut leases = leases.lock().await;
+    if leases
+        .get(&id)
+        .is_some_and(|lease| lease.generation == generation)
+    {
+        leases.remove(&id);
+        true
+    } else {
+        false
+    }
+}
+
+async fn abort_agent_lease(state: &AppState, id: SessionId) -> Result<AgentInterruption, ApiError> {
+    let token = Uuid::new_v4();
+    let lease = {
+        let _gate = state.lifecycle_gate.lock().await;
+        let mut interrupting = state.interrupting_sessions.lock().await;
+        if interrupting.contains_key(&id) {
+            return Err(ApiError::Conflict(
+                "session cancellation or pause is already settling".into(),
+            ));
+        }
+        interrupting.insert(id, token);
+        state.leases.lock().await.remove(&id)
+    };
+    let lease_models = lease.as_ref().map(|lease| lease.models.clone());
+    if let Some(lease) = lease {
+        lease.task.abort();
+        let _ = lease.task.await;
+    }
+    Ok(AgentInterruption {
+        token,
+        lease_models,
+    })
+}
+
+async fn finish_agent_interruption(state: &AppState, id: SessionId, token: Uuid) -> bool {
+    let _gate = state.lifecycle_gate.lock().await;
+    let mut interrupting = state.interrupting_sessions.lock().await;
+    if interrupting.get(&id) == Some(&token) {
+        interrupting.remove(&id);
+        true
+    } else {
+        false
+    }
+}
+
+async fn configured_session_models(
+    state: &AppState,
+    id: SessionId,
+    config: &AppConfig,
+) -> Result<Vec<ModelId>, ApiError> {
+    let session = state.store.lock().await.load(id)?;
+    let selected = session
+        .selected_model
+        .as_deref()
+        .or(config.models.default.as_deref())
+        .ok_or_else(|| ApiError::BadRequest("no default model selected".into()))?;
+    let mut models = vec![ModelId::parse(selected)
+        .map_err(|error| ApiError::BadRequest(format!("invalid selected model: {error}")))?];
+    if let Some(judge) = config.models.roles.get("judge") {
+        let judge = ModelId::parse(judge)
+            .map_err(|error| ApiError::BadRequest(format!("invalid judge model: {error}")))?;
+        if !models.contains(&judge) {
+            models.push(judge);
+        }
+    }
+    Ok(models)
+}
+
+async fn inference_budget(state: &AppState, id: SessionId) -> Result<InferenceBudget, ApiError> {
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let models = configured_session_models(state, id, &config).await?;
+    let mut local_inference = false;
+    for model in &models {
+        let provider = config.providers.get(&model.provider).ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "selected model references unknown provider `{}`",
+                model.provider
+            ))
+        })?;
+        local_inference |= provider.is_local();
+    }
+    Ok(InferenceBudget {
+        models,
+        local_inference,
+        config,
+    })
 }
 
 async fn run_agent_operation(
     state: &AppState,
     id: SessionId,
     operation: AgentOperation,
+    config: AppConfig,
+    model: ModelId,
 ) -> Result<(), DaemonError> {
-    let config = AppConfig::load(&state.app_config)
-        .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
     let mut store = SessionStore::open(&state.database)?;
     let session = store.load(id)?;
-    let selected = session
-        .selected_model
-        .as_deref()
-        .or(config.models.default.as_deref())
-        .ok_or_else(|| DaemonError::AgentConfiguration("no default model selected".into()))?;
-    let model = ModelId::parse(selected)
-        .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
     let judge_selected = config.models.roles.get("judge").ok_or_else(|| {
         DaemonError::AgentConfiguration(
             "models.roles.judge is required for daemon-owned agent sessions".into(),
         )
     })?;
-    if judge_selected == selected && !config.judgment.allow_same_model {
+    let judge_model = ModelId::parse(judge_selected)
+        .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    if judge_model == model && !config.judgment.allow_same_model {
         return Err(DaemonError::AgentConfiguration(
             "coding and judgment roles must use different configured models".into(),
         ));
     }
-    let judge_model = ModelId::parse(judge_selected)
-        .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    let resources = ResourceSnapshot::detect(0);
+    let coding_is_local = config
+        .providers
+        .get(&model.provider)
+        .is_some_and(ProviderConfig::is_local);
+    let judge_is_local = config
+        .providers
+        .get(&judge_model.provider)
+        .is_some_and(ProviderConfig::is_local);
+    if coding_is_local
+        && judge_is_local
+        && model != judge_model
+        && !resources.allow_separate_local_judge
+    {
+        return Err(DaemonError::AgentConfiguration(
+            "resource governor disabled a separate local judge under current memory pressure; use one explicitly accepted reduced-independence model or a remote judge".into(),
+        ));
+    }
     let router = ProviderRouter::from_config(&config)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
     let provider = router
@@ -1723,9 +2041,188 @@ async fn run_agent_operation(
         AgentOperation::Resume => agent.resume(&mut store, id).await.map(|_| ()),
         AgentOperation::Approve => agent.approve(&mut store, id).await.map(|_| ()),
     };
-    state.leases.lock().await.remove(&id);
     result.map_err(|error| DaemonError::Agent(error.to_string()))?;
     Ok(())
+}
+
+fn unique_models(models: &[ModelId]) -> Vec<ModelId> {
+    let mut unique = Vec::new();
+    for model in models {
+        if !unique.contains(model) {
+            unique.push(model.clone());
+        }
+    }
+    unique
+}
+
+fn model_key(model: &ModelId) -> String {
+    format!("{}/{}", model.provider, model.model)
+}
+
+async fn mark_models_active(state: &AppState, models: &[ModelId]) {
+    let models = unique_models(models);
+    {
+        let mut active = state.active_models.lock().await;
+        for model in &models {
+            *active.entry(model_key(model)).or_default() += 1;
+        }
+    }
+    let mut epochs = state.lifecycle_epochs.lock().await;
+    for model in &models {
+        let epoch = epochs.entry(model_key(model)).or_default();
+        *epoch = epoch.wrapping_add(1);
+    }
+}
+
+async fn release_active_models(state: &AppState, models: &[ModelId]) {
+    finish_model_lifecycle(state, models, true).await;
+}
+
+async fn finish_model_lifecycle(state: &AppState, models: &[ModelId], decrement_active: bool) {
+    let _gate = state.lifecycle_gate.lock().await;
+    let models = unique_models(models);
+    if decrement_active {
+        let mut active = state.active_models.lock().await;
+        for model in &models {
+            let key = model_key(model);
+            if let Some(count) = active.get_mut(&key) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    active.remove(&key);
+                }
+            }
+        }
+    }
+    for model in &models {
+        apply_local_model_lifecycle_locked(state, model).await;
+    }
+}
+
+async fn apply_local_model_lifecycle_locked(state: &AppState, model: &ModelId) {
+    let Ok(config) = AppConfig::load(&state.app_config) else {
+        return;
+    };
+    let Some(ProviderConfig::Ollama { base_url, .. }) = config.providers.get(&model.provider)
+    else {
+        return;
+    };
+    let Ok(settings) = LocalModelLifecycleSettings::load(&config) else {
+        return;
+    };
+    let model_key = model_key(model);
+    let lifecycle_epoch = {
+        let mut epochs = state.lifecycle_epochs.lock().await;
+        let epoch = epochs.entry(model_key.clone()).or_default();
+        *epoch = epoch.wrapping_add(1);
+        *epoch
+    };
+    if state
+        .active_models
+        .lock()
+        .await
+        .get(&model_key)
+        .copied()
+        .unwrap_or_default()
+        > 0
+    {
+        return;
+    }
+    let runtime_url = base_url.to_string();
+    let model_name = model.model.clone();
+    match settings.policy {
+        LocalModelLifecycle::UnloadAfterRequest => {
+            let result = async {
+                LocalModelRuntime::new(&runtime_url)?
+                    .unload(&UnloadLocalModelRequest {
+                        model: Some(model_name),
+                        all: false,
+                    })
+                    .await
+                    .map(|_| ())
+            }
+            .await;
+            if let Err(error) = result {
+                tracing::warn!("local model lifecycle release failed: {error}");
+            }
+        }
+        LocalModelLifecycle::IdleTimeout => {
+            let timeout = settings.idle_timeout_seconds;
+            let config_path = state.app_config.clone();
+            let lifecycle_epochs = state.lifecycle_epochs.clone();
+            let lifecycle_gate = state.lifecycle_gate.clone();
+            let active_models = state.active_models.clone();
+            match LocalModelRuntime::new(&runtime_url) {
+                Ok(runtime) => {
+                    if let Err(error) = runtime.keep_alive(&model_name, timeout as i64).await {
+                        tracing::warn!("idle local model keep-alive setup failed: {error}");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!("idle local model keep-alive setup failed: {error}");
+                }
+            }
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(timeout)).await;
+                let _gate = lifecycle_gate.lock().await;
+                if lifecycle_epochs.lock().await.get(&model_key) != Some(&lifecycle_epoch) {
+                    return;
+                }
+                let still_configured = AppConfig::load(&config_path)
+                    .ok()
+                    .and_then(|config| LocalModelLifecycleSettings::load(&config).ok())
+                    .is_some_and(|current| {
+                        current.policy == LocalModelLifecycle::IdleTimeout
+                            && current.idle_timeout_seconds == timeout
+                    });
+                if !still_configured {
+                    return;
+                }
+                if active_models
+                    .lock()
+                    .await
+                    .get(&model_key)
+                    .copied()
+                    .unwrap_or_default()
+                    > 0
+                {
+                    return;
+                }
+                let result = async {
+                    LocalModelRuntime::new(&runtime_url)?
+                        .unload(&UnloadLocalModelRequest {
+                            model: Some(model_name),
+                            all: false,
+                        })
+                        .await
+                        .map(|_| ())
+                }
+                .await;
+                if let Err(error) = result {
+                    tracing::warn!("idle local model release failed: {error}");
+                }
+            });
+        }
+        LocalModelLifecycle::KeepLoaded => {
+            let result = async {
+                LocalModelRuntime::new(&runtime_url)?
+                    .keep_alive(&model_name, -1)
+                    .await
+            }
+            .await;
+            if let Err(error) = result {
+                tracing::warn!("local model keep-loaded request failed: {error}");
+            }
+        }
+        LocalModelLifecycle::External => {}
+    }
+}
+
+fn panic_payload_message(panic: Box<dyn std::any::Any + Send>) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic payload".into())
 }
 
 fn infer_capability(objective: &str) -> String {
@@ -2229,6 +2726,7 @@ async fn remove_provider(
     AxumPath(name): AxumPath<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    let _config_guard = lock_model_configuration(&state).await?;
     let mut config = AppConfig::load(&state.app_config)
         .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
     if config.providers.remove(&name).is_none() {
@@ -2271,6 +2769,7 @@ async fn configure_provider(
     Json(body): Json<ConfigureProviderRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    let _config_guard = lock_model_configuration(&state).await?;
     let mut config = AppConfig::load(&state.app_config)
         .map_err(|e| ApiError::BadRequest(format!("config load failed: {e}")))?;
     if config.providers.contains_key(&body.name) && !body.replace {
@@ -2446,6 +2945,111 @@ async fn list_models(
     Ok(Json(serde_json::json!(models)))
 }
 
+async fn local_models(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let status = configured_ollama_runtime(&config)?
+        .inspect()
+        .await
+        .map_err(ApiError::BadRequest)?;
+    Ok(Json(serde_json::to_value(status).map_err(|error| {
+        ApiError::BadRequest(error.to_string())
+    })?))
+}
+
+async fn unload_local_model(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<UnloadLocalModelRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    request.validate().map_err(ApiError::BadRequest)?;
+    let _gate = state.lifecycle_gate.lock().await;
+    let model_in_use = {
+        let active = state.active_models.lock().await;
+        if request.all {
+            active.values().any(|count| *count > 0)
+        } else {
+            let model = request.model.as_deref().unwrap_or_default();
+            active
+                .iter()
+                .any(|(key, count)| *count > 0 && key.ends_with(&format!("/{model}")))
+        }
+    };
+    if model_in_use {
+        return Err(ApiError::Conflict(
+            "cannot unload a model while a governed request is using it".into(),
+        ));
+    }
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let unloaded = configured_ollama_runtime(&config)?
+        .unload(&request)
+        .await
+        .map_err(ApiError::BadRequest)?;
+    Ok(Json(serde_json::json!({
+        "unloaded": unloaded,
+        "verified": true,
+    })))
+}
+
+async fn local_model_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<LocalModelLifecycleSettings>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    Ok(Json(
+        LocalModelLifecycleSettings::load(&config).map_err(ApiError::BadRequest)?,
+    ))
+}
+
+async fn update_local_model_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(settings): Json<LocalModelLifecycleSettings>,
+) -> Result<Json<LocalModelLifecycleSettings>, ApiError> {
+    authorize(&state, &headers)?;
+    let _gate = state.lifecycle_gate.lock().await;
+    let mut config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    settings
+        .save(&mut config, &state.app_config)
+        .map_err(ApiError::BadRequest)?;
+    for epoch in state.lifecycle_epochs.lock().await.values_mut() {
+        *epoch = epoch.wrapping_add(1);
+    }
+    Ok(Json(settings))
+}
+
+fn configured_ollama_runtime(config: &AppConfig) -> Result<LocalModelRuntime, ApiError> {
+    let preferred_provider = config
+        .models
+        .default
+        .as_deref()
+        .and_then(|model| ModelId::parse(model).ok())
+        .and_then(|model| config.providers.get(&model.provider));
+    let configured = preferred_provider
+        .filter(|provider| matches!(provider, ProviderConfig::Ollama { .. }))
+        .or_else(|| {
+            config
+                .providers
+                .values()
+                .find(|provider| matches!(provider, ProviderConfig::Ollama { .. }))
+        });
+    match configured {
+        Some(ProviderConfig::Ollama { base_url, .. }) => {
+            LocalModelRuntime::new(base_url.as_str()).map_err(ApiError::BadRequest)
+        }
+        _ => LocalModelRuntime::ollama_default().map_err(ApiError::BadRequest),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InspectRepositoryRequest {
@@ -2481,6 +3085,7 @@ async fn assign_model_role(
     Json(body): Json<AssignModelRoleRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    let _config_guard = lock_model_configuration(&state).await?;
     let model =
         ModelId::parse(&body.model).map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let mut config = AppConfig::load(&state.app_config)
@@ -3616,6 +4221,7 @@ mod tests {
         TokenEstimate,
     };
     use schemars::schema::RootSchema;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
 
     #[test]
@@ -3631,6 +4237,18 @@ mod tests {
 
     struct SupervisorProvider {
         responses: StdMutex<Vec<serde_json::Value>>,
+    }
+
+    struct ConcurrencyProvider {
+        active: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+    }
+
+    async fn count_unexpected_provider_request(
+        State(counter): State<Arc<AtomicUsize>>,
+    ) -> Json<serde_json::Value> {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Json(serde_json::json!({}))
     }
 
     #[async_trait]
@@ -3653,6 +4271,53 @@ mod tests {
                 .unwrap()
                 .pop()
                 .ok_or_else(|| ProviderError::InvalidResponse("mock exhausted".into()))
+        }
+
+        async fn count_tokens(
+            &self,
+            _request: &ModelRequest,
+        ) -> Result<TokenEstimate, ProviderError> {
+            Ok(TokenEstimate {
+                tokens: 1,
+                exact: true,
+            })
+        }
+
+        async fn health_check(&self) -> Result<ProviderHealth, ProviderError> {
+            Ok(ProviderHealth {
+                available: true,
+                detail: "mock".into(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ModelProvider for ConcurrencyProvider {
+        async fn capabilities(&self, _model: &ModelId) -> Result<ModelCapabilities, ProviderError> {
+            Ok(ModelCapabilities::unknown(true))
+        }
+
+        async fn stream(&self, _request: ModelRequest) -> Result<ModelEventStream, ProviderError> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn structured(
+            &self,
+            _request: ModelRequest,
+            _schema: RootSchema,
+        ) -> Result<serde_json::Value, ProviderError> {
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(active, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(serde_json::json!({
+                "plan": ["inspect"],
+                "current_step_index": 0,
+                "expected_postconditions": [],
+                "rationale": "no change required",
+                "action": null,
+                "complete": true
+            }))
         }
 
         async fn count_tokens(
@@ -3697,6 +4362,98 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[tokio::test]
+    async fn concurrent_pause_and_cancel_interruptions_are_exclusive_and_generation_safe() {
+        let temporary = tempfile::tempdir().unwrap();
+        let state = AppState {
+            store: Arc::new(Mutex::new(SessionStore::in_memory().unwrap())),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+        };
+        let session_id = SessionId::new();
+        let original_generation = Uuid::new_v4();
+        let original_task = tokio::spawn(std::future::pending::<()>());
+        state.leases.lock().await.insert(
+            session_id,
+            AgentLease {
+                generation: original_generation,
+                task: original_task,
+                models: vec![ModelId::parse("local/test").unwrap()],
+            },
+        );
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+        let first_state = state.clone();
+        let first_barrier = barrier.clone();
+        let first = tokio::spawn(async move {
+            first_barrier.wait().await;
+            abort_agent_lease(&first_state, session_id).await
+        });
+        let second_state = state.clone();
+        let second_barrier = barrier.clone();
+        let second = tokio::spawn(async move {
+            second_barrier.wait().await;
+            abort_agent_lease(&second_state, session_id).await
+        });
+        barrier.wait().await;
+        let first = first.await.unwrap();
+        let second = second.await.unwrap();
+        let (interruption, conflict) = match (first, second) {
+            (Ok(interruption), Err(conflict)) | (Err(conflict), Ok(interruption)) => {
+                (interruption, conflict)
+            }
+            _ => panic!("exactly one concurrent interruption must own the session"),
+        };
+        assert!(matches!(conflict, ApiError::Conflict(_)));
+        assert!(interruption.lease_models.is_some());
+        assert!(state.leases.lock().await.get(&session_id).is_none());
+        assert_eq!(
+            state.interrupting_sessions.lock().await.get(&session_id),
+            Some(&interruption.token)
+        );
+
+        assert!(
+            !finish_agent_interruption(&state, session_id, Uuid::new_v4()).await,
+            "a stale interruption token must not release the current owner"
+        );
+        assert!(
+            finish_agent_interruption(&state, session_id, interruption.token).await,
+            "the owning interruption token must release the session"
+        );
+
+        let replacement_generation = Uuid::new_v4();
+        let replacement_task = tokio::spawn(std::future::pending::<()>());
+        state.leases.lock().await.insert(
+            session_id,
+            AgentLease {
+                generation: replacement_generation,
+                task: replacement_task,
+                models: vec![ModelId::parse("local/replacement").unwrap()],
+            },
+        );
+        assert!(
+            !remove_agent_lease_if_current(&state.leases, session_id, original_generation).await,
+            "a stale task generation must not remove a replacement lease"
+        );
+        let replacement = state
+            .leases
+            .lock()
+            .await
+            .remove(&session_id)
+            .expect("replacement lease must remain owned by its generation");
+        assert_eq!(replacement.generation, replacement_generation);
+        replacement.task.abort();
+        let _ = replacement.task.await;
     }
 
     #[tokio::test]
@@ -3817,6 +4574,8 @@ mod tests {
             model: ModelId::parse("local/test").unwrap(),
             policy: Policy::default(),
             database: temporary.path().join("sessions.db"),
+            local_inference: false,
+            local_inference_slots: Arc::new(Semaphore::new(1)),
         };
         let report = Supervisor::new(ParallelismConfig::default())
             .unwrap()
@@ -3843,6 +4602,74 @@ mod tests {
             .unwrap();
         assert!(status.status.success());
         assert!(status.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn local_supervisor_workers_share_the_single_inference_governor() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repo");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        std::fs::write(repository.join("README.md"), "fixture").unwrap();
+        git(&repository, &["add", "README.md"]);
+        git(
+            &repository,
+            &[
+                "-c",
+                "user.name=PurrCode Tests",
+                "-c",
+                "user.email=tests@purrcode.local",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        );
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let worker = JudgedSupervisorWorker {
+            provider: Arc::new(ConcurrencyProvider {
+                active: active.clone(),
+                peak: peak.clone(),
+            }),
+            model: ModelId::parse("local/test").unwrap(),
+            policy: Policy::default(),
+            database: temporary.path().join("sessions.db"),
+            local_inference: true,
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+        };
+        let report = Supervisor::new(ParallelismConfig {
+            max_workers: 2,
+            max_model_requests: 2,
+            max_worktrees: 2,
+            require_isolation: true,
+        })
+        .unwrap()
+        .run(
+            &repository,
+            vec![
+                WorkerSpec {
+                    id: "one".into(),
+                    objective: "inspect one".into(),
+                    dependencies: Vec::new(),
+                },
+                WorkerSpec {
+                    id: "two".into(),
+                    objective: "inspect two".into(),
+                    dependencies: Vec::new(),
+                },
+            ],
+            &worker,
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.results.len(), 2);
+        assert!(report
+            .results
+            .iter()
+            .all(|result| result.status == WorkerStatus::Completed));
+        assert_eq!(peak.load(Ordering::SeqCst), 1);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -3874,6 +4701,96 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         handle.abort();
+    }
+
+    #[tokio::test]
+    async fn startup_is_lazy_and_does_not_create_sessions_or_touch_ollama() {
+        let temporary = tempfile::tempdir().unwrap();
+        let provider_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let provider_address = provider_listener.local_addr().unwrap();
+        let provider_requests = Arc::new(AtomicUsize::new(0));
+        let provider_counter = provider_requests.clone();
+        let provider_server = tokio::spawn(async move {
+            axum::serve(
+                provider_listener,
+                Router::new()
+                    .fallback(count_unexpected_provider_request)
+                    .with_state(provider_counter),
+            )
+            .await
+            .unwrap();
+        });
+
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        std::fs::write(repository.join("README.md"), "# fixture\n").unwrap();
+        git(&repository, &["add", "README.md"]);
+        git(
+            &repository,
+            &[
+                "-c",
+                "user.name=PurrCode Tests",
+                "-c",
+                "user.email=tests@purrcode.local",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        );
+
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(
+            &app_config,
+            format!(
+                "schema_version = 1\n\n[providers.local]\ntype = \"ollama\"\nbase_url = \"http://{provider_address}/v1/\"\n\n[models]\ndefault = \"local/small:latest\"\n"
+            ),
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config,
+        })
+        .await
+        .unwrap();
+        let daemon_server = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        let providers = client
+            .get(format!("http://{}/v1/providers", report.bind))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(providers.status(), StatusCode::OK);
+        let inspection = client
+            .post(format!("http://{}/v1/repository/inspect", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"repository": repository}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(inspection.status(), StatusCode::OK);
+        let sessions = client
+            .get(format!("http://{}/v1/sessions", report.bind))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json::<Vec<serde_json::Value>>()
+            .await
+            .unwrap();
+
+        assert!(sessions.is_empty());
+        assert_eq!(provider_requests.load(Ordering::SeqCst), 0);
+        daemon_server.abort();
+        provider_server.abort();
     }
 
     #[tokio::test]
@@ -4108,7 +5025,9 @@ local = true
 [models]
 default = "fixture/test"
 [models.roles]
-judge = "fixture/judge"
+judge = "fixture/test"
+[judgment]
+allow_same_model = true
 "#
             ),
         )

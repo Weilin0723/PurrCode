@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 const MAX_VISIBLE_PATHS: usize = 80;
-const MAX_DEPTH: usize = 4;
+// Startup is Tier 0: only root entries. Deeper traversal is task-triggered by Whisker.
+const MAX_DEPTH: usize = 0;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspacePath {
@@ -80,7 +81,33 @@ fn bounded_paths(repository: &Path) -> Vec<WorkspacePath> {
         let Ok(entries) = std::fs::read_dir(directory) else {
             return;
         };
-        let mut entries = entries.filter_map(Result::ok).collect::<Vec<_>>();
+        let remaining = MAX_VISIBLE_PATHS.saturating_sub(output.len());
+        let mut bounded = Vec::with_capacity(remaining);
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if matches!(
+                name.as_ref(),
+                ".git" | ".purrcode" | "node_modules" | "target"
+            ) {
+                continue;
+            }
+            if bounded.len() < remaining {
+                bounded.push(entry);
+                continue;
+            }
+            let Some((largest_index, largest)) = bounded
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, candidate): &(usize, &std::fs::DirEntry)| candidate.file_name())
+            else {
+                continue;
+            };
+            if entry.file_name() < largest.file_name() {
+                bounded[largest_index] = entry;
+            }
+        }
+        let mut entries = bounded;
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries {
             if output.len() >= MAX_VISIBLE_PATHS {
@@ -150,5 +177,41 @@ mod tests {
             .any(|path| path.display == ".env" && path.sensitive));
         assert!(context.paths.len() <= MAX_VISIBLE_PATHS);
         assert!(!format!("{context:?}").contains("NEVER_READ"));
+    }
+
+    #[test]
+    fn startup_listing_is_tier_zero_and_does_not_recurse() {
+        let temporary = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temporary.path().join("src/nested")).unwrap();
+        std::fs::write(temporary.path().join("src/nested/large.rs"), "ignored").unwrap();
+        let context = WorkspaceContext::inspect(temporary.path());
+        assert!(context.paths.iter().any(|path| path.display == "src"));
+        assert!(!context
+            .paths
+            .iter()
+            .any(|path| path.display.contains("large.rs")));
+    }
+
+    #[test]
+    fn startup_root_selection_is_sorted_and_memory_bounded() {
+        let temporary = tempfile::tempdir().unwrap();
+        for index in (0..1_000).rev() {
+            std::fs::write(
+                temporary.path().join(format!("file-{index:04}.txt")),
+                "metadata only",
+            )
+            .unwrap();
+        }
+        let context = WorkspaceContext::inspect(temporary.path());
+        assert_eq!(context.paths.len(), MAX_VISIBLE_PATHS);
+        assert!(context
+            .paths
+            .windows(2)
+            .all(|pair| pair[0].display <= pair[1].display));
+        assert_eq!(context.paths[0].display, "file-0000.txt");
+        assert_eq!(
+            context.paths[MAX_VISIBLE_PATHS - 1].display,
+            "file-0079.txt"
+        );
     }
 }

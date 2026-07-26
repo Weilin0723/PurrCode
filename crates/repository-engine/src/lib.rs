@@ -10,10 +10,12 @@ use std::process::Stdio;
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_GIT_OUTPUT: usize = 4 * 1024 * 1024;
+static WORKTREE_METADATA_GATE: Mutex<()> = Mutex::const_new(());
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepositorySnapshot {
@@ -91,27 +93,34 @@ impl RepositoryEngine {
         session_id: SessionId,
     ) -> Result<SessionWorktree, RepositoryError> {
         let snapshot = Self::inspect(repository).await?;
-        ensure_purrcode_excluded(&snapshot.root).await?;
         let path = snapshot
             .root
             .join(".purrcode")
             .join("worktrees")
             .join(session_id.0.to_string());
-        if path.exists() {
-            return Err(RepositoryError::WorktreeAlreadyExists(path));
-        }
-        let parent = path
-            .parent()
-            .ok_or_else(|| RepositoryError::UnsafeWorktreePath(path.clone()))?;
-        std::fs::create_dir_all(parent)?;
-        let path_text = git_compatible_path(&path)?;
-        git_text(
-            &snapshot.root,
-            &["worktree", "add", "--detach", &path_text, &snapshot.head],
-        )
-        .await?;
-        let canonical_path = path.canonicalize()?;
-        ensure_session_path(&snapshot.root, session_id, &canonical_path)?;
+        let canonical_path = {
+            // `git worktree add/remove` mutate shared metadata under the source repository's
+            // common Git directory. Git does not guarantee that concurrent metadata mutations
+            // from separate async tasks are safe, so every in-process mutation uses one gate.
+            let _metadata_guard = WORKTREE_METADATA_GATE.lock().await;
+            ensure_purrcode_excluded(&snapshot.root).await?;
+            if path.exists() {
+                return Err(RepositoryError::WorktreeAlreadyExists(path));
+            }
+            let parent = path
+                .parent()
+                .ok_or_else(|| RepositoryError::UnsafeWorktreePath(path.clone()))?;
+            std::fs::create_dir_all(parent)?;
+            let path_text = git_compatible_path(&path)?;
+            git_text(
+                &snapshot.root,
+                &["worktree", "add", "--detach", &path_text, &snapshot.head],
+            )
+            .await?;
+            let canonical_path = path.canonicalize()?;
+            ensure_session_path(&snapshot.root, session_id, &canonical_path)?;
+            canonical_path
+        };
         let (initialized_submodules, unavailable_submodules) =
             initialize_local_submodules(&snapshot.root, &canonical_path).await?;
         Ok(SessionWorktree {
@@ -405,6 +414,7 @@ impl RepositoryEngine {
             }),
             ApplicationStrategy::Discard => {
                 let path = git_compatible_path(&worktree.path)?;
+                let _metadata_guard = WORKTREE_METADATA_GATE.lock().await;
                 git_bytes(
                     &worktree.source_repository,
                     &["worktree", "remove", "--force", &path],
@@ -959,6 +969,56 @@ mod tests {
             std::fs::read_to_string(temporary.path().join("tracked.txt")).unwrap(),
             "user change"
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_worktree_metadata_mutations_are_serialized() {
+        let temporary = tempfile::tempdir().unwrap();
+        git(temporary.path(), &["init", "-q"]);
+        std::fs::write(temporary.path().join("tracked.txt"), "base").unwrap();
+        git(temporary.path(), &["add", "tracked.txt"]);
+        git(temporary.path(), &["commit", "-q", "-m", "base"]);
+
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(5));
+        let mut creators = Vec::new();
+        for _ in 0..4 {
+            let repository = temporary.path().to_path_buf();
+            let barrier = barrier.clone();
+            creators.push(tokio::spawn(async move {
+                barrier.wait().await;
+                RepositoryEngine::create_worktree(&repository, SessionId::new()).await
+            }));
+        }
+        barrier.wait().await;
+
+        let mut worktrees = Vec::new();
+        for creator in creators {
+            worktrees.push(
+                creator
+                    .await
+                    .expect("worktree creation task must not panic")
+                    .expect("concurrent worktree creation must preserve Git metadata"),
+            );
+        }
+        let paths = worktrees
+            .iter()
+            .map(|worktree| worktree.path.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(paths.len(), worktrees.len());
+
+        let mut removers = Vec::new();
+        for worktree in worktrees {
+            removers.push(tokio::spawn(async move {
+                RepositoryEngine::apply_strategy(&worktree, ApplicationStrategy::Discard).await
+            }));
+        }
+        for remover in removers {
+            remover
+                .await
+                .expect("worktree removal task must not panic")
+                .expect("concurrent worktree removal must preserve Git metadata");
+        }
+        assert!(paths.iter().all(|path| !path.exists()));
     }
 
     #[tokio::test]

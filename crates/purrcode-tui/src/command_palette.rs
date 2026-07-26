@@ -23,6 +23,16 @@ pub const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
         "/models",
     ),
     (
+        "Loaded local models",
+        "Inspect Ollama memory without loading a model",
+        "/model loaded",
+    ),
+    (
+        "Unload local models",
+        "Release Ollama model memory and verify it",
+        "/model unload-all",
+    ),
+    (
         "New task",
         "Preserve history and begin a new session",
         "/new",
@@ -175,6 +185,82 @@ impl CommandPalette {
                 }
             }
             "models" | "model" => {
+                let mut parts = args.split_whitespace();
+                let action = parts.next().unwrap_or_default();
+                if cmd == "model" && action == "loaded" && parts.next().is_none() {
+                    match app
+                        .request(reqwest::Method::GET, "/v1/local-models", None)
+                        .await
+                    {
+                        Ok(value) => {
+                            let loaded = value["loaded"]
+                                .as_array()
+                                .map(|models| {
+                                    models
+                                        .iter()
+                                        .filter_map(|model| model["name"].as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                })
+                                .filter(|models| !models.is_empty())
+                                .unwrap_or_else(|| "none".into());
+                            app.message_bar = format!(
+                                "Loaded: {loaded}\nMemory pressure: {} · local concurrency: {}",
+                                value["resources"]["memory_pressure"]
+                                    .as_str()
+                                    .unwrap_or("unknown"),
+                                value["resources"]["maximum_local_inference_requests"]
+                                    .as_u64()
+                                    .unwrap_or(1)
+                            );
+                        }
+                        Err(error) => {
+                            app.message_bar = format!("Local model status failed: {error}")
+                        }
+                    }
+                    return;
+                }
+                if cmd == "model" && action == "unload-all" && parts.next().is_none() {
+                    match app
+                        .request(
+                            reqwest::Method::POST,
+                            "/v1/local-models/unload",
+                            Some(serde_json::json!({"all": true})),
+                        )
+                        .await
+                    {
+                        Ok(value) => {
+                            app.message_bar =
+                                format!("Unloaded and verified: {}", value["unloaded"])
+                        }
+                        Err(error) => app.message_bar = format!("Unload failed: {error}"),
+                    }
+                    return;
+                }
+                if cmd == "model" && action == "unload" {
+                    let Some(model) = parts.next() else {
+                        app.message_bar = "Usage: /model unload <model>".into();
+                        return;
+                    };
+                    if parts.next().is_some() {
+                        app.message_bar = "Usage: /model unload <model>".into();
+                        return;
+                    }
+                    match app
+                        .request(
+                            reqwest::Method::POST,
+                            "/v1/local-models/unload",
+                            Some(serde_json::json!({"model": model})),
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            app.message_bar = format!("Unloaded and verified: {model}");
+                        }
+                        Err(error) => app.message_bar = format!("Unload failed: {error}"),
+                    }
+                    return;
+                }
                 match app.request(reqwest::Method::GET, "/v1/models", None).await {
                     Ok(val) => {
                         if cmd == "model" && !args.is_empty() {
@@ -376,6 +462,53 @@ impl CommandPalette {
                 Err(error) => app.message_bar = format!("Error: {error}"),
             },
             "settings" => {
+                let mut parts = args.split_whitespace();
+                if parts.next() == Some("local-model-lifecycle") {
+                    let policy = parts.next();
+                    let timeout = parts.next();
+                    if parts.next().is_some() {
+                        app.message_bar = "Usage: /settings local-model-lifecycle [unload_after_request|idle_timeout|keep_loaded|external] [seconds]".into();
+                        return;
+                    }
+                    let result = if let Some(policy) = policy {
+                        let idle_timeout_seconds = match timeout {
+                            Some(value) => match value.parse::<u64>() {
+                                Ok(value) => value,
+                                Err(_) => {
+                                    app.message_bar =
+                                        "Idle timeout must be a whole number of seconds.".into();
+                                    return;
+                                }
+                            },
+                            None => 300,
+                        };
+                        app.request(
+                            reqwest::Method::POST,
+                            "/v1/local-models/settings",
+                            Some(serde_json::json!({
+                                "policy": policy,
+                                "idle_timeout_seconds": idle_timeout_seconds,
+                            })),
+                        )
+                        .await
+                    } else {
+                        app.request(reqwest::Method::GET, "/v1/local-models/settings", None)
+                            .await
+                    };
+                    match result {
+                        Ok(value) => {
+                            app.message_bar = format!(
+                                "Local model lifecycle: {} · idle timeout: {}s",
+                                value["policy"].as_str().unwrap_or("unknown"),
+                                value["idle_timeout_seconds"].as_u64().unwrap_or(300)
+                            );
+                        }
+                        Err(error) => {
+                            app.message_bar = format!("Lifecycle settings failed: {error}")
+                        }
+                    }
+                    return;
+                }
                 let providers = app
                     .request(reqwest::Method::GET, "/v1/providers", None)
                     .await;
