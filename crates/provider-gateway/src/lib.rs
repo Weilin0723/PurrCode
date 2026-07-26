@@ -661,6 +661,15 @@ impl ProviderConfig {
             Self::EnterpriseGateway { .. } => false,
         }
     }
+
+    pub fn configured_models(&self) -> &BTreeMap<String, ModelCapabilities> {
+        match self {
+            Self::Openai { capabilities, .. }
+            | Self::OpenaiCompatible { capabilities, .. }
+            | Self::Ollama { capabilities, .. }
+            | Self::EnterpriseGateway { capabilities, .. } => capabilities,
+        }
+    }
 }
 
 fn is_loopback_url(url: &Url) -> bool {

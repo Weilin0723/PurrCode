@@ -8,7 +8,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use purrcode_agent_runtime::{AgentAction, AgentTurn, NativeAgent, SkillResolver, CapabilityResolution};
+use purrcode_agent_runtime::{
+    AgentAction, AgentTurn, CapabilityResolution, NativeAgent, SkillResolver,
+};
 use purrcode_claw::ToolRuntime;
 use purrcode_mcp_host::{McpHost, McpServerConfig};
 use purrcode_ninelives::{Automation, SessionStore, StoreError};
@@ -16,13 +18,13 @@ use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
     AppConfig, ModelId, ModelMessage, ModelProvider, ModelRequest, ProviderRouter,
 };
-use purrcode_skill_store::{SkillScope, SkillStore};
-use purrcode_skill_registry::{RegistryEngine, SearchQuery, GitHubRegistryAdapter};
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
     ActionId, ApprovalAuthority, Authorization, CommandAction, DeleteFileAction, JudgmentDecision,
     ProposedAction, SessionEvent, SessionId, SessionStatus, ValidationStatus, WriteFileAction,
 };
+use purrcode_skill_registry::{GitHubRegistryAdapter, RegistryEngine, SearchQuery};
+use purrcode_skill_store::{SkillScope, SkillStore};
 use purrcode_supervisor_runtime::{
     IsolatedWorker, ParallelismConfig, Supervisor, WorkerOutput, WorkerSpec, WorkerStatus,
     WorkerWorkspace,
@@ -1518,9 +1520,7 @@ async fn run_agent_operation(
     let agent = NativeAgent::new(provider.as_ref(), model, policy)
         .with_contextual_judge(judge_provider.as_ref(), judge_model);
     let resolver = DaemonSkillResolver::new(state).await;
-    let _capability = agent
-        .resolve_capability("core", resolver.as_deref())
-        .await;
+    let _capability = agent.resolve_capability("core", resolver.as_deref()).await;
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
@@ -1904,8 +1904,16 @@ impl DaemonSkillResolver {
 #[async_trait::async_trait]
 impl SkillResolver for DaemonSkillResolver {
     async fn resolve(&self, capability: &str) -> CapabilityResolution {
-        let db_path = self.database.parent().unwrap_or(Path::new(".")).join("skills.db");
-        let lib_root = self.database.parent().unwrap_or(Path::new(".")).join("skills");
+        let db_path = self
+            .database
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("skills.db");
+        let lib_root = self
+            .database
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("skills");
         if let Ok(store) = SkillStore::open(&db_path, &lib_root) {
             if let Ok(skills) = store.find_by_capability(capability) {
                 if let Some(skill) = skills.first() {
@@ -1927,9 +1935,8 @@ async fn list_providers(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let config = AppConfig::load(&state.app_config).map_err(|e| {
-        ApiError::BadRequest(format!("config load failed: {e}"))
-    })?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|e| ApiError::BadRequest(format!("config load failed: {e}")))?;
     let providers: Vec<serde_json::Value> = config
         .providers
         .keys()
@@ -1939,12 +1946,9 @@ async fn list_providers(
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
+#[serde(deny_unknown_fields)]
 struct TestProviderRequest {
-    provider_type: String,
-    base_url: String,
-    api_key: Option<String>,
-    local: Option<bool>,
+    provider: String,
 }
 
 async fn test_provider(
@@ -1953,14 +1957,40 @@ async fn test_provider(
     Json(body): Json<TestProviderRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let _local = body.local.unwrap_or(false);
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|e| ApiError::BadRequest(format!("config load failed: {e}")))?;
+    let provider_config = config
+        .providers
+        .get(&body.provider)
+        .ok_or_else(|| ApiError::BadRequest(format!("unknown provider `{}`", body.provider)))?;
+    let local = provider_config.is_local();
+    let router = ProviderRouter::from_config(&config)
+        .map_err(|e| ApiError::BadRequest(format!("provider setup failed: {e}")))?;
+    let probe_model = provider_config
+        .configured_models()
+        .keys()
+        .next()
+        .cloned()
+        .unwrap_or_else(|| "health-check".into());
+    let model = ModelId {
+        provider: body.provider.clone(),
+        model: probe_model,
+    };
+    let provider = router
+        .provider(&model)
+        .map_err(|e| ApiError::BadRequest(format!("provider routing failed: {e}")))?;
+    let health = provider
+        .health_check()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("provider health check failed: {e}")))?;
+    if !health.available {
+        return Err(ApiError::BadRequest(health.detail));
+    }
     Ok(Json(serde_json::json!({
-        "authentication": true,
-        "streaming": true,
-        "structured_output": true,
-        "models_discovered": [
-            {"id": format!("{}/test-model", body.provider_type), "local": _local}
-        ]
+        "available": true,
+        "detail": health.detail,
+        "local": local,
+        "models_configured": provider_config.configured_models().keys().collect::<Vec<_>>(),
     })))
 }
 
@@ -1976,12 +2006,10 @@ async fn store_credential(
     Json(body): Json<StoreCredentialRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    purrcode_provider_gateway::set_keychain_credential(&body.name, &body.secret).map_err(|e| {
-        ApiError::BadRequest(format!("credential storage failed: {e}"))
-    })?;
-    let reference = purrcode_provider_gateway::keychain_reference(&body.name).map_err(|e| {
-        ApiError::BadRequest(format!("keychain reference failed: {e}"))
-    })?;
+    purrcode_provider_gateway::set_keychain_credential(&body.name, &body.secret)
+        .map_err(|e| ApiError::BadRequest(format!("credential storage failed: {e}")))?;
+    let reference = purrcode_provider_gateway::keychain_reference(&body.name)
+        .map_err(|e| ApiError::BadRequest(format!("keychain reference failed: {e}")))?;
     Ok(Json(serde_json::json!({"reference": reference})))
 }
 
@@ -1990,18 +2018,19 @@ async fn list_models(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let config = AppConfig::load(&state.app_config).map_err(|e| {
-        ApiError::BadRequest(format!("config load failed: {e}"))
-    })?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|e| ApiError::BadRequest(format!("config load failed: {e}")))?;
     let mut models = Vec::new();
     for (name, provider_cfg) in &config.providers {
-        let local = matches!(provider_cfg, purrcode_provider_gateway::ProviderConfig::Ollama { .. });
-        models.push(serde_json::json!({
-            "id": format!("{name}/default"),
-            "provider": name,
-            "capabilities": {},
-            "local": local,
-        }));
+        for (model, capabilities) in provider_cfg.configured_models() {
+            models.push(serde_json::json!({
+                "id": format!("{name}/{model}"),
+                "provider": name,
+                "model": model,
+                "capabilities": capabilities,
+                "local": provider_cfg.is_local(),
+            }));
+        }
     }
     Ok(Json(serde_json::json!(models)))
 }
@@ -2011,14 +2040,21 @@ async fn list_skills(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let db_path = state.database.parent().unwrap_or(Path::new(".")).join("skills.db");
-    let lib_root = state.database.parent().unwrap_or(Path::new(".")).join("skills");
-    let store = SkillStore::open(&db_path, &lib_root).map_err(|e| {
-        ApiError::BadRequest(format!("skill store open failed: {e}"))
-    })?;
-    let skills = store.list().map_err(|e| {
-        ApiError::BadRequest(format!("skill list failed: {e}"))
-    })?;
+    let db_path = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills.db");
+    let lib_root = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills");
+    let store = SkillStore::open(&db_path, &lib_root)
+        .map_err(|e| ApiError::BadRequest(format!("skill store open failed: {e}")))?;
+    let skills = store
+        .list()
+        .map_err(|e| ApiError::BadRequest(format!("skill list failed: {e}")))?;
     Ok(Json(serde_json::to_value(&skills).unwrap_or_default()))
 }
 
@@ -2039,13 +2075,18 @@ async fn search_skills(
     let query = SearchQuery {
         capability: body.capability,
         keywords: body.keywords,
-        platform: body.platform.unwrap_or_else(|| if cfg!(target_os = "macos") { "macos".into() } else { "linux".into() }),
+        platform: body.platform.unwrap_or_else(|| {
+            if cfg!(target_os = "macos") {
+                "macos".into()
+            } else {
+                "linux".into()
+            }
+        }),
         purrcode_version: body.purrcode_version.unwrap_or_else(|| "0.1.0".into()),
     };
 
-    let adapters: Vec<Box<dyn purrcode_skill_registry::RegistryAdapter>> = vec![
-        Box::new(GitHubRegistryAdapter::new()),
-    ];
+    let adapters: Vec<Box<dyn purrcode_skill_registry::RegistryAdapter>> =
+        vec![Box::new(GitHubRegistryAdapter::new())];
     let engine = RegistryEngine::new(adapters);
     match engine.search(&query).await {
         Ok(candidates) => Ok(Json(serde_json::to_value(&candidates).unwrap_or_default())),
@@ -2067,11 +2108,18 @@ async fn install_skill(
     Json(body): Json<InstallSkillRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let db_path = state.database.parent().unwrap_or(Path::new(".")).join("skills.db");
-    let lib_root = state.database.parent().unwrap_or(Path::new(".")).join("skills");
-    let mut store = SkillStore::open(&db_path, &lib_root).map_err(|e| {
-        ApiError::BadRequest(format!("skill store open failed: {e}"))
-    })?;
+    let db_path = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills.db");
+    let lib_root = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills");
+    let mut store = SkillStore::open(&db_path, &lib_root)
+        .map_err(|e| ApiError::BadRequest(format!("skill store open failed: {e}")))?;
 
     let scope = match body.scope.as_str() {
         "user" => SkillScope::User,
@@ -2082,17 +2130,19 @@ async fn install_skill(
 
     let source_path = PathBuf::from(body.source_path.unwrap_or_else(|| "/tmp/skill".into()));
     let perms = serde_json::json!({});
-    let record = store.install(
-        &body.candidate_id,
-        &body.version,
-        scope,
-        "registry",
-        None,
-        None,
-        "pending",
-        &perms,
-        &source_path,
-    ).map_err(|e| ApiError::BadRequest(format!("install failed: {e}")))?;
+    let record = store
+        .install(
+            &body.candidate_id,
+            &body.version,
+            scope,
+            "registry",
+            None,
+            None,
+            "pending",
+            &perms,
+            &source_path,
+        )
+        .map_err(|e| ApiError::BadRequest(format!("install failed: {e}")))?;
 
     Ok(Json(serde_json::to_value(&record).unwrap_or_default()))
 }
@@ -2103,11 +2153,18 @@ async fn get_skill(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let db_path = state.database.parent().unwrap_or(Path::new(".")).join("skills.db");
-    let lib_root = state.database.parent().unwrap_or(Path::new(".")).join("skills");
-    let store = SkillStore::open(&db_path, &lib_root).map_err(|e| {
-        ApiError::BadRequest(format!("skill store open failed: {e}"))
-    })?;
+    let db_path = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills.db");
+    let lib_root = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills");
+    let store = SkillStore::open(&db_path, &lib_root)
+        .map_err(|e| ApiError::BadRequest(format!("skill store open failed: {e}")))?;
     match store.get(&id) {
         Ok(record) => Ok(Json(serde_json::to_value(&record).unwrap_or_default())),
         Err(_) => Err(ApiError::NotFound),
@@ -2120,11 +2177,18 @@ async fn remove_skill(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let db_path = state.database.parent().unwrap_or(Path::new(".")).join("skills.db");
-    let lib_root = state.database.parent().unwrap_or(Path::new(".")).join("skills");
-    let mut store = SkillStore::open(&db_path, &lib_root).map_err(|e| {
-        ApiError::BadRequest(format!("skill store open failed: {e}"))
-    })?;
+    let db_path = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills.db");
+    let lib_root = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills");
+    let mut store = SkillStore::open(&db_path, &lib_root)
+        .map_err(|e| ApiError::BadRequest(format!("skill store open failed: {e}")))?;
     match store.remove(&id) {
         Ok(record) => Ok(Json(serde_json::to_value(&record).unwrap_or_default())),
         Err(_) => Err(ApiError::NotFound),
@@ -2296,6 +2360,77 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         handle.abort();
+    }
+
+    #[tokio::test]
+    async fn provider_test_reports_real_health_and_never_accepts_inline_secrets() {
+        let temporary = tempfile::tempdir().unwrap();
+        let provider_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let provider_address = provider_listener.local_addr().unwrap();
+        let provider_server = tokio::spawn(async move {
+            axum::serve(
+                provider_listener,
+                Router::new().route(
+                    "/v1/models",
+                    get(|| async { Json(serde_json::json!({"data": []})) }),
+                ),
+            )
+            .await
+        });
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(
+            &app_config,
+            format!(
+                r#"
+schema_version = 1
+[privacy]
+mode = "local-only"
+[providers.fixture]
+type = "openai-compatible"
+base_url = "http://{provider_address}/v1/"
+local = true
+"#
+            ),
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config,
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        let rejected = client
+            .post(format!("http://{}/v1/providers/test", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"provider": "fixture", "api_key": "must-not-enter-this-api"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let response = client
+            .post(format!("http://{}/v1/providers/test", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"provider": "fixture"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let result: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(result["available"], true);
+        assert_eq!(result["local"], true);
+        assert_eq!(result["models_configured"], serde_json::json!([]));
+
+        handle.abort();
+        provider_server.abort();
     }
 
     #[tokio::test]

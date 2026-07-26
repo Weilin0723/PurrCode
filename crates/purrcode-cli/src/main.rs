@@ -1333,8 +1333,9 @@ async fn main() -> Result<()> {
         }
         Command::Research { command } => match command {
             ResearchCommand::Export { output, redacted } => {
-                let store = SessionStore::open(&database)
-                    .with_context(|| format!("cannot open session store at {}", database.display()))?;
+                let store = SessionStore::open(&database).with_context(|| {
+                    format!("cannot open session store at {}", database.display())
+                })?;
                 let all_session_ids: Vec<SessionId> = store
                     .list_session_ids()
                     .map_err(|e| anyhow::anyhow!("list sessions failed: {e}"))?;
@@ -1343,7 +1344,12 @@ async fn main() -> Result<()> {
                     if let Ok(events) = store.events(*sid) {
                         for event in &events {
                             match event {
-                                SessionEvent::ResearchSearchPerformed { query, url, content_digest, excerpt } => {
+                                SessionEvent::ResearchSearchPerformed {
+                                    query,
+                                    url,
+                                    content_digest,
+                                    excerpt,
+                                } => {
                                     all_events.push(ResearchEvent {
                                         event_type: "ResearchSearchPerformed".into(),
                                         timestamp: Utc::now(),
@@ -1360,7 +1366,10 @@ async fn main() -> Result<()> {
                                         },
                                     });
                                 }
-                                SessionEvent::CapabilityGapDetected { gap_description, task_context } => {
+                                SessionEvent::CapabilityGapDetected {
+                                    gap_description,
+                                    task_context,
+                                } => {
                                     all_events.push(ResearchEvent {
                                         event_type: "CapabilityGapDetected".into(),
                                         timestamp: Utc::now(),
@@ -1372,7 +1381,10 @@ async fn main() -> Result<()> {
                                         },
                                     });
                                 }
-                                SessionEvent::SkillInvoked { skill_id, tool_name } => {
+                                SessionEvent::SkillInvoked {
+                                    skill_id,
+                                    tool_name,
+                                } => {
                                     all_events.push(ResearchEvent {
                                         event_type: "SkillInvoked".into(),
                                         timestamp: Utc::now(),
@@ -1402,10 +1414,22 @@ async fn main() -> Result<()> {
                     }
                 }
                 let metrics = ResearchMetrics {
-                    total_skill_invocations: all_events.iter().filter(|e| e.event_type == "SkillInvoked").count() as u64,
-                    total_skill_installations: all_events.iter().filter(|e| e.event_type == "SkillInstallApproved").count() as u64,
-                    total_capability_gaps: all_events.iter().filter(|e| e.event_type == "CapabilityGapDetected").count() as u64,
-                    total_external_searches: all_events.iter().filter(|e| e.event_type == "ResearchSearchPerformed").count() as u64,
+                    total_skill_invocations: all_events
+                        .iter()
+                        .filter(|e| e.event_type == "SkillInvoked")
+                        .count() as u64,
+                    total_skill_installations: all_events
+                        .iter()
+                        .filter(|e| e.event_type == "SkillInstallApproved")
+                        .count() as u64,
+                    total_capability_gaps: all_events
+                        .iter()
+                        .filter(|e| e.event_type == "CapabilityGapDetected")
+                        .count() as u64,
+                    total_external_searches: all_events
+                        .iter()
+                        .filter(|e| e.event_type == "ResearchSearchPerformed")
+                        .count() as u64,
                     ..Default::default()
                 };
                 let export = ResearchExport {
@@ -1421,7 +1445,7 @@ async fn main() -> Result<()> {
                     None => println!("{json}"),
                 }
             }
-        }
+        },
         Command::Benchmark { command } => {
             let catalog_path = match &command {
                 BenchmarkCommand::Audit { catalog }

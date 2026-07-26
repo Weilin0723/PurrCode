@@ -670,7 +670,6 @@ pub enum ConversationMode {
     Ask,
 }
 
-
 // ── Qualification types ───────────────────────────────────────────
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

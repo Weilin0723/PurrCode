@@ -58,3 +58,10 @@ The following were not run because this checkout has no authenticated GitHub ses
 
 These remain external gates. Static inspection or a skipped tool is not counted as execution
 success.
+
+## Local follow-up after Actions run 30183639751
+
+The Ubuntu job failed at `cargo fmt --all --check` on commit `687acc8`. The formatting diff has been
+applied locally, and `cargo fmt --all --check`, Clippy with warnings denied, and the full workspace
+test suite pass in this checkout. GitHub-hosted rerun evidence remains external until this checkout
+is authenticated and the fix is pushed.

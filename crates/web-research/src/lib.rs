@@ -1,8 +1,8 @@
 //! Governed web research with domain policy, content sanitization, and evidence caching.
 
 use chrono::{DateTime, Utc};
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -41,14 +41,12 @@ pub struct EvidenceRecord {
     pub retrieved_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct DomainPolicy {
     pub allow_list: Vec<String>,
     pub deny_list: Vec<String>,
     pub approval_required: Vec<String>,
 }
-
 
 #[derive(Debug, Error)]
 pub enum ResearchError {
@@ -105,12 +103,7 @@ impl WebSearchProvider {
 impl SearchProvider for WebSearchProvider {
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, ResearchError> {
         let url = format!("{}/search", self.endpoint);
-        let resp = self
-            .client
-            .post(&url)
-            .json(query)
-            .send()
-            .await?;
+        let resp = self.client.post(&url).json(query).send().await?;
         let results: Vec<SearchResult> = resp.json().await?;
         Ok(results)
     }
@@ -140,7 +133,11 @@ impl ResearchEngine {
         }
     }
 
-    pub async fn search(&mut self, query: &SearchQuery, local_only: bool) -> Result<Vec<EvidenceRecord>, ResearchError> {
+    pub async fn search(
+        &mut self,
+        query: &SearchQuery,
+        local_only: bool,
+    ) -> Result<Vec<EvidenceRecord>, ResearchError> {
         if local_only {
             return Err(ResearchError::LocalOnlyMode);
         }
@@ -153,7 +150,12 @@ impl ResearchEngine {
             if self.policy.deny_list.iter().any(|d| domain.contains(d)) {
                 continue;
             }
-            if self.policy.approval_required.iter().any(|d| domain.contains(d)) {
+            if self
+                .policy
+                .approval_required
+                .iter()
+                .any(|d| domain.contains(d))
+            {
                 continue;
             }
 
@@ -168,7 +170,8 @@ impl ResearchEngine {
             };
 
             self.cache.insert(record.id.clone(), record.clone());
-            self.cache_timestamps.insert(record.id.clone(), Instant::now());
+            self.cache_timestamps
+                .insert(record.id.clone(), Instant::now());
             evidence.push(record);
         }
 
@@ -190,7 +193,10 @@ impl ResearchEngine {
             .unwrap_or("")
             .to_string();
 
-        if !content_type.contains("text") && !content_type.contains("json") && !content_type.is_empty() {
+        if !content_type.contains("text")
+            && !content_type.contains("json")
+            && !content_type.is_empty()
+        {
             return Err(ResearchError::InvalidContentType(content_type));
         }
 
@@ -267,7 +273,10 @@ mod tests {
     #[test]
     fn domain_extraction() {
         assert_eq!(extract_domain("https://example.com/path"), "example.com");
-        assert_eq!(extract_domain("http://sub.example.com:8080/path"), "sub.example.com");
+        assert_eq!(
+            extract_domain("http://sub.example.com:8080/path"),
+            "sub.example.com"
+        );
         assert_eq!(extract_domain("not-a-url"), "not-a-url");
     }
 
@@ -302,23 +311,23 @@ mod tests {
 
     #[tokio::test]
     async fn local_only_mode_rejects_search() {
-        let mut engine = ResearchEngine::new(
-            Box::new(StubSearchProvider),
-            DomainPolicy::default(),
-        );
+        let mut engine = ResearchEngine::new(Box::new(StubSearchProvider), DomainPolicy::default());
 
         let result = engine
-            .search(&SearchQuery { query: "test".into(), max_results: 5 }, true)
+            .search(
+                &SearchQuery {
+                    query: "test".into(),
+                    max_results: 5,
+                },
+                true,
+            )
             .await;
         assert!(matches!(result, Err(ResearchError::LocalOnlyMode)));
     }
 
     #[test]
     fn evidence_cache_honors_ttl() {
-        let mut engine = ResearchEngine::new(
-            Box::new(StubSearchProvider),
-            DomainPolicy::default(),
-        );
+        let mut engine = ResearchEngine::new(Box::new(StubSearchProvider), DomainPolicy::default());
 
         let record = EvidenceRecord {
             id: "ev-test".into(),
@@ -330,7 +339,9 @@ mod tests {
             retrieved_at: Utc::now(),
         };
         engine.cache.insert("ev-test".into(), record.clone());
-        engine.cache_timestamps.insert("ev-test".into(), Instant::now());
+        engine
+            .cache_timestamps
+            .insert("ev-test".into(), Instant::now());
 
         assert!(engine.get_cached("ev-test").is_some());
     }

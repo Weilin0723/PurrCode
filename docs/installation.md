@@ -1,5 +1,16 @@
 # Installation
 
+## Signed release (macOS and Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.1.0/scripts/install.sh | sh
+```
+
+The installer detects the host platform, downloads both PurrCode binaries, verifies the archive
+against the release `SHA256SUMS`, and installs to `~/.local/bin`. Set `PURRCODE_INSTALL_DIR` to use
+another destination. Windows users should download and extract the
+`purrcode-x86_64-pc-windows-msvc.zip` release asset.
+
 ## From source
 
 Install Rust 1.88 or newer, Git, and the build tools required by your operating system:

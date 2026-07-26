@@ -13,7 +13,9 @@ use crate::streaming::{StreamController, StreamEvent};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -160,7 +162,8 @@ async fn event_loop(
             tokio::spawn(async move {
                 let cp = CommandPalette::new();
                 // We execute via a separate method that doesn't require &mut App
-                cp.execute_detached(&client, &daemon_url, &token, &cmd_clone).await;
+                cp.execute_detached(&client, &daemon_url, &token, &cmd_clone)
+                    .await;
             });
             app.message_bar = format!("Running: {cmd}");
         }
@@ -188,7 +191,11 @@ async fn event_loop(
 
                 tokio::spawn(async move {
                     let sid = session_id.unwrap_or_default();
-                    let url = format!("{}/v1/sessions/{}/events/stream", daemon_url.trim_end_matches('/'), sid);
+                    let url = format!(
+                        "{}/v1/sessions/{}/events/stream",
+                        daemon_url.trim_end_matches('/'),
+                        sid
+                    );
                     let resp = client.get(&url).bearer_auth(&token).send().await;
                     match resp {
                         Ok(rsp) => {
@@ -205,17 +212,43 @@ async fn event_loop(
                                                 if let Some(data) = line.strip_prefix("data: ") {
                                                     if data == "[DONE]" {
                                                         let _ = tx.send(StreamEvent::Done).await;
-                                                    } else if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                                                        if let Some(delta) = val.get("delta").and_then(|d| d.as_str()) {
-                                                            let _ = tx.send(StreamEvent::Delta(delta.to_string())).await;
+                                                    } else if let Ok(val) =
+                                                        serde_json::from_str::<serde_json::Value>(
+                                                            data,
+                                                        )
+                                                    {
+                                                        if let Some(delta) = val
+                                                            .get("delta")
+                                                            .and_then(|d| d.as_str())
+                                                        {
+                                                            let _ = tx
+                                                                .send(StreamEvent::Delta(
+                                                                    delta.to_string(),
+                                                                ))
+                                                                .await;
                                                         }
                                                         if let Some(tc) = val.get("tool_call") {
-                                                            let _ = tx.send(StreamEvent::ToolCall(tc.clone())).await;
+                                                            let _ = tx
+                                                                .send(StreamEvent::ToolCall(
+                                                                    tc.clone(),
+                                                                ))
+                                                                .await;
                                                         }
                                                         if let Some(usage) = val.get("usage") {
-                                                            let input = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                                            let output = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                                            let _ = tx.send(StreamEvent::Usage { input, output }).await;
+                                                            let input = usage
+                                                                .get("input_tokens")
+                                                                .and_then(|v| v.as_u64())
+                                                                .unwrap_or(0);
+                                                            let output = usage
+                                                                .get("output_tokens")
+                                                                .and_then(|v| v.as_u64())
+                                                                .unwrap_or(0);
+                                                            let _ = tx
+                                                                .send(StreamEvent::Usage {
+                                                                    input,
+                                                                    output,
+                                                                })
+                                                                .await;
                                                         }
                                                     }
                                                 }
@@ -266,7 +299,12 @@ impl App {
         self.config.daemon_url.trim_end_matches('/')
     }
 
-    pub async fn request(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value> {
+    pub async fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
         let url = format!("{}{}", self.daemon_url(), path);
         let mut req = self.client.request(method, &url).bearer_auth(&self.token);
         if let Some(body) = body {
@@ -282,12 +320,16 @@ impl App {
     }
 
     pub async fn check_provider(&mut self) {
-        match self.request(reqwest::Method::GET, "/v1/providers", None).await {
+        match self
+            .request(reqwest::Method::GET, "/v1/providers", None)
+            .await
+        {
             Ok(val) => {
                 let arr = val.as_array();
                 self.has_provider = arr.is_some_and(|a| !a.is_empty());
                 if !self.has_provider {
-                    self.message_bar = "No provider configured. Type /connect to set one up.".into();
+                    self.message_bar =
+                        "No provider configured. Type /connect to set one up.".into();
                 }
             }
             Err(_) => {
@@ -302,7 +344,9 @@ impl App {
             let token = self.token.clone();
             let url = self.daemon_url().to_string();
             let session_id = self.session_id.clone();
-            self.conversation.refresh_events(&url, &token, session_id).await;
+            self.conversation
+                .refresh_events(&url, &token, session_id)
+                .await;
         }
     }
 
@@ -314,7 +358,10 @@ impl App {
             "objective": self.conversation.current_objective(),
             "repository": self.config.repository,
         });
-        match self.request(reqwest::Method::POST, "/v1/sessions", Some(body)).await {
+        match self
+            .request(reqwest::Method::POST, "/v1/sessions", Some(body))
+            .await
+        {
             Ok(val) => {
                 let id = val["id"].as_str().map(String::from);
                 self.session_id = id.clone();

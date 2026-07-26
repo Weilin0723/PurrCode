@@ -96,7 +96,11 @@ impl RegistryEngine {
                     }
                 }
                 Err(e) => {
-                    eprintln!("[skill-registry] adapter {} search failed: {}", adapter.name(), e);
+                    eprintln!(
+                        "[skill-registry] adapter {} search failed: {}",
+                        adapter.name(),
+                        e
+                    );
                 }
             }
         }
@@ -109,7 +113,10 @@ impl RegistryEngine {
         Ok(ranked)
     }
 
-    pub async fn fetch_manifest(&self, candidate_id: &str) -> Result<CandidateManifest, RegistryError> {
+    pub async fn fetch_manifest(
+        &self,
+        candidate_id: &str,
+    ) -> Result<CandidateManifest, RegistryError> {
         for adapter in &self.adapters {
             if let Ok(manifest) = adapter.fetch_manifest(candidate_id).await {
                 return Ok(manifest);
@@ -125,12 +132,46 @@ impl RegistryEngine {
                 let mut signals = BTreeMap::new();
 
                 signals.insert("source_trust".into(), source_trust_score(source));
-                signals.insert("signature_valid".into(), if manifest.signature_status == "verified" { 1.0 } else { 0.0 });
-                signals.insert("has_description".into(), if manifest.description.is_empty() { 0.0 } else { 1.0 });
-                signals.insert("has_tests".into(), if manifest.detected_platforms.is_empty() { 0.0 } else { 0.5 });
-                signals.insert("has_license".into(), if manifest.license.is_some() { 1.0 } else { 0.0 });
-                signals.insert("limited_permissions".into(), limited_permissions_score(&manifest));
-                signals.insert("has_publisher".into(), if manifest.publisher.is_some() { 1.0 } else { 0.0 });
+                signals.insert(
+                    "signature_valid".into(),
+                    if manifest.signature_status == "verified" {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                );
+                signals.insert(
+                    "has_description".into(),
+                    if manifest.description.is_empty() {
+                        0.0
+                    } else {
+                        1.0
+                    },
+                );
+                signals.insert(
+                    "has_tests".into(),
+                    if manifest.detected_platforms.is_empty() {
+                        0.0
+                    } else {
+                        0.5
+                    },
+                );
+                signals.insert(
+                    "has_license".into(),
+                    if manifest.license.is_some() { 1.0 } else { 0.0 },
+                );
+                signals.insert(
+                    "limited_permissions".into(),
+                    limited_permissions_score(&manifest),
+                );
+                signals.insert(
+                    "has_publisher".into(),
+                    if manifest.publisher.is_some() {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                );
 
                 let total: f64 = signals.values().sum();
                 let score = total / signals.len() as f64;
@@ -143,7 +184,11 @@ impl RegistryEngine {
             })
             .collect();
 
-        ranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         ranked
     }
 }
@@ -159,8 +204,14 @@ fn source_trust_score(source: &str) -> f64 {
 }
 
 fn limited_permissions_score(manifest: &CandidateManifest) -> f64 {
-    let has_write = manifest.permissions.get("write").is_some_and(|w| !w.is_empty());
-    let has_secrets = manifest.permissions.get("secrets").is_some_and(|s| !s.is_empty());
+    let has_write = manifest
+        .permissions
+        .get("write")
+        .is_some_and(|w| !w.is_empty());
+    let has_secrets = manifest
+        .permissions
+        .get("secrets")
+        .is_some_and(|s| !s.is_empty());
     let has_network = manifest.network_access.is_some();
 
     match (has_write, has_secrets, has_network) {
@@ -198,9 +249,9 @@ impl Qualifier {
         }
         for ch in manifest.name.chars() {
             if !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.' {
-                return Err(RegistryError::InvalidManifest(
-                    format!("invalid character in name: {ch}"),
-                ));
+                return Err(RegistryError::InvalidManifest(format!(
+                    "invalid character in name: {ch}"
+                )));
             }
         }
         Ok(())
@@ -211,7 +262,9 @@ impl Qualifier {
         platform: &str,
         purrcode_version: &str,
     ) -> QualificationStatus {
-        if !manifest.detected_platforms.is_empty() && !manifest.detected_platforms.contains(&platform.to_string()) {
+        if !manifest.detected_platforms.is_empty()
+            && !manifest.detected_platforms.contains(&platform.to_string())
+        {
             return QualificationStatus::Incompatible;
         }
 
@@ -221,7 +274,11 @@ impl Qualifier {
             }
         }
 
-        if manifest.permissions.get("write").is_some_and(|w| w.contains(&"**/*".into())) {
+        if manifest
+            .permissions
+            .get("write")
+            .is_some_and(|w| w.contains(&"**/*".into()))
+        {
             return QualificationStatus::QualifiedWithConstraints;
         }
 
@@ -253,12 +310,7 @@ impl RegistryAdapter for OfficialRegistryAdapter {
 
     async fn search(&self, _query: &SearchQuery) -> Result<Vec<CandidateManifest>, RegistryError> {
         let url = format!("{}/v1/skills/search", self.base_url);
-        let resp = self
-            .client
-            .post(&url)
-            .json(_query)
-            .send()
-            .await?;
+        let resp = self.client.post(&url).json(_query).send().await?;
         let candidates: Vec<CandidateManifest> = resp.json().await?;
         Ok(candidates)
     }
@@ -324,7 +376,12 @@ impl RegistryAdapter for GitHubRegistryAdapter {
                         candidate_id: format!("github:{}", full_name),
                         name: name.to_string(),
                         version: "0.1.0".into(),
-                        publisher: Some(item["owner"]["login"].as_str().unwrap_or("unknown").to_string()),
+                        publisher: Some(
+                            item["owner"]["login"]
+                                .as_str()
+                                .unwrap_or("unknown")
+                                .to_string(),
+                        ),
                         source_type: "github".into(),
                         source_url: Some(item["html_url"].as_str()?.to_string()),
                         description: description.to_string(),
@@ -348,7 +405,10 @@ impl RegistryAdapter for GitHubRegistryAdapter {
 
     async fn fetch_manifest(&self, candidate_id: &str) -> Result<CandidateManifest, RegistryError> {
         let path = candidate_id.strip_prefix("github:").unwrap_or(candidate_id);
-        let url = format!("https://api.github.com/repos/{}/contents/manifest.toml", path);
+        let url = format!(
+            "https://api.github.com/repos/{}/contents/manifest.toml",
+            path
+        );
 
         let resp = self
             .client
@@ -358,7 +418,9 @@ impl RegistryAdapter for GitHubRegistryAdapter {
             .await?;
 
         if !resp.status().is_success() {
-            return Err(RegistryError::Adapter(format!("manifest not found at {path}")));
+            return Err(RegistryError::Adapter(format!(
+                "manifest not found at {path}"
+            )));
         }
 
         Err(RegistryError::Adapter("binary content not decoded".into()))
@@ -437,12 +499,18 @@ mod tests {
         assert_eq!(limited_permissions_score(&no_perms), 1.0);
 
         let mut write_only = CandidateManifest::default_for_test();
-        write_only.permissions.insert("write".into(), vec!["**/*.rs".into()]);
+        write_only
+            .permissions
+            .insert("write".into(), vec!["**/*.rs".into()]);
         assert_eq!(limited_permissions_score(&write_only), 0.6);
 
         let mut full_access = CandidateManifest::default_for_test();
-        full_access.permissions.insert("write".into(), vec!["**/*".into()]);
-        full_access.permissions.insert("secrets".into(), vec!["*".into()]);
+        full_access
+            .permissions
+            .insert("write".into(), vec!["**/*".into()]);
+        full_access
+            .permissions
+            .insert("secrets".into(), vec!["*".into()]);
         full_access.network_access = Some("any".into());
         assert_eq!(limited_permissions_score(&full_access), 0.0);
     }

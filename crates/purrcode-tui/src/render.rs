@@ -56,10 +56,19 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
         "🌐"
     };
 
-    let local_indicator = if app.status_bar.local { "local" } else { "remote" };
+    let local_indicator = if app.status_bar.local {
+        "local"
+    } else {
+        "remote"
+    };
 
     let title = Line::from(vec![
-        Span::styled("PurrCode", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "PurrCode",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" · "),
         Span::styled(mode_str, Style::default().fg(Color::Green)),
         Span::raw(" · "),
@@ -105,17 +114,12 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 
     frame.render_widget(
-        List::new(items).block(
-            Block::default()
-                .title("Conversation")
-                .borders(Borders::ALL),
-        ),
+        List::new(items).block(Block::default().title("Conversation").borders(Borders::ALL)),
         area,
     );
 }
 
 fn draw_action_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-
     let mut text = String::new();
     if !app.message_bar.is_empty() {
         text.push_str(&app.message_bar);
@@ -159,8 +163,7 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
     };
 
     let content: String = match setup.provider_type {
-        None => {
-            r#"Choose a provider:
+        None => r#"Choose a provider:
 
   1. Ollama (local)
   2. LM Studio (local)
@@ -169,20 +172,26 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
   5. Enterprise gateway
 
   Press 1-5 to select, Esc to cancel."#
-                .to_string()
-        }
+            .to_string(),
         Some(ref pt) => setup_text(setup, pt),
     };
 
     frame.render_widget(
         Paragraph::new(content)
-            .block(Block::default().title("Connect Provider").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("Connect Provider")
+                    .borders(Borders::ALL),
+            )
             .wrap(Wrap { trim: false }),
         area,
     );
 }
 
-fn setup_text(setup: &crate::provider_setup::ProviderSetup, pt: &crate::provider_setup::ProviderType) -> String {
+fn setup_text(
+    setup: &crate::provider_setup::ProviderSetup,
+    pt: &crate::provider_setup::ProviderType,
+) -> String {
     let base = match pt {
         crate::provider_setup::ProviderType::Ollama => format!("Provider: Ollama\nBase URL: {}\n\nPress Enter to discover models, Esc to cancel.", setup.base_url),
         crate::provider_setup::ProviderType::LmStudio => format!("Provider: LM Studio\nBase URL: {}\n\nPress Enter to discover models, Esc to cancel.", setup.base_url),
@@ -249,7 +258,11 @@ fn draw_diff(frame: &mut Frame<'_>, app: &App) {
 
     frame.render_widget(
         Paragraph::new(content)
-            .block(Block::default().title("Diff (Esc closes)").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("Diff (Esc closes)")
+                    .borders(Borders::ALL),
+            )
             .wrap(Wrap { trim: false }),
         area,
     );

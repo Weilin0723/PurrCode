@@ -69,7 +69,12 @@ impl Conversation {
         self.streaming_message = None;
     }
 
-    pub async fn refresh_events(&mut self, _daemon_url: &str, _token: &str, _session_id: Option<String>) {
+    pub async fn refresh_events(
+        &mut self,
+        _daemon_url: &str,
+        _token: &str,
+        _session_id: Option<String>,
+    ) {
         // TODO: poll /v1/sessions/{id}/events and update pending_action, etc.
     }
 

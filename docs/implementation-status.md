@@ -202,6 +202,10 @@ execution beyond carefully audited command forms.
 - Provider secrets can be entered through a hidden prompt and stored in macOS Keychain, Windows
   Credential Manager, or Linux Secret Service. Configuration stores references only and secret
   input is zeroized after transfer.
+- The daemon provider-test endpoint now probes an already configured provider and reports observed
+  health only. It rejects inline secret fields, and model listing no longer invents a default model
+  or unknown capabilities. Provider registration and the conversational `/connect` flow remain
+  incomplete.
 - A daemon-backed VS Code extension builds with strict TypeScript and provides repository/selection
   context, task/plan creation, evidence, approval, lifecycle controls, model selection, and
   current-file isolated diff review.
@@ -234,15 +238,11 @@ execution beyond carefully audited command forms.
   content digests.
 
 ### TUI rewrite
-- Conversational interface replaces the session-list view as the primary workspace.
-- Message composer with /command detection, history navigation, and Enter-to-send.
-- Provider setup wizard (`/connect`) in TUI: select provider type, enter credentials
-  via hidden input with zeroize, test connection, select model.
-- Skill browser (`/skills`, `/skill-search`): list installed/available skills, inspect
-  publisher, permissions, signature, and risk; install with explicit approval.
-- Status bar showing model, privacy mode, local/remote indicator, and conversation mode.
-- Slash commands: /help, /connect, /providers, /models, /model, /privacy, /plan,
-  /build, /review, /diff, /skills, /skill-search, /new, /compact, /cancel, /quit.
+- A conversational interface, composer, provider wizard, skill browser, status bar, and slash-command
+  modules exist as scaffolding, but they are not wired into the production `purrcode` entry point.
+- The production TUI remains the daemon-backed session/action/approval/validation/diff interface.
+- The dormant conversational modules contain placeholder command/provider behavior and are not
+  counted as implemented or release evidence.
 
 ### Daemon API expansion
 - `GET /v1/providers` — list configured providers

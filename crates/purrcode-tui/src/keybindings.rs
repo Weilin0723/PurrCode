@@ -26,7 +26,8 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
                 app.pending_command = Some(msg);
             } else if !msg.is_empty() {
                 app.conversation.add_user_message(&msg);
-                app.conversation.start_streaming(Some(app.status_bar.model.clone()));
+                app.conversation
+                    .start_streaming(Some(app.status_bar.model.clone()));
                 app.pending_user_message = true;
             }
         }
@@ -86,7 +87,10 @@ fn handle_skill_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if let Some(ref mut browser) = app.skill_browser {
-                browser.selected = browser.selected.saturating_add(1).min(browser.skills.len().saturating_sub(1));
+                browser.selected = browser
+                    .selected
+                    .saturating_add(1)
+                    .min(browser.skills.len().saturating_sub(1));
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {

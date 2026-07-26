@@ -131,7 +131,8 @@ impl SkillStore {
         approved_permissions: &serde_json::Value,
         source_path: &Path,
     ) -> Result<SkillRecord, StoreError> {
-        if self.conn
+        if self
+            .conn
             .query_row(
                 "SELECT 1 FROM skill_store WHERE skill_id = ?1",
                 params![skill_id],
@@ -199,17 +200,14 @@ impl SkillStore {
         if dest.exists() {
             let trash = self.library_root.join(".trash");
             std::fs::create_dir_all(&trash)?;
-            let trash_name = format!(
-                "{}-{}-{}",
-                skill_id,
-                record.version,
-                Uuid::new_v4()
-            );
+            let trash_name = format!("{}-{}-{}", skill_id, record.version, Uuid::new_v4());
             std::fs::rename(&dest, trash.join(&trash_name))?;
         }
 
-        self.conn
-            .execute("DELETE FROM skill_store WHERE skill_id = ?1", params![skill_id])?;
+        self.conn.execute(
+            "DELETE FROM skill_store WHERE skill_id = ?1",
+            params![skill_id],
+        )?;
 
         Ok(record)
     }
@@ -246,7 +244,10 @@ impl SkillStore {
                 publisher: row.get(5)?,
                 content_digest: row.get(6)?,
                 signature_status: row.get(7)?,
-                installed_at: row.get::<_, String>(8)?.parse().unwrap_or_else(|_| Utc::now()),
+                installed_at: row
+                    .get::<_, String>(8)?
+                    .parse()
+                    .unwrap_or_else(|_| Utc::now()),
                 approved_permissions: serde_json::from_str(&perms_json).unwrap_or_default(),
                 qualification_status: qual_status,
                 last_used_at: row
@@ -296,7 +297,10 @@ impl SkillStore {
                 publisher: row.get(5)?,
                 content_digest: row.get(6)?,
                 signature_status: row.get(7)?,
-                installed_at: row.get::<_, String>(8)?.parse().unwrap_or_else(|_| Utc::now()),
+                installed_at: row
+                    .get::<_, String>(8)?
+                    .parse()
+                    .unwrap_or_else(|_| Utc::now()),
                 approved_permissions: serde_json::from_str(&perms_json).unwrap_or_default(),
                 qualification_status: qual_status,
                 last_used_at: row
@@ -445,8 +449,14 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].skill_id, "test-skill");
 
-        assert!(store.path_for("test-skill", &SkillScope::User).join("SKILL.md").exists());
-        assert!(store.path_for("test-skill", &SkillScope::User).join("tool.py").exists());
+        assert!(store
+            .path_for("test-skill", &SkillScope::User)
+            .join("SKILL.md")
+            .exists());
+        assert!(store
+            .path_for("test-skill", &SkillScope::User)
+            .join("tool.py")
+            .exists());
 
         store.record_use("test-skill", true).unwrap();
         let updated = store.get("test-skill").unwrap();
@@ -467,15 +477,29 @@ mod tests {
 
         store
             .install(
-                "dup", "1.0", SkillScope::User, "local", None, None, "digest1",
-                &serde_json::json!({}), &skill_dir,
+                "dup",
+                "1.0",
+                SkillScope::User,
+                "local",
+                None,
+                None,
+                "digest1",
+                &serde_json::json!({}),
+                &skill_dir,
             )
             .unwrap();
 
         let err = store
             .install(
-                "dup", "2.0", SkillScope::User, "local", None, None, "digest2",
-                &serde_json::json!({}), &skill_dir,
+                "dup",
+                "2.0",
+                SkillScope::User,
+                "local",
+                None,
+                None,
+                "digest2",
+                &serde_json::json!({}),
+                &skill_dir,
             )
             .unwrap_err();
         assert!(matches!(err, StoreError::AlreadyInstalled(_)));
@@ -491,13 +515,31 @@ mod tests {
         std::fs::write(sd.join("SKILL.md"), "").unwrap();
 
         store
-            .install("terraform-inspector", "1.0", SkillScope::User, "registry",
-                None, Some("example"), "digest", &json!({}), &sd)
+            .install(
+                "terraform-inspector",
+                "1.0",
+                SkillScope::User,
+                "registry",
+                None,
+                Some("example"),
+                "digest",
+                &json!({}),
+                &sd,
+            )
             .unwrap();
 
         store
-            .install("k8s-debug", "1.0", SkillScope::User, "github",
-                None, None, "digest", &json!({}), &sd)
+            .install(
+                "k8s-debug",
+                "1.0",
+                SkillScope::User,
+                "github",
+                None,
+                None,
+                "digest",
+                &json!({}),
+                &sd,
+            )
             .unwrap();
 
         let results = store.find_by_capability("terraform").unwrap();

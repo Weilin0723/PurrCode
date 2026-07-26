@@ -61,8 +61,8 @@ cargo install --locked --path crates/purrcode-daemon
 
 | Step | Status | Notes |
 |---|---|---|
-| `purrcode upgrade check --channel stable` | PASS | Returns 404 (no release published yet - expected) |
-| `purrcode upgrade download` | PASS | Returns 404 (no release published yet - expected) |
+| `purrcode upgrade check --channel stable` | UNAVAILABLE | Returns 404 because no release is published |
+| `purrcode upgrade download` | UNAVAILABLE | Returns 404 because no release artifact is published |
 
 ## All platform coverage
 

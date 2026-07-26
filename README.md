@@ -48,7 +48,22 @@ PurrCode
 - **Providers do not become authorities.** Ollama, LM Studio, OpenAI-compatible services,
   enterprise gateways, and the Codex bridge may propose work, but cannot bypass PawGate.
 
-## Install from source
+## Install
+
+After the signed `v0.1.0` release is published, macOS and Linux users can download, verify, and
+install both binaries with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.1.0/scripts/install.sh | sh
+```
+
+The installer verifies the release archive against `SHA256SUMS` and installs into
+`~/.local/bin`. Override the destination with `PURRCODE_INSTALL_DIR` if needed. Windows users can
+download the `purrcode-x86_64-pc-windows-msvc.zip` asset directly from the GitHub Release.
+
+Then run `purrcode init` and `purrcode`.
+
+### Install from source
 
 Rust 1.88 or newer is required:
 

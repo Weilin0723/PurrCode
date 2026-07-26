@@ -12,7 +12,12 @@ impl CommandPalette {
     }
 
     /// Execute a command using fresh client/url/token (no App dependency).
-    pub async fn execute_detached(_client: &reqwest::Client, _daemon_url: &str, _token: &str, _input: &str) {
+    pub async fn execute_detached(
+        _client: &reqwest::Client,
+        _daemon_url: &str,
+        _token: &str,
+        _input: &str,
+    ) {
         // Static API call — no App mutation needed for simple commands.
         // Full implementation will parse the command and call daemon endpoints.
     }
@@ -37,7 +42,10 @@ impl CommandPalette {
                 app.message_bar = "Setting up provider...".into();
             }
             "providers" => {
-                match app.request(reqwest::Method::GET, "/v1/providers", None).await {
+                match app
+                    .request(reqwest::Method::GET, "/v1/providers", None)
+                    .await
+                {
                     Ok(val) => app.message_bar = format!("Providers: {val}"),
                     Err(e) => app.message_bar = format!("Error: {e}"),
                 }
@@ -72,15 +80,13 @@ impl CommandPalette {
             }
             "diff" => {
                 if let Some(id) = &app.session_id {
-                    match app.request(
-                        reqwest::Method::GET,
-                        &format!("/v1/sessions/{id}"),
-                        None,
-                    )
-                    .await
+                    match app
+                        .request(reqwest::Method::GET, &format!("/v1/sessions/{id}"), None)
+                        .await
                     {
                         Ok(session) => {
-                            app.message_bar = format!("Session diff available: {:?}", session.get("status_code"));
+                            app.message_bar =
+                                format!("Session diff available: {:?}", session.get("status_code"));
                         }
                         Err(e) => app.message_bar = format!("Error: {e}"),
                     }
@@ -119,12 +125,13 @@ impl CommandPalette {
             }
             "compact" => {
                 if let Some(id) = &app.session_id {
-                    match app.request(
-                        reqwest::Method::POST,
-                        &format!("/v1/sessions/{id}/compact"),
-                        Some(serde_json::json!({})),
-                    )
-                    .await
+                    match app
+                        .request(
+                            reqwest::Method::POST,
+                            &format!("/v1/sessions/{id}/compact"),
+                            Some(serde_json::json!({})),
+                        )
+                        .await
                     {
                         Ok(_) => app.message_bar = "Context compacted.".into(),
                         Err(e) => app.message_bar = format!("Error: {e}"),

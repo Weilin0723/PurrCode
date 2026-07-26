@@ -87,13 +87,12 @@ impl Composer {
 
     pub fn submit(&mut self) -> String {
         let msg = self.buffer.trim().to_string();
-        if !msg.is_empty()
-            && (self.history.is_empty() || self.history.back() != Some(&msg)) {
-                self.history.push_back(msg.clone());
-                if self.history.len() > 50 {
-                    self.history.pop_front();
-                }
+        if !msg.is_empty() && (self.history.is_empty() || self.history.back() != Some(&msg)) {
+            self.history.push_back(msg.clone());
+            if self.history.len() > 50 {
+                self.history.pop_front();
             }
+        }
         self.buffer.clear();
         self.cursor = 0;
         self.history_pos = None;
@@ -116,7 +115,9 @@ impl Composer {
     pub fn command_args(&self) -> &str {
         self.buffer
             .strip_prefix('/')
-            .unwrap_or(&self.buffer).split_once(' ').map(|x| x.1)
+            .unwrap_or(&self.buffer)
+            .split_once(' ')
+            .map(|x| x.1)
             .unwrap_or("")
     }
 }

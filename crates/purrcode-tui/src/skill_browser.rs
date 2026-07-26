@@ -51,7 +51,13 @@ impl SkillBrowser {
         self.loading = false;
     }
 
-    pub async fn search(&mut self, client: &reqwest::Client, daemon_url: &str, token: &str, query: &str) {
+    pub async fn search(
+        &mut self,
+        client: &reqwest::Client,
+        daemon_url: &str,
+        token: &str,
+        query: &str,
+    ) {
         self.loading = true;
         let url = format!("{}/v1/skills/search", daemon_url.trim_end_matches('/'));
         let body = serde_json::json!({"capability": query, "keywords": [query], "platform": "macos", "purrcode_version": "0.1.0"});
@@ -80,10 +86,16 @@ fn parse_skills(val: &Value) -> Vec<SkillEntry> {
                 version: v["version"].as_str().unwrap_or("?").to_string(),
                 publisher: v["publisher"].as_str().unwrap_or("unknown").to_string(),
                 source: v["source_type"].as_str().unwrap_or("?").to_string(),
-                signature: v["signature_status"].as_str().unwrap_or("unavailable").to_string(),
+                signature: v["signature_status"]
+                    .as_str()
+                    .unwrap_or("unavailable")
+                    .to_string(),
                 permissions: v["approved_permissions"].to_string(),
                 network: v["network_access"].as_str().unwrap_or("none").to_string(),
-                risk: v["qualification_status"].as_str().unwrap_or("unverified").to_string(),
+                risk: v["qualification_status"]
+                    .as_str()
+                    .unwrap_or("unverified")
+                    .to_string(),
                 installed: true,
             })
         })
@@ -98,11 +110,20 @@ fn parse_candidates(val: &Value) -> Vec<SkillEntry> {
             Some(SkillEntry {
                 skill_id: manifest["name"].as_str().unwrap_or("unknown").to_string(),
                 version: manifest["version"].as_str().unwrap_or("?").to_string(),
-                publisher: manifest["publisher"].as_str().unwrap_or("unknown").to_string(),
+                publisher: manifest["publisher"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string(),
                 source: manifest["source_type"].as_str().unwrap_or("?").to_string(),
-                signature: manifest["signature_status"].as_str().unwrap_or("unavailable").to_string(),
+                signature: manifest["signature_status"]
+                    .as_str()
+                    .unwrap_or("unavailable")
+                    .to_string(),
                 permissions: manifest["permissions"].to_string(),
-                network: manifest["network_access"].as_str().unwrap_or("none").to_string(),
+                network: manifest["network_access"]
+                    .as_str()
+                    .unwrap_or("none")
+                    .to_string(),
                 risk: format!("{:.1}", v["score"].as_f64().unwrap_or(0.0)),
                 installed: false,
             })
