@@ -55,11 +55,7 @@ fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
 }
 
 fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
-    let submit = key.code == KeyCode::Enter
-        && key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::ALT);
-    if submit {
+    if is_submit_key(key) {
         if let Ok(detection) = purrcode_provider_import::detect_content(&app.composer.buffer) {
             if !detection.secret_findings.is_empty() {
                 let redacted = purrcode_provider_import::redact_source(&app.composer.buffer)
@@ -240,23 +236,21 @@ fn handle_secret_review_key(app: &mut App, key: KeyEvent) -> bool {
 }
 
 fn handle_setup_key(app: &mut App, key: KeyEvent) -> bool {
-    let confirm = key.code == KeyCode::Enter
-        && key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
+    if is_submit_key(key) {
+        if let Some(ref mut setup) = app.provider_setup {
+            if setup.screen == SetupScreen::ImportSource {
+                setup.review_import();
+            } else {
+                setup.request_test_and_save();
+            }
+        }
+        return true;
+    }
+
     match key.code {
         KeyCode::Esc => {
             app.provider_setup = None;
             app.switch_mode(AppMode::Conversation);
-        }
-        KeyCode::Enter if confirm => {
-            if let Some(ref mut setup) = app.provider_setup {
-                if setup.screen == SetupScreen::ImportSource {
-                    setup.review_import();
-                } else {
-                    setup.request_test_and_save();
-                }
-            }
         }
         KeyCode::Enter => {
             if let Some(setup) = &mut app.provider_setup {
@@ -322,6 +316,20 @@ fn handle_setup_key(app: &mut App, key: KeyEvent) -> bool {
     true
 }
 
+/// Return whether a key should submit the current multiline input.
+///
+/// Many terminals, including Apple Terminal, encode Ctrl+Enter exactly like Enter and therefore
+/// cannot report the Control modifier. Ctrl+G has a distinct control code in traditional and
+/// enhanced terminal protocols, so it is the portable send binding. Modified Enter remains
+/// supported when the terminal can report it.
+fn is_submit_key(key: KeyEvent) -> bool {
+    (key.code == KeyCode::Enter
+        && key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::ALT))
+        || (key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL))
+}
+
 fn handle_skill_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc => {
@@ -350,4 +358,37 @@ fn handle_diff_key(app: &mut App, _key: KeyEvent) -> bool {
     app.diff_view = None;
     app.switch_mode(AppMode::Conversation);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_submit_key;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn portable_control_g_submits() {
+        assert!(is_submit_key(KeyEvent::new(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
+        )));
+    }
+
+    #[test]
+    fn modified_enter_submits_when_terminal_reports_modifier() {
+        for modifier in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::SUPER,
+            KeyModifiers::ALT,
+        ] {
+            assert!(is_submit_key(KeyEvent::new(KeyCode::Enter, modifier)));
+        }
+    }
+
+    #[test]
+    fn plain_enter_remains_a_newline() {
+        assert!(!is_submit_key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+    }
 }

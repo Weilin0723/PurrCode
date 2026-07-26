@@ -7,8 +7,11 @@ is recorded below)
 
 - Phase 1 replaces the single-line, byte-indexed TUI composer with a Unicode grapheme-safe
   multiline editor model.
-- Enter inserts a newline; Ctrl/Cmd/Alt+Enter explicitly submits. Terminal bracketed paste is
-  enabled and a complete paste is inserted as one undoable operation without executing commands.
+- Enter inserts a newline; portable Ctrl+G explicitly submits. Ctrl/Cmd/Alt+Enter also submits when
+  the terminal reports the modifier; Apple Terminal commonly encodes Ctrl+Enter as plain Enter, so
+  the UI does not advertise that indistinguishable sequence as its primary binding. Terminal
+  bracketed paste is enabled and a complete paste is inserted as one undoable operation without
+  executing commands.
 - Multiline history, vertical and word movement, cross-line deletion, indentation/outdent,
   selection replacement, undo/redo, CRLF normalization, and growing scrollable rendering are
   covered by TUI tests.
