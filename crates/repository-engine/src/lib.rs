@@ -555,11 +555,10 @@ fn git_compatible_path(path: &Path) -> Result<String, RepositoryError> {
         .to_str()
         .ok_or_else(|| RepositoryError::NonUtf8Path(path.to_path_buf()))?;
     #[cfg(windows)]
-    {
-        return Ok(normalize_windows_git_path(path));
-    }
+    let path = normalize_windows_git_path(path);
     #[cfg(not(windows))]
-    Ok(path.to_owned())
+    let path = path.to_owned();
+    Ok(path)
 }
 
 #[cfg(any(windows, test))]
