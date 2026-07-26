@@ -985,12 +985,12 @@ mod tests {
             .unwrap();
         let source = std::fs::read_to_string(temporary.path().join("file.txt")).unwrap();
         assert!(source.contains("line two changed"));
-        assert!(source.contains("line 28\n"));
+        assert!(source.lines().any(|line| line == "line 28"));
         RepositoryEngine::reject_review_hunk(&worktree, 1, &digest)
             .await
             .unwrap();
         let isolated = std::fs::read_to_string(worktree.path.join("file.txt")).unwrap();
-        assert!(isolated.contains("line 28\n"));
+        assert!(isolated.lines().any(|line| line == "line 28"));
         assert!(!isolated.contains("line twenty-eight changed"));
     }
 
