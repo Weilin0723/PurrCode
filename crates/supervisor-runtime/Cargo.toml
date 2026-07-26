@@ -1,0 +1,17 @@
+[package]
+name = "purrcode-supervisor-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+futures.workspace = true
+purrcode-repository-engine = { path = "../repository-engine" }
+purrcode-runtime-core = { path = "../runtime-core" }
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "purrcode-codex-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+purrcode-repository-engine = { path = "../repository-engine" }
+purrcode-runtime-core = { path = "../runtime-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

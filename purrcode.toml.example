@@ -1,0 +1,66 @@
+schema_version = 1
+
+[privacy]
+mode = "local-only"
+allow_remote_fallback = false
+
+[providers.openai]
+type = "openai"
+base_url = "https://api.openai.com/v1/"
+api_key_env = "OPENAI_API_KEY"
+
+[providers.local]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:1234/v1/"
+local = true
+
+[providers.ollama]
+type = "ollama"
+base_url = "http://127.0.0.1:11434/v1/"
+
+# Enterprise example (keep credential values outside this file):
+# [providers.company]
+# type = "enterprise-gateway"
+# base_url = "https://ai.example.com/v1/"
+# credential_command = ["/usr/local/bin/company-token", "print"]
+# identity_pem = "/secure/client-identity.pem"
+# ca_pem = "/secure/company-ca.pem"
+# proxy_url = "https://proxy.example.com/"
+# [providers.company.header_env]
+# X-Organization = "PURRCODE_ORGANIZATION"
+
+[models.roles]
+router = "local/qwen-small"
+summarizer = "local/qwen-small"
+planner = "openai/coding-model"
+coder = "openai/coding-model"
+judge = "local/judge-model"
+reviewer = "openai/review-model"
+
+[judgment]
+# Keep false for independent coder/judge models. `purrcode init` sets true only when a single
+# discovered local model is the sole usable option and prints a reduced-independence warning.
+allow_same_model = false
+
+[codex]
+enabled = false
+binary = "codex"
+execution_mode = "worktree"
+timeout_seconds = 3600
+inherit_auth = true
+require_final_diff_judgment = true
+allow_active_tree_write = false
+
+# MCP servers execute as isolated child processes. `environment_from` maps a child variable to a
+# host variable name; secret values are never stored here.
+# [mcp.servers.documentation]
+# id = "documentation"
+# program = "docs-mcp-server"
+# arguments = ["--stdio"]
+# working_directory = "/absolute/path/to/repository"
+# network = false
+# timeout_seconds = 30
+# maximum_output_bytes = 1048576
+# memory_limit_bytes = 536870912
+# [mcp.servers.documentation.environment_from]
+# DOCS_TOKEN = "DOCS_TOKEN"

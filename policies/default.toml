@@ -1,0 +1,6 @@
+read_only_programs = ["git", "rg"]
+approval_required_programs = ["npm", "pnpm", "python", "python3"]
+denied_argument_fragments = ["reset --hard", "clean -fd", "push --force"]
+timeout_seconds = 120
+maximum_output_bytes = 1048576
+auto_allow_worktree_writes = false

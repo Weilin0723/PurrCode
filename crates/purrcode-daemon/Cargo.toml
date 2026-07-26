@@ -1,0 +1,40 @@
+[package]
+name = "purrcode-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "purrcoded"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+async-stream.workspace = true
+axum.workspace = true
+blake3.workspace = true
+chrono.workspace = true
+clap.workspace = true
+futures.workspace = true
+purrcode-agent-runtime = { path = "../agent-runtime" }
+purrcode-pawgate = { path = "../pawgate-runtime" }
+purrcode-mcp-host = { path = "../mcp-host" }
+purrcode-provider-gateway = { path = "../provider-gateway" }
+purrcode-repository-engine = { path = "../repository-engine" }
+purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-ninelives = { path = "../ninelives-recovery" }
+purrcode-supervisor-runtime = { path = "../supervisor-runtime" }
+purrcode-claw = { path = "../claw-sandbox" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+tempfile.workspace = true

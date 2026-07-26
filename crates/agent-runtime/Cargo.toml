@@ -1,0 +1,28 @@
+[package]
+name = "purrcode-agent-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3.workspace = true
+chrono.workspace = true
+purrcode-whisker = { path = "../whisker-context-engine" }
+purrcode-contextual-judgment = { path = "../contextual-judgment" }
+purrcode-pawgate = { path = "../pawgate-runtime" }
+purrcode-provider-gateway = { path = "../provider-gateway" }
+purrcode-repository-engine = { path = "../repository-engine" }
+purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-ninelives = { path = "../ninelives-recovery" }
+purrcode-claw = { path = "../claw-sandbox" }
+purrcode-validation-runtime = { path = "../validation-runtime" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+futures.workspace = true
+tempfile.workspace = true
+tokio.workspace = true

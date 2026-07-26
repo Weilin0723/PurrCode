@@ -1,0 +1,46 @@
+# Installation
+
+## From source
+
+Install Rust 1.88 or newer, Git, and the build tools required by your operating system:
+
+```bash
+cargo install --locked --path crates/purrcode-cli
+cargo install --locked --path crates/purrcode-daemon
+purrcode init
+```
+
+`purrcode init` discovers Ollama or LM Studio, writes owner-local configuration and persistence,
+creates a managed Git workspace, starts the authenticated loopback daemon, and verifies readiness.
+Run `purrcode` to open the TUI.
+
+## Release packages
+
+Tagged releases build macOS ARM64/x86_64, Linux ARM64/x86_64, and Windows x86_64 archives. Every
+archive has a SHA-256 entry, Sigstore bundle, and GitHub build-provenance attestation. Homebrew and
+winget manifests live under `packaging/`.
+
+Check or download a release:
+
+```bash
+purrcode upgrade check --channel stable
+purrcode upgrade download /tmp/purrcode-release.tar.gz
+purrcode upgrade install --channel stable
+purrcode upgrade rollback
+```
+
+`install` verifies the checksum manifest and both Sigstore bundles before extraction, rejects
+unsafe archive paths, atomically rotates `purrcode` and `purrcoded`, and preserves the prior
+pair for rollback. Before download it verifies installed repository-skill integrity, platform
+support, and required-tool availability. It requires `cosign` and the platform `tar` command.
+
+Downloads are accepted only after Sigstore identity and signed-manifest checksum verification.
+Existing destination files are never overwritten.
+
+## Optional isolation dependencies
+
+- macOS: `/usr/bin/sandbox-exec` when available.
+- Linux: `bubblewrap` (`bwrap`).
+- Windows: process filtering and job controls; inspect `purrcode sandbox doctor`.
+
+PurrCode reports degraded isolation explicitly and does not reinterpret it as a full sandbox.

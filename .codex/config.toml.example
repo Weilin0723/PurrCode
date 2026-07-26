@@ -1,0 +1,4 @@
+# Copy to .codex/config.toml only when this repository is trusted.
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+

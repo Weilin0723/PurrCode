@@ -1,0 +1,23 @@
+[package]
+name = "purrcode-mcp-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3.workspace = true
+chrono.workspace = true
+libc.workspace = true
+purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-ninelives = { path = "../ninelives-recovery" }
+schemars.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+toml.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]

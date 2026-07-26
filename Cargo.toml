@@ -1,0 +1,78 @@
+[workspace]
+members = [
+  "crates/runtime-core",
+  "crates/pawgate-runtime",
+  "crates/contextual-judgment",
+  "crates/ninelives-recovery",
+  "crates/claw-sandbox",
+  "crates/provider-gateway",
+  "crates/repository-engine",
+  "crates/whisker-context-engine",
+  "crates/codex-bridge",
+  "crates/mcp-host",
+  "crates/supervisor-runtime",
+  "crates/validation-runtime",
+  "crates/agent-runtime",
+  "crates/purrcode-daemon",
+  "crates/purrcode-cli",
+  "crates/purrcode-tui",
+  "crates/golden-suite",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Weilin0723/PurrCode"
+rust-version = "1.88"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+async-stream = "0.3"
+axum = "0.8"
+base64 = "0.22"
+blake3 = "1"
+cap-std = "4"
+crossterm = "0.28"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+directories = "6"
+ed25519-dalek = "3"
+futures = "0.3"
+eventsource-stream = "0.2"
+globset = "0.4"
+ignore = "0.4"
+keyring = "4.1.5"
+libc = "0.2"
+hex = "0.4"
+rusqlite = { version = "0.32", features = ["backup", "bundled", "chrono", "uuid"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+ratatui = "0.29"
+rpassword = "7.5.4"
+schemars = { version = "0.8", features = ["uuid1", "chrono"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+semver = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tree-sitter = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-java = "0.23"
+tree-sitter-python = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
+tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "time", "io-util", "signal"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+url = { version = "2", features = ["serde"] }
+zeroize = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

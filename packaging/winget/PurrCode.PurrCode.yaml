@@ -1,0 +1,20 @@
+PackageIdentifier: PurrCode.PurrCode
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: PurrCode
+PackageName: PurrCode
+License: Apache-2.0
+ShortDescription: PurrCode local-first coding agent with the PawGate judgment runtime
+ManifestType: singleton
+ManifestVersion: 1.9.0
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: purrcode-x86_64-pc-windows-msvc\purrcode.exe
+        PortableCommandAlias: purrcode
+      - RelativeFilePath: purrcode-x86_64-pc-windows-msvc\purrcoded.exe
+        PortableCommandAlias: purrcoded
+    InstallerUrl: https://github.com/Weilin0723/PurrCode/releases/download/v0.1.0/purrcode-x86_64-pc-windows-msvc.zip
+    InstallerSha256: RELEASE_AUTOMATION_REPLACES_THIS_VALUE

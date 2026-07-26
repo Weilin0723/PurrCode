@@ -1,0 +1,17 @@
+[package]
+name = "purrcode-contextual-judgment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+purrcode-provider-gateway = { path = "../provider-gateway" }
+purrcode-runtime-core = { path = "../runtime-core" }
+schemars.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+futures.workspace = true
+tokio.workspace = true

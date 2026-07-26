@@ -1,0 +1,68 @@
+{
+  "name": "purrcode",
+  "displayName": "PurrCode",
+  "description": "Daemon-backed PurrCode sessions, approvals, plans, and isolated diffs.",
+  "version": "0.1.0",
+  "publisher": "purrcode",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": ["Machine Learning", "Other"],
+  "activationEvents": ["onView:purrcode.sessions"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {"command": "purrcode.start", "title": "PurrCode: Start Task"},
+      {"command": "purrcode.plan", "title": "PurrCode: Plan Task"},
+      {"command": "purrcode.startSelection", "title": "PurrCode: Start Task With Selection"},
+      {"command": "purrcode.refresh", "title": "PurrCode: Refresh Sessions"},
+      {"command": "purrcode.resume", "title": "PurrCode: Resume Session"},
+      {"command": "purrcode.approve", "title": "PurrCode: Approve Pending Action"},
+      {"command": "purrcode.reject", "title": "PurrCode: Reject Pending Action"},
+      {"command": "purrcode.pause", "title": "PurrCode: Pause Session"},
+      {"command": "purrcode.cancel", "title": "PurrCode: Cancel Session"},
+      {"command": "purrcode.checkpoint", "title": "PurrCode: Create Checkpoint"},
+      {"command": "purrcode.rollback", "title": "PurrCode: Roll Back Isolated Changes"},
+      {"command": "purrcode.compact", "title": "PurrCode: Compact Context"},
+      {"command": "purrcode.selectModel", "title": "PurrCode: Select Session Model"},
+      {"command": "purrcode.openDiff", "title": "PurrCode: Open Current File Diff"},
+      {"command": "purrcode.applyHunk", "title": "PurrCode: Apply Reviewed Hunk"},
+      {"command": "purrcode.rejectHunk", "title": "PurrCode: Reject Reviewed Hunk"},
+      {"command": "purrcode.showEvidence", "title": "PurrCode: Show Session Evidence"}
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {"id": "purrcode", "title": "PurrCode", "icon": "media/icon.svg"}
+      ]
+    },
+    "views": {
+      "purrcode": [
+        {"id": "purrcode.sessions", "name": "Sessions"}
+      ]
+    },
+    "configuration": {
+      "title": "PurrCode",
+      "properties": {
+        "purrcode.daemonUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:7377",
+          "description": "Authenticated loopback PurrCode daemon URL."
+        },
+        "purrcode.tokenFile": {
+          "type": "string",
+          "default": "",
+          "description": "Daemon token path. Empty uses the platform PurrCode data directory."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.7.0"
+  }
+}

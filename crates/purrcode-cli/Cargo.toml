@@ -1,0 +1,42 @@
+[package]
+name = "purrcode-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "purrcode"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+directories.workspace = true
+futures.workspace = true
+hex.workspace = true
+purrcode-codex-bridge = { path = "../codex-bridge" }
+purrcode-pawgate = { path = "../pawgate-runtime" }
+purrcode-daemon = { path = "../purrcode-daemon" }
+purrcode-golden-suite = { path = "../golden-suite" }
+purrcode-mcp-host = { path = "../mcp-host" }
+purrcode-tui = { path = "../purrcode-tui" }
+purrcode-provider-gateway = { path = "../provider-gateway" }
+purrcode-repository-engine = { path = "../repository-engine" }
+purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-ninelives = { path = "../ninelives-recovery" }
+purrcode-claw = { path = "../claw-sandbox" }
+reqwest.workspace = true
+rpassword.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+semver.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+toml.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+url.workspace = true
