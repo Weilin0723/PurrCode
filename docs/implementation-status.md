@@ -86,6 +86,8 @@ is recorded below)
   plain-color and ASCII status fallbacks without relying on color alone.
 - Composer selection supports Shift+arrows and Page Up/Down. Performance regressions cover a 256 KB
   draft and a 10,000-event timeline with bounded interactive latency.
+- The v0.4 release launcher generates its pinned checksums from the exact five native archives in
+  the signed-release job before `npm pack`; a stale checksum file cannot silently ship.
 
 The product and repository are now formally named **PurrCode**. PawGate, Claw, Whisker, and
 NineLives name the judgment, execution, context, and recovery subsystems respectively. Primary

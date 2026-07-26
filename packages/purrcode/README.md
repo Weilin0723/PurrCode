@@ -12,7 +12,7 @@ purrcode
 Until the package is published to the public npm registry, install the release tarball directly:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.2.1/purrcode-0.2.1.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.4.0/purrcode-0.4.0.tgz
 ```
 
 The installer supports macOS ARM64/x64, Linux ARM64/x64, and Windows x64. It downloads over HTTPS,
