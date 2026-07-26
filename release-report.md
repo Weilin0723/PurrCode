@@ -1,10 +1,10 @@
-# PurrCode RC 0.1 Release Pipeline Report
+# PurrCode v0.2.0 Release Pipeline Report
 
 Date: 2026-07-25
 
 ## Outcome
 
-The repository-level release pipeline passed in GitHub's hosted environment. Release `v0.1.0` is
+The repository-level release pipeline passed in GitHub's hosted environment. Release `v0.2.0` is
 published with five platform archives, checksums, Sigstore bundles, and build provenance.
 
 ## CI workflow
@@ -54,6 +54,14 @@ GitHub Release. Write, OIDC, and attestation permissions are restricted to that 
   GitHub Release.
 - The public macOS ARM64 artifact was downloaded through `scripts/install.sh`, verified against
   `SHA256SUMS`, installed to a temporary destination, and both binaries reported version `0.1.0`.
+- CI run 30189414127 passed Rust formatting, strict Clippy, and all workspace tests on Ubuntu,
+  macOS, and Windows, plus the TypeScript SDK, VS Code extension, and Python SDK checks.
+- Signed-release run 30189538120 validated the workspace, built all five `v0.2.0` platform
+  archives, generated `SHA256SUMS`, signed every artifact using GitHub OIDC, attested provenance,
+  and published the non-draft GitHub Release.
+- The public macOS ARM64 `v0.2.0` artifact was downloaded through the documented one-command
+  installer, verified against `SHA256SUMS`, installed to an isolated temporary destination, and
+  both binaries reported version `0.2.0`.
 
 ## Remaining external gates
 
@@ -63,10 +71,3 @@ GitHub Release. Write, OIDC, and attestation permissions are restricted to that 
 
 These remain external gates. Static inspection or a skipped tool is not counted as execution
 success.
-
-## Local follow-up after Actions run 30183639751
-
-The Ubuntu job failed at `cargo fmt --all --check` on commit `687acc8`. The formatting diff has been
-applied locally, and `cargo fmt --all --check`, Clippy with warnings denied, and the full workspace
-test suite pass in this checkout. GitHub-hosted rerun evidence remains external until this checkout
-is authenticated and the fix is pushed.

@@ -219,6 +219,10 @@ execution beyond carefully audited command forms.
   30184496010 published five `v0.1.0` platform archives, SHA-256 checksums, Sigstore bundles, and
   GitHub provenance; the public macOS ARM64 archive passed the checksum-verifying installer smoke
   test. Homebrew and winget publication remain deferred.
+- Conversational/governed-skill CI passed on macOS, Linux, and Windows in run 30189414127.
+  Signed-release run 30189538120 published five `v0.2.0` platform archives, SHA-256 checksums,
+  Sigstore bundles, and GitHub provenance. The documented public one-command installer verified and
+  installed the macOS ARM64 archive, and both binaries reported `0.2.0`.
 - Live golden benchmarks now honor the requested whole-task timeout (300 seconds by default)
   instead of silently capping it from a fixture's validation-command budget. Agent prompting also
   directs small fixes toward minimal implementation and validation rather than repeated reads.

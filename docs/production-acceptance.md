@@ -1,6 +1,6 @@
 # Production acceptance audit
 
-Updated: 2026-07-24
+Updated: 2026-07-25
 
 This is the release gate for the PRD. `Implemented` means the production path and dedicated local
 evidence exist. `External gate` means the implementation exists but must still be exercised
@@ -30,8 +30,8 @@ approved while any row is not `Implemented`.
 | 17 | Provider interruption is recovered/reported accurately | Implemented | Interrupted requests become explicit recovery review; started executions become uncertain and fail closed. |
 | 18 | API keys never appear in logs | Implemented | OS credential-store references, scrubbed child environments, hidden/zeroized CLI input, and redaction tests. |
 | 19 | CI never waits for terminal input | Implemented | Bounded headless mode rejects approval-required work and emits an atomic evidence report. |
-| 20 | Installer, updater, and migrations are tested | Implemented | Signed `v0.1.0` artifacts were published, and the checksum-verifying installer downloaded the public macOS ARM64 archive and ran both installed binaries successfully. Atomic upgrade/rollback and migration tests also pass. |
-| 21 | Cross-platform integration tests pass | Implemented | CI run 30184357753 passed Rust checks/tests on macOS, Linux, and Windows plus both TypeScript clients and Python; signed-release run 30184496010 built all five platform artifacts. |
+| 20 | Installer, updater, and migrations are tested | Implemented | Signed `v0.2.0` artifacts were published by run 30189538120, and the checksum-verifying one-command installer downloaded the public macOS ARM64 archive and both installed binaries reported `0.2.0`. Atomic upgrade/rollback and migration tests also pass. |
+| 21 | Cross-platform integration tests pass | Implemented | CI run 30189414127 passed Rust checks/tests on macOS, Linux, and Windows plus both TypeScript clients and Python; signed-release run 30189538120 built all five platform artifacts. |
 | 22 | Security invariants have dedicated tests | Implemented | See invariant matrix below and crate-level regression tests. |
 | 23 | No placeholder production successes | Implemented | Validation distinguishes passed, failed, unavailable, undetected, skipped, timed out, and uncertain; catalog-only expectations report unavailable rather than passed. |
 | 24 | Installation/providers/security/recovery/troubleshooting docs | Implemented | `docs/installation.md`, `docs/providers.md`, `SECURITY.md`, `docs/recovery.md`, and `docs/troubleshooting.md`. |
@@ -59,6 +59,6 @@ approved while any row is not `Implemented`.
 
 ## Release decision
 
-The offline runtime is published as release candidate `v0.1.0`, but the full production acceptance
+The offline runtime and conversational governed-skill workflows are published as `v0.2.0`, but the full production acceptance
 gate remains open. Supply credentials locally through `purrcode credential set` to execute criteria
 1, 4, 5, and 6. Secrets must never be pasted into chat or configuration.
