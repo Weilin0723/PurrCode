@@ -16,7 +16,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         AppMode::ProviderSetup => draw_setup(frame, app),
         AppMode::SkillBrowse => draw_skills(frame, app),
         AppMode::DiffView => draw_diff(frame, app),
-        AppMode::Help => draw_help(frame),
+        AppMode::Help => draw_help(frame, app),
         AppMode::LeaseConflict => draw_lease_conflict(frame),
         AppMode::Conversation => draw_conversation(frame, app),
     }
@@ -27,15 +27,28 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     }
 }
 
-fn draw_help(frame: &mut Frame<'_>) {
-    let text = "Keyboard help\n\nCtrl+Enter  Send message\nEnter       Insert newline\nCtrl+P / ?  Command palette and help\nCtrl+B      Toggle workspace\nCtrl+D      Full diff\nCtrl+Up/Down Select timeline card\nCtrl+Space  Expand card details\nAlt+Up/Down Draft history\nCtrl+A      Select all\nCtrl+Z/Y    Undo / redo\nEsc         Close overlay\n\nCommands\n/connect  /provider  /models  /model  /plan  /build  /review\n/diff  /approve  /deny  /pause  /resume  /rollback\n/skills  /research  /sessions  /session  /new  /cancel  /quit";
+fn draw_help(frame: &mut Frame<'_>, app: &App) {
+    let actions = crate::command_palette::filtered_actions(&app.palette_query);
+    let mut text = format!("Search actions: {}_\n\n", app.palette_query);
+    for (index, (name, detail, command)) in actions.iter().enumerate() {
+        let marker = if index == app.palette_selected {
+            ">"
+        } else {
+            " "
+        };
+        text.push_str(&format!("{marker} {name:<28} {command:<18} {detail}\n"));
+    }
+    if actions.is_empty() {
+        text.push_str("  No matching actions.\n");
+    }
+    text.push_str("\nType to filter · Up/Down select · Enter run · Esc close");
     frame.render_widget(
         Paragraph::new(text).wrap(Wrap { trim: false }).block(
             Block::default()
                 .title("Command palette")
                 .borders(Borders::ALL),
         ),
-        centered(frame.area(), 72, 24),
+        centered(frame.area(), 100, 24),
     );
 }
 
@@ -709,7 +722,7 @@ mod tests {
 
     #[test]
     fn lease_conflict_snapshot_has_state_impact_and_recovery_actions() {
-        let backend = TestBackend::new(80, 24);
+        let backend = TestBackend::new(120, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(draw_lease_conflict).unwrap();
         let snapshot = terminal
@@ -728,9 +741,10 @@ mod tests {
 
     #[test]
     fn help_snapshot_exposes_primary_keyboard_actions_without_secrets() {
-        let backend = TestBackend::new(80, 24);
+        let backend = TestBackend::new(120, 24);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(draw_help).unwrap();
+        let app = test_app();
+        terminal.draw(|frame| draw_help(frame, &app)).unwrap();
         let snapshot = terminal
             .backend()
             .buffer()
@@ -738,9 +752,47 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        for expected in ["Ctrl+Enter", "Ctrl+P", "Ctrl+D", "/connect", "/approve"] {
+        for expected in ["Search actions", "/connect", "/approve", "Type to filter"] {
             assert!(snapshot.contains(expected));
         }
         assert!(!snapshot.contains("sk-"));
+    }
+
+    fn test_app() -> App {
+        App {
+            config: crate::app::TuiConfig {
+                daemon_url: "http://127.0.0.1:7377".into(),
+                token_file: "/tmp/token".into(),
+                repository: "/tmp".into(),
+            },
+            client: reqwest::Client::new(),
+            token: String::new(),
+            mode: AppMode::Help,
+            conversation: crate::conversation::Conversation::new(),
+            composer: crate::composer::Composer::new(),
+            secret_review: None,
+            status_bar: crate::status_bar::StatusBar::new(),
+            workspace: crate::workspace::WorkspaceContext::inspect(std::path::Path::new("/tmp")),
+            provider_setup: None,
+            skill_browser: None,
+            diff_view: None,
+            stream: crate::streaming::StreamController::new(),
+            last_refresh: std::time::Instant::now(),
+            message_bar: String::new(),
+            session_id: None,
+            has_provider: false,
+            pending_command: None,
+            pending_user_message: false,
+            running_command: false,
+            quit_requested: false,
+            downloaded_skill: None,
+            pending_skill_install_action: None,
+            theme: crate::theme::Theme {
+                colors_enabled: true,
+                unicode_enabled: true,
+            },
+            palette_query: String::new(),
+            palette_selected: 0,
+        }
     }
 }

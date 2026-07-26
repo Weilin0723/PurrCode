@@ -81,6 +81,8 @@ pub struct App {
     pub downloaded_skill: Option<Value>,
     pub pending_skill_install_action: Option<String>,
     pub theme: Theme,
+    pub palette_query: String,
+    pub palette_selected: usize,
 }
 
 pub async fn run(config: TuiConfig) -> Result<()> {
@@ -119,6 +121,8 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         downloaded_skill: None,
         pending_skill_install_action: None,
         theme: Theme::detect(),
+        palette_query: String::new(),
+        palette_selected: 0,
     };
     app.session_id = recovery.restore(&mut app.composer);
 

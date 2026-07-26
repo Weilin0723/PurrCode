@@ -10,13 +10,48 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         AppMode::ProviderSetup => handle_setup_key(app, key),
         AppMode::SkillBrowse => handle_skill_key(app, key),
         AppMode::DiffView => handle_diff_key(app, key),
-        AppMode::Help => {
-            app.switch_mode(AppMode::Conversation);
-            true
-        }
+        AppMode::Help => handle_help_key(app, key),
         AppMode::LeaseConflict => handle_lease_conflict_key(app, key),
         AppMode::Conversation => handle_conversation_key(app, key),
     }
+}
+
+fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.palette_query.clear();
+            app.palette_selected = 0;
+            app.switch_mode(AppMode::Conversation);
+        }
+        KeyCode::Up => app.palette_selected = app.palette_selected.saturating_sub(1),
+        KeyCode::Down => {
+            let count = crate::command_palette::filtered_actions(&app.palette_query).len();
+            app.palette_selected = app
+                .palette_selected
+                .saturating_add(1)
+                .min(count.saturating_sub(1));
+        }
+        KeyCode::Backspace => {
+            app.palette_query.pop();
+            app.palette_selected = 0;
+        }
+        KeyCode::Char(character) => {
+            app.palette_query.push(character);
+            app.palette_selected = 0;
+        }
+        KeyCode::Enter => {
+            if let Some(action) = crate::command_palette::filtered_actions(&app.palette_query)
+                .get(app.palette_selected)
+            {
+                app.pending_command = Some(action.2.to_owned());
+                app.palette_query.clear();
+                app.palette_selected = 0;
+                app.switch_mode(AppMode::Conversation);
+            }
+        }
+        _ => {}
+    }
+    true
 }
 
 fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {

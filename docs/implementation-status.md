@@ -81,7 +81,8 @@ is recorded below)
   reconnect, read-only attach, new-session, and technical-detail choices. No competing loop starts.
 - Repository-scoped selected-session and unsent-draft state restores after restart. Recovery state
   is written atomically; secret-like values are redacted before disk persistence.
-- Ctrl+P and `?` open a keyboard-first command/help overlay. `NO_COLOR` and dumb terminals receive
+- Ctrl+P and `?` open a keyboard-first command palette with live name/detail/command filtering,
+  Up/Down selection, and Enter execution. `NO_COLOR` and dumb terminals receive
   plain-color and ASCII status fallbacks without relying on color alone.
 - Composer selection supports Shift+arrows and Page Up/Down. Performance regressions cover a 256 KB
   draft and a 10,000-event timeline with bounded interactive latency.
