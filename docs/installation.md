@@ -20,9 +20,12 @@ npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0
 ```
 
 The package downloads only the matching native archive, checks it against the digest pinned inside
-the npm package, and installs both `purrcode` and `purrcoded`. Publishing the same package name to
-the public npm registry additionally requires the repository owner to configure npm trusted
-publishing or authenticate an npm account; GitHub authentication alone cannot grant that access.
+the npm package, and installs both `purrcode` and `purrcoded`. The public npm registry package uses
+the owner scope because npm reserves unscoped names that are too similar to existing packages:
+
+```bash
+npm install --global @minaovo/purrcode
+```
 
 ## From source
 
