@@ -555,10 +555,19 @@ impl DeltaBatcher {
 }
 
 fn verified_end_from_audit(event: &Value) -> Option<VerifiedStreamEnd> {
+    if event.get("event").and_then(Value::as_str) == Some("judgment_recorded")
+        && event
+            .pointer("/data/decision/decision")
+            .and_then(Value::as_str)
+            == Some("require_approval")
+    {
+        return Some(VerifiedStreamEnd::AwaitingApproval);
+    }
     match event.get("event").and_then(Value::as_str) {
         Some("session_completed") => Some(VerifiedStreamEnd::Completed),
         Some("session_failed") => Some(VerifiedStreamEnd::Failed),
         Some("session_cancelled") => Some(VerifiedStreamEnd::Cancelled),
+        Some("session_paused") => Some(VerifiedStreamEnd::AwaitingReview),
         Some("approval_requested") => Some(VerifiedStreamEnd::AwaitingApproval),
         Some("outcome_review_required") => Some(VerifiedStreamEnd::AwaitingReview),
         _ => None,

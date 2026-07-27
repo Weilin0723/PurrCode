@@ -1,5 +1,12 @@
 //! Authenticated loopback API and durable session owner.
 
+/// Version of the authenticated loopback contract used by this build.
+///
+/// The CLI checks this before reusing a daemon already bound to the configured
+/// port. Bump this when a daemon change cannot safely interoperate with an
+/// older TUI/CLI process.
+pub const DAEMON_API_VERSION: u32 = 2;
+
 mod local_models;
 pub mod model_recommendation;
 mod ollama_pull;
@@ -28,7 +35,7 @@ use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
     keychain_reference, qualify_model, validate_credential_reference, AppConfig, ModelEvent,
     ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode, ProviderConfig,
-    ProviderRouter,
+    ProviderRouter, ProviderStreamEvent,
 };
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
@@ -592,6 +599,9 @@ async fn health(
     Ok(Json(Health {
         status: if integrity { "ok" } else { "degraded" },
         sqlite_integrity: integrity,
+        product: "purrcode",
+        version: env!("CARGO_PKG_VERSION"),
+        daemon_api_version: DAEMON_API_VERSION,
     }))
 }
 
@@ -1253,7 +1263,12 @@ async fn append_message(
 ) -> Result<(StatusCode, Json<AcceptedSession>), ApiError> {
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
-    ensure_session_exists(&state, id).await?;
+    let session = state.store.lock().await.load(id)?;
+    if session.status != SessionStatus::Active {
+        return Err(ApiError::Conflict(
+            "only an active session can accept a follow-up message; start a new session".into(),
+        ));
+    }
     if request.content.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "message content cannot be empty".into(),
@@ -1330,6 +1345,12 @@ async fn approve_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     ensure_session_exists(&state, id).await?;
+    require_approval_boundary(&state.store.lock().await.load(id)?)?;
+    wait_for_agent_lease_release(&state, id).await?;
+    // The operation that produced the boundary may settle while the lease is handed off.
+    // Recheck before spawning so an invalid approval can never become an asynchronous
+    // agent failure that corrupts an otherwise paused or terminal session.
+    require_approval_boundary(&state.store.lock().await.load(id)?)?;
     spawn_agent_operation(state, id, AgentOperation::Approve).await?;
     Ok((
         StatusCode::ACCEPTED,
@@ -1338,6 +1359,41 @@ async fn approve_session(
             status: "approval accepted",
         }),
     ))
+}
+
+fn require_approval_boundary(
+    session: &purrcode_runtime_core::SessionState,
+) -> Result<ActionId, ApiError> {
+    match session.status {
+        SessionStatus::AwaitingApproval(action_id) => Ok(action_id),
+        _ => Err(ApiError::Conflict(
+            "no action is awaiting approval; approve/deny are available only when an approval card is visible".into(),
+        )),
+    }
+}
+
+/// Approval is often submitted as soon as the client observes the durable approval boundary.
+/// The operation that produced that boundary can still be unwinding its stream and background
+/// bookkeeping, so hand the lease over instead of racing the next operation against cleanup.
+async fn wait_for_agent_lease_release(state: &AppState, id: SessionId) -> Result<(), ApiError> {
+    const LEASE_HANDOFF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    const LEASE_HANDOFF_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
+    tokio::time::timeout(LEASE_HANDOFF_TIMEOUT, async {
+        loop {
+            if !state.leases.lock().await.contains_key(&id) {
+                return;
+            }
+            tokio::time::sleep(LEASE_HANDOFF_POLL).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        ApiError::Conflict(
+            "the previous session operation did not release its daemon lease before approval"
+                .into(),
+        )
+    })
 }
 
 #[derive(Deserialize)]
@@ -2309,7 +2365,7 @@ async fn run_agent_operation(
             "models.roles.judge is required for daemon-owned agent sessions".into(),
         )
     })?;
-    let judge_model = ModelId::parse(judge_selected)
+    let mut judge_model = ModelId::parse(judge_selected)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
     if judge_model == model && !config.judgment.allow_same_model {
         return Err(DaemonError::AgentConfiguration(
@@ -2330,9 +2386,13 @@ async fn run_agent_operation(
         && model != judge_model
         && !resources.allow_separate_local_judge
     {
-        return Err(DaemonError::AgentConfiguration(
-            "resource governor disabled a separate local judge under current memory pressure; use one explicitly accepted reduced-independence model or a remote judge".into(),
-        ));
+        if config.judgment.allow_same_model {
+            judge_model = model.clone();
+        } else {
+            return Err(DaemonError::AgentConfiguration(
+                "resource governor disabled a separate local judge under current memory pressure; explicitly allow the same model or configure a remote judge".into(),
+            ));
+        }
     }
     let router = ProviderRouter::from_config(&config)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
@@ -2387,7 +2447,18 @@ async fn run_agent_operation(
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Resume => agent.resume(&mut store, id).await.map(|_| ()),
-        AgentOperation::Approve => agent.approve(&mut store, id).await.map(|_| ()),
+        AgentOperation::Approve => {
+            agent
+                .approve(&mut store, id)
+                .await
+                .map_err(|error| DaemonError::Agent(error.to_string()))?;
+            // Approval is a continuation command, not a single-step execution command.
+            // Once the exact authorized action has been durably executed, immediately
+            // re-enter the agent loop so it can observe the result and propose the next
+            // action (or complete). Without this, clients receive "approval accepted"
+            // while the session silently remains Active with no daemon task driving it.
+            agent.resume(&mut store, id).await.map(|_| ())
+        }
     };
     result.map_err(|error| DaemonError::Agent(error.to_string()))?;
     Ok(())
@@ -3017,6 +3088,9 @@ async fn shutdown_signal() {
 struct Health {
     status: &'static str,
     sqlite_integrity: bool,
+    product: &'static str,
+    version: &'static str,
+    daemon_api_version: u32,
 }
 
 #[derive(Serialize)]
@@ -3292,6 +3366,17 @@ async fn configure_provider(
             credential_reference.as_deref(),
         )
         .map_err(|error| ApiError::BadRequest(format!("provider configuration failed: {error}")))?;
+    let enabled_remote_routing = candidate
+        .providers
+        .get(&body.name)
+        .is_some_and(|provider| !provider.is_local())
+        && matches!(candidate.privacy.mode, PrivacyMode::LocalOnly);
+    if enabled_remote_routing {
+        // Saving a remote profile and running its real connection test is an explicit request to
+        // permit that provider. Persist the policy change with the profile so the user is not
+        // trapped behind an otherwise invisible local-only default.
+        candidate.privacy.mode = PrivacyMode::Mixed;
+    }
     let probe = probe_provider(&candidate, &body.name).await?;
     candidate
         .save(&state.app_config)
@@ -3304,6 +3389,8 @@ async fn configure_provider(
         "latency_ms": probe.latency_ms,
         "first_token_latency_ms": probe.first_token_latency_ms,
         "local": probe.local,
+        "privacy_mode": candidate.privacy.mode,
+        "remote_routing_enabled": enabled_remote_routing,
         "models_configured": probe.models_configured,
     })))
 }
@@ -3329,6 +3416,11 @@ struct ProviderProbe {
     models_configured: Vec<String>,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+struct ProviderProbeAnswer {
+    answer: String,
+}
+
 async fn probe_provider(
     config: &AppConfig,
     provider_name: &str,
@@ -3340,12 +3432,7 @@ async fn probe_provider(
     let local = provider_config.is_local();
     let router = ProviderRouter::from_config(config)
         .map_err(|error| ApiError::BadRequest(format!("provider setup failed: {error}")))?;
-    let probe_model = provider_config
-        .configured_models()
-        .keys()
-        .next()
-        .cloned()
-        .unwrap_or_else(|| "health-check".into());
+    let probe_model = configured_probe_model(config, provider_name, provider_config);
     let model = ModelId {
         provider: provider_name.to_owned(),
         model: probe_model,
@@ -3364,28 +3451,42 @@ async fn probe_provider(
     let request_started = std::time::Instant::now();
     let generation = tokio::time::timeout(std::time::Duration::from_secs(30), async {
         let mut stream = provider
-            .stream(ModelRequest {
-                model: model.clone(),
-                messages: vec![ModelMessage {
-                    role: "user".into(),
-                    content: "Reply with OK.".into(),
-                }],
-                tools: Vec::new(),
-                max_output_tokens: Some(4),
-                reasoning_effort: None,
-            })
+            .structured_stream(
+                ModelRequest {
+                    model: model.clone(),
+                    messages: vec![ModelMessage {
+                        role: "user".into(),
+                        content: "Reply with a JSON object whose answer field is OK.".into(),
+                    }],
+                    tools: Vec::new(),
+                    max_output_tokens: Some(32),
+                    reasoning_effort: None,
+                },
+                schema_for!(ProviderProbeAnswer),
+            )
             .await
             .map_err(|error| {
                 ApiError::BadRequest(format!("provider generation probe failed: {error}"))
             })?;
         let mut first_semantic = None;
         let mut finished = false;
+        let mut structured_text = String::new();
         while let Some(event) = stream.next().await {
-            match event.map_err(|error| {
+            let event = event.map_err(|error| {
                 ApiError::BadRequest(format!("provider generation stream failed: {error}"))
-            })? {
+            })?;
+            let ProviderStreamEvent::Model(event) = event else {
+                continue;
+            };
+            match event {
                 ModelEvent::TextDelta(delta) if !delta.is_empty() => {
                     first_semantic.get_or_insert_with(|| request_started.elapsed().as_millis());
+                    if structured_text.len().saturating_add(delta.len()) > 1024 {
+                        return Err(ApiError::BadRequest(
+                            "provider structured probe exceeded 1024 bytes".into(),
+                        ));
+                    }
+                    structured_text.push_str(&delta);
                 }
                 ModelEvent::ToolCall { .. } => {
                     first_semantic.get_or_insert_with(|| request_started.elapsed().as_millis());
@@ -3399,6 +3500,17 @@ async fn probe_provider(
         if !finished {
             return Err(ApiError::BadRequest(
                 "provider generation probe ended without a completion event".into(),
+            ));
+        }
+        let answer: ProviderProbeAnswer =
+            serde_json::from_str(&structured_text).map_err(|error| {
+                ApiError::BadRequest(format!(
+                    "provider structured probe returned invalid JSON: {error}"
+                ))
+            })?;
+        if answer.answer.trim().is_empty() {
+            return Err(ApiError::BadRequest(
+                "provider structured probe returned an empty answer".into(),
             ));
         }
         first_semantic.ok_or_else(|| {
@@ -3448,6 +3560,29 @@ async fn probe_provider(
             .cloned()
             .collect(),
     })
+}
+
+fn configured_probe_model(
+    config: &AppConfig,
+    provider_name: &str,
+    provider_config: &ProviderConfig,
+) -> String {
+    let prefix = format!("{provider_name}/");
+    config
+        .models
+        .default
+        .as_deref()
+        .and_then(|model| model.strip_prefix(&prefix))
+        .or_else(|| {
+            config
+                .models
+                .roles
+                .values()
+                .find_map(|model| model.strip_prefix(&prefix))
+        })
+        .map(str::to_owned)
+        .or_else(|| provider_config.configured_models().keys().next().cloned())
+        .unwrap_or_else(|| "health-check".into())
 }
 
 async fn discover_provider_models(
@@ -3631,12 +3766,21 @@ async fn list_models(
     let mut models = Vec::new();
     for (name, provider_cfg) in &config.providers {
         for (model, capabilities) in provider_cfg.configured_models() {
+            let id = format!("{name}/{model}");
+            let roles = config
+                .models
+                .roles
+                .iter()
+                .filter_map(|(role, selected)| (selected == &id).then_some(role))
+                .collect::<Vec<_>>();
             models.push(serde_json::json!({
-                "id": format!("{name}/{model}"),
+                "id": id,
                 "provider": name,
                 "model": model,
                 "capabilities": capabilities,
                 "local": provider_cfg.is_local(),
+                "default": config.models.default.as_deref() == Some(id.as_str()),
+                "roles": roles,
             }));
         }
     }
@@ -4451,11 +4595,18 @@ async fn assign_model_role(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     config
         .assign_model_role(&body.role, &model)
-        .and_then(|()| config.save(&state.app_config))
+        .and_then(|()| {
+            if matches!(body.role.as_str(), "coding_worker" | "coder") {
+                config.models.default = Some(body.model.clone());
+            }
+            config.save(&state.app_config)
+        })
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    Ok(Json(
-        serde_json::json!({"role": body.role, "model": body.model}),
-    ))
+    Ok(Json(serde_json::json!({
+        "role": body.role,
+        "model": body.model,
+        "default_updated": matches!(body.role.as_str(), "coding_worker" | "coder")
+    })))
 }
 
 async fn list_skills(
@@ -6090,6 +6241,33 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     #[test]
+    fn provider_probe_prefers_the_configured_default_over_alphabetical_capabilities() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+schema_version = 1
+[providers.ollama]
+type = "ollama"
+base_url = "http://127.0.0.1:11434/"
+[providers.ollama.capabilities."large"]
+local = true
+latency_class = "unknown"
+[providers.ollama.capabilities."small"]
+local = true
+latency_class = "unknown"
+[models]
+default = "ollama/small"
+"#,
+        )
+        .unwrap();
+        let config = AppConfig::load(&path).unwrap();
+        let provider = config.providers.get("ollama").unwrap();
+        assert_eq!(configured_probe_model(&config, "ollama", provider), "small");
+    }
+
+    #[test]
     fn secret_content_is_rejected_without_echoing_or_redaction_leaks() {
         let secret = "sk-example123456789";
         let error = reject_secret_content(&format!("api_key={secret}"))
@@ -6119,7 +6297,7 @@ mod tests {
     async fn compatible_generation_stream() -> impl IntoResponse {
         (
             [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
-            "data: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+            "data: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"{\\\"answer\\\":\\\"OK\\\"}\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         )
     }
 
@@ -6595,6 +6773,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approval_waits_for_previous_daemon_lease_handoff() {
+        let temporary = tempfile::tempdir().unwrap();
+        let state = AppState {
+            store: Arc::new(Mutex::new(SessionStore::in_memory().unwrap())),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+        };
+        let session_id = SessionId::new();
+        let generation = Uuid::new_v4();
+        let task = tokio::spawn(std::future::pending::<()>());
+        state.leases.lock().await.insert(
+            session_id,
+            AgentLease {
+                generation,
+                task,
+                models: vec![ModelId::parse("local/test").unwrap()],
+                cancellation: AgentCancellation::new(),
+            },
+        );
+
+        let releasing_state = state.clone();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            let lease = releasing_state
+                .leases
+                .lock()
+                .await
+                .remove(&session_id)
+                .expect("fixture lease must still exist");
+            lease.task.abort();
+            let _ = lease.task.await;
+        });
+
+        let started = tokio::time::Instant::now();
+        wait_for_agent_lease_release(&state, session_id)
+            .await
+            .expect("approval must wait for the prior operation to release its lease");
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(60),
+            "handoff returned before the previous operation released its lease"
+        );
+        assert!(!state.leases.lock().await.contains_key(&session_id));
+        release.await.unwrap();
+    }
+
+    #[test]
+    fn approval_requires_a_visible_durable_approval_boundary() {
+        let session_id = SessionId::new();
+        let action_id = ActionId::new();
+        let mut session = purrcode_runtime_core::SessionState::empty(session_id);
+
+        session.status = SessionStatus::Paused;
+        assert!(matches!(
+            require_approval_boundary(&session),
+            Err(ApiError::Conflict(_))
+        ));
+        assert_eq!(session.status, SessionStatus::Paused);
+
+        session.status = SessionStatus::AwaitingApproval(action_id);
+        assert_eq!(require_approval_boundary(&session).unwrap(), action_id);
+    }
+
+    #[tokio::test]
     async fn installed_skill_is_reused_first_after_daemon_resolver_restart() {
         let temporary = tempfile::tempdir().unwrap();
         let database = temporary.path().join("sessions.db");
@@ -6845,6 +7096,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        let health: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(health["product"], "purrcode");
+        assert_eq!(health["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(health["daemon_api_version"], DAEMON_API_VERSION);
         handle.abort();
     }
 
@@ -7329,7 +7584,7 @@ allow_same_model = true
             .send()
             .await
             .unwrap();
-        assert_eq!(follow_up.status(), StatusCode::ACCEPTED);
+        assert_eq!(follow_up.status(), StatusCode::CONFLICT);
         let messages: Vec<ConversationMessage> = client
             .get(format!("http://{}/v1/sessions/{id}/messages", report.bind))
             .bearer_auth(token.trim())
@@ -7339,8 +7594,7 @@ allow_same_model = true
             .json()
             .await
             .unwrap();
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[1].content, "follow-up after restart boundary");
+        assert_eq!(messages.len(), 1);
         let store = SessionStore::open(&database).unwrap();
         let session_id = SessionId(Uuid::parse_str(id).unwrap());
         assert_eq!(

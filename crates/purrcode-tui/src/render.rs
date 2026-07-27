@@ -18,11 +18,21 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         AppMode::DiffView => draw_diff(frame, app),
         AppMode::Help => draw_help(frame, app),
         AppMode::LeaseConflict => draw_lease_conflict(frame),
+        AppMode::SessionChoice => draw_session_choice(frame, app),
         AppMode::Conversation => draw_conversation(frame, app),
     }
-    if !app.theme.colors_enabled {
-        for cell in frame.buffer_mut().content.iter_mut() {
-            cell.set_fg(Color::Reset).set_bg(Color::Reset);
+    apply_opaque_black_theme(frame, app.theme.colors_enabled);
+}
+
+/// Keep the interface legible independently of the terminal application's
+/// configured background (including macOS Terminal's light and translucent
+/// profiles). `Reset` delegates color choice to the terminal, so it cannot be
+/// used for either the canvas or primary text in PurrCode's dark theme.
+fn apply_opaque_black_theme(frame: &mut Frame<'_>, colors_enabled: bool) {
+    for cell in frame.buffer_mut().content.iter_mut() {
+        cell.set_bg(Color::Black);
+        if !colors_enabled || cell.fg == Color::Reset || cell.fg == Color::Black {
+            cell.set_fg(Color::White);
         }
     }
 }
@@ -85,6 +95,47 @@ fn truncate_palette_field(value: &str, maximum_chars: usize) -> String {
         truncated.push('…');
         truncated
     }
+}
+
+fn draw_session_choice(frame: &mut Frame<'_>, app: &App) {
+    let choice = app.session_choice.as_ref();
+    let session = choice
+        .map(|choice| choice.session_id.as_str())
+        .or(app.session_id.as_deref())
+        .unwrap_or("latest session");
+    let status = choice
+        .map(|choice| choice.status.as_str())
+        .unwrap_or("unknown");
+    let resume = match choice {
+        Some(choice)
+            if matches!(
+                choice.status.as_str(),
+                "awaiting_approval" | "awaiting_review"
+            ) =>
+        {
+            "R / Enter  Restore the saved decision boundary"
+        }
+        Some(choice)
+            if choice.lease_active && matches!(choice.status.as_str(), "active" | "executing") =>
+        {
+            "R / Enter  Attach to the active session and refresh"
+        }
+        Some(choice) if !choice.resumable => {
+            "This session cannot be resumed safely; start New or open history read-only"
+        }
+        _ => "R / Enter  Resume this session now",
+    };
+    let text = format!(
+        "Existing session found\n\nPurrCode found {session} ({status}) for this repository.\nChoose how to start before entering another message.\n\n{resume}\nN          Start a new session\nO / Esc    Open history read-only\n\nNo task will run until you choose."
+    );
+    frame.render_widget(
+        Paragraph::new(text).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title("Start PurrCode")
+                .borders(Borders::ALL),
+        ),
+        centered(frame.area(), 76, 16),
+    );
 }
 
 fn draw_lease_conflict(frame: &mut Frame<'_>) {
@@ -255,8 +306,8 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 };
                 let style = match msg.role.as_str() {
                     "user" => Style::default().fg(Color::Cyan),
-                    "assistant" => Style::default().fg(Color::White),
-                    _ => Style::default().fg(Color::DarkGray),
+                    "assistant" => Style::default().fg(Color::Reset),
+                    _ => Style::default().fg(Color::Gray),
                 };
                 ListItem::new(render_markdown(prefix, &msg.content, style))
             })
@@ -280,7 +331,7 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     if let Some(ref msg) = app.conversation.streaming_message {
         let text = format!("PurrCode: {}", msg.content);
-        items.push(ListItem::new(text).style(Style::default().fg(Color::White)));
+        items.push(ListItem::new(text).style(Style::default().fg(Color::Reset)));
     }
 
     if items.is_empty() {
@@ -297,7 +348,7 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Line::from(""),
             Line::from(Span::styled(
                 "Ctrl+G sends · Enter adds a line · Ctrl+Enter works where supported",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Gray),
             )),
         ])));
     }
@@ -315,18 +366,18 @@ fn timeline_item<'a>(
     expanded: bool,
 ) -> ListItem<'a> {
     let (glyph, color) = match card.kind {
-        CardKind::Conversation => ("●", Color::White),
+        CardKind::Conversation => ("●", Color::Reset),
         CardKind::Plan => ("◆", Color::Blue),
         CardKind::Action => ("▶", Color::Yellow),
         CardKind::PawGate => ("◆", Color::Magenta),
         CardKind::Claw => ("▶", Color::Cyan),
-        CardKind::Output => ("│", Color::DarkGray),
+        CardKind::Output => ("│", Color::Gray),
         CardKind::Validation => ("✓", Color::Green),
         CardKind::Checkpoint => ("●", Color::Blue),
         CardKind::Recovery => ("!", Color::Red),
         CardKind::Completion => ("✓", Color::Green),
         CardKind::Skill => ("◇", Color::Cyan),
-        CardKind::Context => ("·", Color::DarkGray),
+        CardKind::Context => ("·", Color::Gray),
     };
     let marker = if selected { "›" } else { " " };
     let mut lines = vec![Line::from(vec![
@@ -336,12 +387,10 @@ fn timeline_item<'a>(
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
     ])];
-    lines.extend(render_markdown("  ", &card.summary, Style::default().fg(Color::White)).lines);
+    lines.extend(render_markdown("  ", &card.summary, Style::default().fg(Color::Reset)).lines);
     if expanded {
         for detail in &card.details {
-            lines.extend(
-                render_markdown("    ", detail, Style::default().fg(Color::DarkGray)).lines,
-            );
+            lines.extend(render_markdown("    ", detail, Style::default().fg(Color::Gray)).lines);
         }
     } else if !card.details.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -349,7 +398,7 @@ fn timeline_item<'a>(
                 "    {} detail line(s) · Ctrl+Space to expand",
                 card.details.len()
             ),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
     }
     lines.push(Line::from(""));
@@ -360,20 +409,27 @@ fn timeline_item<'a>(
 fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let mut lines = vec![
         Line::from(vec![
-            Span::styled("Repository  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Repository  ", Style::default().fg(Color::Gray)),
             Span::raw(&app.workspace.repository_name),
         ]),
         Line::from(vec![
-            Span::styled("Branch      ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Branch      ", Style::default().fg(Color::Gray)),
             Span::raw(&app.workspace.branch),
         ]),
         Line::from(vec![
-            Span::styled("Source      ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Source      ", Style::default().fg(Color::Gray)),
             Span::raw(&app.workspace.source_state),
         ]),
         Line::from(vec![
-            Span::styled("Daemon      ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Daemon      ", Style::default().fg(Color::Gray)),
             Span::raw(&app.workspace.daemon_health),
+        ]),
+        Line::from(vec![
+            Span::styled("Model       ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                &app.workspace.model,
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -392,7 +448,7 @@ fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     if app.workspace.paths.len() > available {
         lines.push(Line::from(Span::styled(
             format!("… {} more paths", app.workspace.paths.len() - available),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
     }
     frame.render_widget(
@@ -415,10 +471,10 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
     {
         "Ctrl+B Timeline  @file mention  Ctrl+D Diff  ? Help"
     } else {
-        "Ctrl+G Send  Enter Newline  Ctrl+P Commands  Ctrl+B Files  Ctrl+D Diff  ? Help"
+        "Ctrl+G Send  Space/E Expand  Drag select · Cmd+C copy  Ctrl+P Commands  ? Help"
     };
     frame.render_widget(
-        Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(text).style(Style::default().fg(Color::Gray)),
         area,
     );
 }
@@ -462,7 +518,7 @@ fn draw_action_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
         text.push('\n');
     }
     if app.stream.active {
-        text.push_str("● Streaming...");
+        text.push_str(&format!("● Generating with {}…", app.status_bar.model));
     }
     if let Some(action) = &app.conversation.pending_action {
         text.push_str(&format!(
@@ -830,6 +886,33 @@ mod tests {
     }
 
     #[test]
+    fn startup_session_choice_requires_resume_or_new_before_input() {
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = test_app();
+        app.session_id = Some("session-123".into());
+        terminal
+            .draw(|frame| draw_session_choice(frame, &app))
+            .unwrap();
+        let snapshot = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        for expected in [
+            "Existing session found",
+            "session-123",
+            "Resume this session now",
+            "Start a new session",
+            "No task will run until you choose",
+        ] {
+            assert!(snapshot.contains(expected), "missing {expected:?}");
+        }
+    }
+
+    #[test]
     fn help_snapshot_exposes_primary_keyboard_actions_without_secrets() {
         let backend = TestBackend::new(120, 24);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -849,6 +932,34 @@ mod tests {
             );
         }
         assert!(!snapshot.contains("sk-"));
+    }
+
+    #[test]
+    fn complete_ui_uses_an_opaque_black_canvas_with_readable_primary_text() {
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = test_app();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        for cell in &terminal.backend().buffer().content {
+            assert_eq!(cell.bg, Color::Black);
+            assert_ne!(cell.fg, Color::Reset);
+            assert_ne!(cell.fg, Color::Black);
+        }
+    }
+
+    #[test]
+    fn plain_text_fallback_still_uses_high_contrast_black_and_white() {
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = test_app();
+        app.theme.colors_enabled = false;
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        for cell in &terminal.backend().buffer().content {
+            assert_eq!(cell.bg, Color::Black);
+            assert_eq!(cell.fg, Color::White);
+        }
     }
 
     #[test]
@@ -904,6 +1015,8 @@ mod tests {
             last_refresh: std::time::Instant::now(),
             message_bar: String::new(),
             session_id: None,
+            session_choice: None,
+            session_read_only: false,
             has_provider: false,
             pending_command: None,
             pending_user_message: false,

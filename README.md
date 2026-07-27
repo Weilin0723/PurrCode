@@ -14,9 +14,9 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. Every 
 bound to a durable authorization, checked again immediately before execution, and followed by
 recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
-PurrCode v0.5 focuses on first-use reliability: secure multiline provider import, native Ollama
-streaming, hardware-aware model recommendations, explicit pull and unload controls, truthful live
-phases, governed skill/MCP discovery, and lazy tiered repository indexing.
+PurrCode v0.5.2 focuses on dependable daily use: provider profiles reconnect through the OS
+keychain, NVIDIA NIM and Ollama use their selected models, sessions recover explicitly, approvals
+continue execution, and the terminal stays readable with a high-contrast dark theme.
 
 ## Why PurrCode
 
@@ -44,7 +44,7 @@ npm install --global @minaovo/purrcode
 Node.js 18 or newer can also install the signed-release launcher directly from GitHub:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.1/purrcode-0.5.1.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.2/purrcode-0.5.2.tgz
 ```
 
 The package selects the correct macOS, Linux, or Windows binary, verifies its pinned SHA-256 digest,
@@ -53,7 +53,7 @@ and exposes both `purrcode` and `purrcoded`.
 ### macOS and Linux installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.2/scripts/install.sh | sh
 ```
 
 This installer verifies the release archive against `SHA256SUMS` and installs into `~/.local/bin`.
@@ -91,6 +91,17 @@ requires a keychain or environment reference before saving.
 
 ## What changed in v0.5
 
+- **Reliable provider routing:** saved keychain credentials, selected remote-provider routing,
+  low-memory Ollama defaults, and NVIDIA NIM bounded-generation probes now use the intended profile
+  and model.
+- **Explicit session recovery:** startup asks whether to resume, open history, or create a new
+  session before accepting a task. Terminal sessions are never silently replayed.
+- **Approval continuation:** durable approval boundaries wait for the previous daemon lease, reject
+  invalid approval requests without corrupting session state, and continue the agent loop after an
+  approved action executes.
+- **Readable terminal workflow:** the default canvas is opaque black with high-contrast text,
+  active provider/model identity is visible, timeline details expand with Space or E, and terminal
+  selection remains copyable.
 - **Truthful streaming:** content deltas, provider phases, and durable audit events use separate
   bounded channels. Reconnect restores a snapshot; cancellation preserves partial output.
 - **Resource-aware local models:** startup never generates or loads a model. Ollama native mode is
@@ -183,6 +194,7 @@ PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
 - [Troubleshooting](docs/troubleshooting.md)
 - [Implementation status](docs/implementation-status.md)
 - [v0.5 usability recovery evidence](docs/reports/v0.5-usability-recovery.md)
+- [v0.5.2 provider-routing hotfix evidence](docs/reports/v0.5.2-provider-routing-hotfix.md)
 - [v0.4 redesign acceptance](docs/product-redesign-acceptance.md)
 - [Verification reports](docs/reports/)
 

@@ -115,7 +115,9 @@ impl Policy {
                     };
                 }
                 if self.read_only_programs.contains(program) {
-                    if let Some(reason) = unsafe_read_command(program, &command.arguments) {
+                    if let Some(reason) =
+                        unsafe_read_command(program, &command.arguments, repository)
+                    {
                         return JudgmentDecision::Deny { reason };
                     }
                     return JudgmentDecision::AllowWithConstraints(ActionConstraints {
@@ -376,10 +378,13 @@ fn is_safe_relative_path(path: &Path) -> bool {
 }
 
 fn default_read_only_programs() -> BTreeSet<String> {
-    ["git", "rg"].into_iter().map(str::to_owned).collect()
+    ["find", "git", "ls", "rg"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
 
-fn unsafe_read_command(program: &str, arguments: &[String]) -> Option<String> {
+fn unsafe_read_command(program: &str, arguments: &[String], repository: &Path) -> Option<String> {
     match program {
         "git" => {
             let Some(subcommand) = arguments.first() else {
@@ -398,7 +403,103 @@ fn unsafe_read_command(program: &str, arguments: &[String]) -> Option<String> {
         {
             Some("rg preprocessor execution is denied".into())
         }
+        "ls" => unsafe_ls(arguments, repository),
+        "find" => unsafe_find(arguments, repository),
         _ => None,
+    }
+}
+
+fn unsafe_ls(arguments: &[String], repository: &Path) -> Option<String> {
+    if arguments.is_empty() {
+        return None;
+    }
+    for argument in arguments {
+        if let Some(flags) = argument.strip_prefix('-') {
+            if argument == "--"
+                || (!argument.starts_with("--")
+                    && flags
+                        .chars()
+                        .all(|flag| matches!(flag, 'a' | 'A' | 'l' | '1')))
+            {
+                continue;
+            }
+            return Some(format!(
+                "ls option `{argument}` is not an allowed bounded read"
+            ));
+        }
+        if !path_is_within_repository(Path::new(argument), repository) {
+            return Some("ls path must remain inside the authorized repository".into());
+        }
+    }
+    None
+}
+
+fn unsafe_find(arguments: &[String], repository: &Path) -> Option<String> {
+    let Some(root) = arguments.first() else {
+        return Some("find requires an explicit repository root".into());
+    };
+    if Path::new(root) != repository {
+        return Some("find root must exactly match the authorized repository".into());
+    }
+    let mut index = 1;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "-maxdepth" | "--maxdepth" => {
+                let Some(depth) = arguments.get(index + 1) else {
+                    return Some("find maxdepth requires a value".into());
+                };
+                let Ok(depth) = depth.parse::<u8>() else {
+                    return Some("find maxdepth must be a small positive integer".into());
+                };
+                if !(1..=5).contains(&depth) {
+                    return Some("find maxdepth must be between 1 and 5".into());
+                }
+                index += 2;
+            }
+            "-not" => {
+                if arguments.get(index + 1).map(String::as_str) != Some("-path")
+                    || arguments
+                        .get(index + 2)
+                        .is_none_or(|pattern| !safe_find_exclusion(pattern))
+                {
+                    return Some(
+                        "find only permits `-not -path` exclusions for repository subtrees".into(),
+                    );
+                }
+                index += 3;
+            }
+            other => {
+                return Some(format!(
+                    "find expression `{other}` is not an allowed bounded repository read"
+                ));
+            }
+        }
+    }
+    if !arguments
+        .iter()
+        .any(|argument| matches!(argument.as_str(), "-maxdepth" | "--maxdepth"))
+    {
+        return Some("find requires maxdepth between 1 and 5".into());
+    }
+    None
+}
+
+fn safe_find_exclusion(pattern: &str) -> bool {
+    pattern.starts_with("*/")
+        && pattern.ends_with("/*")
+        && pattern[2..pattern.len() - 2].chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+        })
+}
+
+fn path_is_within_repository(path: &Path, repository: &Path) -> bool {
+    if path.is_absolute() {
+        path == repository || path.strip_prefix(repository).is_ok()
+    } else {
+        !path.as_os_str().is_empty()
+            && path
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)))
     }
 }
 fn default_approval_programs() -> BTreeSet<String> {
@@ -443,11 +544,20 @@ mod tests {
     use purrcode_runtime_core::CommandAction;
     use std::collections::BTreeMap;
 
+    #[cfg(not(windows))]
+    const TEST_REPOSITORY: &str = "/repo";
+    #[cfg(windows)]
+    const TEST_REPOSITORY: &str = r"C:\repo";
+
     fn action(args: &[&str]) -> ProposedAction {
+        command("git", args)
+    }
+
+    fn command(program: &str, args: &[&str]) -> ProposedAction {
         ProposedAction::Command(CommandAction {
-            program: "git".into(),
+            program: program.into(),
             arguments: args.iter().map(|s| (*s).to_owned()).collect(),
-            working_directory: "/repo".into(),
+            working_directory: TEST_REPOSITORY.into(),
             environment: BTreeMap::new(),
         })
     }
@@ -455,7 +565,7 @@ mod tests {
     #[test]
     fn hard_deny_wins_over_allowlisted_program() {
         assert!(matches!(
-            Policy::default().evaluate(&action(&["reset", "--hard"]), Path::new("/repo")),
+            Policy::default().evaluate(&action(&["reset", "--hard"]), Path::new(TEST_REPOSITORY)),
             JudgmentDecision::Deny { .. }
         ));
     }
@@ -510,9 +620,58 @@ mod tests {
     #[test]
     fn mutating_git_subcommand_is_denied() {
         assert!(matches!(
-            Policy::default().evaluate(&action(&["commit", "-m", "no"]), Path::new("/repo")),
+            Policy::default()
+                .evaluate(&action(&["commit", "-m", "no"]), Path::new(TEST_REPOSITORY)),
             JudgmentDecision::Deny { .. }
         ));
+    }
+
+    #[test]
+    fn bounded_repository_listings_are_allowed_without_approval() {
+        for proposed in [
+            command("ls", &["-la", TEST_REPOSITORY]),
+            command(
+                "find",
+                &[
+                    TEST_REPOSITORY,
+                    "-maxdepth",
+                    "3",
+                    "-not",
+                    "-path",
+                    "*/node_modules/*",
+                    "-not",
+                    "-path",
+                    "*/.git/*",
+                ],
+            ),
+        ] {
+            assert!(matches!(
+                Policy::default().evaluate(&proposed, Path::new(TEST_REPOSITORY)),
+                JudgmentDecision::AllowWithConstraints(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn unsafe_repository_listings_are_denied() {
+        for proposed in [
+            command("ls", &["-R", TEST_REPOSITORY]),
+            command("ls", &["/etc"]),
+            command("ls", &["../outside"]),
+            command("find", &[TEST_REPOSITORY, "-maxdepth", "99"]),
+            command("find", &["/tmp", "-maxdepth", "2"]),
+            command("find", &[TEST_REPOSITORY, "-maxdepth", "2", "-exec", "sh"]),
+            command("find", &[TEST_REPOSITORY, "-type", "d"]),
+            command(
+                "find",
+                &[TEST_REPOSITORY, "-maxdepth", "2", "-not", "-path", "/tmp/*"],
+            ),
+        ] {
+            assert!(matches!(
+                Policy::default().evaluate(&proposed, Path::new(TEST_REPOSITORY)),
+                JudgmentDecision::Deny { .. }
+            ));
+        }
     }
 
     #[test]
@@ -523,7 +682,10 @@ mod tests {
         };
         command.program = "/tmp/git".into();
         assert!(matches!(
-            Policy::default().evaluate(&ProposedAction::Command(command), Path::new("/repo")),
+            Policy::default().evaluate(
+                &ProposedAction::Command(command),
+                Path::new(TEST_REPOSITORY)
+            ),
             JudgmentDecision::Deny { .. }
         ));
     }
@@ -534,10 +696,10 @@ mod tests {
             server_id: "docs".into(),
             tool_name: "search".into(),
             arguments: serde_json::json!({"query":"safe"}),
-            working_directory: "/repo".into(),
+            working_directory: TEST_REPOSITORY.into(),
         });
         assert!(matches!(
-            Policy::default().evaluate(&action, Path::new("/repo")),
+            Policy::default().evaluate(&action, Path::new(TEST_REPOSITORY)),
             JudgmentDecision::RequireApproval { .. }
         ));
     }

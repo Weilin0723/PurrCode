@@ -50,6 +50,7 @@ pub struct ProviderSetup {
     pub environment_reference: String,
     pub keychain_storage_confirmed: bool,
     pub editing_existing: bool,
+    preserved_credential_reference: Option<SecretReference>,
 }
 
 impl Drop for ProviderSetup {
@@ -84,6 +85,7 @@ impl ProviderSetup {
             environment_reference: String::new(),
             keychain_storage_confirmed: false,
             editing_existing: false,
+            preserved_credential_reference: None,
         }
     }
 
@@ -140,6 +142,16 @@ impl ProviderSetup {
         setup.model_id = setup.discovered_models.first().cloned().unwrap_or_default();
         setup.discovery_requested = false;
         setup.editing_existing = true;
+        setup.preserved_credential_reference = configuration
+            .get("api_key_env")
+            .and_then(serde_json::Value::as_str)
+            .map(|reference| {
+                if reference.starts_with("keychain:") {
+                    SecretReference::Keychain(reference.to_owned())
+                } else {
+                    SecretReference::Environment(reference.to_owned())
+                }
+            });
         Ok(setup)
     }
 
@@ -399,6 +411,7 @@ impl ProviderSetup {
         self.secure_import
             .as_ref()
             .and_then(|parsed| parsed.secret_state.reference())
+            .or_else(|| self.preserved_credential_reference.clone())
     }
 
     pub fn auth_status(&self) -> &'static str {
@@ -421,6 +434,20 @@ impl ProviderSetup {
             ) => "detected secret awaiting storage choice",
             Some(ImportedSecretState::Discarded) => "detected secret discarded",
             Some(ImportedSecretState::None) => "not required",
+            None if matches!(
+                self.preserved_credential_reference,
+                Some(SecretReference::Keychain(_))
+            ) =>
+            {
+                "stored in OS keychain"
+            }
+            None if matches!(
+                self.preserved_credential_reference,
+                Some(SecretReference::Environment(_))
+            ) =>
+            {
+                "environment reference selected"
+            }
             None if self.provider_type == Some(ProviderType::Openai) => "not set (required)",
             None => "not required or not set",
         }
@@ -641,5 +668,27 @@ mod tests {
         assert_eq!(setup.provider_type, Some(ProviderType::LmStudio));
         assert_eq!(setup.model_id, "model-a");
         assert!(setup.api_key.is_empty());
+    }
+
+    #[test]
+    fn saved_keychain_profile_reuses_its_credential_reference() {
+        let value = serde_json::json!({
+            "name": "nvidia-nim",
+            "configuration": {
+                "type": "openai-compatible",
+                "base_url": "https://integrate.api.nvidia.com/v1",
+                "api_key_env": "keychain:nvidia-nim",
+                "local": false,
+                "headers": {},
+                "capabilities": {"z-ai/glm-5.2": {}}
+            },
+            "models": ["z-ai/glm-5.2"]
+        });
+        let setup = ProviderSetup::from_saved(&value).unwrap();
+        assert_eq!(setup.auth_status(), "stored in OS keychain");
+        assert_eq!(
+            setup.credential_reference(),
+            Some(SecretReference::Keychain("keychain:nvidia-nim".into()))
+        );
     }
 }
