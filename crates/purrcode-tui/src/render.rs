@@ -29,17 +29,37 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
 
 fn draw_help(frame: &mut Frame<'_>, app: &App) {
     let actions = crate::command_palette::filtered_actions(&app.palette_query);
-    let mut text = format!("Search actions: {}_\n\n", app.palette_query);
-    for (index, (name, detail, command)) in actions.iter().enumerate() {
+    const VISIBLE_ACTIONS: usize = 16;
+    let start = app
+        .palette_selected
+        .saturating_sub(VISIBLE_ACTIONS.saturating_sub(1))
+        .min(actions.len().saturating_sub(VISIBLE_ACTIONS));
+    let end = start.saturating_add(VISIBLE_ACTIONS).min(actions.len());
+    let mut text = format!(
+        "Search actions: {}_ · showing {}–{} of {}\n\n",
+        app.palette_query,
+        if actions.is_empty() { 0 } else { start + 1 },
+        end,
+        actions.len()
+    );
+    for (index, (name, detail, command)) in actions[start..end].iter().enumerate() {
+        let index = start + index;
         let marker = if index == app.palette_selected {
             ">"
         } else {
             " "
         };
-        text.push_str(&format!("{marker} {name:<28} {command:<18} {detail}\n"));
+        text.push_str(&format!(
+            "{marker} {:<25} {:<32} {}\n",
+            truncate_palette_field(name, 25),
+            truncate_palette_field(command, 32),
+            truncate_palette_field(detail, 35)
+        ));
     }
     if actions.is_empty() {
         text.push_str("  No matching actions.\n");
+    } else if end < actions.len() {
+        text.push_str(&format!("  … {} more action(s)\n", actions.len() - end));
     }
     text.push_str("\nType to filter · Up/Down select · Enter run · Esc close");
     frame.render_widget(
@@ -50,6 +70,21 @@ fn draw_help(frame: &mut Frame<'_>, app: &App) {
         ),
         centered(frame.area(), 100, 24),
     );
+}
+
+fn truncate_palette_field(value: &str, maximum_chars: usize) -> String {
+    let mut characters = value.chars();
+    let prefix = characters.by_ref().take(maximum_chars).collect::<String>();
+    if characters.next().is_none() {
+        prefix
+    } else {
+        let mut truncated = prefix
+            .chars()
+            .take(maximum_chars.saturating_sub(1))
+            .collect::<String>();
+        truncated.push('…');
+        truncated
+    }
 }
 
 fn draw_lease_conflict(frame: &mut Frame<'_>) {
@@ -369,7 +404,11 @@ fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let text = if app.conversation.pending_action.is_some() {
+    let text = if app.pending_model_pull.is_some() {
+        "P Approve exact Ollama pull  /model pull-approve  Ctrl+C cancels only after start"
+    } else if app.active_pull_action.is_some() {
+        "Ctrl+C Cancel model pull  /model pull-cancel  Progress is verified by rediscovery"
+    } else if app.conversation.pending_action.is_some() {
         "A Approve  R Reject  Ctrl+D Full diff  /approve and /deny remain exact-action bound"
     } else if app.workspace.file_panel_visible
         && workspace_layout(frame.area().width) != WorkspaceLayout::Wide
@@ -429,6 +468,17 @@ fn draw_action_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
         text.push_str(&format!(
             "\nPending action: {}\nA approve · R reject · Ctrl+D full diff",
             action_summary(action)
+        ));
+    }
+    if let Some(pull) = &app.pending_model_pull {
+        let state = if pull.approved {
+            "Ollama pull approved; start can be retried"
+        } else {
+            "Ollama pull awaiting explicit approval"
+        };
+        text.push_str(&format!(
+            "\n{state}\nModel: {}\nAction: {}\nDigest: {}\nP approve/start this exact action · /model pull-approve",
+            pull.model, pull.action_id, pull.action_digest,
         ));
     }
     for evidence in &app.conversation.evidence {
@@ -522,9 +572,22 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
     let content = match setup.screen {
         crate::provider_setup::SetupScreen::Discovery => setup_discovery_text(setup),
         crate::provider_setup::SetupScreen::ImportSource => format!(
-            "Import provider configuration\n\nPaste a Python, JavaScript, cURL, dotenv, JSON, YAML, or TOML example.\nThe source is parsed locally and is never executed. Raw secret values are never rendered here.\n\nCaptured: {} bytes · {} lines\n\nCtrl+G  Parse and review    Esc  Cancel{}",
+            "Import provider configuration\n\nPaste a Python, JavaScript, cURL, dotenv, JSON, YAML, or TOML example.\nThe source is parsed locally and is never executed. Raw secret values are never rendered here.\n\nCaptured: {} / {} bytes · {} lines\n\nCtrl+G  Parse and review    Esc  Cancel{}",
             setup.import_source.len(),
+            purrcode_provider_import::DEFAULT_MAX_INPUT_BYTES,
             setup.import_source.lines().count().max(1),
+            setup.error.as_ref().map_or_else(String::new, |error| format!("\n\nError: {error}"))
+        ),
+        crate::provider_setup::SetupScreen::ImportAuthChoice => {
+            setup_import_auth_choice_text(setup)
+        }
+        crate::provider_setup::SetupScreen::ImportKeychainConfirm => format!(
+            "Confirm OS keychain storage\n\nPurrCode detected one static credential. Its value remains in a zeroizing transient buffer and is not shown.\n\nStore it under credential name `{}`?\nOnly `keychain:{}` will be written to provider configuration.\n\nY  Confirm storage    N/Esc  Back",
+            setup.profile_name, setup.profile_name
+        ),
+        crate::provider_setup::SetupScreen::ImportEnvironment => format!(
+            "Use an environment-variable reference\n\nVariable: [{}]\n\nPurrCode will save only this variable name. Ensure the variable contains the credential before the real connection test.\n\nCtrl+G/Enter  Confirm reference    Esc  Back{}",
+            setup.environment_reference,
             setup.error.as_ref().map_or_else(String::new, |error| format!("\n\nError: {error}"))
         ),
         crate::provider_setup::SetupScreen::Form
@@ -541,6 +604,33 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn setup_import_auth_choice_text(setup: &crate::provider_setup::ProviderSetup) -> String {
+    let choices = [
+        (
+            "Store in OS keychain",
+            "recommended · saves only a keychain reference",
+        ),
+        ("Use environment reference", "saves only a variable name"),
+        ("Discard and enter another", "zeroizes the detected value"),
+    ];
+    let cards = choices
+        .iter()
+        .enumerate()
+        .map(|(index, (label, detail))| {
+            let marker = if index == setup.import_auth_choice {
+                "▶"
+            } else {
+                " "
+            };
+            format!("{marker} {label:<30} {detail}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    format!(
+        "Resolve detected authentication\n\nA static credential was extracted before the source entered chat history.\nIts value is hidden and held only in zeroizing memory.\n\n{cards}\n\n↑↓  Select    Enter/Ctrl+G  Continue    K/E/D  Shortcut    Esc  Cancel"
+    )
 }
 
 fn setup_discovery_text(setup: &crate::provider_setup::ProviderSetup) -> String {
@@ -622,10 +712,10 @@ fn setup_form_text(setup: &crate::provider_setup::ProviderSetup) -> String {
         String::new()
     };
     format!(
-        "Review provider\n\nProvider: {provider}\n\n{} Profile name  [{}]\n{} Base URL      [{}]\n{} API key       [{}]\n{} Model          [{}]\n{} Role           [{}]\n\nDiscovered models: {}\nNetwork: {}{}{}\n\nTab/Shift+Tab  Field    Ctrl+G  Save and run real connection test    Esc  Cancel",
+        "Review provider\n\nProvider: {provider}\n\n{} Profile name  [{}]\n{} Base URL      [{}]\n{} Authentication [{}]\n{} Model          [{}]\n{} Role           [{}]\n\nDiscovered models: {}\nNetwork: {}{}{}\n\nTab/Shift+Tab  Field    Ctrl+G  Save and run real connection test    Esc  Cancel",
         marker(0), setup.profile_name,
         marker(1), setup.base_url,
-        marker(2), if setup.api_key.is_empty() { "not set" } else { "••••••••" },
+        marker(2), setup.auth_status(),
         marker(3), setup.model_id,
         marker(4), setup.role,
         if setup.discovered_models.is_empty() { "none".into() } else { setup.discovered_models.join(", ") },
@@ -753,9 +843,42 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         for expected in ["Search actions", "/connect", "/approve", "Type to filter"] {
-            assert!(snapshot.contains(expected));
+            assert!(
+                snapshot.contains(expected),
+                "missing {expected}: {snapshot}"
+            );
         }
         assert!(!snapshot.contains("sk-"));
+    }
+
+    #[test]
+    fn pending_pull_card_exposes_exact_digest_and_explicit_approval_key() {
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = test_app();
+        app.mode = AppMode::Conversation;
+        app.pending_model_pull = Some(crate::app::PendingModelPull {
+            action_id: "action-123".into(),
+            action_digest: "sha256:abc123".into(),
+            session_id: "pull-session".into(),
+            model: "coder:7b".into(),
+            approved: false,
+        });
+        terminal
+            .draw(|frame| draw_action_panel(frame, frame.area(), &app))
+            .unwrap();
+        let snapshot = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(snapshot.contains("awaiting explicit approval"));
+        assert!(snapshot.contains("coder:7b"));
+        assert!(snapshot.contains("action-123"));
+        assert!(snapshot.contains("sha256:abc123"));
+        assert!(snapshot.contains("P approve/start this exact action"));
     }
 
     fn test_app() -> App {
@@ -777,6 +900,7 @@ mod tests {
             skill_browser: None,
             diff_view: None,
             stream: crate::streaming::StreamController::new(),
+            reconciliation: None,
             last_refresh: std::time::Instant::now(),
             message_bar: String::new(),
             session_id: None,
@@ -787,6 +911,11 @@ mod tests {
             quit_requested: false,
             downloaded_skill: None,
             pending_skill_install_action: None,
+            pending_research: None,
+            pending_skill_download: None,
+            pending_model_pull: None,
+            active_pull_action: None,
+            active_pull_session: None,
             theme: crate::theme::Theme {
                 colors_enabled: true,
                 unicode_enabled: true,

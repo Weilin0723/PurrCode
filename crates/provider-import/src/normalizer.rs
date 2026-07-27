@@ -82,6 +82,18 @@ pub fn normalize_candidate(
     })
 }
 
+/// Normalizes only after every detected transient secret has an explicit durable reference.
+pub fn normalize_resolved_import(
+    parsed: &ParsedProviderImport,
+) -> Result<NormalizedProviderProfile, ImportError> {
+    parsed.validate_auth_resolved()?;
+    let reference = parsed.secret_state.reference();
+    normalize_candidate(
+        &parsed.candidate,
+        reference.as_ref().map(SecretReference::as_config_reference),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +111,25 @@ mod tests {
             } => {
                 assert_eq!(api_key_env.as_deref(), Some("NVIDIA_API_KEY"));
                 assert!(!local);
+            }
+            _ => panic!("expected compatible provider"),
+        }
+    }
+
+    #[test]
+    fn secure_normalization_requires_resolution_and_uses_keychain_reference() {
+        let source = include_str!("../tests/fixtures/provider.py").to_owned();
+        let mut parsed = import_provider_secure(source, Some(InputFormat::Python)).unwrap();
+        assert!(normalize_resolved_import(&parsed).is_err());
+        parsed.secret_state.begin_storage_choice().unwrap();
+        parsed
+            .secret_state
+            .confirm_keychain_stored("nvidia-import", true)
+            .unwrap();
+        let normalized = normalize_resolved_import(&parsed).unwrap();
+        match normalized.provider {
+            ProviderConfig::OpenaiCompatible { api_key_env, .. } => {
+                assert_eq!(api_key_env.as_deref(), Some("keychain:nvidia-import"));
             }
             _ => panic!("expected compatible provider"),
         }

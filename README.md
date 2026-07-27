@@ -14,9 +14,9 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. Every 
 bound to a durable authorization, checked again immediately before execution, and followed by
 recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
-The v0.4 workspace adds a Unicode-safe multiline composer, redacted script-aware provider import,
-real provider discovery/testing, a responsive repository panel, structured runtime cards, a
-searchable command palette, and actionable daemon-recovery flows.
+PurrCode v0.5 focuses on first-use reliability: secure multiline provider import, native Ollama
+streaming, hardware-aware model recommendations, explicit pull and unload controls, truthful live
+phases, governed skill/MCP discovery, and lazy tiered repository indexing.
 
 ## Why PurrCode
 
@@ -35,12 +35,19 @@ searchable command palette, and actionable daemon-recovery flows.
 
 ## Install
 
-### npm-compatible package
+### npm
+
+```bash
+npm install --global purrcode
+```
+
+Until the first npm registry publication completes, install the same signed launcher from the
+GitHub release:
 
 Node.js 18 or newer can install the signed-release launcher directly from GitHub:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.4.1/purrcode-0.4.1.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.0/purrcode-0.5.0.tgz
 ```
 
 The package selects the correct macOS, Linux, or Windows binary, verifies its pinned SHA-256 digest,
@@ -49,7 +56,7 @@ and exposes both `purrcode` and `purrcoded`.
 ### macOS and Linux installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.4.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.0/scripts/install.sh | sh
 ```
 
 This installer verifies the release archive against `SHA256SUMS` and installs into `~/.local/bin`.
@@ -80,6 +87,36 @@ purrcode
 Use `/connect` inside the interface to discover Ollama or LM Studio, or configure a remote provider
 without editing TOML. Credentials use the operating-system secret store and are not passed to model
 context or tool processes.
+
+Paste Python, JavaScript, cURL, JSON, YAML, TOML, or dotenv provider examples with
+`/connect import`. PurrCode parses them without execution, keeps extracted secrets transient, and
+requires a keychain or environment reference before saving.
+
+## What changed in v0.5
+
+- **Truthful streaming:** content deltas, provider phases, and durable audit events use separate
+  bounded channels. Reconnect restores a snapshot; cancellation preserves partial output.
+- **Resource-aware local models:** startup never generates or loads a model. Ollama native mode is
+  the default, recommendations use observed qualification and memory, and low-memory systems use
+  one local request with unload-after-request.
+- **Governed capability discovery:** installed qualified skills are checked first. Public search,
+  immutable download, dynamic qualification, installation, and every MCP invocation have separate
+  exact-action PawGate decisions.
+- **Lazy context:** Tier 0 is startup-only metadata, Tier 1 begins after task submission, and
+  bounded Tier 2 pauses for generation, memory pressure, or responsiveness.
+
+Useful in-app commands:
+
+```text
+/connect import
+/model recommend
+/model qualify <model>
+/model loaded
+/model unload <model>
+/skills search <query>
+/mcp search <query>
+/capability add <description>
+```
 
 ## Runtime model
 
@@ -148,6 +185,7 @@ PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
 - [Recovery](docs/recovery.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Implementation status](docs/implementation-status.md)
+- [v0.5 usability recovery evidence](docs/reports/v0.5-usability-recovery.md)
 - [v0.4 redesign acceptance](docs/product-redesign-acceptance.md)
 - [Verification reports](docs/reports/)
 

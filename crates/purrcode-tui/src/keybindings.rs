@@ -5,6 +5,14 @@ use crate::provider_setup::{ProviderSetup, SetupScreen};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
+    if is_active_pull_cancel_key(key, app.active_pull_action.is_some()) {
+        app.pending_command = Some("/model pull-cancel".into());
+        return true;
+    }
+    if is_active_stream_cancel_key(key, app.mode == AppMode::Conversation && app.stream.active) {
+        app.pending_command = Some("/cancel".into());
+        return true;
+    }
     match app.mode {
         AppMode::SecretReview => handle_secret_review_key(app, key),
         AppMode::ProviderSetup => handle_setup_key(app, key),
@@ -55,6 +63,15 @@ fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
 }
 
 fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
+    if let Some(command) = model_pull_shortcut(
+        key,
+        app.composer.buffer.is_empty(),
+        app.pending_model_pull.is_some(),
+    ) {
+        app.pending_command = Some(command.into());
+        return true;
+    }
+
     if is_submit_key(key) {
         if let Ok(detection) = purrcode_provider_import::detect_content(&app.composer.buffer) {
             if !detection.secret_findings.is_empty() {
@@ -177,6 +194,35 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
     true
 }
 
+fn model_pull_shortcut(
+    key: KeyEvent,
+    composer_empty: bool,
+    has_pending_pull: bool,
+) -> Option<&'static str> {
+    if matches!(key.code, KeyCode::Char('p' | 'P'))
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        && composer_empty
+        && has_pending_pull
+    {
+        return Some("/model pull-approve");
+    }
+    None
+}
+
+fn is_active_pull_cancel_key(key: KeyEvent, has_active_pull: bool) -> bool {
+    matches!(key.code, KeyCode::Char('c' | 'C'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && has_active_pull
+}
+
+fn is_active_stream_cancel_key(key: KeyEvent, has_active_stream: bool) -> bool {
+    matches!(key.code, KeyCode::Char('c' | 'C'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && has_active_stream
+}
+
 fn handle_lease_conflict_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -238,10 +284,14 @@ fn handle_secret_review_key(app: &mut App, key: KeyEvent) -> bool {
 fn handle_setup_key(app: &mut App, key: KeyEvent) -> bool {
     if is_submit_key(key) {
         if let Some(ref mut setup) = app.provider_setup {
-            if setup.screen == SetupScreen::ImportSource {
-                setup.review_import();
-            } else {
-                setup.request_test_and_save();
+            match setup.screen {
+                SetupScreen::ImportSource => setup.review_import(),
+                SetupScreen::ImportAuthChoice => setup.choose_import_auth(),
+                SetupScreen::ImportEnvironment => setup.confirm_environment_reference(),
+                SetupScreen::ImportKeychainConfirm => {}
+                SetupScreen::Discovery | SetupScreen::Form | SetupScreen::ImportReview => {
+                    setup.request_test_and_save()
+                }
             }
         }
         return true;
@@ -249,65 +299,156 @@ fn handle_setup_key(app: &mut App, key: KeyEvent) -> bool {
 
     match key.code {
         KeyCode::Esc => {
-            app.provider_setup = None;
-            app.switch_mode(AppMode::Conversation);
+            let nested = app.provider_setup.as_ref().map(|setup| setup.screen);
+            match nested {
+                Some(SetupScreen::ImportKeychainConfirm | SetupScreen::ImportEnvironment) => {
+                    if let Some(setup) = &mut app.provider_setup {
+                        setup.screen = SetupScreen::ImportAuthChoice;
+                        setup.error = None;
+                    }
+                }
+                _ => {
+                    app.provider_setup = None;
+                    app.switch_mode(AppMode::Conversation);
+                }
+            }
         }
         KeyCode::Enter => {
             if let Some(setup) = &mut app.provider_setup {
-                if setup.screen == SetupScreen::Discovery {
-                    setup.choose_selected();
-                } else if setup.screen == SetupScreen::ImportSource {
-                    setup.insert_import("\n");
-                } else {
-                    setup.next_field(false);
+                match setup.screen {
+                    SetupScreen::Discovery => setup.choose_selected(),
+                    SetupScreen::ImportSource => setup.insert_import("\n"),
+                    SetupScreen::ImportAuthChoice => setup.choose_import_auth(),
+                    SetupScreen::ImportEnvironment => setup.confirm_environment_reference(),
+                    SetupScreen::ImportKeychainConfirm => {}
+                    SetupScreen::Form | SetupScreen::ImportReview => setup.next_field(false),
                 }
             }
         }
         KeyCode::Up
-            if app
-                .provider_setup
-                .as_ref()
-                .is_some_and(|setup| setup.screen == SetupScreen::Discovery) =>
+            if app.provider_setup.as_ref().is_some_and(|setup| {
+                matches!(
+                    setup.screen,
+                    SetupScreen::Discovery | SetupScreen::ImportAuthChoice
+                )
+            }) =>
         {
             if let Some(setup) = &mut app.provider_setup {
-                setup.move_selection(-1);
+                if setup.screen == SetupScreen::Discovery {
+                    setup.move_selection(-1);
+                } else {
+                    setup.move_import_auth_choice(-1);
+                }
             }
         }
         KeyCode::Down
-            if app
-                .provider_setup
-                .as_ref()
-                .is_some_and(|setup| setup.screen == SetupScreen::Discovery) =>
+            if app.provider_setup.as_ref().is_some_and(|setup| {
+                matches!(
+                    setup.screen,
+                    SetupScreen::Discovery | SetupScreen::ImportAuthChoice
+                )
+            }) =>
         {
             if let Some(setup) = &mut app.provider_setup {
-                setup.move_selection(1);
+                if setup.screen == SetupScreen::Discovery {
+                    setup.move_selection(1);
+                } else {
+                    setup.move_import_auth_choice(1);
+                }
             }
         }
         KeyCode::Tab => {
             if let Some(setup) = &mut app.provider_setup {
-                setup.next_field(false);
+                if matches!(setup.screen, SetupScreen::Form | SetupScreen::ImportReview) {
+                    setup.next_field(false);
+                }
             }
         }
         KeyCode::BackTab => {
             if let Some(setup) = &mut app.provider_setup {
-                setup.next_field(true);
+                if matches!(setup.screen, SetupScreen::Form | SetupScreen::ImportReview) {
+                    setup.next_field(true);
+                }
+            }
+        }
+        KeyCode::Char('y' | 'Y')
+            if app
+                .provider_setup
+                .as_ref()
+                .is_some_and(|setup| setup.screen == SetupScreen::ImportKeychainConfirm) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.confirm_keychain_choice(true);
+            }
+        }
+        KeyCode::Char('n' | 'N')
+            if app
+                .provider_setup
+                .as_ref()
+                .is_some_and(|setup| setup.screen == SetupScreen::ImportKeychainConfirm) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.confirm_keychain_choice(false);
+            }
+        }
+        KeyCode::Char('k' | 'K')
+            if app
+                .provider_setup
+                .as_ref()
+                .is_some_and(|setup| setup.screen == SetupScreen::ImportAuthChoice) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.import_auth_choice = 0;
+                setup.choose_import_auth();
+            }
+        }
+        KeyCode::Char('e' | 'E')
+            if app
+                .provider_setup
+                .as_ref()
+                .is_some_and(|setup| setup.screen == SetupScreen::ImportAuthChoice) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.import_auth_choice = 1;
+                setup.choose_import_auth();
+            }
+        }
+        KeyCode::Char('d' | 'D')
+            if app
+                .provider_setup
+                .as_ref()
+                .is_some_and(|setup| setup.screen == SetupScreen::ImportAuthChoice) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.import_auth_choice = 2;
+                setup.choose_import_auth();
             }
         }
         KeyCode::Char(character) => {
             if let Some(setup) = &mut app.provider_setup {
-                if setup.screen == SetupScreen::ImportSource {
-                    setup.insert_import(&character.to_string());
-                } else {
-                    setup.edit_char(character);
+                match setup.screen {
+                    SetupScreen::ImportSource => setup.insert_import(&character.to_string()),
+                    SetupScreen::ImportEnvironment => setup.edit_environment_reference(character),
+                    SetupScreen::Form | SetupScreen::ImportReview => setup.edit_char(character),
+                    SetupScreen::Discovery
+                    | SetupScreen::ImportAuthChoice
+                    | SetupScreen::ImportKeychainConfirm => {}
                 }
             }
         }
         KeyCode::Backspace => {
             if let Some(setup) = &mut app.provider_setup {
-                if setup.screen == SetupScreen::ImportSource {
-                    setup.import_source.pop();
-                } else {
-                    setup.backspace();
+                match setup.screen {
+                    SetupScreen::ImportSource => {
+                        setup.import_source.pop();
+                    }
+                    SetupScreen::ImportEnvironment => {
+                        setup.backspace_environment_reference();
+                    }
+                    SetupScreen::Form | SetupScreen::ImportReview => setup.backspace(),
+                    SetupScreen::Discovery
+                    | SetupScreen::ImportAuthChoice
+                    | SetupScreen::ImportKeychainConfirm => {}
                 }
             }
         }
@@ -362,7 +503,9 @@ fn handle_diff_key(app: &mut App, _key: KeyEvent) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_submit_key;
+    use super::{
+        is_active_pull_cancel_key, is_active_stream_cancel_key, is_submit_key, model_pull_shortcut,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -390,5 +533,30 @@ mod tests {
             KeyCode::Enter,
             KeyModifiers::NONE,
         )));
+    }
+
+    #[test]
+    fn p_only_approves_a_visible_pending_model_pull() {
+        let p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
+        assert_eq!(
+            model_pull_shortcut(p, true, true),
+            Some("/model pull-approve")
+        );
+        assert_eq!(model_pull_shortcut(p, false, true), None);
+        assert_eq!(model_pull_shortcut(p, true, false), None);
+    }
+
+    #[test]
+    fn control_c_cancels_only_an_active_model_pull() {
+        let control_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(is_active_pull_cancel_key(control_c, true));
+        assert!(!is_active_pull_cancel_key(control_c, false));
+    }
+
+    #[test]
+    fn control_c_cancels_only_an_active_session_stream() {
+        let control_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(is_active_stream_cancel_key(control_c, true));
+        assert!(!is_active_stream_cancel_key(control_c, false));
     }
 }

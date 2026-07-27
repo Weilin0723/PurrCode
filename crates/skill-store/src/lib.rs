@@ -4,11 +4,15 @@ use chrono::{DateTime, Utc};
 use purrcode_runtime_core::QualificationStatus;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+const MAX_SKILL_FILES: u64 = 10_000;
+const MAX_SKILL_BYTES: u64 = 100 * 1024 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SkillRecord {
     pub skill_id: String,
     pub version: String,
@@ -62,6 +66,24 @@ pub struct SkillStoreEntry {
     pub record: SkillRecord,
 }
 
+/// Result of the mandatory installed-skill lookup that precedes any external search.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InstalledCapabilityResolution {
+    pub capability: String,
+    /// Only dynamically qualified skills are eligible for reuse.
+    pub qualified_matches: Vec<SkillRecord>,
+    /// Matching records that fail closed because they are not currently invocable.
+    pub non_invocable_matches: Vec<SkillRecord>,
+    /// Explicit audit signal for the caller. `true` means no registry/web adapter should run.
+    pub external_search_avoided: bool,
+}
+
+impl InstalledCapabilityResolution {
+    pub fn requires_external_search(&self) -> bool {
+        !self.external_search_avoided
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("SQLite error: {0}")]
@@ -78,6 +100,14 @@ pub enum StoreError {
     InvalidScope(String),
     #[error("invalid publisher: {0}")]
     InvalidPublisher(String),
+    #[error("invalid capability: {0}")]
+    InvalidCapability(String),
+    #[error("invalid skill package: {0}")]
+    InvalidPackage(String),
+    #[error("skill content digest mismatch: expected {expected}, observed {observed}")]
+    DigestMismatch { expected: String, observed: String },
+    #[error("skill must pass dynamic qualification before qualified install: {0:?}")]
+    QualificationRequired(QualificationStatus),
 }
 
 pub struct SkillStore {
@@ -164,6 +194,13 @@ impl SkillStore {
         approved_permissions: &serde_json::Value,
         source_path: &Path,
     ) -> Result<SkillRecord, StoreError> {
+        let observed_digest = skill_content_digest(source_path)?;
+        if observed_digest != content_digest {
+            return Err(StoreError::DigestMismatch {
+                expected: content_digest.to_owned(),
+                observed: observed_digest,
+            });
+        }
         if self
             .conn
             .query_row(
@@ -189,7 +226,21 @@ impl SkillStore {
         std::fs::create_dir(&staging)?;
         if let Err(error) = Self::copy_dir(source_path, &staging) {
             let _ = std::fs::remove_dir_all(&staging);
-            return Err(error.into());
+            return Err(error);
+        }
+        let staged_digest = match skill_content_digest(&staging) {
+            Ok(digest) => digest,
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(error);
+            }
+        };
+        if staged_digest != content_digest {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(StoreError::DigestMismatch {
+                expected: content_digest.to_owned(),
+                observed: staged_digest,
+            });
         }
         std::fs::rename(&staging, &dest)?;
 
@@ -240,6 +291,45 @@ impl SkillStore {
             failed_uses: 0,
             pinned: false,
         })
+    }
+
+    /// Install a package only after dynamic qualification has reached an invocable state.
+    ///
+    /// The package is copied and its digest is rechecked by [`Self::install`]. The initial
+    /// unverified record is fail-closed and is promoted only after the copy succeeds.
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_qualified(
+        &mut self,
+        skill_id: &str,
+        version: &str,
+        scope: SkillScope,
+        source_type: &str,
+        source_location: Option<&str>,
+        publisher: Option<&str>,
+        content_digest: &str,
+        approved_permissions: &serde_json::Value,
+        source_path: &Path,
+        qualification_status: &QualificationStatus,
+    ) -> Result<SkillRecord, StoreError> {
+        if !qualification_is_invocable(qualification_status) {
+            return Err(StoreError::QualificationRequired(
+                qualification_status.clone(),
+            ));
+        }
+        let mut record = self.install(
+            skill_id,
+            version,
+            scope,
+            source_type,
+            source_location,
+            publisher,
+            content_digest,
+            approved_permissions,
+            source_path,
+        )?;
+        self.update_qualification(skill_id, qualification_status)?;
+        record.qualification_status = qualification_status.clone();
+        Ok(record)
     }
 
     pub fn remove(&mut self, skill_id: &str) -> Result<SkillRecord, StoreError> {
@@ -368,17 +458,53 @@ impl SkillStore {
         })
     }
 
-    pub fn find_by_capability(&self, _capability: &str) -> Result<Vec<SkillRecord>, StoreError> {
+    pub fn find_by_capability(&self, capability: &str) -> Result<Vec<SkillRecord>, StoreError> {
+        let trimmed = capability.trim().to_lowercase();
+        if trimmed.is_empty() {
+            return Err(StoreError::InvalidCapability(
+                "capability cannot be empty".into(),
+            ));
+        }
         let all = self.list()?;
-        let trimmed = _capability.to_lowercase();
-        Ok(all
+        let mut matches = all
             .into_iter()
             .filter(|s| {
                 let id = s.skill_id.to_lowercase();
                 let src = s.source_type.to_lowercase();
-                id.contains(&trimmed) || src.contains(&trimmed)
+                let publisher = s.publisher.as_deref().unwrap_or_default().to_lowercase();
+                id.contains(&trimmed) || src.contains(&trimmed) || publisher.contains(&trimmed)
             })
-            .collect())
+            .collect::<Vec<_>>();
+        matches.sort_by_key(|record| {
+            (
+                scope_priority(&record.scope),
+                Reverse(record.pinned),
+                Reverse(record.successful_uses),
+                record.skill_id.clone(),
+            )
+        });
+        Ok(matches)
+    }
+
+    /// Resolve installed capabilities before a caller is allowed to consider registry/web search.
+    ///
+    /// `external_search_avoided` is deliberately part of the returned evidence so callers can
+    /// durably assert that no external adapter was needed.
+    pub fn resolve_installed_capability(
+        &self,
+        capability: &str,
+    ) -> Result<InstalledCapabilityResolution, StoreError> {
+        let matches = self.find_by_capability(capability)?;
+        let (qualified_matches, non_invocable_matches): (Vec<_>, Vec<_>) = matches
+            .into_iter()
+            .partition(|record| qualification_is_invocable(&record.qualification_status));
+        let external_search_avoided = !qualified_matches.is_empty();
+        Ok(InstalledCapabilityResolution {
+            capability: capability.trim().to_owned(),
+            qualified_matches,
+            non_invocable_matches,
+            external_search_avoided,
+        })
     }
 
     pub fn record_use(&mut self, skill_id: &str, success: bool) -> Result<(), StoreError> {
@@ -477,25 +603,134 @@ impl SkillStore {
         }
     }
 
-    fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
-        for entry in std::fs::read_dir(src)? {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            if file_type.is_symlink() {
-                continue;
+    fn copy_dir(src: &Path, dst: &Path) -> Result<(), StoreError> {
+        fn visit(
+            src: &Path,
+            dst: &Path,
+            files: &mut u64,
+            bytes: &mut u64,
+        ) -> Result<(), StoreError> {
+            for entry in std::fs::read_dir(src)? {
+                let entry = entry?;
+                let metadata = std::fs::symlink_metadata(entry.path())?;
+                if metadata.file_type().is_symlink() {
+                    return Err(StoreError::InvalidPackage(
+                        "symbolic links are forbidden".into(),
+                    ));
+                }
+                let dst_path = dst.join(entry.file_name());
+                if metadata.is_dir() {
+                    std::fs::create_dir_all(&dst_path)?;
+                    visit(&entry.path(), &dst_path, files, bytes)?;
+                } else if metadata.is_file() {
+                    *files = files.saturating_add(1);
+                    *bytes = bytes.saturating_add(metadata.len());
+                    if *files > MAX_SKILL_FILES || *bytes > MAX_SKILL_BYTES {
+                        return Err(StoreError::InvalidPackage(
+                            "package exceeds file-count or byte limit".into(),
+                        ));
+                    }
+                    std::fs::copy(entry.path(), dst_path)?;
+                } else {
+                    return Err(StoreError::InvalidPackage(
+                        "package contains an unsupported filesystem entry".into(),
+                    ));
+                }
             }
-            let name = entry.file_name();
-            let src_path = entry.path();
-            let dst_path = dst.join(&name);
-            if file_type.is_dir() {
-                std::fs::create_dir_all(&dst_path)?;
-                Self::copy_dir(&src_path, &dst_path)?;
-            } else {
-                std::fs::copy(&src_path, &dst_path)?;
+            Ok(())
+        }
+
+        let mut files = 0;
+        let mut bytes = 0;
+        visit(src, dst, &mut files, &mut bytes)
+    }
+}
+
+fn qualification_is_invocable(status: &QualificationStatus) -> bool {
+    matches!(
+        status,
+        QualificationStatus::Qualified | QualificationStatus::QualifiedWithConstraints
+    )
+}
+
+fn scope_priority(scope: &SkillScope) -> u8 {
+    match scope {
+        SkillScope::Session => 0,
+        SkillScope::Repository => 1,
+        SkillScope::User => 2,
+    }
+}
+
+/// Compute the deterministic digest bound by download, qualification, and install approvals.
+///
+/// Paths and bytes are both included, directory traversal is sorted, symbolic links are rejected,
+/// and the install metadata file is excluded so integrity can be rechecked after installation.
+pub fn skill_content_digest(root: &Path) -> Result<String, StoreError> {
+    fn collect(
+        root: &Path,
+        current: &Path,
+        output: &mut Vec<PathBuf>,
+        files: &mut u64,
+        bytes: &mut u64,
+    ) -> Result<(), StoreError> {
+        for entry in std::fs::read_dir(current)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() {
+                return Err(StoreError::InvalidPackage(
+                    "symbolic links are forbidden".into(),
+                ));
+            }
+            if metadata.is_dir() {
+                collect(root, &path, output, files, bytes)?;
+            } else if metadata.is_file()
+                && path.file_name().and_then(|name| name.to_str()) != Some(".purrcode-install.json")
+            {
+                *files = files.saturating_add(1);
+                *bytes = bytes.saturating_add(metadata.len());
+                if *files > MAX_SKILL_FILES || *bytes > MAX_SKILL_BYTES {
+                    return Err(StoreError::InvalidPackage(
+                        "package exceeds file-count or byte limit".into(),
+                    ));
+                }
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|_| StoreError::InvalidPackage("path escaped package root".into()))?;
+                if relative.to_str().is_none() {
+                    return Err(StoreError::InvalidPackage(
+                        "package paths must be valid UTF-8".into(),
+                    ));
+                }
+                output.push(relative.to_owned());
+            } else if !metadata.is_file() {
+                return Err(StoreError::InvalidPackage(
+                    "package contains an unsupported filesystem entry".into(),
+                ));
             }
         }
         Ok(())
     }
+
+    let root_metadata = std::fs::symlink_metadata(root)?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(StoreError::InvalidPackage(
+            "skill package root must be a real directory".into(),
+        ));
+    }
+    let mut paths = Vec::new();
+    let mut files = 0;
+    let mut bytes = 0;
+    collect(root, root, &mut paths, &mut files, &mut bytes)?;
+    paths.sort();
+    let mut hasher = blake3::Hasher::new();
+    for relative in paths {
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update(&[0]);
+        hasher.update(&std::fs::read(root.join(&relative))?);
+        hasher.update(&[0]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 #[cfg(test)]
@@ -516,6 +751,7 @@ mod tests {
         std::fs::write(skill_dir.join("tool.py"), "print('hello')").unwrap();
 
         let perms = json!({"read": ["**/*.tf"]});
+        let digest = skill_content_digest(&skill_dir).unwrap();
 
         let record = store
             .install(
@@ -525,7 +761,7 @@ mod tests {
                 "local",
                 None,
                 None,
-                "abc123",
+                &digest,
                 &perms,
                 &skill_dir,
             )
@@ -564,6 +800,7 @@ mod tests {
         let skill_dir = dir.path().join("src");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(skill_dir.join("SKILL.md"), "# Skill").unwrap();
+        let digest = skill_content_digest(&skill_dir).unwrap();
 
         store
             .install(
@@ -573,7 +810,7 @@ mod tests {
                 "local",
                 None,
                 None,
-                "digest1",
+                &digest,
                 &serde_json::json!({}),
                 &skill_dir,
             )
@@ -587,7 +824,7 @@ mod tests {
                 "local",
                 None,
                 None,
-                "digest2",
+                &digest,
                 &serde_json::json!({}),
                 &skill_dir,
             )
@@ -602,6 +839,7 @@ mod tests {
         let source = dir.path().join("source");
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("SKILL.md"), "# scoped").unwrap();
+        let digest = skill_content_digest(&source).unwrap();
         for scope in [
             SkillScope::User,
             SkillScope::Repository,
@@ -615,7 +853,7 @@ mod tests {
                     "local",
                     None,
                     None,
-                    "digest",
+                    &digest,
                     &serde_json::json!({}),
                     &source,
                 )
@@ -649,6 +887,7 @@ mod tests {
         let sd = dir.path().join("s1");
         std::fs::create_dir_all(&sd).unwrap();
         std::fs::write(sd.join("SKILL.md"), "").unwrap();
+        let digest = skill_content_digest(&sd).unwrap();
 
         store
             .install(
@@ -658,7 +897,7 @@ mod tests {
                 "registry",
                 None,
                 Some("example"),
-                "digest",
+                &digest,
                 &json!({}),
                 &sd,
             )
@@ -672,7 +911,7 @@ mod tests {
                 "github",
                 None,
                 None,
-                "digest",
+                &digest,
                 &json!({}),
                 &sd,
             )
@@ -681,5 +920,133 @@ mod tests {
         let results = store.find_by_capability("terraform").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].skill_id, "terraform-inspector");
+    }
+
+    #[test]
+    fn installed_resolution_avoids_external_search_only_for_qualified_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SkillStore::open(&dir.path().join("db"), &dir.path().join("lib")).unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# Pull request reader").unwrap();
+        let digest = skill_content_digest(&source).unwrap();
+        store
+            .install(
+                "github-pr-reader",
+                "1.0.0",
+                SkillScope::Repository,
+                "local",
+                None,
+                Some("trusted"),
+                &digest,
+                &json!({"read": ["**/*"]}),
+                &source,
+            )
+            .unwrap();
+
+        let unverified = store.resolve_installed_capability("github-pr").unwrap();
+        assert!(unverified.qualified_matches.is_empty());
+        assert_eq!(unverified.non_invocable_matches.len(), 1);
+        assert!(unverified.requires_external_search());
+
+        store
+            .update_qualification("github-pr-reader", &QualificationStatus::Qualified)
+            .unwrap();
+        let qualified = store.resolve_installed_capability("github-pr").unwrap();
+        assert_eq!(qualified.qualified_matches.len(), 1);
+        assert!(qualified.non_invocable_matches.is_empty());
+        assert!(qualified.external_search_avoided);
+        assert!(!qualified.requires_external_search());
+    }
+
+    #[test]
+    fn install_recomputes_and_rejects_a_mismatched_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SkillStore::open(&dir.path().join("db"), &dir.path().join("lib")).unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# immutable").unwrap();
+
+        let error = store
+            .install(
+                "digest-bound",
+                "1.0.0",
+                SkillScope::User,
+                "registry",
+                None,
+                None,
+                "not-the-observed-digest",
+                &json!({}),
+                &source,
+            )
+            .unwrap_err();
+        assert!(matches!(error, StoreError::DigestMismatch { .. }));
+        assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn qualified_install_fails_closed_for_every_non_invocable_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# qualification gate").unwrap();
+        let digest = skill_content_digest(&source).unwrap();
+        for (index, status) in [
+            QualificationStatus::Unverified,
+            QualificationStatus::Failed,
+            QualificationStatus::Blocked,
+            QualificationStatus::Outdated,
+            QualificationStatus::Incompatible,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut store = SkillStore::open(
+                &dir.path().join(format!("db-{index}")),
+                &dir.path().join(format!("lib-{index}")),
+            )
+            .unwrap();
+            let error = store
+                .install_qualified(
+                    "qualification-gated",
+                    "1.0.0",
+                    SkillScope::User,
+                    "registry",
+                    None,
+                    None,
+                    &digest,
+                    &json!({}),
+                    &source,
+                    &status,
+                )
+                .unwrap_err();
+            assert!(matches!(error, StoreError::QualificationRequired(_)));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn digest_and_install_reject_symbolic_links() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# no links").unwrap();
+        symlink("/etc/passwd", source.join("escape")).unwrap();
+        assert!(matches!(
+            skill_content_digest(&source),
+            Err(StoreError::InvalidPackage(_))
+        ));
+
+        let clean_source = dir.path().join("clean-source");
+        let linked_root = dir.path().join("linked-root");
+        std::fs::create_dir(&clean_source).unwrap();
+        std::fs::write(clean_source.join("SKILL.md"), "# root link").unwrap();
+        symlink(&clean_source, &linked_root).unwrap();
+        assert!(matches!(
+            skill_content_digest(&linked_root),
+            Err(StoreError::InvalidPackage(_))
+        ));
     }
 }

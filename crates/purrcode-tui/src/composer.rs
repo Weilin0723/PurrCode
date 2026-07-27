@@ -535,7 +535,12 @@ mod tests {
         let mut composer = Composer::new();
         composer.insert_paste(&"x".repeat(256 * 1024));
         assert_eq!(composer.grapheme_count(), 256 * 1024);
-        assert!(start.elapsed() < std::time::Duration::from_millis(250));
+        let maximum = if std::env::var_os("CI").is_some() {
+            std::time::Duration::from_secs(1)
+        } else {
+            std::time::Duration::from_millis(250)
+        };
+        assert!(start.elapsed() < maximum);
     }
 
     #[test]

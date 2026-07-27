@@ -10,7 +10,7 @@ globset.workspace = true
 purrcode-runtime-core = { path = "../runtime-core" }
 tempfile.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,7 +1,45 @@
 # Implementation status
 
-Updated: 2026-07-26 (v0.4 redesign implementation complete; cross-platform and provider evidence
-is recorded below)
+Updated: 2026-07-26 (v0.5 usability recovery Phases 1–6 complete; release qualification in progress)
+
+## v0.5 usability recovery — Phases 1–6 complete
+
+- Daemon and TUI startup remain generation-free and session-free. A deterministic integration test
+  starts the daemon with a live fake Ollama endpoint, performs the same provider-list and repository
+  inspection used by the initial TUI, and proves that no provider request, durable session,
+  worktree, or checkpoint is created.
+- Startup repository presentation is Tier 0: only bounded root metadata is listed. Recursive
+  task-relevant indexing remains deferred until a user submits work.
+- Authenticated daemon APIs and TUI commands inspect installed/loaded Ollama models through
+  `/api/version`, `/api/tags`, and `/api/ps` without generation; `/model unload <model>` and
+  `/model unload-all` send native `keep_alive: 0` requests and verify release through `/api/ps`.
+- Configurable lifecycle policies support `unload_after_request`, bounded `idle_timeout`,
+  opt-in `keep_loaded`, and externally managed lifetime. Native keep-alive updates never load an
+  otherwise absent model. Completion, failure, panic, pause, cancellation, and parallel-supervisor
+  completion all reach the lifecycle boundary; idle unload will not evict a model reused by a
+  different active session.
+- The resource governor reads physical/available memory and swap, includes observed loaded-model
+  memory, and conservatively permits at most one local inference request across normal agent and
+  supervisor paths. It rejects a separate local judge when the detected budget is insufficient.
+  Remote requests do not consume the local inference budget.
+- Agent leases now own the actual agent future rather than a detached child task, so cancelling a
+  lease drops in-flight provider work before durable cancellation and model release.
+- Provider import keeps extracted secrets in zeroizing transient storage until the user chooses a
+  keychain or environment reference. Native Ollama and explicit OpenAI-compatible modes are
+  separate, and bounded redacted diagnostics classify transport, HTTP, schema, framing, model,
+  context, memory, and cancellation failures.
+- Live output separates rationale content, provider phases/timing, and durable audit events.
+  Bounded channels apply backpressure; reconnect restores a bounded snapshot; cancellation
+  preserves partial output and releases the local model.
+- Hardware-aware recommendations use observed metadata and qualification evidence. Explicit
+  Ollama pulls require exact durable approval and support bounded progress and cancellation.
+- Installed qualified skills are resolved before external search. Public research, immutable
+  download, dynamic qualification, installation, and each MCP invocation retain distinct PawGate
+  authorization boundaries.
+- Tier 1 begins only after a task. Daemon-owned Tier 2 advances in bounded steps and pauses for
+  generation, memory pressure, or degraded scheduler responsiveness.
+- Full evidence and the live Ollama acceptance are recorded in
+  `docs/reports/v0.5-usability-recovery.md`.
 
 ## v0.4 product redesign — implemented, provider model qualification failed
 
