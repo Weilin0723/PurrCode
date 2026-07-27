@@ -20,6 +20,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         AppMode::DiffView => handle_diff_key(app, key),
         AppMode::Help => handle_help_key(app, key),
         AppMode::LeaseConflict => handle_lease_conflict_key(app, key),
+        AppMode::SessionChoice => handle_session_choice_key(app, key),
         AppMode::Conversation => handle_conversation_key(app, key),
     }
 }
@@ -73,6 +74,11 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
     }
 
     if is_submit_key(key) {
+        if app.session_read_only {
+            app.message_bar =
+                "History is open read-only. Restart and choose New to enter a new task.".into();
+            return true;
+        }
         if let Ok(detection) = purrcode_provider_import::detect_content(&app.composer.buffer) {
             if !detection.secret_findings.is_empty() {
                 let redacted = purrcode_provider_import::redact_source(&app.composer.buffer)
@@ -90,6 +96,9 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         let msg = app.composer.submit();
         if msg.starts_with('/') && !msg.contains('\n') {
             app.pending_command = Some(msg);
+        } else if is_bare_resume_message(&msg) {
+            app.message_bar =
+                "“resume” is task text, not a session command. Choose Resume at startup or use /resume for the selected session.".into();
         } else if !msg.is_empty() {
             app.conversation.add_user_message(&msg);
             app.pending_user_message = true;
@@ -132,9 +141,20 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char(' ') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.conversation.toggle_selected_card()
         }
+        KeyCode::Char(' ' | 'e' | 'E')
+            if app.composer.buffer.is_empty() && app.conversation.selected_card.is_some() =>
+        {
+            app.conversation.toggle_selected_card()
+        }
         KeyCode::Char('?') if app.composer.buffer.is_empty() => app.switch_mode(AppMode::Help),
         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.switch_mode(AppMode::Help)
+        }
+        KeyCode::PageUp if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.conversation.user_scroll_up(5)
+        }
+        KeyCode::PageDown if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.conversation.user_scroll_down(5)
         }
         KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => app.composer.undo(),
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => app.composer.redo(),
@@ -194,6 +214,10 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
     true
 }
 
+fn is_bare_resume_message(message: &str) -> bool {
+    message.trim().eq_ignore_ascii_case("resume")
+}
+
 fn model_pull_shortcut(
     key: KeyEvent,
     composer_empty: bool,
@@ -221,6 +245,100 @@ fn is_active_stream_cancel_key(key: KeyEvent, has_active_stream: bool) -> bool {
     matches!(key.code, KeyCode::Char('c' | 'C'))
         && key.modifiers.contains(KeyModifiers::CONTROL)
         && has_active_stream
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SessionChoiceAction {
+    Resume,
+    New,
+    ReadOnly,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SessionResumeBehavior {
+    Resume,
+    Attach,
+    Reject,
+}
+
+fn session_resume_behavior(status: &str, lease_active: bool) -> SessionResumeBehavior {
+    match status {
+        "active" if !lease_active => SessionResumeBehavior::Resume,
+        "paused" => SessionResumeBehavior::Resume,
+        "active" | "executing" if lease_active => SessionResumeBehavior::Attach,
+        "awaiting_approval" | "awaiting_review" => SessionResumeBehavior::Attach,
+        _ => SessionResumeBehavior::Reject,
+    }
+}
+
+fn session_choice_action(key: KeyEvent) -> Option<SessionChoiceAction> {
+    match key.code {
+        KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Enter => {
+            Some(SessionChoiceAction::Resume)
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => Some(SessionChoiceAction::New),
+        KeyCode::Char('o') | KeyCode::Char('O') | KeyCode::Esc => {
+            Some(SessionChoiceAction::ReadOnly)
+        }
+        _ => None,
+    }
+}
+
+fn handle_session_choice_key(app: &mut App, key: KeyEvent) -> bool {
+    match session_choice_action(key) {
+        Some(SessionChoiceAction::Resume) => {
+            let Some(choice) = app.session_choice.clone() else {
+                app.switch_mode(AppMode::Conversation);
+                return true;
+            };
+            match session_resume_behavior(&choice.status, choice.lease_active) {
+                SessionResumeBehavior::Resume if choice.status == "active" => {
+                    app.pending_command = Some("/resume".into());
+                    app.message_bar = "Resuming the existing session…".into();
+                }
+                SessionResumeBehavior::Resume => {
+                    app.pending_command = Some("/resume".into());
+                    app.message_bar = "Resuming the paused session…".into();
+                }
+                SessionResumeBehavior::Attach
+                    if matches!(choice.status.as_str(), "active" | "executing") =>
+                {
+                    app.message_bar =
+                        "Attached to the active session; refreshing durable state.".into();
+                }
+                SessionResumeBehavior::Attach => {
+                    app.message_bar =
+                        "Restored the saved decision boundary; choose an action to continue."
+                            .into();
+                }
+                SessionResumeBehavior::Reject => {
+                    app.message_bar = format!(
+                        "Session status {} cannot be resumed safely. Press N to start a new session or O to view history.",
+                        choice.status
+                    );
+                    return true;
+                }
+            }
+            app.session_choice = None;
+            app.session_read_only = false;
+            app.switch_mode(AppMode::Conversation);
+        }
+        Some(SessionChoiceAction::New) => {
+            app.session_id = None;
+            app.session_choice = None;
+            app.session_read_only = false;
+            app.switch_mode(AppMode::Conversation);
+            app.message_bar = "New session selected; enter the task you want to run.".into();
+        }
+        Some(SessionChoiceAction::ReadOnly) => {
+            app.session_choice = None;
+            app.session_read_only = true;
+            app.switch_mode(AppMode::Conversation);
+            app.message_bar = "Existing session opened read-only.".into();
+        }
+        None => {}
+    }
+    true
 }
 
 fn handle_lease_conflict_key(app: &mut App, key: KeyEvent) -> bool {
@@ -504,7 +622,9 @@ fn handle_diff_key(app: &mut App, _key: KeyEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_active_pull_cancel_key, is_active_stream_cancel_key, is_submit_key, model_pull_shortcut,
+        is_active_pull_cancel_key, is_active_stream_cancel_key, is_bare_resume_message,
+        is_submit_key, model_pull_shortcut, session_choice_action, session_resume_behavior,
+        SessionChoiceAction, SessionResumeBehavior,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -558,5 +678,53 @@ mod tests {
         let control_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(is_active_stream_cancel_key(control_c, true));
         assert!(!is_active_stream_cancel_key(control_c, false));
+    }
+
+    #[test]
+    fn startup_session_choice_has_direct_resume_and_new_actions() {
+        assert_eq!(
+            session_choice_action(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+            Some(SessionChoiceAction::Resume)
+        );
+        assert_eq!(
+            session_choice_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(SessionChoiceAction::Resume)
+        );
+        assert_eq!(
+            session_choice_action(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
+            Some(SessionChoiceAction::New)
+        );
+        assert_eq!(
+            session_choice_action(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            Some(SessionChoiceAction::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn bare_resume_is_not_sent_as_a_new_task() {
+        assert!(is_bare_resume_message(" resume "));
+        assert!(is_bare_resume_message("RESUME"));
+        assert!(!is_bare_resume_message("/resume"));
+        assert!(!is_bare_resume_message("resume the code review"));
+    }
+
+    #[test]
+    fn startup_resume_never_posts_across_terminal_or_decision_boundaries() {
+        assert_eq!(
+            session_resume_behavior("paused", false),
+            SessionResumeBehavior::Resume
+        );
+        for status in ["awaiting_approval", "awaiting_review"] {
+            assert_eq!(
+                session_resume_behavior(status, false),
+                SessionResumeBehavior::Attach
+            );
+        }
+        for status in ["completed", "failed", "cancelled", "uncertain"] {
+            assert_eq!(
+                session_resume_behavior(status, false),
+                SessionResumeBehavior::Reject
+            );
+        }
     }
 }

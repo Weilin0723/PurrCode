@@ -1,6 +1,24 @@
 # Implementation status
 
-Updated: 2026-07-26 (v0.5.1 connection recovery implemented; release qualification in progress)
+Updated: 2026-07-27 (v0.5.2 provider-routing hotfix implemented; release qualification in progress)
+
+## v0.5.2 provider-routing hotfix — implemented
+
+- Provider connection probes prefer the configured default or role model for that provider instead
+  of the alphabetically first capability entry.
+- Saving and testing an explicitly selected remote provider persists `mixed` privacy mode and
+  reports that remote routing was enabled.
+- Re-importing a profile that already exists requires a second explicit confirmation before
+  replacing its configuration or credential.
+- The affected 8 GB Mac now probes Ollama with `llama3.2:1b` rather than `llama3.1:8b`; NVIDIA NIM
+  `z-ai/glm-5.2` also completed a real bounded-generation probe.
+- Startup requires an explicit resume, history, or new-session choice; terminal sessions are never
+  silently replayed.
+- Approval requests validate a visible durable boundary before lease handoff, and an approved
+  action automatically resumes the agent loop.
+- The terminal uses an opaque black high-contrast canvas and shows the active provider and model.
+- Common unbounded `find` forms and plain-text approval aliases remain tracked for follow-up in
+  [Issue #21](https://github.com/Weilin0723/PurrCode/issues/21).
 
 ## v0.5.1 connection recovery — implemented
 

@@ -16,10 +16,7 @@ use crate::theme::Theme;
 use crate::ui_state::UiState;
 use crate::workspace::WorkspaceContext;
 use anyhow::Result;
-use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyEventKind, MouseEventKind,
-};
+use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -49,6 +46,9 @@ pub enum AppMode {
     DiffView,
     Help,
     LeaseConflict,
+    /// An existing durable session was found at startup. Require an explicit
+    /// resume-or-new choice before accepting conversation input.
+    SessionChoice,
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +80,14 @@ pub struct PendingSkillDownload {
     pub commit: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionChoice {
+    pub session_id: String,
+    pub status: String,
+    pub resumable: bool,
+    pub lease_active: bool,
+}
+
 #[derive(serde::Serialize)]
 struct StoreCredentialPayload<'a> {
     name: &'a str,
@@ -104,6 +112,11 @@ pub struct App {
     pub last_refresh: Instant,
     pub message_bar: String,
     pub session_id: Option<String>,
+    /// Startup gate for a repository-scoped session recovered from durable UI state.
+    /// The composer must not accept a task until the user explicitly attaches to
+    /// this session or starts a new one.
+    pub session_choice: Option<SessionChoice>,
+    pub session_read_only: bool,
     pub has_provider: bool,
     pub pending_command: Option<String>,
     pub pending_user_message: bool,
@@ -156,6 +169,8 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         last_refresh: Instant::now(),
         message_bar: String::new(),
         session_id: None,
+        session_choice: None,
+        session_read_only: false,
         has_provider: false,
         pending_command: None,
         pending_user_message: false,
@@ -176,15 +191,11 @@ pub async fn run(config: TuiConfig) -> Result<()> {
 
     app.check_provider().await;
     app.check_workspace().await;
+    app.inspect_recovered_session().await;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableBracketedPaste
-    )?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let result = event_loop(&mut terminal, &mut app).await;
@@ -192,7 +203,6 @@ pub async fn run(config: TuiConfig) -> Result<()> {
     execute!(
         terminal.backend_mut(),
         DisableBracketedPaste,
-        DisableMouseCapture,
         LeaveAlternateScreen
     )?;
     terminal.show_cursor()?;
@@ -296,79 +306,7 @@ async fn event_loop(
                 app.conversation
                     .start_streaming(Some(selected_model.clone()));
 
-                let tx = app.stream.start(Some(selected_model), Instant::now());
-
-                let daemon_url = app.daemon_url().to_string();
-                let token = app.token.clone();
-                let session_id = app.session_id.clone();
-
-                tokio::spawn(async move {
-                    let sid = session_id.unwrap_or_default();
-                    let url = format!(
-                        "{}/v1/sessions/{}/events/stream?after={stream_after}",
-                        daemon_url.trim_end_matches('/'),
-                        sid
-                    );
-                    let client = match reqwest::Client::builder()
-                        .connect_timeout(Duration::from_secs(3))
-                        .build()
-                    {
-                        Ok(client) => client,
-                        Err(error) => {
-                            let _ = tx
-                                .send(StreamEvent::TransportError(error.to_string()))
-                                .await;
-                            return;
-                        }
-                    };
-                    let resp = client.get(&url).bearer_auth(&token).send().await;
-                    match resp {
-                        Ok(rsp) if rsp.status().is_success() => {
-                            let mut stream = rsp.bytes_stream();
-                            let mut decoder = SseDecoder::default();
-                            while let Some(chunk) = stream.next().await {
-                                match chunk {
-                                    Ok(bytes) => {
-                                        let decoded = match decoder.push(&bytes) {
-                                            Ok(decoded) => decoded,
-                                            Err(error) => {
-                                                let _ = tx
-                                                    .send(StreamEvent::TransportError(error))
-                                                    .await;
-                                                return;
-                                            }
-                                        };
-                                        for event in decoded {
-                                            if tx.send(event).await.is_err() {
-                                                return;
-                                            }
-                                        }
-                                    }
-                                    Err(error) => {
-                                        let _ = tx
-                                            .send(StreamEvent::TransportError(error.to_string()))
-                                            .await;
-                                        return;
-                                    }
-                                }
-                            }
-                            let _ = tx.send(StreamEvent::TransportClosed).await;
-                        }
-                        Ok(response) => {
-                            let _ = tx
-                                .send(StreamEvent::TransportError(format!(
-                                    "daemon stream returned HTTP {}",
-                                    response.status()
-                                )))
-                                .await;
-                        }
-                        Err(error) => {
-                            let _ = tx
-                                .send(StreamEvent::TransportError(error.to_string()))
-                                .await;
-                        }
-                    }
-                });
+                app.start_session_stream(stream_after, Some(selected_model));
                 app.message_bar = "Preparing context...".into();
             }
         }
@@ -382,14 +320,6 @@ async fn event_loop(
         }
 
         let input = event::read()?;
-        if let Event::Mouse(mouse) = input {
-            match mouse.kind {
-                MouseEventKind::ScrollUp => app.conversation.user_scroll_up(3),
-                MouseEventKind::ScrollDown => app.conversation.user_scroll_down(3),
-                _ => {}
-            }
-            continue;
-        }
         if let Event::Paste(content) = input {
             if app.mode == AppMode::Conversation {
                 app.composer.insert_paste(&content);
@@ -450,6 +380,116 @@ async fn daemon_get_json(
 }
 
 impl App {
+    /// Resolve repository-scoped recovery state before the composer becomes
+    /// interactive. This is deliberately GET-only: merely opening PurrCode
+    /// never resumes a daemon operation or creates a replacement session.
+    async fn inspect_recovered_session(&mut self) {
+        let Some(session_id) = self.session_id.clone() else {
+            return;
+        };
+        let session = match self
+            .request(
+                reqwest::Method::GET,
+                &format!("/v1/sessions/{session_id}"),
+                None,
+            )
+            .await
+        {
+            Ok(session) => session,
+            Err(error) => {
+                self.session_id = None;
+                self.message_bar =
+                    format!("Previous session is unavailable; starting a new session: {error}");
+                return;
+            }
+        };
+        let status = session["status_code"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_owned();
+        let lease_active = session["lease_active"].as_bool().unwrap_or(false);
+        let resumable = recovered_session_is_resumable(&status, lease_active);
+        self.session_choice = Some(SessionChoice {
+            session_id,
+            status,
+            resumable,
+            lease_active,
+        });
+        self.mode = AppMode::SessionChoice;
+    }
+
+    pub(crate) fn start_session_stream(&mut self, after: u64, model: Option<String>) {
+        let Some(session_id) = self.session_id.clone() else {
+            self.message_bar = "No active session.".into();
+            return;
+        };
+        self.cancel_reconciliation();
+        let tx = self.stream.start(model, Instant::now());
+        let daemon_url = self.daemon_url().to_string();
+        let token = self.token.clone();
+        tokio::spawn(async move {
+            let url = format!(
+                "{}/v1/sessions/{session_id}/events/stream?after={after}",
+                daemon_url.trim_end_matches('/')
+            );
+            let client = match reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(3))
+                .build()
+            {
+                Ok(client) => client,
+                Err(error) => {
+                    let _ = tx
+                        .send(StreamEvent::TransportError(error.to_string()))
+                        .await;
+                    return;
+                }
+            };
+            match client.get(&url).bearer_auth(&token).send().await {
+                Ok(response) if response.status().is_success() => {
+                    let mut stream = response.bytes_stream();
+                    let mut decoder = SseDecoder::default();
+                    while let Some(chunk) = stream.next().await {
+                        match chunk {
+                            Ok(bytes) => match decoder.push(&bytes) {
+                                Ok(events) => {
+                                    for event in events {
+                                        if tx.send(event).await.is_err() {
+                                            return;
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    let _ = tx.send(StreamEvent::TransportError(error)).await;
+                                    return;
+                                }
+                            },
+                            Err(error) => {
+                                let _ = tx
+                                    .send(StreamEvent::TransportError(error.to_string()))
+                                    .await;
+                                return;
+                            }
+                        }
+                    }
+                    let _ = tx.send(StreamEvent::TransportClosed).await;
+                }
+                Ok(response) => {
+                    let _ = tx
+                        .send(StreamEvent::TransportError(format!(
+                            "daemon stream returned HTTP {}",
+                            response.status()
+                        )))
+                        .await;
+                }
+                Err(error) => {
+                    let _ = tx
+                        .send(StreamEvent::TransportError(error.to_string()))
+                        .await;
+                }
+            }
+        });
+    }
+
     pub fn persist_ui_state(&self) {
         UiState::save(
             &self.config.repository,
@@ -529,11 +569,33 @@ impl App {
                 if !self.has_provider {
                     self.message_bar =
                         "No provider configured. Type /connect to set one up.".into();
+                    self.workspace.model = "none".into();
+                } else if let Ok(models) =
+                    self.request(reqwest::Method::GET, "/v1/models", None).await
+                {
+                    if let Some(selected) = models
+                        .as_array()
+                        .and_then(|models| {
+                            models
+                                .iter()
+                                .find(|model| model["default"].as_bool() == Some(true))
+                        })
+                        .and_then(|model| model["id"].as_str())
+                    {
+                        self.status_bar.set_model(selected);
+                        self.workspace.model = selected.to_owned();
+                        self.status_bar.local = models
+                            .as_array()
+                            .and_then(|models| models.iter().find(|model| model["id"] == selected))
+                            .and_then(|model| model["local"].as_bool())
+                            .unwrap_or(false);
+                    }
                 }
             }
             Err(_) => {
                 self.workspace.daemon_health = "unreachable".into();
                 self.has_provider = false;
+                self.workspace.model = "unavailable".into();
                 self.message_bar = "Daemon unreachable. Type /connect to set up.".into();
             }
         }
@@ -752,12 +814,30 @@ impl App {
     }
 
     pub async fn ensure_session(&mut self) -> Option<String> {
-        if self.session_id.is_some() {
-            return self.session_id.clone();
+        let objective = self.conversation.latest_user_message();
+        if let Some(session_id) = self.session_id.clone() {
+            let reusable = self
+                .request(
+                    reqwest::Method::GET,
+                    &format!("/v1/sessions/{session_id}"),
+                    None,
+                )
+                .await
+                .ok()
+                .and_then(|session| session["status_code"].as_str().map(str::to_owned))
+                .is_some_and(|status| status == "active");
+            if reusable {
+                return Some(session_id);
+            }
+            self.session_id = None;
+            self.conversation = Conversation::new();
+            self.conversation.add_user_message(&objective);
+            self.workspace.session_phase = "new".into();
         }
         let body = serde_json::json!({
-            "objective": self.conversation.current_objective(),
+            "objective": objective,
             "repository": self.config.repository,
+            "plan_only": explicit_plan_only_intent(&objective),
         });
         match self
             .request(reqwest::Method::POST, "/v1/sessions", Some(body))
@@ -801,6 +881,37 @@ impl App {
                 return;
             }
         };
+        if !setup.editing_existing {
+            match self
+                .request(reqwest::Method::GET, "/v1/providers", None)
+                .await
+            {
+                Ok(providers)
+                    if providers.as_array().is_some_and(|providers| {
+                        providers.iter().any(|provider| {
+                            provider.get("name").and_then(Value::as_str) == Some(name.as_str())
+                        })
+                    }) =>
+                {
+                    setup.editing_existing = true;
+                    setup.complete = false;
+                    setup.error = Some(format!(
+                        "Provider profile `{name}` already exists. Press Ctrl+G again to explicitly replace it and run the real connection test."
+                    ));
+                    self.provider_setup = Some(setup);
+                    return;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    setup.complete = false;
+                    setup.error = Some(format!(
+                        "Could not check existing provider profiles before saving: {error}"
+                    ));
+                    self.provider_setup = Some(setup);
+                    return;
+                }
+            }
+        }
         let mut credential_name = None;
         let mut credential_reference = setup.credential_reference();
         if let Some(secret) = setup.pending_keychain_secret() {
@@ -923,5 +1034,65 @@ impl App {
             Err(error) => setup.error = Some(error.to_string()),
         }
         self.provider_setup = Some(setup);
+    }
+}
+
+fn recovered_session_is_resumable(status: &str, lease_active: bool) -> bool {
+    match status {
+        "active" | "paused" => true,
+        // These restore the durable decision boundary; they do not rerun the
+        // model when the user chooses Resume.
+        "awaiting_approval" | "awaiting_review" => true,
+        // An executing session without its daemon lease cannot safely be
+        // replayed. With a lease it may only be attached.
+        "executing" => lease_active,
+        "cancelled" | "completed" | "failed" => false,
+        _ => false,
+    }
+}
+
+fn explicit_plan_only_intent(objective: &str) -> bool {
+    let objective = objective.to_ascii_lowercase();
+    objective.contains("plan")
+        && [
+            "do not revise",
+            "don't revise",
+            "do not modify",
+            "don't modify",
+            "do not change",
+            "don't change",
+            "plan only",
+            "only a plan",
+            "give me the actual plan",
+            "send me the plan",
+        ]
+        .iter()
+        .any(|marker| objective.contains(marker))
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::recovered_session_is_resumable;
+
+    #[test]
+    fn terminal_sessions_require_a_new_session() {
+        for status in ["completed", "failed", "cancelled"] {
+            assert!(!recovered_session_is_resumable(status, false));
+            assert!(!recovered_session_is_resumable(status, true));
+        }
+    }
+
+    #[test]
+    fn executing_without_a_lease_is_not_replayed() {
+        assert!(!recovered_session_is_resumable("executing", false));
+        assert!(recovered_session_is_resumable("executing", true));
+    }
+
+    #[test]
+    fn paused_and_decision_boundaries_can_be_restored() {
+        for status in ["paused", "awaiting_approval", "awaiting_review"] {
+            assert!(recovered_session_is_resumable(status, false));
+        }
+        assert!(!recovered_session_is_resumable("uncertain", false));
     }
 }

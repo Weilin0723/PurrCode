@@ -5,7 +5,7 @@ use directories::ProjectDirs;
 use futures::future::join_all;
 use purrcode_claw::{sandbox_capability, ToolRuntime};
 use purrcode_codex_bridge::{CodexBridge, CodexBridgeConfig};
-use purrcode_daemon::{bind_and_report, DaemonConfig};
+use purrcode_daemon::{bind_and_report, DaemonConfig, DAEMON_API_VERSION};
 use purrcode_golden_suite::GoldenCatalog;
 use purrcode_mcp_host::{
     discover_skills, install_skill, uninstall_skill, verify_installed_skill, McpHost,
@@ -2536,11 +2536,20 @@ async fn ensure_daemon_started(
     token_file: &Path,
     announce: bool,
 ) -> Result<()> {
-    if daemon_is_ready(daemon_url, token_file).await {
-        if announce {
-            println!("daemon: already ready at {daemon_url}");
+    match daemon_compatibility(daemon_url, token_file).await {
+        DaemonCompatibility::Compatible => {
+            if announce {
+                println!("daemon: already ready at {daemon_url}");
+            }
+            return Ok(());
         }
-        return Ok(());
+        DaemonCompatibility::Incompatible(detail) => {
+            bail!(
+                "incompatible PurrCode daemon is already running at {daemon_url}: {detail}. \
+                 Stop the stale daemon and restart PurrCode"
+            );
+        }
+        DaemonCompatibility::Unavailable => {}
     }
     let executable = std::env::current_exe()?;
     let parsed_daemon_url = url::Url::parse(daemon_url)?;
@@ -2581,7 +2590,10 @@ async fn ensure_daemon_started(
         .spawn()?;
     fs::write(default_daemon_pid_path()?, child.id().to_string())?;
     for _ in 0..50 {
-        if daemon_is_ready(daemon_url, token_file).await {
+        if matches!(
+            daemon_compatibility(daemon_url, token_file).await,
+            DaemonCompatibility::Compatible
+        ) {
             if announce {
                 println!("daemon: ready at {daemon_url}");
                 println!("log: {}", log_path.display());
@@ -2597,11 +2609,17 @@ async fn ensure_daemon_started(
     )
 }
 
-async fn daemon_is_ready(daemon_url: &str, token_file: &Path) -> bool {
+enum DaemonCompatibility {
+    Compatible,
+    Incompatible(String),
+    Unavailable,
+}
+
+async fn daemon_compatibility(daemon_url: &str, token_file: &Path) -> DaemonCompatibility {
     if !token_file.is_file() {
-        return false;
+        return DaemonCompatibility::Unavailable;
     }
-    daemon_json(
+    let Ok(health) = daemon_json(
         reqwest::Method::GET,
         daemon_url,
         "/v1/health",
@@ -2609,7 +2627,31 @@ async fn daemon_is_ready(daemon_url: &str, token_file: &Path) -> bool {
         token_file,
     )
     .await
-    .is_ok()
+    else {
+        return DaemonCompatibility::Unavailable;
+    };
+    assess_daemon_health(&health)
+}
+
+fn assess_daemon_health(health: &serde_json::Value) -> DaemonCompatibility {
+    let product = health["product"].as_str();
+    let api_version = health["daemon_api_version"].as_u64();
+    if product != Some("purrcode") {
+        return DaemonCompatibility::Incompatible(format!(
+            "health identity was {:?}, expected `purrcode`",
+            product
+        ));
+    }
+    if api_version != Some(u64::from(DAEMON_API_VERSION)) {
+        return DaemonCompatibility::Incompatible(format!(
+            "daemon API version was {}, expected {}",
+            api_version
+                .map(|version| version.to_string())
+                .unwrap_or_else(|| "missing (legacy daemon)".into()),
+            DAEMON_API_VERSION
+        ));
+    }
+    DaemonCompatibility::Compatible
 }
 
 fn default_daemon_log_path() -> Result<PathBuf> {
@@ -2919,6 +2961,40 @@ mod cli_tests {
         let name = release_artifact_name().unwrap();
         assert!(name.starts_with("purrcode-"));
         assert!(name.ends_with(if cfg!(windows) { ".zip" } else { ".tar.gz" }));
+    }
+
+    #[test]
+    fn daemon_health_requires_the_current_product_and_api_identity() {
+        assert!(matches!(
+            assess_daemon_health(&serde_json::json!({
+                "product": "purrcode",
+                "daemon_api_version": DAEMON_API_VERSION
+            })),
+            DaemonCompatibility::Compatible
+        ));
+        assert!(matches!(
+            assess_daemon_health(&serde_json::json!({
+                "status": "ok",
+                "sqlite_integrity": true
+            })),
+            DaemonCompatibility::Incompatible(detail)
+                if detail.contains("health identity")
+        ));
+        assert!(matches!(
+            assess_daemon_health(&serde_json::json!({
+                "product": "purrcode"
+            })),
+            DaemonCompatibility::Incompatible(detail)
+                if detail.contains("missing (legacy daemon)")
+        ));
+        assert!(matches!(
+            assess_daemon_health(&serde_json::json!({
+                "product": "purrcode",
+                "daemon_api_version": DAEMON_API_VERSION + 1
+            })),
+            DaemonCompatibility::Incompatible(detail)
+                if detail.contains("daemon API version")
+        ));
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub struct Conversation {
     pub messages: Vec<Message>,
     pub streaming_message: Option<Message>,
     pub pending_action: Option<Value>,
+    pending_action_candidate: Option<(String, Value)>,
     pub mode: ConversationMode,
     pub scroll: usize,
     pub auto_follow: bool,
@@ -34,11 +35,16 @@ pub struct Conversation {
 }
 
 impl Conversation {
+    pub fn last_durable_sequence(&self) -> u64 {
+        self.last_durable_sequence
+    }
+
     pub fn new() -> Self {
         Self {
             messages: Vec::new(),
             streaming_message: None,
             pending_action: None,
+            pending_action_candidate: None,
             mode: ConversationMode::Build,
             scroll: 0,
             auto_follow: true,
@@ -121,7 +127,33 @@ impl Conversation {
         self.phase = runtime_phase(name).to_owned();
 
         if name == "action_proposed" {
-            self.pending_action = pending_action_from_events(std::slice::from_ref(&event));
+            if let (Some(action_id), Some(action)) = (
+                event.pointer("/data/action_id").and_then(Value::as_str),
+                event.pointer("/data/action"),
+            ) {
+                self.pending_action_candidate = Some((action_id.to_owned(), action.clone()));
+            }
+        } else if name == "judgment_recorded" {
+            let action_id = event.pointer("/data/action_id").and_then(Value::as_str);
+            let decision = event
+                .pointer("/data/decision/decision")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if self
+                .pending_action_candidate
+                .as_ref()
+                .is_some_and(|(id, _)| Some(id.as_str()) == action_id)
+            {
+                if decision == "require_approval" {
+                    self.pending_action = self
+                        .pending_action_candidate
+                        .as_ref()
+                        .map(|(_, action)| action.clone());
+                } else if matches!(decision, "deny" | "modify_action" | "replan") {
+                    self.pending_action_candidate = None;
+                    self.pending_action = None;
+                }
+            }
         } else if matches!(
             name,
             "approval_rejected"
@@ -132,6 +164,7 @@ impl Conversation {
                 | "session_cancelled"
         ) {
             self.pending_action = None;
+            self.pending_action_candidate = None;
         }
 
         if let Some(evidence) = collapsed_evidence(&event) {
@@ -143,7 +176,14 @@ impl Conversation {
             && event.pointer("/data/message/role").and_then(Value::as_str) == Some("assistant")
             && self.streaming_message.is_some();
         if !is_streamed_assistant_snapshot {
-            self.timeline.push(collapsed_card_from_event(&event));
+            let card = collapsed_card_from_event(&event);
+            let expand_plan = card.kind == crate::timeline::CardKind::Plan;
+            self.timeline.push(card);
+            if expand_plan {
+                let index = self.timeline.len() - 1;
+                self.selected_card = Some(index);
+                self.expanded_card = Some(index);
+            }
         }
         self.note_new_output();
     }
@@ -238,6 +278,7 @@ impl Conversation {
             .unwrap_or("ready")
             .to_owned();
         self.pending_action = pending_action_from_events(&events);
+        self.pending_action_candidate = None;
         self.evidence = events
             .iter()
             .filter_map(collapsed_evidence)
@@ -246,6 +287,16 @@ impl Conversation {
             .collect();
         self.timeline = cards_from_events(&events);
         self.last_durable_sequence = events.len() as u64;
+        if self.expanded_card.is_none() {
+            if let Some(index) = self
+                .timeline
+                .iter()
+                .rposition(|card| card.kind == crate::timeline::CardKind::Plan)
+            {
+                self.selected_card = Some(index);
+                self.expanded_card = Some(index);
+            }
+        }
         self.selected_card = self
             .selected_card
             .map(|index| index.min(self.timeline.len().saturating_sub(1)));
@@ -273,6 +324,15 @@ impl Conversation {
     pub fn current_objective(&self) -> String {
         self.messages
             .first()
+            .map(|message| message.content.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn latest_user_message(&self) -> String {
+        self.messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
             .map(|message| message.content.clone())
             .unwrap_or_default()
     }

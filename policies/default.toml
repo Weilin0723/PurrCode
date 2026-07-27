@@ -1,4 +1,4 @@
-read_only_programs = ["git", "rg"]
+read_only_programs = ["find", "git", "ls", "rg"]
 approval_required_programs = ["npm", "pnpm", "python", "python3"]
 denied_argument_fragments = ["reset --hard", "clean -fd", "push --force"]
 timeout_seconds = 120

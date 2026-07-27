@@ -50,7 +50,7 @@ const KEYCHAIN_PREFIX: &str = "keychain:";
 pub fn set_keychain_credential(name: &str, secret: &str) -> Result<(), ProviderError> {
     validate_credential_name(name)?;
     if secret.trim().is_empty() {
-        return Err(ProviderError::InvalidCredential(name.into()));
+        return Err(ProviderError::InvalidKeychainCredential(name.into()));
     }
     set_os_credential(name, secret)
 }
@@ -146,27 +146,34 @@ fn set_os_credential(name: &str, secret: &str) -> Result<(), ProviderError> {
 
 #[cfg(target_os = "macos")]
 fn get_os_credential(name: &str) -> Result<String, ProviderError> {
-    let keychain = macos_default_keychain()?;
-    let (password, _) = keychain
-        .find_generic_password(KEYCHAIN_SERVICE, name)
-        .map_err(|_| ProviderError::MissingCredential(format!("OS keychain entry `{name}`")))?;
+    // Search the user's configured keychain list rather than only SecKeychainCopyDefault.
+    // Credentials written by an earlier PurrCode build can live in login.keychain-db while a
+    // sandboxed/GUI process reports a different default keychain.
+    let (password, _) = security_framework::os::macos::passwords::find_generic_password(
+        None,
+        KEYCHAIN_SERVICE,
+        name,
+    )
+    .map_err(|_| ProviderError::MissingKeychainCredential(name.into()))?;
     String::from_utf8(password.to_vec())
-        .map_err(|_| ProviderError::InvalidCredential(format!("OS keychain entry `{name}`")))
+        .map_err(|_| ProviderError::InvalidKeychainCredential(name.into()))
 }
 
 #[cfg(not(target_os = "macos"))]
 fn get_os_credential(name: &str) -> Result<String, ProviderError> {
     keyring::Entry::new(KEYCHAIN_SERVICE, name)
         .and_then(|entry| entry.get_password())
-        .map_err(|_| ProviderError::MissingCredential(format!("OS keychain entry `{name}`")))
+        .map_err(|_| ProviderError::MissingKeychainCredential(name.into()))
 }
 
 #[cfg(target_os = "macos")]
 fn delete_os_credential(name: &str) -> Result<(), ProviderError> {
-    let keychain = macos_default_keychain()?;
-    let (_, item) = keychain
-        .find_generic_password(KEYCHAIN_SERVICE, name)
-        .map_err(|error| ProviderError::Keychain(error.to_string()))?;
+    let (_, item) = security_framework::os::macos::passwords::find_generic_password(
+        None,
+        KEYCHAIN_SERVICE,
+        name,
+    )
+    .map_err(|error| ProviderError::Keychain(error.to_string()))?;
     item.delete();
     Ok(())
 }
@@ -1425,9 +1432,28 @@ impl HttpProvider {
                 if let Some(maximum) = request.max_output_tokens {
                     body["options"] = json!({"num_predict": maximum});
                 }
+                if schema.is_some() {
+                    if body.get("options").is_none() {
+                        body["options"] = json!({});
+                    }
+                    body["options"]["temperature"] = json!(0);
+                    body["options"]["num_ctx"] = json!(4096);
+                }
                 if let Some(schema) = schema {
-                    body["format"] = serde_json::to_value(schema)
-                        .expect("JSON Schema serialization is infallible");
+                    let supports_json_schema = self
+                        .capabilities
+                        .get(&request.model.model)
+                        .and_then(|capabilities| capabilities.supports_json_schema)
+                        .unwrap_or(false);
+                    body["format"] = if supports_json_schema {
+                        serde_json::to_value(schema)
+                            .expect("JSON Schema serialization is infallible")
+                    } else {
+                        // Ollama versions before schema-format support accept only the string
+                        // `json`. Unknown capability evidence must use that compatible mode while
+                        // the caller still validates the returned structured value.
+                        json!("json")
+                    };
                 }
                 body
             }
@@ -1633,6 +1659,10 @@ pub enum ProviderError {
     MissingCredential(String),
     #[error("credential environment variable `{0}` is not a valid HTTP credential")]
     InvalidCredential(String),
+    #[error("OS keychain entry `{0}` is not set; reconnect this provider to store its credential")]
+    MissingKeychainCredential(String),
+    #[error("OS keychain entry `{0}` is not a valid HTTP credential")]
+    InvalidKeychainCredential(String),
     #[error("external credential command failed: {0}")]
     CredentialCommand(String),
     #[error("OS credential store failed: {0}")]
@@ -1665,9 +1695,10 @@ impl ProviderError {
         match self {
             Self::Diagnostic(diagnostic) => Some(diagnostic.category),
             Self::HttpStatus { .. } => Some(ProviderErrorCategory::HttpStatus),
-            Self::MissingCredential(_) | Self::InvalidCredential(_) => {
-                Some(ProviderErrorCategory::Authentication)
-            }
+            Self::MissingCredential(_)
+            | Self::InvalidCredential(_)
+            | Self::MissingKeychainCredential(_)
+            | Self::InvalidKeychainCredential(_) => Some(ProviderErrorCategory::Authentication),
             Self::InvalidResponse(_) | Self::Json(_) => Some(ProviderErrorCategory::Schema),
             Self::Transport(error) => {
                 Some(transport_diagnostic(error, ProviderApiMode::Responses).category)
@@ -1861,6 +1892,29 @@ mod tests {
     }
 
     #[test]
+    fn keychain_failures_are_not_reported_as_environment_variables() {
+        let missing = ProviderError::MissingKeychainCredential("nvidia-nim".into());
+        assert_eq!(
+            missing.to_string(),
+            "OS keychain entry `nvidia-nim` is not set; reconnect this provider to store its credential"
+        );
+        assert_eq!(
+            missing.category(),
+            Some(ProviderErrorCategory::Authentication)
+        );
+
+        let invalid = ProviderError::InvalidKeychainCredential("nvidia-nim".into());
+        assert_eq!(
+            invalid.to_string(),
+            "OS keychain entry `nvidia-nim` is not a valid HTTP credential"
+        );
+        assert_eq!(
+            invalid.category(),
+            Some(ProviderErrorCategory::Authentication)
+        );
+    }
+
+    #[test]
     fn openai_configuration_requires_a_resolved_reference() {
         let mut config: AppConfig = toml::from_str(
             r#"
@@ -1997,6 +2051,24 @@ mod tests {
         .unwrap()
     }
 
+    fn ollama_schema_provider(base_url: Url) -> HttpProvider {
+        let capabilities = BTreeMap::from([(
+            "fixture-model".into(),
+            ModelCapabilities {
+                supports_json_schema: Some(true),
+                ..ModelCapabilities::unknown(true)
+            },
+        )]);
+        HttpProvider::from_config(
+            "ollama".into(),
+            ProviderConfig::Ollama {
+                base_url,
+                capabilities,
+            },
+        )
+        .unwrap()
+    }
+
     async fn fake_http_server(
         status: &'static str,
         content_type: &'static str,
@@ -2071,7 +2143,7 @@ mod tests {
             br#"{"message":{"role":"assistant","content":"{\"ok\":true}"},"done":true}"#.to_vec();
         let (base_url, server) =
             fake_http_server("200 OK", "application/json; charset=utf-8", response).await;
-        let provider = ollama_provider(base_url.join("v1").unwrap());
+        let provider = ollama_schema_provider(base_url.join("v1").unwrap());
 
         let value = provider
             .structured(
@@ -2090,8 +2162,32 @@ mod tests {
         assert_eq!(body["stream"], false);
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["options"]["num_predict"], 64);
+        assert_eq!(body["options"]["temperature"], 0);
+        assert_eq!(body["options"]["num_ctx"], 4096);
         assert_eq!(body["format"]["type"], "object");
         assert!(body.get("response_format").is_none());
+    }
+
+    #[tokio::test]
+    async fn ollama_unknown_schema_capability_uses_legacy_json_mode() {
+        let response =
+            br#"{"message":{"role":"assistant","content":"{\"ok\":true}"},"done":true}"#.to_vec();
+        let (base_url, server) =
+            fake_http_server("200 OK", "application/json; charset=utf-8", response).await;
+        let provider = ollama_provider(base_url);
+
+        provider
+            .structured(
+                test_request("ollama"),
+                schemars::schema_for!(QualificationAnswer),
+            )
+            .await
+            .unwrap();
+
+        let body = request_body(&server.await.unwrap());
+        assert_eq!(body["format"], "json");
+        assert_eq!(body["options"]["temperature"], 0);
+        assert_eq!(body["options"]["num_ctx"], 4096);
     }
 
     #[tokio::test]
@@ -2189,7 +2285,7 @@ mod tests {
         .as_bytes()
         .to_vec();
         let (base_url, server) = fake_http_server("200 OK", "application/x-ndjson", response).await;
-        let provider = ollama_provider(base_url);
+        let provider = ollama_schema_provider(base_url);
 
         let mut stream = provider
             .structured_stream(

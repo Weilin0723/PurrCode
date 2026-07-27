@@ -14,9 +14,9 @@ PurrCode 是一个在隔离 Git worktree 中工作的终端编程智能体。每
 持久化授权，并在执行前再次校验，随后记录真实验证结果。仓库内容、模型输出和下载的技能
 始终被视为不可信数据。
 
-PurrCode v0.5 专注首次使用可靠性：安全的多行 Provider 导入、Ollama 原生流式接口、
-基于硬件的模型推荐、明确的拉取与卸载控制、真实运行阶段、受治理的 Skill/MCP 发现，以及
-延迟启动的分层仓库索引。
+PurrCode v0.5.2 专注稳定的日常使用：Provider 配置可通过系统钥匙串重新连接，NVIDIA NIM
+和 Ollama 会使用用户选择的模型，会话恢复需要明确选择，审批后会继续执行，终端界面则默认
+采用高对比度深色主题。
 
 ## 为什么选择 PurrCode
 
@@ -44,7 +44,7 @@ npm install --global @minaovo/purrcode
 使用 Node.js 18 或更高版本，也可以直接从 GitHub 安装同一个已签名 launcher：
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.1/purrcode-0.5.1.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.2/purrcode-0.5.2.tgz
 ```
 
 安装包会选择正确的 macOS、Linux 或 Windows 二进制文件，校验固定的 SHA-256 摘要，并
@@ -53,7 +53,7 @@ npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0
 ### macOS 和 Linux 安装脚本
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.2/scripts/install.sh | sh
 ```
 
 脚本会使用 `SHA256SUMS` 校验发布归档，并默认安装到 `~/.local/bin`。可通过
@@ -90,6 +90,14 @@ purrcode
 
 ## v0.5 更新
 
+- **可靠的 Provider 路由：** 已保存的钥匙串凭据、远程 Provider 路由、低内存 Ollama
+  默认值和 NVIDIA NIM 有界生成探测都会使用正确的配置与模型。
+- **明确的会话恢复：** 启动时会先要求选择继续会话、只读查看历史或新建会话；已经结束的
+  会话不会被静默重放。
+- **审批后自动续跑：** 持久化审批边界会等待上一个 daemon lease 释放；无效审批不会破坏
+  会话状态；已批准的操作执行后，智能体会自动继续下一步。
+- **更清晰的终端工作流：** 默认使用纯黑背景和高对比度文字，始终显示当前 Provider/模型；
+  Space 或 E 可展开时间线详情，终端选择内容仍可复制。
 - **真实流式体验：** 内容增量、Provider 阶段和持久化审计使用三个独立的有界通道；重连
   恢复快照，取消时保留 partial 输出。
 - **资源感知的本地模型：** 启动时不会生成内容或加载模型。Ollama 默认使用原生接口；推荐
@@ -180,6 +188,7 @@ PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
 - [故障排查](docs/troubleshooting.md)
 - [实现状态](docs/implementation-status.md)
 - [v0.5 可用性恢复证据](docs/reports/v0.5-usability-recovery.md)
+- [v0.5.2 Provider 路由修复证据](docs/reports/v0.5.2-provider-routing-hotfix.md)
 - [v0.4 重构验收](docs/product-redesign-acceptance.md)
 - [验证报告](docs/reports/)
 

@@ -64,7 +64,7 @@ pub fn collapsed_card_from_event(event: &Value) -> TimelineCard {
 }
 
 pub fn pending_action_from_events(events: &[Value]) -> Option<Value> {
-    let mut pending: Option<(String, Value)> = None;
+    let mut pending: Option<(String, Value, bool)> = None;
     for event in events {
         let name = event.get("event").and_then(Value::as_str).unwrap_or("");
         let data = event.get("data").unwrap_or(&Value::Null);
@@ -73,7 +73,22 @@ pub fn pending_action_from_events(events: &[Value]) -> Option<Value> {
                 data.get("action_id").and_then(Value::as_str),
                 data.get("action"),
             ) {
-                pending = Some((action_id.to_owned(), action.clone()));
+                pending = Some((action_id.to_owned(), action.clone(), false));
+            }
+        } else if name == "judgment_recorded" {
+            let action_id = data.get("action_id").and_then(Value::as_str);
+            let decision = data
+                .pointer("/decision/decision")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if let Some((pending_id, _, ready)) = &mut pending {
+                if Some(pending_id.as_str()) == action_id {
+                    if decision == "require_approval" {
+                        *ready = true;
+                    } else if matches!(decision, "deny" | "modify_action" | "replan") {
+                        pending = None;
+                    }
+                }
             }
         } else if matches!(
             name,
@@ -85,13 +100,13 @@ pub fn pending_action_from_events(events: &[Value]) -> Option<Value> {
                 .and_then(Value::as_str);
             if pending
                 .as_ref()
-                .is_some_and(|(id, _)| Some(id.as_str()) == completed)
+                .is_some_and(|(id, _, _)| Some(id.as_str()) == completed)
             {
                 pending = None;
             }
         }
     }
-    pending.map(|(_, action)| action)
+    pending.and_then(|(_, action, ready)| ready.then_some(action))
 }
 
 fn safe_event_name(value: &str) -> String {
@@ -453,6 +468,7 @@ mod tests {
     fn approval_lifecycle_clears_only_the_matching_pending_action() {
         let events = vec![
             json!({"event":"action_proposed","data":{"action_id":"one","action":{"type":"write_file","path":"a.rs","content":"x"}}}),
+            json!({"event":"judgment_recorded","data":{"action_id":"one","decision":{"decision":"require_approval","details":{"reason":"review","constraints":{}}}}}),
             json!({"event":"approval_rejected","data":{"action_id":"other","reason":"no"}}),
         ];
         assert!(pending_action_from_events(&events).is_some());

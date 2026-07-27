@@ -990,7 +990,17 @@ impl CommandPalette {
                     )
                     .await
                 {
-                    Ok(_) => app.message_bar = format!("Session command accepted: {cmd}"),
+                    Ok(_) => {
+                        app.message_bar = format!("Session command accepted: {cmd}");
+                        if matches!(cmd.as_str(), "approve" | "resume") {
+                            let after = app.conversation.last_durable_sequence();
+                            let model = app.status_bar.model.clone();
+                            app.conversation.start_streaming(Some(model.clone()));
+                            app.start_session_stream(after, Some(model));
+                            app.message_bar =
+                                format!("Session command accepted: {cmd} · continuing...");
+                        }
+                    }
                     Err(error) => app.message_bar = format!("Error: {error}"),
                 }
             }

@@ -3,7 +3,7 @@
 ## Signed release (macOS and Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.2/scripts/install.sh | sh
 ```
 
 The installer detects the host platform, downloads both PurrCode binaries, verifies the archive
@@ -16,7 +16,7 @@ another destination. Windows users should download and extract the
 Node.js 18 or newer can install the cross-platform launcher directly from the GitHub release:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.1/purrcode-0.5.1.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.2/purrcode-0.5.2.tgz
 ```
 
 The package downloads only the matching native archive, checks it against the digest pinned inside
