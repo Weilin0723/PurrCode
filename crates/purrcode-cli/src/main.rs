@@ -2638,8 +2638,7 @@ fn assess_daemon_health(health: &serde_json::Value) -> DaemonCompatibility {
     let api_version = health["daemon_api_version"].as_u64();
     if product != Some("purrcode") {
         return DaemonCompatibility::Incompatible(format!(
-            "health identity was {:?}, expected `purrcode`",
-            product
+            "health identity was {product:?}, expected `purrcode`"
         ));
     }
     if api_version != Some(u64::from(DAEMON_API_VERSION)) {
