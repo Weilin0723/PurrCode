@@ -2120,15 +2120,15 @@ mod action_normalization_tests {
 
     #[test]
     fn deterministic_bounded_reads_do_not_gain_semantic_approval_prompts() {
-        let worktree = Path::new("/repo/.purrcode/worktrees/session");
+        let worktree = std::env::temp_dir().join("purrcode-policy-read-session");
         let action = normalize_action(
             AgentAction::ReadCommand {
                 program: "ls".into(),
                 arguments: vec!["-la".into(), worktree.display().to_string()],
             },
-            worktree,
+            &worktree,
         );
-        let decision = Policy::default().evaluate(&action, worktree);
+        let decision = Policy::default().evaluate(&action, &worktree);
         assert!(matches!(
             decision,
             purrcode_runtime_core::JudgmentDecision::AllowWithConstraints(_)
@@ -2138,15 +2138,15 @@ mod action_normalization_tests {
 
     #[test]
     fn exact_successful_action_is_reused_instead_of_replayed() {
-        let worktree = Path::new("/repo/.purrcode/worktrees/session");
+        let worktree = std::env::temp_dir().join("purrcode-duplicate-read-session");
         let action = normalize_action(
             AgentAction::ReadCommand {
                 program: "ls".into(),
                 arguments: vec!["-la".into(), worktree.display().to_string()],
             },
-            worktree,
+            &worktree,
         );
-        let decision = Policy::default().evaluate(&action, worktree);
+        let decision = Policy::default().evaluate(&action, &worktree);
         let JudgmentDecision::AllowWithConstraints(constraints) = decision.clone() else {
             panic!("expected constrained allow")
         };
@@ -2172,9 +2172,9 @@ mod action_normalization_tests {
                 program: "ls".into(),
                 arguments: vec!["-l".into(), worktree.display().to_string()],
             },
-            worktree,
+            &worktree,
         );
-        let distinct_decision = Policy::default().evaluate(&distinct, worktree);
+        let distinct_decision = Policy::default().evaluate(&distinct, &worktree);
         let JudgmentDecision::AllowWithConstraints(distinct_constraints) = distinct_decision else {
             panic!("expected constrained allow")
         };
