@@ -1,10 +1,23 @@
 //! Provider-neutral contracts, secure configuration, routing, and HTTP adapters.
 
-use async_stream::try_stream;
+mod diagnostics;
+mod http_transport;
+mod stream_state;
+
+pub use diagnostics::{
+    ProviderApiMode, ProviderDiagnostic, ProviderErrorCategory, MAX_PROVIDER_DIAGNOSTIC_BYTES,
+    MAX_PROVIDER_ERROR_BODY_BYTES, MAX_PROVIDER_HTTP_BODY_BYTES, MAX_PROVIDER_HTTP_REQUEST_BYTES,
+    MAX_PROVIDER_STREAM_FRAME_BYTES,
+};
+pub use stream_state::{
+    StreamIncrement, StreamPhase, StreamStateError, StreamTiming, StreamTracker, StreamUpdate,
+};
+
 use async_trait::async_trait;
-use eventsource_stream::Eventsource;
-use futures::{stream::BoxStream, StreamExt};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use futures::stream::BoxStream;
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER,
+};
 use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -20,6 +33,16 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use url::Url;
 use uuid::Uuid;
+
+use diagnostics::transport_diagnostic;
+use http_transport::{
+    bounded_http_failure, encode_bounded_request, encode_bounded_structured_value,
+    ensure_content_type, extract_chat_output, extract_ollama_output, extract_output_json,
+    ollama_native_stream, ollama_provider_stream, openai_event_stream, openai_provider_stream,
+    parse_json_body, read_bounded_body,
+};
+#[cfg(test)]
+use http_transport::{parse_chat_event, parse_response_event};
 
 const KEYCHAIN_SERVICE: &str = "dev.purrcode.provider-credentials";
 const KEYCHAIN_PREFIX: &str = "keychain:";
@@ -44,6 +67,36 @@ pub fn delete_keychain_credential(name: &str) -> Result<(), ProviderError> {
 pub fn keychain_reference(name: &str) -> Result<String, ProviderError> {
     validate_credential_name(name)?;
     Ok(format!("{KEYCHAIN_PREFIX}{name}"))
+}
+
+/// Validates a durable provider credential reference without resolving its secret.
+///
+/// Keychain references are canonical `keychain:<name>` values. Environment references use the
+/// deliberately narrow portable form `[A-Z_][A-Z0-9_]{0,127}`. This boundary must never accept a
+/// raw credential and is therefore stricter than the host operating system's environment rules.
+pub fn validate_credential_reference(reference: &str) -> Result<String, ProviderError> {
+    if let Some(name) = reference.strip_prefix(KEYCHAIN_PREFIX) {
+        let canonical = keychain_reference(name)?;
+        if canonical == reference {
+            return Ok(canonical);
+        }
+    }
+    let valid_environment = !reference.is_empty()
+        && reference.len() <= 128
+        && reference
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_uppercase() || byte == b'_')
+        && reference
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_');
+    if valid_environment {
+        return Ok(reference.to_owned());
+    }
+    Err(ProviderError::Configuration(
+        "credential reference must be canonical `keychain:<name>` or match [A-Z_][A-Z0-9_]{0,127}"
+            .into(),
+    ))
 }
 
 fn validate_credential_name(name: &str) -> Result<(), ProviderError> {
@@ -173,6 +226,19 @@ pub enum ModelEvent {
     Finished,
 }
 
+/// A provider stream increment before UI/runtime lifecycle interpretation.
+///
+/// Transport progress is kept separate from semantic model events so consumers can measure
+/// connection and first-byte latency without treating implementation details as assistant content
+/// or durable audit records.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum ProviderStreamEvent {
+    Connected,
+    BytesReceived { byte_count: usize },
+    Model(ModelEvent),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenEstimate {
     pub tokens: u64,
@@ -186,6 +252,7 @@ pub struct ProviderHealth {
 }
 
 pub type ModelEventStream = BoxStream<'static, Result<ModelEvent, ProviderError>>;
+pub type ProviderEventStream = BoxStream<'static, Result<ProviderStreamEvent, ProviderError>>;
 
 #[async_trait]
 pub trait ModelProvider: Send + Sync {
@@ -196,8 +263,60 @@ pub trait ModelProvider: Send + Sync {
         request: ModelRequest,
         schema: RootSchema,
     ) -> Result<Value, ProviderError>;
+    /// Streams a schema-constrained response with transport-level progress.
+    ///
+    /// Providers with native streaming should override this method. The compatibility default
+    /// preserves custom provider implementations by returning bounded semantic deltas only after
+    /// their existing structured request has completed.
+    async fn structured_stream(
+        &self,
+        request: ModelRequest,
+        schema: RootSchema,
+    ) -> Result<ProviderEventStream, ProviderError> {
+        let value = self.structured(request, schema).await?;
+        let encoded = encode_bounded_structured_value(&value)?;
+        let byte_count = encoded.len();
+        let content = String::from_utf8(encoded).map_err(|_| {
+            ProviderError::InvalidResponse(
+                "serialized structured provider output was not UTF-8".into(),
+            )
+        })?;
+        let mut events = vec![
+            Ok(ProviderStreamEvent::Connected),
+            Ok(ProviderStreamEvent::BytesReceived { byte_count }),
+        ];
+        events.extend(
+            split_bounded_utf8(content, MAX_PROVIDER_STREAM_FRAME_BYTES)
+                .into_iter()
+                .map(|delta| Ok(ProviderStreamEvent::Model(ModelEvent::TextDelta(delta)))),
+        );
+        events.push(Ok(ProviderStreamEvent::Model(ModelEvent::Finished)));
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
     async fn count_tokens(&self, request: &ModelRequest) -> Result<TokenEstimate, ProviderError>;
     async fn health_check(&self) -> Result<ProviderHealth, ProviderError>;
+}
+
+fn split_bounded_utf8(value: String, maximum_bytes: usize) -> Vec<String> {
+    debug_assert!(maximum_bytes > 0);
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < value.len() {
+        let mut end = start.saturating_add(maximum_bytes).min(value.len());
+        while end > start && !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == start {
+            end = value[start..]
+                .char_indices()
+                .nth(1)
+                .map(|(offset, _)| start + offset)
+                .unwrap_or(value.len());
+        }
+        chunks.push(value[start..end].to_owned());
+        start = end;
+    }
+    chunks
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -390,12 +509,37 @@ impl AppConfig {
         model: &str,
         credential_name: Option<&str>,
     ) -> Result<(), ProviderError> {
+        let credential_reference = match credential_name {
+            Some(credential_name) => Some(keychain_reference(credential_name)?),
+            None if provider_type == "openai" => Some(keychain_reference(name)?),
+            None => None,
+        };
+        self.configure_provider_with_reference(
+            name,
+            provider_type,
+            base_url,
+            model,
+            credential_reference.as_deref(),
+        )
+    }
+
+    pub fn configure_provider_with_reference(
+        &mut self,
+        name: &str,
+        provider_type: &str,
+        base_url: &str,
+        model: &str,
+        credential_reference: Option<&str>,
+    ) -> Result<(), ProviderError> {
         if name.trim().is_empty() || model.trim().is_empty() {
             return Err(ProviderError::Configuration(
                 "provider name and model are required".into(),
             ));
         }
-        let base_url = Url::parse(base_url)
+        let credential_reference = credential_reference
+            .map(validate_credential_reference)
+            .transpose()?;
+        let mut base_url = Url::parse(base_url)
             .map_err(|error| ProviderError::Configuration(format!("invalid base URL: {error}")))?;
         let mut capabilities = BTreeMap::new();
         capabilities.insert(
@@ -403,22 +547,38 @@ impl AppConfig {
             ModelCapabilities::unknown(provider_type != "openai"),
         );
         let provider = match provider_type {
-            "ollama" => ProviderConfig::Ollama {
-                base_url,
-                capabilities,
-            },
+            "ollama" => {
+                if credential_reference.is_some() {
+                    return Err(ProviderError::Configuration(
+                        "Ollama Native profiles do not accept an authentication reference".into(),
+                    ));
+                }
+                base_url = normalize_ollama_base_url(base_url);
+                ProviderConfig::Ollama {
+                    base_url,
+                    capabilities,
+                }
+            }
             "lm-studio" | "openai-compatible" => ProviderConfig::OpenaiCompatible {
                 base_url,
-                api_key_env: credential_name.map(keychain_reference).transpose()?,
+                api_key_env: credential_reference,
                 local: provider_type == "lm-studio",
                 headers: BTreeMap::new(),
                 capabilities,
             },
-            "openai" => ProviderConfig::Openai {
-                base_url,
-                api_key_env: keychain_reference(credential_name.unwrap_or(name))?,
-                capabilities,
-            },
+            "openai" => {
+                let api_key_env = credential_reference.ok_or_else(|| {
+                    ProviderError::Configuration(
+                        "OpenAI authentication must resolve to a keychain or environment reference"
+                            .into(),
+                    )
+                })?;
+                ProviderConfig::Openai {
+                    base_url,
+                    api_key_env,
+                    capabilities,
+                }
+            }
             _ => {
                 return Err(ProviderError::Configuration(format!(
                     "unsupported provider type `{provider_type}`"
@@ -436,12 +596,13 @@ impl AppConfig {
     }
 
     pub fn load(path: &Path) -> Result<Self, ProviderError> {
-        let config: Self = toml::from_str(&fs::read_to_string(path)?)?;
+        let mut config: Self = toml::from_str(&fs::read_to_string(path)?)?;
         if config.schema_version == 0 {
             return Err(ProviderError::Configuration(
                 "legacy configuration schema 0; run `purrcode config migrate`".into(),
             ));
         }
+        config.normalize_provider_urls();
         config.validate()?;
         Ok(config)
     }
@@ -532,6 +693,14 @@ impl AppConfig {
             }
         }
         Ok(())
+    }
+
+    fn normalize_provider_urls(&mut self) {
+        for provider in self.providers.values_mut() {
+            if let ProviderConfig::Ollama { base_url, .. } = provider {
+                *base_url = normalize_ollama_base_url(base_url.clone());
+            }
+        }
     }
 
     pub fn save(&self, path: &Path) -> Result<(), ProviderError> {
@@ -756,7 +925,21 @@ fn openai_base_url() -> Url {
     Url::parse("https://api.openai.com/v1/").expect("static OpenAI URL is valid")
 }
 fn ollama_base_url() -> Url {
-    Url::parse("http://127.0.0.1:11434/v1/").expect("static Ollama URL is valid")
+    Url::parse("http://127.0.0.1:11434/").expect("static Ollama URL is valid")
+}
+
+fn normalize_ollama_base_url(mut url: Url) -> Url {
+    let trimmed = url.path().trim_end_matches('/');
+    let native_path = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
+    let normalized = if native_path.is_empty() {
+        "/".to_owned()
+    } else {
+        format!("{native_path}/")
+    };
+    url.set_path(&normalized);
+    url.set_query(None);
+    url.set_fragment(None);
+    url
 }
 fn openai_key_env() -> String {
     "OPENAI_API_KEY".into()
@@ -864,7 +1047,7 @@ pub struct HttpProvider {
     local: bool,
     capabilities: BTreeMap<String, ModelCapabilities>,
     client: reqwest::Client,
-    chat_completions: bool,
+    api_mode: ProviderApiMode,
 }
 
 impl HttpProvider {
@@ -880,7 +1063,7 @@ impl HttpProvider {
             ca_pem,
             proxy_url,
             capabilities,
-            chat_completions,
+            api_mode,
         ) = match config {
             ProviderConfig::Openai {
                 base_url,
@@ -897,7 +1080,7 @@ impl HttpProvider {
                 None,
                 None,
                 capabilities,
-                false,
+                ProviderApiMode::Responses,
             ),
             ProviderConfig::OpenaiCompatible {
                 base_url,
@@ -916,13 +1099,13 @@ impl HttpProvider {
                 None,
                 None,
                 capabilities,
-                true,
+                ProviderApiMode::OpenaiCompatible,
             ),
             ProviderConfig::Ollama {
                 base_url,
                 capabilities,
             } => (
-                base_url,
+                normalize_ollama_base_url(base_url),
                 None,
                 None,
                 true,
@@ -932,7 +1115,7 @@ impl HttpProvider {
                 None,
                 None,
                 capabilities,
-                true,
+                ProviderApiMode::OllamaNative,
             ),
             ProviderConfig::EnterpriseGateway {
                 base_url,
@@ -955,7 +1138,7 @@ impl HttpProvider {
                 ca_pem,
                 proxy_url,
                 capabilities,
-                false,
+                ProviderApiMode::Responses,
             ),
         };
         let mut headers = HeaderMap::new();
@@ -1000,7 +1183,7 @@ impl HttpProvider {
             local,
             capabilities,
             client,
-            chat_completions,
+            api_mode,
         })
     }
 
@@ -1061,11 +1244,14 @@ impl HttpProvider {
         body: Option<&Value>,
         idempotency_key: Option<&str>,
     ) -> Result<reqwest::Response, ProviderError> {
+        let encoded_body = body
+            .map(|body| encode_bounded_request(body, self.api_mode))
+            .transpose()?;
         let mut last_transport = None;
         for attempt in 0..3_u32 {
             let mut request = self.request(method.clone(), url.clone()).await?;
-            if let Some(body) = body {
-                request = request.json(body);
+            if let Some(body) = &encoded_body {
+                request = request.body(body.clone());
             }
             if let Some(key) = idempotency_key {
                 request = request.header("Idempotency-Key", key);
@@ -1076,11 +1262,11 @@ impl HttpProvider {
                         || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS =>
                 {
                     if attempt == 2 {
-                        return Err(http_failure(response).await);
+                        return Err(self.http_failure(response).await);
                     }
                     let retry_after = response
                         .headers()
-                        .get(reqwest::header::RETRY_AFTER)
+                        .get(RETRY_AFTER)
                         .and_then(|value| value.to_str().ok())
                         .and_then(|value| value.parse::<u64>().ok())
                         .map(Duration::from_secs)
@@ -1094,15 +1280,27 @@ impl HttpProvider {
                         tokio::time::sleep(Duration::from_millis(100 * 2_u64.pow(attempt))).await;
                     }
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => {
+                    return Err(ProviderError::Diagnostic(transport_diagnostic(
+                        &error,
+                        self.api_mode,
+                    )))
+                }
             }
         }
         match last_transport {
-            Some(error) => Err(error.into()),
+            Some(error) => Err(ProviderError::Diagnostic(transport_diagnostic(
+                &error,
+                self.api_mode,
+            ))),
             None => Err(ProviderError::Unavailable(
                 "retry attempts were exhausted without a response".into(),
             )),
         }
+    }
+
+    async fn http_failure(&self, response: reqwest::Response) -> ProviderError {
+        bounded_http_failure(response, self.api_mode).await
     }
 
     fn response_body(
@@ -1116,46 +1314,69 @@ impl HttpProvider {
             .iter()
             .map(|message| json!({"role": message.role, "content": message.content}))
             .collect();
-        if self.chat_completions {
-            let mut body = json!({
-                "model": request.model.model,
-                "messages": messages,
-                "stream": stream,
-            });
-            if let Some(maximum) = request.max_output_tokens {
-                body["max_tokens"] = json!(maximum);
-            }
-            if schema.is_some() {
-                body["response_format"] = json!({
-                    "type": "json_object"
+        match self.api_mode {
+            ProviderApiMode::OpenaiCompatible => {
+                let mut body = json!({
+                    "model": request.model.model,
+                    "messages": messages,
+                    "stream": stream,
                 });
+                if let Some(maximum) = request.max_output_tokens {
+                    body["max_tokens"] = json!(maximum);
+                }
+                if schema.is_some() {
+                    body["response_format"] = json!({
+                        "type": "json_object"
+                    });
+                }
+                body
             }
-            body
-        } else {
-            let mut body = json!({
-                "model": request.model.model,
-                "input": messages,
-                "tools": request.tools,
-                "stream": stream,
-                "store": false
-            });
-            if let Some(maximum) = request.max_output_tokens {
-                body["max_output_tokens"] = json!(maximum);
-            }
-            if let Some(effort) = &request.reasoning_effort {
-                body["reasoning"] = json!({"effort": effort});
-            }
-            if let Some(schema) = schema {
-                body["text"] = json!({
-                    "format": {
-                        "type": "json_schema",
-                        "name": "purrcode_result",
-                        "strict": true,
-                        "schema": schema.schema
-                    }
+            ProviderApiMode::Responses => {
+                let mut body = json!({
+                    "model": request.model.model,
+                    "input": messages,
+                    "tools": request.tools,
+                    "stream": stream,
+                    "store": false
                 });
+                if let Some(maximum) = request.max_output_tokens {
+                    body["max_output_tokens"] = json!(maximum);
+                }
+                if let Some(effort) = &request.reasoning_effort {
+                    body["reasoning"] = json!({"effort": effort});
+                }
+                if let Some(schema) = schema {
+                    let schema = serde_json::to_value(schema)
+                        .expect("JSON Schema serialization is infallible");
+                    body["text"] = json!({
+                        "format": {
+                            "type": "json_schema",
+                            "name": "purrcode_result",
+                            "strict": true,
+                            "schema": schema
+                        }
+                    });
+                }
+                body
             }
-            body
+            ProviderApiMode::OllamaNative => {
+                let mut body = json!({
+                    "model": request.model.model,
+                    "messages": messages,
+                    "stream": stream,
+                });
+                if !request.tools.is_empty() {
+                    body["tools"] = json!(request.tools);
+                }
+                if let Some(maximum) = request.max_output_tokens {
+                    body["options"] = json!({"num_predict": maximum});
+                }
+                if let Some(schema) = schema {
+                    body["format"] = serde_json::to_value(schema)
+                        .expect("JSON Schema serialization is infallible");
+                }
+                body
+            }
         }
     }
 }
@@ -1176,41 +1397,50 @@ impl ModelProvider for HttpProvider {
     async fn stream(&self, request: ModelRequest) -> Result<ModelEventStream, ProviderError> {
         let body = self.response_body(&request, true, None);
         let idempotency_key = Uuid::new_v4().to_string();
-        let endpoint = if self.chat_completions {
-            "chat/completions"
-        } else {
-            "responses"
+        let endpoint = match self.api_mode {
+            ProviderApiMode::Responses => "responses",
+            ProviderApiMode::OpenaiCompatible => "chat/completions",
+            ProviderApiMode::OllamaNative => "api/chat",
         };
         let response = self
             .send_with_retry(
                 reqwest::Method::POST,
                 self.endpoint(endpoint)?,
                 Some(&body),
-                Some(&idempotency_key),
+                (self.api_mode != ProviderApiMode::OllamaNative)
+                    .then_some(idempotency_key.as_str()),
             )
             .await?;
         let status = response.status();
         if !status.is_success() {
-            return Err(http_failure(response).await);
+            return Err(self.http_failure(response).await);
         }
-        let events = response.bytes_stream().eventsource();
-        let use_chat = self.chat_completions;
-        Ok(Box::pin(try_stream! {
-            futures::pin_mut!(events);
-            while let Some(event) = events.next().await {
-                let event = event.map_err(|error| ProviderError::InvalidResponse(error.to_string()))?;
-                if event.data == "[DONE]" {
-                    break;
-                }
-                if use_chat {
-                    if let Some(parsed) = parse_chat_event(&event.data)? {
-                        yield parsed;
-                    }
-                } else if let Some(parsed) = parse_response_event(&event.data)? {
-                    yield parsed;
-                }
+        match self.api_mode {
+            ProviderApiMode::OllamaNative => {
+                ensure_content_type(
+                    &response,
+                    &[
+                        "application/x-ndjson",
+                        "application/ndjson",
+                        "application/json",
+                    ],
+                    "application/x-ndjson",
+                    true,
+                    self.api_mode,
+                )?;
+                Ok(ollama_native_stream(response, self.api_mode))
             }
-        }))
+            ProviderApiMode::Responses | ProviderApiMode::OpenaiCompatible => {
+                ensure_content_type(
+                    &response,
+                    &["text/event-stream"],
+                    "text/event-stream",
+                    true,
+                    self.api_mode,
+                )?;
+                Ok(openai_event_stream(response, self.api_mode))
+            }
+        }
     }
 
     async fn structured(
@@ -1220,27 +1450,89 @@ impl ModelProvider for HttpProvider {
     ) -> Result<Value, ProviderError> {
         let body = self.response_body(&request, false, Some(schema));
         let idempotency_key = Uuid::new_v4().to_string();
-        let endpoint = if self.chat_completions {
-            "chat/completions"
-        } else {
-            "responses"
+        let endpoint = match self.api_mode {
+            ProviderApiMode::Responses => "responses",
+            ProviderApiMode::OpenaiCompatible => "chat/completions",
+            ProviderApiMode::OllamaNative => "api/chat",
         };
         let response = self
             .send_with_retry(
                 reqwest::Method::POST,
                 self.endpoint(endpoint)?,
                 Some(&body),
-                Some(&idempotency_key),
+                (self.api_mode != ProviderApiMode::OllamaNative)
+                    .then_some(idempotency_key.as_str()),
             )
             .await?;
         if !response.status().is_success() {
-            return Err(http_failure(response).await);
+            return Err(self.http_failure(response).await);
         }
-        let value: Value = response.json().await?;
-        if self.chat_completions {
-            extract_chat_output(value)
-        } else {
-            extract_output_json(value)
+        ensure_content_type(
+            &response,
+            &["application/json"],
+            "application/json",
+            false,
+            self.api_mode,
+        )?;
+        let bytes =
+            read_bounded_body(response, MAX_PROVIDER_HTTP_BODY_BYTES, self.api_mode).await?;
+        let value = parse_json_body(&bytes, self.api_mode)?;
+        match self.api_mode {
+            ProviderApiMode::Responses => extract_output_json(value, self.api_mode),
+            ProviderApiMode::OpenaiCompatible => extract_chat_output(value, self.api_mode),
+            ProviderApiMode::OllamaNative => extract_ollama_output(value, self.api_mode),
+        }
+    }
+
+    async fn structured_stream(
+        &self,
+        request: ModelRequest,
+        schema: RootSchema,
+    ) -> Result<ProviderEventStream, ProviderError> {
+        let body = self.response_body(&request, true, Some(schema));
+        let idempotency_key = Uuid::new_v4().to_string();
+        let endpoint = match self.api_mode {
+            ProviderApiMode::Responses => "responses",
+            ProviderApiMode::OpenaiCompatible => "chat/completions",
+            ProviderApiMode::OllamaNative => "api/chat",
+        };
+        let response = self
+            .send_with_retry(
+                reqwest::Method::POST,
+                self.endpoint(endpoint)?,
+                Some(&body),
+                (self.api_mode != ProviderApiMode::OllamaNative)
+                    .then_some(idempotency_key.as_str()),
+            )
+            .await?;
+        if !response.status().is_success() {
+            return Err(self.http_failure(response).await);
+        }
+        match self.api_mode {
+            ProviderApiMode::OllamaNative => {
+                ensure_content_type(
+                    &response,
+                    &[
+                        "application/x-ndjson",
+                        "application/ndjson",
+                        "application/json",
+                    ],
+                    "application/x-ndjson",
+                    true,
+                    self.api_mode,
+                )?;
+                Ok(ollama_provider_stream(response, self.api_mode))
+            }
+            ProviderApiMode::Responses | ProviderApiMode::OpenaiCompatible => {
+                ensure_content_type(
+                    &response,
+                    &["text/event-stream"],
+                    "text/event-stream",
+                    true,
+                    self.api_mode,
+                )?;
+                Ok(openai_provider_stream(response, self.api_mode))
+            }
         }
     }
 
@@ -1257,8 +1549,12 @@ impl ModelProvider for HttpProvider {
     }
 
     async fn health_check(&self) -> Result<ProviderHealth, ProviderError> {
+        let endpoint = match self.api_mode {
+            ProviderApiMode::OllamaNative => "api/version",
+            ProviderApiMode::Responses | ProviderApiMode::OpenaiCompatible => "models",
+        };
         let response = self
-            .send_with_retry(reqwest::Method::GET, self.endpoint("models")?, None, None)
+            .send_with_retry(reqwest::Method::GET, self.endpoint(endpoint)?, None, None)
             .await?;
         Ok(ProviderHealth {
             available: response.status().is_success(),
@@ -1267,138 +1563,10 @@ impl ModelProvider for HttpProvider {
     }
 }
 
-async fn http_failure(response: reqwest::Response) -> ProviderError {
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    let sanitized = if body.len() > 2048 {
-        &body[..2048]
-    } else {
-        &body
-    };
-    ProviderError::HttpStatus {
-        status: status.as_u16(),
-        body: sanitized.to_owned(),
-    }
-}
-
-fn parse_response_event(data: &str) -> Result<Option<ModelEvent>, ProviderError> {
-    let value: Value = serde_json::from_str(data)?;
-    let event_type = value["type"].as_str().unwrap_or_default();
-    let event = match event_type {
-        "response.created" => {
-            value["response"]["id"]
-                .as_str()
-                .map(|id| ModelEvent::ResponseStarted {
-                    response_id: id.into(),
-                })
-        }
-        "response.output_text.delta" => value["delta"]
-            .as_str()
-            .map(|delta| ModelEvent::TextDelta(delta.into())),
-        "response.output_item.done" if value["item"]["type"] == "function_call" => {
-            Some(ModelEvent::ToolCall {
-                call_id: required_string(&value["item"], "call_id")?,
-                name: required_string(&value["item"], "name")?,
-                arguments: required_string(&value["item"], "arguments")?,
-            })
-        }
-        "response.completed" => {
-            if let (Some(input), Some(output)) = (
-                value["response"]["usage"]["input_tokens"].as_u64(),
-                value["response"]["usage"]["output_tokens"].as_u64(),
-            ) {
-                Some(ModelEvent::Usage {
-                    input_tokens: input,
-                    output_tokens: output,
-                })
-            } else {
-                Some(ModelEvent::Finished)
-            }
-        }
-        "response.failed" | "error" => {
-            return Err(ProviderError::InvalidResponse(
-                value["response"]["error"]["message"]
-                    .as_str()
-                    .or_else(|| value["error"]["message"].as_str())
-                    .unwrap_or("provider reported an unspecified error")
-                    .into(),
-            ))
-        }
-        _ => None,
-    };
-    Ok(event)
-}
-
-fn required_string(value: &Value, field: &str) -> Result<String, ProviderError> {
-    value[field]
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| ProviderError::InvalidResponse(format!("missing string field `{field}`")))
-}
-
-fn parse_chat_event(data: &str) -> Result<Option<ModelEvent>, ProviderError> {
-    let value: Value = serde_json::from_str(data)?;
-    let choices = value["choices"].as_array().and_then(|c| c.first());
-    let delta = choices.and_then(|c| c["delta"].as_object());
-    let finish_reason = choices.and_then(|c| c["finish_reason"].as_str());
-    if finish_reason.is_some() {
-        if let Some(input) = value["usage"]["prompt_tokens"].as_u64() {
-            if let Some(output) = value["usage"]["completion_tokens"].as_u64() {
-                return Ok(Some(ModelEvent::Usage {
-                    input_tokens: input,
-                    output_tokens: output,
-                }));
-            }
-        }
-        return Ok(Some(ModelEvent::Finished));
-    }
-    let event = delta.and_then(|d| {
-        d.get("content")
-            .and_then(|c| c.as_str())
-            .map(|text| ModelEvent::TextDelta(text.into()))
-            .or_else(|| {
-                d.get("tool_calls")
-                    .and_then(|tc| tc.as_array())
-                    .and_then(|calls| calls.first())
-                    .map(|call| ModelEvent::ToolCall {
-                        call_id: call["id"].as_str().unwrap_or("").into(),
-                        name: call["function"]["name"].as_str().unwrap_or("").into(),
-                        arguments: call["function"]["arguments"]
-                            .as_str()
-                            .unwrap_or("{}")
-                            .into(),
-                    })
-            })
-    });
-    Ok(event)
-}
-
-fn extract_chat_output(response: Value) -> Result<Value, ProviderError> {
-    let content = response["choices"]
-        .as_array()
-        .and_then(|c| c.first())
-        .and_then(|c| c["message"]["content"].as_str())
-        .ok_or_else(|| {
-            ProviderError::InvalidResponse("chat response contained no message content".into())
-        })?;
-    Ok(serde_json::from_str(content)?)
-}
-
-fn extract_output_json(response: Value) -> Result<Value, ProviderError> {
-    let text = response["output"]
-        .as_array()
-        .and_then(|items| items.iter().find(|item| item["type"] == "message"))
-        .and_then(|message| message["content"].as_array())
-        .and_then(|parts| parts.iter().find(|part| part["type"] == "output_text"))
-        .and_then(|part| part["text"].as_str())
-        .ok_or_else(|| {
-            ProviderError::InvalidResponse("structured response contained no output_text".into())
-        })?;
-    Ok(serde_json::from_str(text)?)
-}
-
 #[derive(Debug, Error)]
 pub enum ProviderError {
+    #[error("{0}")]
+    Diagnostic(ProviderDiagnostic),
     #[error("provider is unavailable: {0}")]
     Unavailable(String),
     #[error("provider response was invalid: {0}")]
@@ -1419,7 +1587,7 @@ pub enum ProviderError {
     Configuration(String),
     #[error("provider returned HTTP {status}: {body}")]
     HttpStatus { status: u16, body: String },
-    #[error("HTTP transport failed: {0}")]
+    #[error("HTTP transport failed")]
     Transport(#[from] reqwest::Error),
     #[error("configuration file could not be read: {0}")]
     Io(#[from] std::io::Error),
@@ -1431,13 +1599,43 @@ pub enum ProviderError {
     Json(#[from] serde_json::Error),
 }
 
+impl ProviderError {
+    pub fn diagnostic(&self) -> Option<&ProviderDiagnostic> {
+        match self {
+            Self::Diagnostic(diagnostic) => Some(diagnostic),
+            _ => None,
+        }
+    }
+
+    pub fn category(&self) -> Option<ProviderErrorCategory> {
+        match self {
+            Self::Diagnostic(diagnostic) => Some(diagnostic.category),
+            Self::HttpStatus { .. } => Some(ProviderErrorCategory::HttpStatus),
+            Self::MissingCredential(_) | Self::InvalidCredential(_) => {
+                Some(ProviderErrorCategory::Authentication)
+            }
+            Self::InvalidResponse(_) | Self::Json(_) => Some(ProviderErrorCategory::Schema),
+            Self::Transport(error) => {
+                Some(transport_diagnostic(error, ProviderApiMode::Responses).category)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn cancelled(reason: &str, api_mode: ProviderApiMode) -> Self {
+        Self::Diagnostic(diagnostics::cancelled_diagnostic(reason, api_mode))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt as _;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::AsyncWriteExt as _;
 
     #[test]
-    fn provider_endpoint_preserves_a_base_path_without_trailing_slash() {
+    fn legacy_ollama_v1_base_is_normalized_to_the_native_api_root() {
         let provider = HttpProvider::from_config(
             "ollama".into(),
             ProviderConfig::Ollama {
@@ -1447,9 +1645,75 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            provider.endpoint("chat/completions").unwrap().as_str(),
-            "http://127.0.0.1:11434/v1/chat/completions"
+            provider.endpoint("api/chat").unwrap().as_str(),
+            "http://127.0.0.1:11434/api/chat"
         );
+        assert_eq!(provider.api_mode, ProviderApiMode::OllamaNative);
+    }
+
+    #[test]
+    fn explicit_openai_compatible_provider_retains_its_v1_base() {
+        let provider = HttpProvider::from_config(
+            "compatible".into(),
+            ProviderConfig::OpenaiCompatible {
+                base_url: Url::parse("http://127.0.0.1:1234/v1").unwrap(),
+                api_key_env: None,
+                local: true,
+                headers: BTreeMap::new(),
+                capabilities: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            provider.endpoint("chat/completions").unwrap().as_str(),
+            "http://127.0.0.1:1234/v1/chat/completions"
+        );
+        assert_eq!(provider.api_mode, ProviderApiMode::OpenaiCompatible);
+    }
+
+    #[test]
+    fn compatibility_stream_chunking_preserves_utf8_and_frame_bounds() {
+        let value = format!("{}猫{}", "a".repeat(31), "b".repeat(31));
+        let chunks = split_bounded_utf8(value.clone(), 32);
+        assert!(chunks.iter().all(|chunk| chunk.len() <= 32));
+        assert_eq!(chunks.concat(), value);
+    }
+
+    #[test]
+    fn responses_request_keeps_nested_schema_definitions() {
+        #[allow(dead_code)]
+        #[derive(schemars::JsonSchema)]
+        struct NestedEnvelope {
+            action: NestedAction,
+        }
+
+        #[allow(dead_code)]
+        #[derive(schemars::JsonSchema)]
+        enum NestedAction {
+            Write { path: String },
+        }
+
+        let provider = HttpProvider::from_config(
+            "openai".into(),
+            ProviderConfig::Openai {
+                base_url: Url::parse("https://api.openai.com/v1/").unwrap(),
+                api_key_env: "OPENAI_API_KEY".into(),
+                capabilities: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+        let body = provider.response_body(
+            &test_request("openai"),
+            true,
+            Some(schemars::schema_for!(NestedEnvelope)),
+        );
+        let schema = &body["text"]["format"]["schema"];
+        assert!(schema["definitions"]
+            .as_object()
+            .is_some_and(|definitions| !definitions.is_empty()));
+        assert!(serde_json::to_string(schema)
+            .unwrap()
+            .contains("#/definitions/"));
     }
 
     #[test]
@@ -1514,6 +1778,42 @@ mod tests {
         assert!(keychain_reference("openai.primary-1").is_ok());
         assert!(keychain_reference("../unsafe").is_err());
         assert!(keychain_reference("").is_err());
+    }
+
+    #[test]
+    fn credential_references_are_typed_and_canonical() {
+        assert_eq!(
+            validate_credential_reference("keychain:openai.primary-1").unwrap(),
+            "keychain:openai.primary-1"
+        );
+        assert_eq!(
+            validate_credential_reference("PROVIDER_API_KEY").unwrap(),
+            "PROVIDER_API_KEY"
+        );
+        assert!(validate_credential_reference("sk-secret-value").is_err());
+        assert!(validate_credential_reference("provider_api_key").is_err());
+        assert!(validate_credential_reference("keychain:../unsafe").is_err());
+    }
+
+    #[test]
+    fn openai_configuration_requires_a_resolved_reference() {
+        let mut config: AppConfig = toml::from_str(
+            r#"
+                schema_version = 1
+                [privacy]
+                mode = "mixed"
+            "#,
+        )
+        .unwrap();
+        let result = config.configure_provider_with_reference(
+            "openai",
+            "openai",
+            "https://api.openai.com/v1",
+            "gpt-test",
+            None,
+        );
+        assert!(matches!(result, Err(ProviderError::Configuration(_))));
+        assert!(config.providers.is_empty());
     }
 
     #[test]
@@ -1585,7 +1885,10 @@ mod tests {
                 "message": {"role": "assistant", "content": "{\"ok\":true}"}
             }]
         });
-        assert_eq!(extract_chat_output(response).unwrap(), json!({"ok": true}));
+        assert_eq!(
+            extract_chat_output(response, ProviderApiMode::OpenaiCompatible).unwrap(),
+            json!({"ok": true})
+        );
     }
 
     #[test]
@@ -1596,12 +1899,370 @@ mod tests {
                 "content": [{"type": "output_text", "text": "{\"ok\":true}"}]
             }]
         });
-        assert_eq!(extract_output_json(response).unwrap(), json!({"ok": true}));
+        assert_eq!(
+            extract_output_json(response, ProviderApiMode::Responses).unwrap(),
+            json!({"ok": true})
+        );
+    }
+
+    fn test_request(provider: &str) -> ModelRequest {
+        ModelRequest {
+            model: ModelId {
+                provider: provider.into(),
+                model: "fixture-model".into(),
+            },
+            messages: vec![ModelMessage {
+                role: "user".into(),
+                content: "Return JSON.".into(),
+            }],
+            tools: Vec::new(),
+            max_output_tokens: Some(64),
+            reasoning_effort: None,
+        }
+    }
+
+    fn ollama_provider(base_url: Url) -> HttpProvider {
+        HttpProvider::from_config(
+            "ollama".into(),
+            ProviderConfig::Ollama {
+                base_url,
+                capabilities: BTreeMap::new(),
+            },
+        )
+        .unwrap()
+    }
+
+    async fn fake_http_server(
+        status: &'static str,
+        content_type: &'static str,
+        body: Vec<u8>,
+    ) -> (Url, tokio::task::JoinHandle<Vec<u8>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = read_http_request(&mut socket).await;
+            let headers = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = socket.write_all(headers.as_bytes()).await;
+            let _ = socket.write_all(&body).await;
+            request
+        });
+        (Url::parse(&format!("http://{address}/")).unwrap(), server)
+    }
+
+    async fn read_http_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        let (header_end, content_length) = loop {
+            let read = socket.read(&mut buffer).await.unwrap();
+            if read == 0 {
+                return request;
+            }
+            request.extend_from_slice(&buffer[..read]);
+            if let Some(header_end) = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|position| position + 4)
+            {
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':').and_then(|(name, value)| {
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                    })
+                    .unwrap_or(0);
+                break (header_end, content_length);
+            }
+        };
+        while request.len() < header_end.saturating_add(content_length) {
+            let read = socket.read(&mut buffer).await.unwrap();
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..read]);
+        }
+        request
+    }
+
+    fn request_body(request: &[u8]) -> Value {
+        let body_start = request
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|position| position + 4)
+            .unwrap();
+        serde_json::from_slice(&request[body_start..]).unwrap()
+    }
+
+    #[tokio::test]
+    async fn ollama_native_structured_request_uses_api_chat_and_native_schema() {
+        let response =
+            br#"{"message":{"role":"assistant","content":"{\"ok\":true}"},"done":true}"#.to_vec();
+        let (base_url, server) =
+            fake_http_server("200 OK", "application/json; charset=utf-8", response).await;
+        let provider = ollama_provider(base_url.join("v1").unwrap());
+
+        let value = provider
+            .structured(
+                test_request("ollama"),
+                schemars::schema_for!(QualificationAnswer),
+            )
+            .await
+            .unwrap();
+        assert_eq!(value, json!({"ok": true}));
+
+        let request = server.await.unwrap();
+        let rendered = String::from_utf8_lossy(&request);
+        assert!(rendered.starts_with("POST /api/chat HTTP/1.1\r\n"));
+        let body = request_body(&request);
+        assert_eq!(body["model"], "fixture-model");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["options"]["num_predict"], 64);
+        assert_eq!(body["format"]["type"], "object");
+        assert!(body.get("response_format").is_none());
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_mode_remains_explicit_and_uses_chat_completions() {
+        let response = br#"{"choices":[{"message":{"content":"{\"ok\":true}"}}]}"#.to_vec();
+        let (base_url, server) = fake_http_server("200 OK", "application/json", response).await;
+        let provider = HttpProvider::from_config(
+            "compatible".into(),
+            ProviderConfig::OpenaiCompatible {
+                base_url: base_url.join("v1/").unwrap(),
+                api_key_env: None,
+                local: true,
+                headers: BTreeMap::new(),
+                capabilities: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+
+        let value = provider
+            .structured(
+                test_request("compatible"),
+                schemars::schema_for!(QualificationAnswer),
+            )
+            .await
+            .unwrap();
+        assert_eq!(value, json!({"ok": true}));
+
+        let request = server.await.unwrap();
+        let rendered = String::from_utf8_lossy(&request);
+        assert!(rendered.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
+        let body = request_body(&request);
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["response_format"]["type"], "json_object");
+        assert!(body.get("format").is_none());
+    }
+
+    #[tokio::test]
+    async fn ollama_native_ndjson_stream_yields_text_tools_usage_and_finish() {
+        let response = concat!(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"hel\"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"lo\",\"tool_calls\":[{\"function\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"README.md\"}}}]},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":7,\"eval_count\":3}\n"
+        )
+        .as_bytes()
+        .to_vec();
+        let (base_url, server) = fake_http_server("200 OK", "application/x-ndjson", response).await;
+        let provider = ollama_provider(base_url);
+        let mut request = test_request("ollama");
+        request.tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "parameters": {"type": "object"}
+            }
+        }));
+
+        let mut stream = provider.stream(request).await.unwrap();
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.unwrap());
+        }
+        assert_eq!(
+            events,
+            vec![
+                ModelEvent::TextDelta("hel".into()),
+                ModelEvent::TextDelta("lo".into()),
+                ModelEvent::ToolCall {
+                    call_id: "ollama-tool-0".into(),
+                    name: "read_file".into(),
+                    arguments: "{\"path\":\"README.md\"}".into(),
+                },
+                ModelEvent::Usage {
+                    input_tokens: 7,
+                    output_tokens: 3,
+                },
+                ModelEvent::Finished,
+            ]
+        );
+
+        let request = server.await.unwrap();
+        let rendered = String::from_utf8_lossy(&request);
+        assert!(rendered.starts_with("POST /api/chat HTTP/1.1\r\n"));
+        let body = request_body(&request);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["tools"][0]["function"]["name"], "read_file");
+    }
+
+    #[tokio::test]
+    async fn ollama_structured_stream_exposes_transport_and_real_content_deltas() {
+        let response = concat!(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"answer\\\":\"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"\\\"ok\\\"}\"},\"done\":false}\n",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":5,\"eval_count\":2}\n"
+        )
+        .as_bytes()
+        .to_vec();
+        let (base_url, server) = fake_http_server("200 OK", "application/x-ndjson", response).await;
+        let provider = ollama_provider(base_url);
+
+        let mut stream = provider
+            .structured_stream(
+                test_request("ollama"),
+                schemars::schema_for!(QualificationAnswer),
+            )
+            .await
+            .unwrap();
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.unwrap());
+        }
+        assert_eq!(events.first(), Some(&ProviderStreamEvent::Connected));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProviderStreamEvent::BytesReceived { byte_count } if *byte_count > 0
+        )));
+        let content: String = events
+            .iter()
+            .filter_map(|event| match event {
+                ProviderStreamEvent::Model(ModelEvent::TextDelta(delta)) => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(content, r#"{"answer":"ok"}"#);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProviderStreamEvent::Model(ModelEvent::Usage {
+                input_tokens: 5,
+                output_tokens: 2,
+            })
+        )));
+        assert_eq!(
+            events.last(),
+            Some(&ProviderStreamEvent::Model(ModelEvent::Finished))
+        );
+
+        let request = server.await.unwrap();
+        let rendered = String::from_utf8_lossy(&request);
+        assert!(rendered.starts_with("POST /api/chat HTTP/1.1\r\n"));
+        let body = request_body(&request);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["format"]["type"], "object");
+    }
+
+    #[tokio::test]
+    async fn http_error_body_is_bounded_redacted_and_categorized() {
+        let body = format!(
+            "api_key=sk-super-secret Authorization: Bearer another-secret {}",
+            "x".repeat(MAX_PROVIDER_ERROR_BODY_BYTES * 2)
+        )
+        .into_bytes();
+        let (base_url, server) =
+            fake_http_server("401 Unauthorized", "application/json", body).await;
+        let provider = ollama_provider(base_url);
+
+        let error = provider
+            .structured(
+                test_request("ollama"),
+                schemars::schema_for!(QualificationAnswer),
+            )
+            .await
+            .unwrap_err();
+        let diagnostic = error.diagnostic().unwrap();
+        assert_eq!(diagnostic.category, ProviderErrorCategory::Authentication);
+        assert_eq!(diagnostic.http_status, Some(401));
+        assert!(diagnostic.truncated);
+        assert!(diagnostic.excerpt.as_ref().unwrap().len() <= MAX_PROVIDER_DIAGNOSTIC_BYTES);
+        let rendered = error.to_string();
+        assert!(!rendered.contains("super-secret"));
+        assert!(!rendered.contains("another-secret"));
+        assert!(rendered.contains("[REDACTED]"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn incompatible_stream_content_type_is_an_api_mode_mismatch() {
+        let (base_url, server) = fake_http_server("200 OK", "text/event-stream", Vec::new()).await;
+        let provider = ollama_provider(base_url);
+
+        let error = provider.stream(test_request("ollama")).await.err().unwrap();
+        assert_eq!(
+            error.category(),
+            Some(ProviderErrorCategory::ApiModeMismatch)
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn oversized_ndjson_frame_is_rejected_with_a_bounded_diagnostic() {
+        let mut response = vec![b'x'; MAX_PROVIDER_STREAM_FRAME_BYTES + 1];
+        response.push(b'\n');
+        let (base_url, server) = fake_http_server("200 OK", "application/x-ndjson", response).await;
+        let provider = ollama_provider(base_url);
+
+        let mut stream = provider.stream(test_request("ollama")).await.unwrap();
+        let error = stream.next().await.unwrap().unwrap_err();
+        let diagnostic = error.diagnostic().unwrap();
+        assert_eq!(diagnostic.category, ProviderErrorCategory::StreamFraming);
+        assert!(diagnostic.truncated);
+        assert!(diagnostic.excerpt.as_ref().unwrap().len() <= MAX_PROVIDER_DIAGNOSTIC_BYTES);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn oversized_structured_response_is_rejected_at_the_body_limit() {
+        let response = vec![b'x'; MAX_PROVIDER_HTTP_BODY_BYTES + 1];
+        let (base_url, server) = fake_http_server("200 OK", "application/json", response).await;
+        let provider = ollama_provider(base_url);
+
+        let error = provider
+            .structured(
+                test_request("ollama"),
+                schemars::schema_for!(QualificationAnswer),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.category(), Some(ProviderErrorCategory::Schema));
+        assert!(error.diagnostic().unwrap().truncated);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn oversized_request_is_rejected_before_network_io() {
+        let provider = ollama_provider(Url::parse("http://127.0.0.1:9/").unwrap());
+        let mut request = test_request("ollama");
+        request.messages[0].content = "x".repeat(MAX_PROVIDER_HTTP_REQUEST_BYTES + 1);
+
+        let error = provider.stream(request).await.err().unwrap();
+        assert_eq!(
+            error.category(),
+            Some(ProviderErrorCategory::ContextTooLarge)
+        );
+        assert!(error.diagnostic().unwrap().excerpt.is_some());
     }
 
     #[tokio::test]
     async fn health_check_retries_transient_statuses_only() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let attempts = Arc::new(AtomicUsize::new(0));

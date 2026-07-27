@@ -260,12 +260,23 @@ impl LocalModelRuntime {
             }
             read_bounded_json(response, "api/generate unload").await?;
         }
-        let remaining = self.inspect().await?.loaded;
-        let still_loaded = remaining
-            .iter()
-            .filter(|model| targets.contains(&model.name))
-            .map(|model| model.name.clone())
-            .collect::<Vec<_>>();
+        let mut still_loaded = Vec::new();
+        for attempt in 0..=20 {
+            still_loaded = self
+                .inspect()
+                .await?
+                .loaded
+                .into_iter()
+                .filter(|model| targets.contains(&model.name))
+                .map(|model| model.name)
+                .collect();
+            if still_loaded.is_empty() {
+                break;
+            }
+            if attempt < 20 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
         if !still_loaded.is_empty() {
             return Err(format!(
                 "Ollama acknowledged unload but models remain loaded: {}",

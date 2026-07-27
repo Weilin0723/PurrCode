@@ -46,6 +46,23 @@ pub fn cards_from_events(events: &[Value]) -> Vec<TimelineCard> {
     events.iter().filter_map(card_from_event).collect()
 }
 
+/// Collapse one durable event without ever exposing its raw JSON payload.
+///
+/// Known events retain their normal human-readable card. A newer daemon may add an event before
+/// this TUI knows its detailed shape; that event is represented by a generic audit card whose
+/// summary contains only the bounded event name.
+pub fn collapsed_card_from_event(event: &Value) -> TimelineCard {
+    card_from_event(event).unwrap_or_else(|| {
+        let name = event
+            .get("event")
+            .and_then(Value::as_str)
+            .map(safe_event_name)
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "unknown event".into());
+        TimelineCard::new(CardKind::Context, "Runtime audit", humanize(&name))
+    })
+}
+
 pub fn pending_action_from_events(events: &[Value]) -> Option<Value> {
     let mut pending: Option<(String, Value)> = None;
     for event in events {
@@ -75,6 +92,14 @@ pub fn pending_action_from_events(events: &[Value]) -> Option<Value> {
         }
     }
     pending.map(|(_, action)| action)
+}
+
+fn safe_event_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+        .take(64)
+        .collect()
 }
 
 pub fn action_summary(action: &Value) -> String {

@@ -8,6 +8,7 @@ license.workspace = true
 async-trait.workspace = true
 blake3.workspace = true
 chrono.workspace = true
+futures.workspace = true
 purrcode-whisker = { path = "../whisker-context-engine" }
 purrcode-contextual-judgment = { path = "../contextual-judgment" }
 purrcode-pawgate = { path = "../pawgate-runtime" }
@@ -21,9 +22,8 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 async-trait.workspace = true
-futures.workspace = true
 tempfile.workspace = true
-tokio.workspace = true

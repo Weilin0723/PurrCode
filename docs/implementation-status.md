@@ -1,8 +1,8 @@
 # Implementation status
 
-Updated: 2026-07-26 (v0.5 usability recovery Phase 1 complete; later phases remain in progress)
+Updated: 2026-07-26 (v0.5 usability recovery Phases 1–6 complete; release qualification in progress)
 
-## v0.5 usability recovery — Phase 1 complete
+## v0.5 usability recovery — Phases 1–6 complete
 
 - Daemon and TUI startup remain generation-free and session-free. A deterministic integration test
   starts the daemon with a live fake Ollama endpoint, performs the same provider-list and repository
@@ -24,9 +24,22 @@ Updated: 2026-07-26 (v0.5 usability recovery Phase 1 complete; later phases rema
   Remote requests do not consume the local inference budget.
 - Agent leases now own the actual agent future rather than a detached child task, so cancelling a
   lease drops in-flight provider work before durable cancellation and model release.
-- Ollama Native generation, hardware-aware model recommendation/pull, truthful provider streaming,
-  governed external capability discovery, and cancellable Tier 1/2 indexing are intentionally
-  tracked in Phases 2–6 and are not represented as complete here.
+- Provider import keeps extracted secrets in zeroizing transient storage until the user chooses a
+  keychain or environment reference. Native Ollama and explicit OpenAI-compatible modes are
+  separate, and bounded redacted diagnostics classify transport, HTTP, schema, framing, model,
+  context, memory, and cancellation failures.
+- Live output separates rationale content, provider phases/timing, and durable audit events.
+  Bounded channels apply backpressure; reconnect restores a bounded snapshot; cancellation
+  preserves partial output and releases the local model.
+- Hardware-aware recommendations use observed metadata and qualification evidence. Explicit
+  Ollama pulls require exact durable approval and support bounded progress and cancellation.
+- Installed qualified skills are resolved before external search. Public research, immutable
+  download, dynamic qualification, installation, and each MCP invocation retain distinct PawGate
+  authorization boundaries.
+- Tier 1 begins only after a task. Daemon-owned Tier 2 advances in bounded steps and pauses for
+  generation, memory pressure, or degraded scheduler responsiveness.
+- Full evidence and the live Ollama acceptance are recorded in
+  `docs/reports/v0.5-usability-recovery.md`.
 
 ## v0.4 product redesign — implemented, provider model qualification failed
 

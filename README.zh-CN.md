@@ -14,8 +14,9 @@ PurrCode 是一个在隔离 Git worktree 中工作的终端编程智能体。每
 持久化授权，并在执行前再次校验，随后记录真实验证结果。仓库内容、模型输出和下载的技能
 始终被视为不可信数据。
 
-v0.4 工作区新增 Unicode 安全的多行编辑器、自动脱敏且仅解析不执行的 Provider 脚本导入、
-真实 Provider 发现与测试、响应式仓库面板、结构化运行卡片、可搜索命令面板和可操作的守护进程恢复流程。
+PurrCode v0.5 专注首次使用可靠性：安全的多行 Provider 导入、Ollama 原生流式接口、
+基于硬件的模型推荐、明确的拉取与卸载控制、真实运行阶段、受治理的 Skill/MCP 发现，以及
+延迟启动的分层仓库索引。
 
 ## 为什么选择 PurrCode
 
@@ -34,12 +35,18 @@ v0.4 工作区新增 Unicode 安全的多行编辑器、自动脱敏且仅解析
 
 ## 安装
 
-### npm 兼容安装包
+### npm
+
+```bash
+npm install --global purrcode
+```
+
+首次 npm registry 发布完成前，可从 GitHub Release 安装同一个已签名 launcher：
 
 使用 Node.js 18 或更高版本，可以直接从 GitHub 安装：
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.4.1/purrcode-0.4.1.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.0/purrcode-0.5.0.tgz
 ```
 
 安装包会选择正确的 macOS、Linux 或 Windows 二进制文件，校验固定的 SHA-256 摘要，并
@@ -48,7 +55,7 @@ npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0
 ### macOS 和 Linux 安装脚本
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.4.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.0/scripts/install.sh | sh
 ```
 
 脚本会使用 `SHA256SUMS` 校验发布归档，并默认安装到 `~/.local/bin`。可通过
@@ -78,6 +85,34 @@ purrcode
 
 在界面内使用 `/connect` 即可发现 Ollama 或 LM Studio，也可以配置远程供应商，无需手动
 编辑 TOML。凭据存储在操作系统密钥库中，不会进入模型上下文或工具进程。
+
+使用 `/connect import` 可粘贴 Python、JavaScript、cURL、JSON、YAML、TOML 或 dotenv
+示例。PurrCode 只解析、不执行；提取出的密钥只短暂保存在内存中，保存前必须转换为钥匙串或
+环境变量引用。
+
+## v0.5 更新
+
+- **真实流式体验：** 内容增量、Provider 阶段和持久化审计使用三个独立的有界通道；重连
+  恢复快照，取消时保留 partial 输出。
+- **资源感知的本地模型：** 启动时不会生成内容或加载模型。Ollama 默认使用原生接口；推荐
+  只依据已观察的资格证据和内存状态；低内存设备默认单请求并在结束后卸载。
+- **受治理的能力发现：** 优先复用已安装且合格的 Skill。公开搜索、固定提交下载、动态资格
+  验证、安装和每次 MCP 调用都需要独立的精确 PawGate 授权。
+- **延迟上下文：** 启动时 Tier 0 只读取元数据；提交任务后才运行 Tier 1；有界 Tier 2 会在
+  生成、内存压力或响应变慢时暂停。
+
+常用界面命令：
+
+```text
+/connect import
+/model recommend
+/model qualify <model>
+/model loaded
+/model unload <model>
+/skills search <query>
+/mcp search <query>
+/capability add <description>
+```
 
 ## 运行时模型
 
@@ -146,6 +181,7 @@ PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
 - [恢复](docs/recovery.md)
 - [故障排查](docs/troubleshooting.md)
 - [实现状态](docs/implementation-status.md)
+- [v0.5 可用性恢复证据](docs/reports/v0.5-usability-recovery.md)
 - [v0.4 重构验收](docs/product-redesign-acceptance.md)
 - [验证报告](docs/reports/)
 

@@ -1,6 +1,8 @@
 //! Authenticated loopback API and durable session owner.
 
 mod local_models;
+pub mod model_recommendation;
+mod ollama_pull;
 
 use async_trait::async_trait;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -10,9 +12,11 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use purrcode_agent_runtime::{
-    AgentAction, AgentTurn, CapabilityResolution, NativeAgent, SkillResolver,
+    bounded_agent_stream_channel, AgentAction, AgentCancellation, AgentContextIndex,
+    AgentStreamEvent, AgentStreamObserver, AgentTurn, CapabilityResolution, IndexingSignals,
+    MemoryPressure, NativeAgent, SkillResolver, Tier2Policy,
 };
 use purrcode_claw::ToolRuntime;
 use purrcode_mcp_host::{
@@ -22,24 +26,28 @@ use purrcode_mcp_host::{
 use purrcode_ninelives::{Automation, SessionStore, StoreError};
 use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
-    AppConfig, ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode, ProviderConfig,
+    keychain_reference, qualify_model, validate_credential_reference, AppConfig, ModelEvent,
+    ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode, ProviderConfig,
     ProviderRouter,
 };
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, Authorization, CommandAction,
     ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
-    SessionEvent, SessionId, SessionStatus, ValidationStatus, WriteFileAction,
+    SessionEvent, SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
 };
 use purrcode_skill_registry::{
-    GitHubRegistryAdapter, Qualifier as RegistryQualifier, RegistryEngine, SearchQuery,
+    ExternalSearchAuthorization, GitHubRegistryAdapter, Qualifier as RegistryQualifier,
+    RegistryEngine, SearchQuery,
 };
 use purrcode_skill_store::{SkillScope, SkillStore};
 use purrcode_supervisor_runtime::{
     IsolatedWorker, ParallelismConfig, Supervisor, WorkerOutput, WorkerSpec, WorkerStatus,
     WorkerWorkspace,
 };
-use purrcode_web_research::{DomainPolicy, ResearchEngine, StubSearchProvider};
+use purrcode_web_research::{
+    DomainPolicy, PublicWebAction, PublicWebAuthorization, ResearchEngine, StubSearchProvider,
+};
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -50,13 +58,21 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{broadcast, watch, Mutex, Semaphore};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
 use crate::local_models::{
     LocalModelLifecycle, LocalModelLifecycleSettings, LocalModelRuntime, ResourceSnapshot,
     UnloadLocalModelRequest,
+};
+use crate::model_recommendation::{
+    recommend_local_models, CapabilityObservation, ModelEvidence, OllamaMetadataEvidence,
+    QualificationEvidence,
+};
+use crate::ollama_pull::{
+    proposed_pull, resolve_ollama_program, validate_model_name as validate_pull_model_name,
+    validate_pull_action, PullAdapter, PullPhase, PullProgress,
 };
 
 #[derive(Clone)]
@@ -72,17 +88,208 @@ struct AppState {
     local_inference_slots: Arc<Semaphore>,
     local_inference_limit: usize,
     interrupting_sessions: Arc<Mutex<BTreeMap<SessionId, Uuid>>>,
+    pull_jobs: Arc<Mutex<BTreeMap<ActionId, PullJob>>>,
+    live_streams: Arc<Mutex<BTreeMap<SessionId, Arc<LiveStreamHub>>>>,
 }
 
 struct AgentLease {
     generation: Uuid,
     task: tokio::task::JoinHandle<()>,
     models: Vec<ModelId>,
+    cancellation: AgentCancellation,
 }
 
 struct AgentInterruption {
     token: Uuid,
     lease_models: Option<Vec<ModelId>>,
+}
+
+struct PullJob {
+    session_id: SessionId,
+    progress: watch::Sender<PullProgress>,
+    cancellation: watch::Sender<bool>,
+}
+
+const LIVE_STREAM_CAPACITY: usize = 64;
+const AGENT_STREAM_CAPACITY: usize = 32;
+const MAX_LIVE_PARTIAL_BYTES: usize = 256 * 1024;
+
+struct LiveStreamHub {
+    sender: broadcast::Sender<serde_json::Value>,
+    snapshot: Mutex<LiveStreamSnapshot>,
+}
+
+#[derive(Default)]
+struct LiveStreamSnapshot {
+    request_index: u64,
+    role: String,
+    attempt: u8,
+    model: String,
+    phase: Option<serde_json::Value>,
+    partial: String,
+    partial_is_preservable: bool,
+}
+
+impl LiveStreamHub {
+    fn new() -> Self {
+        let (sender, _) = broadcast::channel(LIVE_STREAM_CAPACITY);
+        Self {
+            sender,
+            snapshot: Mutex::new(LiveStreamSnapshot::default()),
+        }
+    }
+
+    async fn publish(&self, event: AgentStreamEvent, model: &ModelId) {
+        let value = {
+            let mut snapshot = self.snapshot.lock().await;
+            match event {
+                AgentStreamEvent::Phase {
+                    role,
+                    attempt,
+                    sequence,
+                    previous_phase,
+                    phase,
+                    timing,
+                } => {
+                    if sequence == 1 {
+                        if attempt == 1 {
+                            snapshot.request_index = snapshot.request_index.saturating_add(1);
+                        }
+                        snapshot.role = role.clone();
+                        snapshot.attempt = attempt;
+                        snapshot.model = model_key(model);
+                        snapshot.partial.clear();
+                        snapshot.partial_is_preservable = false;
+                    }
+                    snapshot.partial_is_preservable = match phase {
+                        purrcode_provider_gateway::StreamPhase::Cancelled => {
+                            !snapshot.partial.is_empty()
+                        }
+                        purrcode_provider_gateway::StreamPhase::Completed
+                        | purrcode_provider_gateway::StreamPhase::Failed => false,
+                        _ => snapshot.partial_is_preservable,
+                    };
+                    let value = serde_json::json!({
+                        "kind": "phase",
+                        "request_index": snapshot.request_index,
+                        "role": role,
+                        "attempt": attempt,
+                        "sequence": sequence,
+                        "previous_phase": previous_phase,
+                        "phase": phase,
+                        "model": model_key(model),
+                        "timing": timing,
+                    });
+                    snapshot.phase = Some(value.clone());
+                    value
+                }
+                AgentStreamEvent::ContentDelta {
+                    role,
+                    attempt,
+                    delta,
+                } => {
+                    if role == "coding_worker"
+                        && snapshot.partial.len().saturating_add(delta.len())
+                            <= MAX_LIVE_PARTIAL_BYTES
+                    {
+                        snapshot.partial.push_str(&delta);
+                        snapshot.partial_is_preservable = true;
+                    }
+                    serde_json::json!({
+                        "kind": "content_delta",
+                        "request_index": snapshot.request_index,
+                        "role": role,
+                        "attempt": attempt,
+                        "model": model_key(model),
+                        "delta": delta,
+                    })
+                }
+            }
+        };
+        let _ = self.sender.send(value);
+    }
+
+    async fn reconnect_snapshot(&self) -> Vec<serde_json::Value> {
+        let snapshot = self.snapshot.lock().await;
+        let mut events = Vec::new();
+        if let Some(phase) = &snapshot.phase {
+            events.push(phase.clone());
+        }
+        if !snapshot.partial.is_empty() {
+            events.push(serde_json::json!({
+                "kind": "content_delta",
+                "request_index": snapshot.request_index,
+                "role": snapshot.role,
+                "attempt": snapshot.attempt,
+                "model": snapshot.model,
+                "delta": snapshot.partial,
+                "snapshot": true,
+            }));
+        }
+        events
+    }
+
+    async fn take_preservable_partial(&self) -> Option<(String, String)> {
+        let mut snapshot = self.snapshot.lock().await;
+        if !snapshot.partial_is_preservable || snapshot.partial.is_empty() {
+            return None;
+        }
+        snapshot.partial_is_preservable = false;
+        Some((
+            std::mem::take(&mut snapshot.partial),
+            snapshot.model.clone(),
+        ))
+    }
+}
+
+async fn live_stream_hub(state: &AppState, id: SessionId) -> Arc<LiveStreamHub> {
+    let mut streams = state.live_streams.lock().await;
+    streams
+        .entry(id)
+        .or_insert_with(|| Arc::new(LiveStreamHub::new()))
+        .clone()
+}
+
+async fn preserve_live_partial(
+    state: &AppState,
+    id: SessionId,
+    boundary: &str,
+) -> Result<(), ApiError> {
+    let hub = {
+        let streams = state.live_streams.lock().await;
+        streams.get(&id).cloned()
+    };
+    let Some(hub) = hub else {
+        return Ok(());
+    };
+    let Some((partial, model)) = hub.take_preservable_partial().await else {
+        return Ok(());
+    };
+    let content = format!("{partial}\n\n[Partial response preserved after {boundary}.]");
+    let mut store = state.store.lock().await;
+    let session = store.load(id)?;
+    if session.conversation_messages.iter().any(|message| {
+        message.role == "assistant"
+            && message.content == content
+            && message.model.as_deref() == Some(&model)
+    }) {
+        return Ok(());
+    }
+    store.append(
+        id,
+        &SessionEvent::ConversationMessageAdded {
+            message: ConversationMessage {
+                id: Uuid::new_v4().to_string(),
+                role: "assistant".into(),
+                content,
+                timestamp: Utc::now(),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                model: Some(model),
+            },
+        },
+    )?;
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +330,8 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         local_inference_slots: Arc::new(Semaphore::new(local_inference_limit)),
         local_inference_limit,
         interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+        pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+        live_streams: Arc::new(Mutex::new(BTreeMap::new())),
     };
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -166,7 +375,36 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         .route("/v1/models", get(list_models))
         .route("/v1/models/roles", post(assign_model_role))
         .route("/v1/local-models", get(local_models))
+        .route(
+            "/v1/local-models/recommendations",
+            get(local_model_recommendations),
+        )
+        .route("/v1/local-models/qualify", post(qualify_local_model))
         .route("/v1/local-models/unload", post(unload_local_model))
+        .route(
+            "/v1/local-models/pull/propose",
+            post(propose_local_model_pull),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}/approve",
+            post(approve_local_model_pull),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}/start",
+            post(start_local_model_pull),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}",
+            get(local_model_pull_status),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}/events",
+            get(local_model_pull_events),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}/cancel",
+            post(cancel_local_model_pull),
+        )
         .route(
             "/v1/local-models/settings",
             get(local_model_settings).post(update_local_model_settings),
@@ -232,6 +470,8 @@ pub async fn bind_and_report(
         local_inference_slots: Arc::new(Semaphore::new(local_inference_limit)),
         local_inference_limit,
         interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+        pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+        live_streams: Arc::new(Mutex::new(BTreeMap::new())),
     };
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -275,7 +515,36 @@ pub async fn bind_and_report(
         .route("/v1/models", get(list_models))
         .route("/v1/models/roles", post(assign_model_role))
         .route("/v1/local-models", get(local_models))
+        .route(
+            "/v1/local-models/recommendations",
+            get(local_model_recommendations),
+        )
+        .route("/v1/local-models/qualify", post(qualify_local_model))
         .route("/v1/local-models/unload", post(unload_local_model))
+        .route(
+            "/v1/local-models/pull/propose",
+            post(propose_local_model_pull),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}/approve",
+            post(approve_local_model_pull),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}/start",
+            post(start_local_model_pull),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}",
+            get(local_model_pull_status),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}/events",
+            get(local_model_pull_events),
+        )
+        .route(
+            "/v1/local-models/pull/{action_id}/cancel",
+            post(cancel_local_model_pull),
+        )
         .route(
             "/v1/local-models/settings",
             get(local_model_settings).post(update_local_model_settings),
@@ -1101,6 +1370,7 @@ async fn pause_session(
         token,
         lease_models,
     } = abort_agent_lease(&state, id).await?;
+    preserve_live_partial(&state, id, "pause").await?;
     let models_were_active = lease_models.is_some();
     let lifecycle_models = lease_models.unwrap_or(fallback_models);
     let result: Result<Json<AcceptedSession>, ApiError> = async {
@@ -1365,6 +1635,7 @@ async fn replace_action(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct McpInvocationRequest {
     server: String,
     tool: String,
@@ -1372,6 +1643,7 @@ struct McpInvocationRequest {
     arguments: serde_json::Value,
     #[serde(default)]
     approved: bool,
+    action_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1388,15 +1660,43 @@ async fn invoke_mcp(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
+    if request.approved && request.action_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "approved MCP invocation requires the exact previously proposed action_id".into(),
+        ));
+    }
+    if !request.approved && request.action_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "action_id is accepted only when executing an explicitly approved MCP invocation"
+                .into(),
+        ));
+    }
+    let requested_action_id = request
+        .action_id
+        .as_deref()
+        .map(parse_action_id)
+        .transpose()?;
     require_idle(&state, id).await?;
     let session = state.store.lock().await.load(id)?;
     let restore_paused = session.status == SessionStatus::Paused;
-    if !matches!(
-        session.status,
-        SessionStatus::Active | SessionStatus::Paused
-    ) {
+    let status_allows_request = match requested_action_id {
+        Some(action_id) => {
+            matches!(
+                session.status,
+                SessionStatus::Active | SessionStatus::Paused
+            ) || matches!(
+                session.status,
+                SessionStatus::AwaitingApproval(pending) if pending == action_id
+            )
+        }
+        None => matches!(
+            session.status,
+            SessionStatus::Active | SessionStatus::Paused
+        ),
+    };
+    if !status_allows_request {
         return Err(ApiError::Conflict(
-            "MCP calls require an active or paused nonterminal session".into(),
+            "MCP calls require an active session or the exact pending approval".into(),
         ));
     }
     let repository = session
@@ -1434,60 +1734,71 @@ async fn invoke_mcp(
     let policy = effective_policy(&config, &repository)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let decision = policy.evaluate(&action, &repository);
-    let constraints = match &decision {
-        JudgmentDecision::RequireApproval { constraints, .. } if request.approved => {
-            constraints.clone()
-        }
-        JudgmentDecision::RequireApproval { reason, .. } => {
-            return Err(ApiError::Conflict(format!(
-                "human approval required for exact MCP action: {reason}"
-            )));
-        }
+    let action_id = if let Some(action_id) = requested_action_id {
+        action_id
+    } else {
+        let action_id = ActionId::new();
+        let mut store = SessionStore::open(&state.database)?;
+        store.append(
+            id,
+            &SessionEvent::ActionProposed {
+                action_id,
+                action: action.clone(),
+            },
+        )?;
+        store.append(
+            id,
+            &SessionEvent::JudgmentRecorded {
+                action_id,
+                decision: decision.clone(),
+            },
+        )?;
+        return match decision {
+            JudgmentDecision::RequireApproval {
+                reason,
+                constraints,
+            } => {
+                let action_digest = action
+                    .digest(&constraints)
+                    .map_err(|error| ApiError::Conflict(error.to_string()))?;
+                Ok(Json(serde_json::json!({
+                    "requires_approval": true,
+                    "action_id": action_id.0,
+                    "action_digest": action_digest,
+                    "reason": reason,
+                })))
+            }
+            JudgmentDecision::Deny { reason } => Err(ApiError::Conflict(format!(
+                "MCP action {action_id:?} denied by PawGate: {reason}"
+            ))),
+            other => Err(ApiError::Conflict(format!(
+                "MCP policy returned unsupported decision {other:?}"
+            ))),
+        };
+    };
+    let current_constraints = match decision {
+        JudgmentDecision::RequireApproval { constraints, .. } => constraints,
         JudgmentDecision::Deny { reason } => {
-            return Err(ApiError::Conflict(format!("MCP action denied: {reason}")));
+            return Err(ApiError::Conflict(format!(
+                "MCP action is now denied by PawGate: {reason}"
+            )))
         }
         other => {
             return Err(ApiError::Conflict(format!(
                 "MCP policy returned unsupported decision {other:?}"
-            )));
+            )))
         }
     };
-    let action_id = ActionId::new();
-    let digest = action
-        .digest(&constraints)
-        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    let (persisted_constraints, _) =
+        exact_approval_context(&session, action_id, &action, "MCP invocation")?;
+    if persisted_constraints != current_constraints {
+        return Err(ApiError::Conflict(
+            "MCP policy constraints changed after proposal; propose the action again".into(),
+        ));
+    }
     let mut store = SessionStore::open(&state.database)?;
-    store.append(
-        id,
-        &SessionEvent::ActionProposed {
-            action_id,
-            action: action.clone(),
-        },
-    )?;
-    store.append(
-        id,
-        &SessionEvent::JudgmentRecorded {
-            action_id,
-            decision,
-        },
-    )?;
-    store.authorize(&Authorization {
-        action_id,
-        session_id: id,
-        action_digest: digest.clone(),
-        constraints: constraints.clone(),
-        authorized_at: Utc::now(),
-        approved_by: ApprovalAuthority::Human,
-    })?;
-    store.append(
-        id,
-        &SessionEvent::ApprovalRecorded {
-            action_id,
-            authority: ApprovalAuthority::Human,
-            action_digest: digest,
-        },
-    )?;
-    store.append(id, &SessionEvent::ExecutionStarted { action_id })?;
+    let (constraints, _) =
+        authorize_exact_human_action(&mut store, id, action_id, &action, "MCP invocation", false)?;
     let skill_started = std::time::Instant::now();
     let skill_parent = state.database.parent().unwrap_or(Path::new("."));
     let mut skill_store = SkillStore::open(
@@ -1679,6 +1990,7 @@ async fn cancel_session(
         token,
         lease_models,
     } = abort_agent_lease(&state, id).await?;
+    preserve_live_partial(&state, id, "cancellation").await?;
     let models_were_active = lease_models.is_some();
     let lifecycle_models = lease_models.unwrap_or(fallback_models);
     let result: Result<Json<AcceptedSession>, ApiError> = async {
@@ -1755,7 +2067,13 @@ async fn spawn_agent_operation(
     let task_state = state.clone();
     let lifecycle_models = budget.models.clone();
     let coding_model = budget.models[0].clone();
+    let streamed_model = coding_model.clone();
     let operation_config = budget.config.clone();
+    let cancellation = AgentCancellation::new();
+    let task_cancellation = cancellation.clone();
+    let (observer, mut receiver) = bounded_agent_stream_channel(AGENT_STREAM_CAPACITY)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let stream_hub = live_stream_hub(&state, id).await;
     let lease_generation = Uuid::new_v4();
     let cleanup_generation = lease_generation;
     let (start_tx, start_rx) = tokio::sync::oneshot::channel();
@@ -1767,20 +2085,33 @@ async fn spawn_agent_operation(
         let leases = task_state.leases.clone();
         let db = task_state.database.clone();
         let cleanup_id = id;
+        let stream_task = tokio::spawn(async move {
+            while let Some(event) = receiver.recv().await {
+                stream_hub.publish(event, &streamed_model).await;
+            }
+        });
         let result = AssertUnwindSafe(run_agent_operation(
             &task_state,
             cleanup_id,
             operation,
             operation_config,
             coding_model,
+            observer,
+            task_cancellation.clone(),
         ))
         .catch_unwind()
         .await;
+        let operation_succeeded = matches!(&result, Ok(Ok(())));
+        stream_task.abort();
+        let _ = stream_task.await;
         remove_agent_lease_if_current(&leases, cleanup_id, cleanup_generation).await;
         release_active_models(&task_state, &lifecycle_models).await;
         match result {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
+                if task_cancellation.is_cancelled() {
+                    return;
+                }
                 if let Ok(mut store) = SessionStore::open(&db) {
                     let terminal = store
                         .load(cleanup_id)
@@ -1804,6 +2135,9 @@ async fn spawn_agent_operation(
                 }
             }
             Err(panic) => {
+                if task_cancellation.is_cancelled() {
+                    return;
+                }
                 let panic = panic_payload_message(panic);
                 eprintln!("agent task panicked for session {}: {panic}", cleanup_id.0);
                 if let Ok(mut store) = SessionStore::open(&db) {
@@ -1816,6 +2150,9 @@ async fn spawn_agent_operation(
                 }
             }
         }
+        if operation_succeeded {
+            run_background_tier2(&task_state, cleanup_id).await;
+        }
     });
     leases.insert(
         id,
@@ -1823,6 +2160,7 @@ async fn spawn_agent_operation(
             generation: lease_generation,
             task: handle,
             models: budget.models,
+            cancellation,
         },
     );
     let _ = start_tx.send(());
@@ -1884,9 +2222,15 @@ async fn abort_agent_lease(state: &AppState, id: SessionId) -> Result<AgentInter
         state.leases.lock().await.remove(&id)
     };
     let lease_models = lease.as_ref().map(|lease| lease.models.clone());
-    if let Some(lease) = lease {
-        lease.task.abort();
-        let _ = lease.task.await;
+    if let Some(mut lease) = lease {
+        lease.cancellation.cancel();
+        if tokio::time::timeout(std::time::Duration::from_secs(3), &mut lease.task)
+            .await
+            .is_err()
+        {
+            lease.task.abort();
+            let _ = lease.task.await;
+        }
     }
     Ok(AgentInterruption {
         token,
@@ -1955,6 +2299,8 @@ async fn run_agent_operation(
     operation: AgentOperation,
     config: AppConfig,
     model: ModelId,
+    observer: AgentStreamObserver,
+    cancellation: AgentCancellation,
 ) -> Result<(), DaemonError> {
     let mut store = SessionStore::open(&state.database)?;
     let session = store.load(id)?;
@@ -2003,7 +2349,9 @@ async fn run_agent_operation(
     let policy = effective_policy(&config, &repository)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
     let agent = NativeAgent::new(provider.as_ref(), model, policy)
-        .with_contextual_judge(judge_provider.as_ref(), judge_model);
+        .with_contextual_judge(judge_provider.as_ref(), judge_model)
+        .with_stream_observer(observer)
+        .with_cancellation(cancellation);
     let resolver = DaemonSkillResolver::new(state).await;
     let capability = infer_capability(&objective);
     if let CapabilityResolution::InstalledSkill { skill_id, .. } = agent
@@ -2043,6 +2391,68 @@ async fn run_agent_operation(
     };
     result.map_err(|error| DaemonError::Agent(error.to_string()))?;
     Ok(())
+}
+
+async fn run_background_tier2(state: &AppState, id: SessionId) {
+    let session = match state.store.lock().await.load(id) {
+        Ok(session) => session,
+        Err(_) => return,
+    };
+    let Some(worktree) = session.worktree else {
+        return;
+    };
+    let database = worktree.join(".purrcode").join("context.db");
+    let mut index = match AgentContextIndex::open(&worktree, &database) {
+        Ok(index) => index,
+        Err(_) => return,
+    };
+    let mut work = match index.begin_tier2(Tier2Policy::default()) {
+        Ok(work) => work,
+        Err(_) => return,
+    };
+    let cadence = std::time::Duration::from_millis(25);
+    loop {
+        let before_sleep = std::time::Instant::now();
+        tokio::time::sleep(cadence).await;
+        let input_latency_millis = before_sleep
+            .elapsed()
+            .saturating_sub(cadence)
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        let status = match state.store.lock().await.load(id) {
+            Ok(session) => session.status,
+            Err(_) => return,
+        };
+        let cancel_requested = matches!(status, SessionStatus::Cancelled | SessionStatus::Failed);
+        let generation_active = state.leases.lock().await.contains_key(&id);
+        let resources = ResourceSnapshot::detect(0);
+        let memory_pressure = if resources.total_memory_bytes > 0
+            && resources.available_memory_bytes.saturating_mul(20) < resources.total_memory_bytes
+        {
+            MemoryPressure::Critical
+        } else {
+            match resources.memory_pressure {
+                "high" => MemoryPressure::High,
+                "elevated" => MemoryPressure::Elevated,
+                _ => MemoryPressure::Normal,
+            }
+        };
+        let report = match index.drive_tier2(
+            &mut work,
+            IndexingSignals {
+                cancel_requested,
+                memory_pressure,
+                generation_active,
+                input_latency_millis,
+            },
+        ) {
+            Ok(report) => report,
+            Err(_) => return,
+        };
+        if report.status.is_terminal() {
+            return;
+        }
+    }
 }
 
 fn unique_models(models: &[ModelId]) -> Vec<ModelId> {
@@ -2459,37 +2869,78 @@ async fn event_stream(
     if state.store.lock().await.events(id)?.is_empty() {
         return Err(ApiError::NotFound);
     }
+    let hub = live_stream_hub(&state, id).await;
+    let mut live = hub.sender.subscribe();
+    let reconnect = hub.reconnect_snapshot().await;
     let stream = async_stream::stream! {
         let mut delivered = query.after.unwrap_or(0);
+        for value in reconnect {
+            let kind = value
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("diagnostic");
+            yield Ok(Event::default().event(kind).data(value.to_string()));
+        }
+        let mut audit_tick = tokio::time::interval(std::time::Duration::from_millis(250));
+        audit_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            let snapshot = state.store.lock().await.events(id);
-            match snapshot {
-                Ok(events) => {
-                    for (offset, event) in events.iter().enumerate().skip(delivered) {
-                        if let SessionEvent::ConversationMessageAdded { message } = event {
-                            if message.role == "assistant" {
-                                let characters = message.content.chars().collect::<Vec<_>>();
-                                for chunk in characters.chunks(24) {
-                                    let delta = chunk.iter().collect::<String>();
-                                    yield Ok(Event::default()
-                                        .event("assistant_delta")
-                                        .data(serde_json::json!({"delta": delta}).to_string()));
-                                    tokio::time::sleep(std::time::Duration::from_millis(8)).await;
-                                }
+            tokio::select! {
+                live_event = live.recv() => {
+                    match live_event {
+                        Ok(value) => {
+                            let kind = value
+                                .get("kind")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("diagnostic");
+                            yield Ok(Event::default().event(kind).data(value.to_string()));
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            let diagnostic = serde_json::json!({
+                                "kind": "diagnostic",
+                                "code": "live_stream_lagged",
+                                "message": "live observations were skipped; the current bounded snapshot follows",
+                                "skipped": skipped,
+                            });
+                            yield Ok(Event::default().event("diagnostic").data(diagnostic.to_string()));
+                            for value in hub.reconnect_snapshot().await {
+                                let kind = value
+                                    .get("kind")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("diagnostic");
+                                yield Ok(Event::default().event(kind).data(value.to_string()));
                             }
                         }
-                        let data = serde_json::to_string(event)
-                            .unwrap_or_else(|_| "{\"type\":\"serialization_error\"}".into());
-                        yield Ok(Event::default().id((offset + 1).to_string()).data(data));
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
-                    delivered = events.len();
                 }
-                Err(_) => {
-                    yield Ok(Event::default().event("error").data("session store unavailable"));
-                    break;
+                _ = audit_tick.tick() => {
+                    match state.store.lock().await.events(id) {
+                        Ok(events) => {
+                            for (offset, event) in events.iter().enumerate().skip(delivered) {
+                                let data = serde_json::json!({
+                                    "kind": "durable_audit",
+                                    "sequence": offset + 1,
+                                    "event": event,
+                                });
+                                yield Ok(Event::default()
+                                    .event("durable_audit")
+                                    .id((offset + 1).to_string())
+                                    .data(data.to_string()));
+                            }
+                            delivered = events.len();
+                        }
+                        Err(_) => {
+                            let diagnostic = serde_json::json!({
+                                "kind": "diagnostic",
+                                "code": "session_store_unavailable",
+                                "message": "session store unavailable",
+                            });
+                            yield Ok(Event::default().event("diagnostic").data(diagnostic.to_string()));
+                            break;
+                        }
+                    }
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
     };
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
@@ -2674,8 +3125,8 @@ impl SkillResolver for DaemonSkillResolver {
             .unwrap_or(Path::new("."))
             .join("skills");
         if let Ok(store) = SkillStore::open(&db_path, &lib_root) {
-            if let Ok(skills) = store.find_by_capability(capability) {
-                if let Some(skill) = skills.first() {
+            if let Ok(resolution) = store.resolve_installed_capability(capability) {
+                if let Some(skill) = resolution.qualified_matches.first() {
                     return CapabilityResolution::InstalledSkill {
                         skill_id: skill.skill_id.clone(),
                         tool_name: skill.skill_id.clone(),
@@ -2759,8 +3210,46 @@ struct ConfigureProviderRequest {
     base_url: String,
     model: String,
     credential_name: Option<String>,
+    credential_reference: Option<ProviderCredentialReference>,
     #[serde(default)]
     replace: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum ProviderCredentialReference {
+    Keychain(String),
+    Environment(String),
+}
+
+impl ProviderCredentialReference {
+    fn canonical(&self) -> Result<String, ApiError> {
+        let reference = match self {
+            Self::Keychain(reference) => {
+                let name = reference.strip_prefix("keychain:").ok_or_else(|| {
+                    ApiError::BadRequest(
+                        "keychain credential reference must be canonical `keychain:<name>`".into(),
+                    )
+                })?;
+                let canonical = keychain_reference(name)
+                    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+                if canonical != *reference {
+                    return Err(ApiError::BadRequest(
+                        "keychain credential reference is not canonical".into(),
+                    ));
+                }
+                canonical
+            }
+            Self::Environment(variable) => variable.clone(),
+        };
+        validate_credential_reference(&reference)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))
+    }
 }
 
 async fn configure_provider(
@@ -2770,7 +3259,7 @@ async fn configure_provider(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
     let _config_guard = lock_model_configuration(&state).await?;
-    let mut config = AppConfig::load(&state.app_config)
+    let config = AppConfig::load(&state.app_config)
         .map_err(|e| ApiError::BadRequest(format!("config load failed: {e}")))?;
     if config.providers.contains_key(&body.name) && !body.replace {
         return Err(ApiError::BadRequest(format!(
@@ -2778,19 +3267,45 @@ async fn configure_provider(
             body.name
         )));
     }
-    config
-        .configure_provider(
+    let credential_reference = match (
+        body.credential_name.as_deref(),
+        body.credential_reference.as_ref(),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err(ApiError::BadRequest(
+                "provide only one credential name or typed credential reference".into(),
+            ))
+        }
+        (Some(name), None) => Some(
+            keychain_reference(name).map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        ),
+        (None, Some(reference)) => Some(reference.canonical()?),
+        (None, None) => None,
+    };
+    let mut candidate = config.clone();
+    candidate
+        .configure_provider_with_reference(
             &body.name,
             &body.provider_type,
             &body.base_url,
             &body.model,
-            body.credential_name.as_deref(),
+            credential_reference.as_deref(),
         )
-        .and_then(|()| config.save(&state.app_config))
-        .map_err(|e| ApiError::BadRequest(format!("provider configuration failed: {e}")))?;
-    Ok(Json(
-        serde_json::json!({"name": body.name, "configured": true}),
-    ))
+        .map_err(|error| ApiError::BadRequest(format!("provider configuration failed: {error}")))?;
+    let probe = probe_provider(&candidate, &body.name).await?;
+    candidate
+        .save(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("provider save failed: {error}")))?;
+    Ok(Json(serde_json::json!({
+        "name": body.name,
+        "configured": true,
+        "available": probe.available,
+        "detail": probe.detail,
+        "latency_ms": probe.latency_ms,
+        "first_token_latency_ms": probe.first_token_latency_ms,
+        "local": probe.local,
+        "models_configured": probe.models_configured,
+    })))
 }
 
 #[derive(Deserialize)]
@@ -2805,15 +3320,169 @@ struct DiscoverProviderRequest {
     provider_type: String,
 }
 
+struct ProviderProbe {
+    available: bool,
+    detail: String,
+    latency_ms: u128,
+    first_token_latency_ms: u128,
+    local: bool,
+    models_configured: Vec<String>,
+}
+
+async fn probe_provider(
+    config: &AppConfig,
+    provider_name: &str,
+) -> Result<ProviderProbe, ApiError> {
+    let provider_config = config
+        .providers
+        .get(provider_name)
+        .ok_or_else(|| ApiError::BadRequest(format!("unknown provider `{provider_name}`")))?;
+    let local = provider_config.is_local();
+    let router = ProviderRouter::from_config(config)
+        .map_err(|error| ApiError::BadRequest(format!("provider setup failed: {error}")))?;
+    let probe_model = provider_config
+        .configured_models()
+        .keys()
+        .next()
+        .cloned()
+        .unwrap_or_else(|| "health-check".into());
+    let model = ModelId {
+        provider: provider_name.to_owned(),
+        model: probe_model,
+    };
+    let provider = router
+        .provider(&model)
+        .map_err(|error| ApiError::BadRequest(format!("provider routing failed: {error}")))?;
+    let started = std::time::Instant::now();
+    let health = provider
+        .health_check()
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("provider health check failed: {error}")))?;
+    if !health.available {
+        return Err(ApiError::BadRequest(health.detail));
+    }
+    let request_started = std::time::Instant::now();
+    let generation = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let mut stream = provider
+            .stream(ModelRequest {
+                model: model.clone(),
+                messages: vec![ModelMessage {
+                    role: "user".into(),
+                    content: "Reply with OK.".into(),
+                }],
+                tools: Vec::new(),
+                max_output_tokens: Some(4),
+                reasoning_effort: None,
+            })
+            .await
+            .map_err(|error| {
+                ApiError::BadRequest(format!("provider generation probe failed: {error}"))
+            })?;
+        let mut first_semantic = None;
+        let mut finished = false;
+        while let Some(event) = stream.next().await {
+            match event.map_err(|error| {
+                ApiError::BadRequest(format!("provider generation stream failed: {error}"))
+            })? {
+                ModelEvent::TextDelta(delta) if !delta.is_empty() => {
+                    first_semantic.get_or_insert_with(|| request_started.elapsed().as_millis());
+                }
+                ModelEvent::ToolCall { .. } => {
+                    first_semantic.get_or_insert_with(|| request_started.elapsed().as_millis());
+                }
+                ModelEvent::Finished => finished = true,
+                ModelEvent::ResponseStarted { .. }
+                | ModelEvent::TextDelta(_)
+                | ModelEvent::Usage { .. } => {}
+            }
+        }
+        if !finished {
+            return Err(ApiError::BadRequest(
+                "provider generation probe ended without a completion event".into(),
+            ));
+        }
+        first_semantic.ok_or_else(|| {
+            ApiError::BadRequest(
+                "provider connected, but its generation probe produced no semantic output".into(),
+            )
+        })
+    })
+    .await
+    .map_err(|_| {
+        ApiError::BadRequest(
+            "provider connected, but no semantic token arrived within 30 seconds".into(),
+        )
+    });
+
+    if let ProviderConfig::Ollama { base_url, .. } = provider_config {
+        let settings = LocalModelLifecycleSettings::load(config).map_err(ApiError::BadRequest)?;
+        if settings.policy == LocalModelLifecycle::UnloadAfterRequest {
+            let runtime =
+                LocalModelRuntime::new(base_url.as_str()).map_err(ApiError::BadRequest)?;
+            let status = runtime.inspect().await.map_err(ApiError::BadRequest)?;
+            if status
+                .loaded
+                .iter()
+                .any(|loaded| loaded.name == model.model)
+            {
+                runtime
+                    .unload(&UnloadLocalModelRequest {
+                        model: Some(model.model.clone()),
+                        all: false,
+                    })
+                    .await
+                    .map_err(ApiError::BadRequest)?;
+            }
+        }
+    }
+    let first_token_latency_ms = generation??;
+    Ok(ProviderProbe {
+        available: true,
+        detail: format!("{}; bounded generation verified", health.detail),
+        latency_ms: started.elapsed().as_millis(),
+        first_token_latency_ms,
+        local,
+        models_configured: provider_config
+            .configured_models()
+            .keys()
+            .cloned()
+            .collect(),
+    })
+}
+
 async fn discover_provider_models(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<DiscoverProviderRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let (url, pointer) = match body.provider_type.as_str() {
-        "ollama" => ("http://127.0.0.1:11434/api/tags", "/models"),
-        "lm-studio" => ("http://127.0.0.1:1234/v1/models", "/data"),
+    if body.provider_type == "ollama" {
+        let status = LocalModelRuntime::ollama_default()
+            .map_err(ApiError::BadRequest)?
+            .inspect()
+            .await
+            .map_err(ApiError::BadRequest)?;
+        let models = status
+            .installed
+            .iter()
+            .map(|model| model.name.clone())
+            .collect::<Vec<_>>();
+        return Ok(Json(serde_json::json!({
+            "models": models,
+            "api_mode": "ollama_native",
+            "version": status.version,
+            "loaded": status.loaded,
+            "resources": status.resources,
+            "observed": {
+                "version": true,
+                "tags": true,
+                "processes": true,
+                "generation": false,
+            },
+        })));
+    }
+    let url = match body.provider_type.as_str() {
+        "lm-studio" => "http://127.0.0.1:1234/v1/models",
         _ => {
             return Err(ApiError::BadRequest(
                 "discovery is limited to local providers".into(),
@@ -2837,12 +3506,9 @@ async fn discover_provider_models(
             response.status()
         )));
     }
-    let value: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|error| ApiError::BadRequest(format!("invalid discovery response: {error}")))?;
+    let value = read_bounded_discovery_json(response).await?;
     let models = value
-        .pointer(pointer)
+        .pointer("/data")
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
@@ -2854,7 +3520,65 @@ async fn discover_provider_models(
         })
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    Ok(Json(serde_json::json!({"models": models})))
+    Ok(Json(serde_json::json!({
+        "models": models,
+        "api_mode": "openai_compatible",
+        "observed": {
+            "models": true,
+            "generation": false,
+        },
+    })))
+}
+
+const MAX_DISCOVERY_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
+async fn read_bounded_discovery_json(
+    response: reqwest::Response,
+) -> Result<serde_json::Value, ApiError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_DISCOVERY_RESPONSE_BYTES as u64)
+    {
+        return Err(ApiError::BadRequest(format!(
+            "local provider discovery response exceeded {MAX_DISCOVERY_RESPONSE_BYTES} bytes"
+        )));
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !content_type.starts_with("application/json") {
+        return Err(ApiError::BadRequest(format!(
+            "local provider discovery returned content type `{}`; expected application/json",
+            if content_type.is_empty() {
+                "missing"
+            } else {
+                content_type.as_str()
+            }
+        )));
+    }
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            ApiError::BadRequest(format!(
+                "local provider discovery body read failed: {error}"
+            ))
+        })?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_DISCOVERY_RESPONSE_BYTES {
+            return Err(ApiError::BadRequest(format!(
+                "local provider discovery response exceeded {MAX_DISCOVERY_RESPONSE_BYTES} bytes"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error| {
+        ApiError::BadRequest(format!(
+            "local provider discovery returned incompatible JSON: {error}"
+        ))
+    })
 }
 
 async fn test_provider(
@@ -2865,40 +3589,14 @@ async fn test_provider(
     authorize(&state, &headers)?;
     let config = AppConfig::load(&state.app_config)
         .map_err(|e| ApiError::BadRequest(format!("config load failed: {e}")))?;
-    let provider_config = config
-        .providers
-        .get(&body.provider)
-        .ok_or_else(|| ApiError::BadRequest(format!("unknown provider `{}`", body.provider)))?;
-    let local = provider_config.is_local();
-    let router = ProviderRouter::from_config(&config)
-        .map_err(|e| ApiError::BadRequest(format!("provider setup failed: {e}")))?;
-    let probe_model = provider_config
-        .configured_models()
-        .keys()
-        .next()
-        .cloned()
-        .unwrap_or_else(|| "health-check".into());
-    let model = ModelId {
-        provider: body.provider.clone(),
-        model: probe_model,
-    };
-    let provider = router
-        .provider(&model)
-        .map_err(|e| ApiError::BadRequest(format!("provider routing failed: {e}")))?;
-    let started = std::time::Instant::now();
-    let health = provider
-        .health_check()
-        .await
-        .map_err(|e| ApiError::BadRequest(format!("provider health check failed: {e}")))?;
-    if !health.available {
-        return Err(ApiError::BadRequest(health.detail));
-    }
+    let probe = probe_provider(&config, &body.provider).await?;
     Ok(Json(serde_json::json!({
-        "available": true,
-        "detail": health.detail,
-        "latency_ms": started.elapsed().as_millis(),
-        "local": local,
-        "models_configured": provider_config.configured_models().keys().collect::<Vec<_>>(),
+        "available": probe.available,
+        "detail": probe.detail,
+        "latency_ms": probe.latency_ms,
+        "first_token_latency_ms": probe.first_token_latency_ms,
+        "local": probe.local,
+        "models_configured": probe.models_configured,
     })))
 }
 
@@ -2961,6 +3659,282 @@ async fn local_models(
     })?))
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ModelQualificationCache {
+    #[serde(default)]
+    entries: BTreeMap<String, CachedModelQualification>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CachedModelQualification {
+    observed_at: String,
+    evidence: QualificationEvidence,
+}
+
+impl ModelQualificationCache {
+    fn load(config: &AppConfig) -> Result<Self, ApiError> {
+        config
+            .extensions
+            .get("model_qualification_cache")
+            .cloned()
+            .map(toml::Value::try_into)
+            .transpose()
+            .map_err(|error| {
+                ApiError::BadRequest(format!("invalid model qualification cache: {error}"))
+            })
+            .map(|cache| cache.unwrap_or_default())
+    }
+
+    fn save(self, config: &mut AppConfig) -> Result<(), ApiError> {
+        let value = toml::Value::try_from(self).map_err(|error| {
+            ApiError::BadRequest(format!(
+                "model qualification cache serialization failed: {error}"
+            ))
+        })?;
+        config
+            .extensions
+            .insert("model_qualification_cache".into(), value);
+        Ok(())
+    }
+}
+
+async fn local_model_recommendations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let (provider_name, runtime) = configured_ollama_provider(&config)?;
+    let status = runtime.inspect().await.map_err(ApiError::BadRequest)?;
+    let report = build_recommendation_report(&config, &provider_name, &status)?;
+    Ok(Json(serde_json::json!({
+        "provider": provider_name,
+        "observed_at": Utc::now(),
+        "report": report,
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QualifyLocalModelRequest {
+    provider: Option<String>,
+    model: String,
+}
+
+async fn qualify_local_model(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<QualifyLocalModelRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    validate_pull_model_name(&request.model).map_err(ApiError::BadRequest)?;
+    let initial_config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let (default_provider, _) = configured_ollama_provider(&initial_config)?;
+    let provider_name = request.provider.unwrap_or(default_provider);
+    let runtime = ollama_runtime_for_provider(&initial_config, &provider_name)?;
+    let status = runtime.inspect().await.map_err(ApiError::BadRequest)?;
+    if !status
+        .installed
+        .iter()
+        .any(|installed| installed.name == request.model)
+    {
+        return Err(ApiError::BadRequest(format!(
+            "model `{}` is not installed; pull it through the approved workflow first",
+            request.model
+        )));
+    }
+    let model = ModelId {
+        provider: provider_name.clone(),
+        model: request.model,
+    };
+    let router = ProviderRouter::from_config(&initial_config)
+        .map_err(|error| ApiError::BadRequest(format!("provider setup failed: {error}")))?;
+    let provider = router
+        .provider(&model)
+        .map_err(|error| ApiError::BadRequest(format!("provider routing failed: {error}")))?;
+    let permit = state
+        .local_inference_slots
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| ApiError::Conflict("local inference governor is unavailable".into()))?;
+    mark_models_active(&state, std::slice::from_ref(&model)).await;
+    let qualification = AssertUnwindSafe(qualify_model(provider.as_ref(), model.clone()))
+        .catch_unwind()
+        .await;
+    drop(permit);
+    release_active_models(&state, std::slice::from_ref(&model)).await;
+    let report = qualification
+        .map_err(|_| ApiError::BadRequest("model qualification panicked and was aborted".into()))?
+        .map_err(|error| ApiError::BadRequest(format!("model qualification failed: {error}")))?;
+    let evidence = QualificationEvidence::from_report(&report, CapabilityObservation::NotTested);
+    {
+        let _config_guard = lock_model_configuration(&state).await?;
+        let mut config = AppConfig::load(&state.app_config)
+            .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+        if !matches!(
+            config.providers.get(&provider_name),
+            Some(ProviderConfig::Ollama { .. })
+        ) {
+            return Err(ApiError::Conflict(
+                "Ollama provider changed while qualification was running".into(),
+            ));
+        }
+        let mut cache = ModelQualificationCache::load(&config)?;
+        cache.entries.insert(
+            model_key(&model),
+            CachedModelQualification {
+                observed_at: Utc::now().to_rfc3339(),
+                evidence,
+            },
+        );
+        cache.save(&mut config)?;
+        config.save(&state.app_config).map_err(|error| {
+            ApiError::BadRequest(format!("qualification cache save failed: {error}"))
+        })?;
+    }
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let status = ollama_runtime_for_provider(&config, &provider_name)?
+        .inspect()
+        .await
+        .map_err(ApiError::BadRequest)?;
+    let recommendations = build_recommendation_report(&config, &provider_name, &status)?;
+    Ok(Json(serde_json::json!({
+        "qualification": report,
+        "recommendations": recommendations,
+    })))
+}
+
+fn configured_ollama_provider(config: &AppConfig) -> Result<(String, LocalModelRuntime), ApiError> {
+    let preferred = config
+        .models
+        .default
+        .as_deref()
+        .and_then(|model| ModelId::parse(model).ok())
+        .and_then(|model| {
+            config
+                .providers
+                .get(&model.provider)
+                .map(|provider| (model.provider, provider))
+        })
+        .filter(|(_, provider)| matches!(provider, ProviderConfig::Ollama { .. }));
+    let configured = preferred.or_else(|| {
+        config
+            .providers
+            .iter()
+            .find(|(_, provider)| matches!(provider, ProviderConfig::Ollama { .. }))
+            .map(|(name, provider)| (name.clone(), provider))
+    });
+    match configured {
+        Some((name, ProviderConfig::Ollama { .. })) => {
+            let runtime = ollama_runtime_for_provider(config, &name)?;
+            Ok((name, runtime))
+        }
+        _ => Err(ApiError::BadRequest(
+            "no Ollama Native provider is configured".into(),
+        )),
+    }
+}
+
+fn ollama_runtime_for_provider(
+    config: &AppConfig,
+    provider_name: &str,
+) -> Result<LocalModelRuntime, ApiError> {
+    match config.providers.get(provider_name) {
+        Some(ProviderConfig::Ollama { base_url, .. }) => {
+            LocalModelRuntime::new(base_url.as_str()).map_err(ApiError::BadRequest)
+        }
+        _ => Err(ApiError::BadRequest(format!(
+            "provider `{provider_name}` is not configured for Ollama Native"
+        ))),
+    }
+}
+
+fn build_recommendation_report(
+    config: &AppConfig,
+    provider_name: &str,
+    status: &local_models::LocalModelStatus,
+) -> Result<model_recommendation::RecommendationReport, ApiError> {
+    let cache = ModelQualificationCache::load(config)?;
+    let loaded = status
+        .loaded
+        .iter()
+        .map(|model| model.name.as_str())
+        .collect::<Vec<_>>();
+    let candidates = status
+        .installed
+        .iter()
+        .map(|model| ModelEvidence {
+            model: model.name.clone(),
+            installed: true,
+            currently_loaded: loaded.contains(&model.name.as_str()),
+            metadata: OllamaMetadataEvidence {
+                parameter_count: model
+                    .details
+                    .get("parameter_size")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(parse_parameter_count),
+                quantization: model
+                    .details
+                    .get("quantization_level")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                quantization_bits: model
+                    .details
+                    .get("quantization_level")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(parse_quantization_bits),
+                context_length_tokens: model
+                    .details
+                    .get("context_length")
+                    .or_else(|| model.details.get("num_ctx"))
+                    .and_then(serde_json::Value::as_u64),
+                size_bytes: (model.size > 0).then_some(model.size),
+            },
+            qualification: cache
+                .entries
+                .get(&format!("{provider_name}/{}", model.name))
+                .map(|cached| cached.evidence.clone()),
+        })
+        .collect::<Vec<_>>();
+    Ok(recommend_local_models(&status.resources, &candidates))
+}
+
+fn parse_parameter_count(value: &str) -> Option<u64> {
+    let normalized = value.trim().to_ascii_uppercase();
+    let (number, multiplier) = if let Some(value) = normalized.strip_suffix('B') {
+        (value, 1_000_000_000_f64)
+    } else if let Some(value) = normalized.strip_suffix('M') {
+        (value, 1_000_000_f64)
+    } else if let Some(value) = normalized.strip_suffix('K') {
+        (value, 1_000_f64)
+    } else {
+        (normalized.as_str(), 1_f64)
+    };
+    let parsed = number.parse::<f64>().ok()?;
+    let parameters = parsed * multiplier;
+    (parameters.is_finite() && parameters > 0_f64 && parameters <= u64::MAX as f64)
+        .then_some(parameters.round() as u64)
+}
+
+fn parse_quantization_bits(value: &str) -> Option<u8> {
+    let normalized = value.trim().to_ascii_uppercase();
+    let digits = normalized
+        .strip_prefix('Q')?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>();
+    digits
+        .parse::<u8>()
+        .ok()
+        .filter(|bits| (1..=32).contains(bits))
+}
+
 async fn unload_local_model(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2995,6 +3969,391 @@ async fn unload_local_model(
         "unloaded": unloaded,
         "verified": true,
     })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProposeLocalModelPullRequest {
+    session_id: Option<String>,
+    repository: Option<PathBuf>,
+    model: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocalModelPullActionRequest {
+    session_id: String,
+}
+
+async fn propose_local_model_pull(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ProposeLocalModelPullRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    validate_pull_model_name(&request.model).map_err(ApiError::BadRequest)?;
+    if request.session_id.is_some() && request.repository.is_some() {
+        return Err(ApiError::BadRequest(
+            "provide an existing session or a repository for a dedicated pull session, not both"
+                .into(),
+        ));
+    }
+    let (session_id, working_directory) = if let Some(session_id) = request.session_id.as_deref() {
+        let session_id = parse_session_id(session_id)?;
+        let session = state.store.lock().await.load(session_id)?;
+        let repository = session
+            .repository
+            .ok_or_else(|| ApiError::Conflict("session has no repository".into()))?
+            .canonicalize()
+            .map_err(|error| {
+                ApiError::BadRequest(format!("session repository is unavailable: {error}"))
+            })?;
+        (session_id, repository)
+    } else {
+        let repository = request
+            .repository
+            .as_ref()
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "repository is required when no existing session is supplied".into(),
+                )
+            })?
+            .canonicalize()
+            .map_err(|error| ApiError::BadRequest(format!("repository is unavailable: {error}")))?;
+        if !repository.is_dir() {
+            return Err(ApiError::BadRequest(
+                "pull authorization repository must be a directory".into(),
+            ));
+        }
+        let session_id = SessionId::new();
+        state.store.lock().await.append(
+            session_id,
+            &SessionEvent::SessionCreated {
+                objective: format!("Pull Ollama model {}", request.model),
+                repository: repository.clone(),
+            },
+        )?;
+        (session_id, repository)
+    };
+    let (program, program_digest) = tokio::task::spawn_blocking(resolve_ollama_program)
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("Ollama lookup failed: {error}")))?
+        .map_err(ApiError::BadRequest)?;
+    let (action_id, action, constraints, _) = proposed_pull(
+        session_id,
+        &request.model,
+        program,
+        program_digest,
+        working_directory,
+    )
+    .map_err(ApiError::BadRequest)?;
+    let action_digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let mut store = state.store.lock().await;
+    store.append(
+        session_id,
+        &SessionEvent::ActionProposed { action_id, action },
+    )?;
+    store.append(
+        session_id,
+        &SessionEvent::JudgmentRecorded {
+            action_id,
+            decision: JudgmentDecision::RequireApproval {
+                reason: format!(
+                    "pulling Ollama model `{}` writes to the external model store and uses network access",
+                    request.model
+                ),
+                constraints,
+            },
+        },
+    )?;
+    Ok(Json(serde_json::json!({
+        "action_id": action_id.0,
+        "action_digest": action_digest,
+        "session_id": session_id.0,
+        "model": request.model,
+        "status": "requires_approval",
+    })))
+}
+
+async fn approve_local_model_pull(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(action_id): AxumPath<String>,
+    Json(request): Json<LocalModelPullActionRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let session_id = parse_session_id(&request.session_id)?;
+    let action_id = parse_action_id(&action_id)?;
+    let session = state.store.lock().await.load(session_id)?;
+    let action = session
+        .proposed_actions
+        .get(&action_id)
+        .ok_or(ApiError::NotFound)?;
+    let constraints = match session.judgments.get(&action_id) {
+        Some(JudgmentDecision::RequireApproval { constraints, .. }) => constraints.clone(),
+        _ => {
+            return Err(ApiError::Conflict(
+                "Ollama pull action is not awaiting approval".into(),
+            ))
+        }
+    };
+    let model = validate_pull_action(action, &constraints).map_err(ApiError::BadRequest)?;
+    let action_digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    state.store.lock().await.authorize(&Authorization {
+        action_id,
+        session_id,
+        action_digest: action_digest.clone(),
+        constraints,
+        authorized_at: Utc::now(),
+        approved_by: ApprovalAuthority::Human,
+    })?;
+    Ok(Json(serde_json::json!({
+        "action_id": action_id.0,
+        "action_digest": action_digest,
+        "model": model,
+        "status": "approved",
+    })))
+}
+
+async fn start_local_model_pull(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(action_id): AxumPath<String>,
+    Json(request): Json<LocalModelPullActionRequest>,
+) -> Result<Json<PullProgress>, ApiError> {
+    authorize(&state, &headers)?;
+    if state.local_inference_slots.available_permits() < state.local_inference_limit
+        || state
+            .active_models
+            .lock()
+            .await
+            .values()
+            .any(|count| *count > 0)
+    {
+        return Err(ApiError::Conflict(
+            "cannot pull a model while governed local inference is active".into(),
+        ));
+    }
+    let session_id = parse_session_id(&request.session_id)?;
+    let action_id = parse_action_id(&action_id)?;
+    let session = state.store.lock().await.load(session_id)?;
+    let action = session
+        .proposed_actions
+        .get(&action_id)
+        .cloned()
+        .ok_or(ApiError::NotFound)?;
+    let constraints = match session.judgments.get(&action_id) {
+        Some(JudgmentDecision::RequireApproval { constraints, .. }) => constraints.clone(),
+        _ => {
+            return Err(ApiError::Conflict(
+                "Ollama pull action was not judged for explicit approval".into(),
+            ))
+        }
+    };
+    let model = validate_pull_action(&action, &constraints).map_err(ApiError::BadRequest)?;
+    let initial = PullProgress::queued(action_id, model.clone());
+    let (progress, _) = watch::channel(initial.clone());
+    let (cancellation, cancellation_rx) = watch::channel(false);
+    {
+        let mut jobs = state.pull_jobs.lock().await;
+        jobs.retain(|_, job| !job.progress.borrow().phase.terminal());
+        if jobs.contains_key(&action_id) {
+            return Err(ApiError::Conflict(
+                "this Ollama pull action is already running".into(),
+            ));
+        }
+        if jobs.len() >= 16 {
+            return Err(ApiError::Conflict(
+                "too many Ollama pull jobs are retained; finish or cancel one first".into(),
+            ));
+        }
+        jobs.insert(
+            action_id,
+            PullJob {
+                session_id,
+                progress: progress.clone(),
+                cancellation,
+            },
+        );
+    }
+    let task_state = state.clone();
+    tokio::spawn(async move {
+        let result = PullAdapter::execute(
+            task_state.store.clone(),
+            session_id,
+            action_id,
+            action,
+            constraints,
+            cancellation_rx,
+            progress.clone(),
+        )
+        .await;
+        match result {
+            Ok(outcome) if outcome.exit_code == Some(0) && !outcome.cancelled => {
+                let verification = async {
+                    let config = AppConfig::load(&task_state.app_config)
+                        .map_err(|error| format!("config load failed: {error}"))?;
+                    let status = configured_ollama_runtime(&config)
+                        .map_err(|error| format!("Ollama runtime unavailable: {error:?}"))?
+                        .inspect()
+                        .await?;
+                    if !status.installed.iter().any(|installed| installed.name == model) {
+                        return Err(format!(
+                            "Ollama pull exited successfully, but `{model}` was absent after rediscovery"
+                        ));
+                    }
+                    Ok::<_, String>(())
+                }
+                .await;
+                match verification {
+                    Ok(()) => {
+                        let _ = task_state.store.lock().await.append(
+                            session_id,
+                            &SessionEvent::ValidationRecorded {
+                                action_id,
+                                status: ValidationStatus::Passed,
+                                evidence: format!(
+                                    "post-pull Ollama rediscovery verified installed model `{model}`"
+                                ),
+                            },
+                        );
+                        let _ = progress.send(PullProgress {
+                            action_id,
+                            model,
+                            phase: PullPhase::Completed,
+                            message: "Ollama pull completed and model rediscovery succeeded".into(),
+                            captured_output_bytes: progress.borrow().captured_output_bytes,
+                            truncated: outcome.truncated,
+                            exit_code: outcome.exit_code,
+                        });
+                    }
+                    Err(error) => {
+                        let _ = task_state.store.lock().await.append(
+                            session_id,
+                            &SessionEvent::ValidationRecorded {
+                                action_id,
+                                status: ValidationStatus::Failed,
+                                evidence: "post-pull Ollama model rediscovery failed".into(),
+                            },
+                        );
+                        let _ = progress.send(PullProgress {
+                            action_id,
+                            model,
+                            phase: PullPhase::Failed,
+                            message: bounded_status_message(&error),
+                            captured_output_bytes: progress.borrow().captured_output_bytes,
+                            truncated: outcome.truncated,
+                            exit_code: outcome.exit_code,
+                        });
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let _ = task_state.store.lock().await.append(
+                    session_id,
+                    &SessionEvent::ValidationRecorded {
+                        action_id,
+                        status: ValidationStatus::Failed,
+                        evidence: "exact-authorized Ollama pull adapter rejected execution".into(),
+                    },
+                );
+                let current = progress.borrow().clone();
+                let _ = progress.send(PullProgress {
+                    action_id,
+                    model,
+                    phase: PullPhase::Failed,
+                    message: bounded_status_message(&error),
+                    captured_output_bytes: current.captured_output_bytes,
+                    truncated: current.truncated,
+                    exit_code: current.exit_code,
+                });
+            }
+        }
+    });
+    Ok(Json(initial))
+}
+
+async fn local_model_pull_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(action_id): AxumPath<String>,
+) -> Result<Json<PullProgress>, ApiError> {
+    authorize(&state, &headers)?;
+    let action_id = parse_action_id(&action_id)?;
+    let jobs = state.pull_jobs.lock().await;
+    let job = jobs.get(&action_id).ok_or(ApiError::NotFound)?;
+    let current = job.progress.borrow().clone();
+    Ok(Json(current))
+}
+
+async fn local_model_pull_events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(action_id): AxumPath<String>,
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
+    authorize(&state, &headers)?;
+    let action_id = parse_action_id(&action_id)?;
+    let mut progress = {
+        let jobs = state.pull_jobs.lock().await;
+        jobs.get(&action_id)
+            .ok_or(ApiError::NotFound)?
+            .progress
+            .subscribe()
+    };
+    let stream = async_stream::stream! {
+        loop {
+            let current = progress.borrow().clone();
+            let terminal = current.phase.terminal();
+            let encoded = serde_json::to_string(&current)
+                .unwrap_or_else(|_| "{\"phase\":\"failed\",\"message\":\"progress serialization failed\"}".into());
+            yield Ok(Event::default().event("pull_progress").data(encoded));
+            if terminal || progress.changed().await.is_err() {
+                break;
+            }
+        }
+    };
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+async fn cancel_local_model_pull(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(action_id): AxumPath<String>,
+    Json(request): Json<LocalModelPullActionRequest>,
+) -> Result<Json<PullProgress>, ApiError> {
+    authorize(&state, &headers)?;
+    let session_id = parse_session_id(&request.session_id)?;
+    let action_id = parse_action_id(&action_id)?;
+    let jobs = state.pull_jobs.lock().await;
+    let job = jobs.get(&action_id).ok_or(ApiError::NotFound)?;
+    if job.session_id != session_id {
+        return Err(ApiError::Conflict(
+            "pull job belongs to a different session".into(),
+        ));
+    }
+    let current = job.progress.borrow().clone();
+    if current.phase.terminal() {
+        return Err(ApiError::Conflict("pull job is already terminal".into()));
+    }
+    job.cancellation
+        .send(true)
+        .map_err(|_| ApiError::Conflict("pull job is no longer running".into()))?;
+    Ok(Json(current))
+}
+
+fn parse_action_id(value: &str) -> Result<ActionId, ApiError> {
+    Uuid::parse_str(value)
+        .map(ActionId)
+        .map_err(|_| ApiError::BadRequest("invalid action id".into()))
+}
+
+fn bounded_status_message(value: &str) -> String {
+    value.chars().take(1024).collect()
 }
 
 async fn local_model_settings(
@@ -3122,11 +4481,108 @@ async fn list_skills(
     Ok(Json(serde_json::to_value(&skills).unwrap_or_default()))
 }
 
+fn append_exact_approval_proposal(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    action: ProposedAction,
+    constraints: ActionConstraints,
+    reason: &str,
+) -> Result<(ActionId, String), ApiError> {
+    let action_id = ActionId::new();
+    let action_digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    store.append(
+        session_id,
+        &SessionEvent::ActionProposed { action_id, action },
+    )?;
+    store.append(
+        session_id,
+        &SessionEvent::JudgmentRecorded {
+            action_id,
+            decision: JudgmentDecision::RequireApproval {
+                reason: reason.into(),
+                constraints,
+            },
+        },
+    )?;
+    Ok((action_id, action_digest))
+}
+
+fn exact_approval_context(
+    session: &SessionState,
+    action_id: ActionId,
+    expected_action: &ProposedAction,
+    purpose: &str,
+) -> Result<(ActionConstraints, String), ApiError> {
+    let persisted_action = session
+        .proposed_actions
+        .get(&action_id)
+        .ok_or(ApiError::NotFound)?;
+    if persisted_action != expected_action {
+        return Err(ApiError::Conflict(format!(
+            "{purpose} does not match the exact proposed action"
+        )));
+    }
+    let constraints = match session.judgments.get(&action_id) {
+        Some(JudgmentDecision::RequireApproval { constraints, .. }) => constraints.clone(),
+        _ => {
+            return Err(ApiError::Conflict(format!(
+                "{purpose} is not awaiting explicit approval"
+            )))
+        }
+    };
+    let action_digest = persisted_action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok((constraints, action_digest))
+}
+
+fn authorize_exact_human_action(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    action_id: ActionId,
+    expected_action: &ProposedAction,
+    purpose: &str,
+    consume_at_boundary: bool,
+) -> Result<(ActionConstraints, String), ApiError> {
+    let session = store.load(session_id)?;
+    let (constraints, action_digest) =
+        exact_approval_context(&session, action_id, expected_action, purpose)?;
+    store
+        .authorize(&Authorization {
+            action_id,
+            session_id,
+            action_digest: action_digest.clone(),
+            constraints: constraints.clone(),
+            authorized_at: Utc::now(),
+            approved_by: ApprovalAuthority::Human,
+        })
+        .map_err(|_| {
+            ApiError::Conflict(format!(
+                "{purpose} authorization is unavailable or was already approved"
+            ))
+        })?;
+    if consume_at_boundary {
+        store
+            .consume_authorization(action_id, &action_digest)
+            .map_err(|_| {
+                ApiError::Conflict(format!(
+                    "{purpose} authorization is unavailable or was already consumed"
+                ))
+            })?;
+    }
+    store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+    Ok((constraints, action_digest))
+}
+
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SearchSkillsRequest {
     session_id: Option<String>,
     #[serde(default)]
     approved: bool,
+    action_id: Option<String>,
     capability: String,
     keywords: Vec<String>,
     platform: Option<String>,
@@ -3139,101 +4595,29 @@ async fn search_skills(
     Json(body): Json<SearchSkillsRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let research_session = body
+    if body.approved && body.action_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "approved skill search requires the exact previously proposed action_id".into(),
+        ));
+    }
+    if !body.approved && body.action_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "action_id is accepted only when executing an explicitly approved search".into(),
+        ));
+    }
+    let session_id = body
         .session_id
         .as_deref()
         .map(parse_session_id)
-        .transpose()?;
-    let session_id = research_session.ok_or_else(|| {
-        ApiError::BadRequest("skill search requires an active session for authorization".into())
-    })?;
+        .transpose()?
+        .ok_or_else(|| {
+            ApiError::BadRequest("skill search requires an active session for authorization".into())
+        })?;
     ensure_session_exists(&state, session_id).await?;
     let session = state.store.lock().await.load(session_id)?;
     let repository = session
         .repository
         .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
-    let action = ProposedAction::ExternalTool(ExternalToolAction {
-        server_id: "purrcode.skill-registry".into(),
-        tool_name: "search".into(),
-        arguments: serde_json::json!({
-            "capability": body.capability.clone(),
-            "keywords": body.keywords.clone(),
-            "platform": body.platform.clone(),
-            "purrcode_version": body.purrcode_version.clone(),
-        }),
-        working_directory: repository.clone(),
-    });
-    let constraints = ActionConstraints {
-        working_directory: repository,
-        network: true,
-        timeout_seconds: 30,
-        maximum_output_bytes: 1_048_576,
-        allowed_write_globs: Vec::new(),
-        maximum_changed_files: 0,
-    };
-    let action_id = ActionId::new();
-    let action_digest = action
-        .digest(&constraints)
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    {
-        let mut session_store = state.store.lock().await;
-        session_store.append(
-            session_id,
-            &SessionEvent::ActionProposed {
-                action_id,
-                action: action.clone(),
-            },
-        )?;
-        session_store.append(
-            session_id,
-            &SessionEvent::JudgmentRecorded {
-                action_id,
-                decision: JudgmentDecision::RequireApproval {
-                    reason: "remote skill registry search requires explicit network approval"
-                        .into(),
-                    constraints: constraints.clone(),
-                },
-            },
-        )?;
-    }
-    if !body.approved {
-        return Ok(Json(serde_json::json!({
-            "requires_approval": true,
-            "action_id": action_id.0,
-            "action_digest": action_digest,
-        })));
-    }
-    {
-        let mut session_store = state.store.lock().await;
-        session_store.authorize(&Authorization {
-            action_id,
-            session_id,
-            action_digest: action_digest.clone(),
-            constraints: constraints.clone(),
-            authorized_at: Utc::now(),
-            approved_by: ApprovalAuthority::Human,
-        })?;
-        session_store
-            .consume_authorization(action_id, &action_digest)
-            .map_err(|_| ApiError::Conflict("registry search authorization unavailable".into()))?;
-        session_store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
-    }
-    {
-        state.store.lock().await.append(
-            session_id,
-            &SessionEvent::CapabilityGapDetected {
-                gap_description: body.capability.clone(),
-                task_context: "user-requested skill search".into(),
-            },
-        )?;
-        state.store.lock().await.append(
-            session_id,
-            &SessionEvent::SkillSearchStarted {
-                query: body.capability.clone(),
-                sources: vec!["github".into()],
-            },
-        )?;
-    }
     let query = SearchQuery {
         capability: body.capability,
         keywords: body.keywords,
@@ -3248,13 +4632,136 @@ async fn search_skills(
             .purrcode_version
             .unwrap_or_else(|| env!("CARGO_PKG_VERSION").into()),
     };
-
+    ExternalSearchAuthorization::new(
+        "proposal-validation",
+        query.clone(),
+        vec!["github".into()],
+        Utc::now() + chrono::Duration::seconds(30),
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let parent = state.database.parent().unwrap_or(Path::new("."));
+    let installed_store = SkillStore::open(&parent.join("skills.db"), &parent.join("skills"))
+        .map_err(|error| ApiError::BadRequest(format!("skill store open failed: {error}")))?;
+    let installed = installed_store
+        .resolve_installed_capability(&query.capability)
+        .map_err(|error| ApiError::BadRequest(format!("installed skill lookup failed: {error}")))?;
+    if let Some(skill) = installed.qualified_matches.first() {
+        let skill = skill.clone();
+        let previous_uses = skill.successful_uses.saturating_add(skill.failed_uses);
+        let mut event_store = state.store.lock().await;
+        event_store.append(
+            session_id,
+            &SessionEvent::InstalledSkillMatched {
+                skill_id: skill.skill_id.clone(),
+                matched_capability: query.capability.clone(),
+            },
+        )?;
+        if previous_uses > 0 {
+            event_store.append(
+                session_id,
+                &SessionEvent::InstalledSkillReused {
+                    skill_id: skill.skill_id.clone(),
+                    previous_uses: previous_uses.min(u32::MAX as u64) as u32,
+                },
+            )?;
+        }
+        event_store.append(
+            session_id,
+            &SessionEvent::ExternalSearchAvoided {
+                skill_id: skill.skill_id.clone(),
+                matched_capability: query.capability,
+            },
+        )?;
+        return Ok(Json(serde_json::json!({
+            "resolution": "installed",
+            "installed": installed,
+            "selected_skill": skill,
+            "external_search_avoided": true,
+        })));
+    }
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    if matches!(config.privacy.mode, PrivacyMode::LocalOnly) {
+        return Err(ApiError::Conflict(
+            "external skill search is disabled in local-only mode".into(),
+        ));
+    }
+    let action = ProposedAction::ExternalTool(ExternalToolAction {
+        server_id: "purrcode.skill-registry".into(),
+        tool_name: "search".into(),
+        arguments: serde_json::json!({
+            "query": query,
+            "adapter": "github",
+        }),
+        working_directory: repository.clone(),
+    });
+    let constraints = ActionConstraints {
+        working_directory: repository,
+        network: true,
+        timeout_seconds: 30,
+        maximum_output_bytes: 1_048_576,
+        allowed_write_globs: Vec::new(),
+        maximum_changed_files: 0,
+    };
+    let action_id = if let Some(action_id) = body.action_id.as_deref() {
+        parse_action_id(action_id)?
+    } else {
+        let mut session_store = state.store.lock().await;
+        let (action_id, action_digest) = append_exact_approval_proposal(
+            &mut session_store,
+            session_id,
+            action.clone(),
+            constraints.clone(),
+            "remote skill registry search requires explicit network approval",
+        )?;
+        return Ok(Json(serde_json::json!({
+            "requires_approval": true,
+            "action_id": action_id.0,
+            "action_digest": action_digest,
+            "installed": installed,
+            "external_search_avoided": false,
+        })));
+    };
+    {
+        let mut session_store = state.store.lock().await;
+        authorize_exact_human_action(
+            &mut session_store,
+            session_id,
+            action_id,
+            &action,
+            "registry search",
+            true,
+        )?;
+        session_store.append(
+            session_id,
+            &SessionEvent::CapabilityGapDetected {
+                gap_description: query.capability.clone(),
+                task_context: "user-requested skill search".into(),
+            },
+        )?;
+        session_store.append(
+            session_id,
+            &SessionEvent::SkillSearchStarted {
+                query: query.capability.clone(),
+                sources: vec!["github".into()],
+            },
+        )?;
+    }
     let adapters: Vec<Box<dyn purrcode_skill_registry::RegistryAdapter>> =
         vec![Box::new(GitHubRegistryAdapter::new())];
     let engine = RegistryEngine::new(adapters);
-    match engine.search(&query).await {
+    let adapter_authorization = ExternalSearchAuthorization::new(
+        action_id.0.to_string(),
+        query.clone(),
+        vec!["github".into()],
+        Utc::now() + chrono::Duration::seconds(30),
+    )
+    .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    match engine
+        .search_authorized(&query, &adapter_authorization)
+        .await
+    {
         Ok(mut candidates) => {
-            let parent = state.database.parent().unwrap_or(Path::new("."));
             let store = SkillStore::open(&parent.join("skills.db"), &parent.join("skills"))
                 .map_err(|error| ApiError::BadRequest(error.to_string()))?;
             candidates.retain(|candidate| {
@@ -3264,29 +4771,27 @@ async fn search_skills(
                     .as_deref()
                     .is_none_or(|publisher| !store.is_publisher_blocked(publisher).unwrap_or(true))
             });
-            if let Some(session_id) = research_session {
-                let mut session_store = state.store.lock().await;
-                for (index, candidate) in candidates.iter().enumerate() {
-                    let rank = (index + 1).min(u32::MAX as usize) as u32;
-                    session_store.append(
-                        session_id,
-                        &SessionEvent::SkillCandidateDiscovered {
-                            candidate_id: candidate.manifest.candidate_id.clone(),
-                            source: candidate.manifest.source_type.clone(),
-                            rank,
-                        },
-                    )?;
-                    session_store.append(
-                        session_id,
-                        &SessionEvent::SkillCandidateRanked {
-                            candidate_id: candidate.manifest.candidate_id.clone(),
-                            rank,
-                            signals: serde_json::to_value(&candidate.signals).unwrap_or_default(),
-                        },
-                    )?;
-                }
+            let mut session_store = state.store.lock().await;
+            for (index, candidate) in candidates.iter().enumerate() {
+                let rank = (index + 1).min(u32::MAX as usize) as u32;
+                session_store.append(
+                    session_id,
+                    &SessionEvent::SkillCandidateDiscovered {
+                        candidate_id: candidate.manifest.candidate_id.clone(),
+                        source: candidate.manifest.source_type.clone(),
+                        rank,
+                    },
+                )?;
+                session_store.append(
+                    session_id,
+                    &SessionEvent::SkillCandidateRanked {
+                        candidate_id: candidate.manifest.candidate_id.clone(),
+                        rank,
+                        signals: serde_json::to_value(&candidate.signals).unwrap_or_default(),
+                    },
+                )?;
             }
-            state.store.lock().await.append(
+            session_store.append(
                 session_id,
                 &SessionEvent::ExecutionFinished {
                     action_id,
@@ -3296,7 +4801,7 @@ async fn search_skills(
                     sandbox_backend: Some("skill-registry".into()),
                 },
             )?;
-            state.store.lock().await.append(
+            session_store.append(
                 session_id,
                 &SessionEvent::ValidationRecorded {
                     action_id,
@@ -3341,8 +4846,132 @@ async fn search_skills(
 struct DownloadSkillRequest {
     session_id: String,
     candidate_id: String,
+    commit: String,
     #[serde(default)]
     approved: bool,
+    action_id: Option<String>,
+}
+
+fn normalize_full_git_commit(commit: &str) -> Result<String, ApiError> {
+    let commit = commit.trim();
+    if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest(
+            "skill download requires an immutable full 40-character Git commit SHA".into(),
+        ));
+    }
+    Ok(commit.to_ascii_lowercase())
+}
+
+fn public_download_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            let octets = address.octets();
+            !(octets[0] == 0
+                || address.is_private()
+                || address.is_loopback()
+                || address.is_link_local()
+                || address.is_broadcast()
+                || address.is_documentation()
+                || address.is_unspecified()
+                || address.is_multicast()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+                || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+                || (octets[0] == 198 && matches!(octets[1], 18 | 19))
+                || octets[0] >= 240)
+        }
+        IpAddr::V6(address) => {
+            let segments = address.segments();
+            address
+                .to_ipv4_mapped()
+                .map(|mapped| public_download_address(IpAddr::V4(mapped)))
+                .unwrap_or_else(|| {
+                    !(address.is_loopback()
+                        || address.is_unspecified()
+                        || address.is_multicast()
+                        || (segments[0] & 0xfe00) == 0xfc00
+                        || (segments[0] & 0xffc0) == 0xfe80
+                        || (segments[0] & 0xffc0) == 0xfec0
+                        || (segments[0] == 0x2001 && segments[1] == 0x0db8))
+                })
+        }
+    }
+}
+
+fn validate_skill_download_boundary(
+    action: &ProposedAction,
+    constraints: &ActionConstraints,
+) -> Result<String, ApiError> {
+    let ProposedAction::ExternalTool(external) = action else {
+        return Err(ApiError::Conflict(
+            "download authorization does not contain an external action".into(),
+        ));
+    };
+    if external.server_id != "purrcode.skill-registry"
+        || external.tool_name != "download-source-archive"
+        || external.working_directory != constraints.working_directory
+        || !constraints.network
+        || constraints.maximum_changed_files != 0
+        || !constraints.allowed_write_globs.is_empty()
+    {
+        return Err(ApiError::Conflict(
+            "download action or constraints changed at the execution boundary".into(),
+        ));
+    }
+    let candidate_id = external.arguments["candidate_id"]
+        .as_str()
+        .ok_or_else(|| ApiError::Conflict("authorized download candidate is missing".into()))?;
+    let repository = candidate_id.strip_prefix("github:").ok_or_else(|| {
+        ApiError::Conflict("authorized download candidate is not a GitHub repository".into())
+    })?;
+    let parts = repository.split('/').collect::<Vec<_>>();
+    if parts.len() != 2
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+                })
+        })
+    {
+        return Err(ApiError::Conflict(
+            "authorized GitHub repository identity is invalid".into(),
+        ));
+    }
+    let commit = external.arguments["commit"]
+        .as_str()
+        .ok_or_else(|| ApiError::Conflict("authorized commit is missing".into()))?;
+    let commit = normalize_full_git_commit(commit)?;
+    let expected_url = format!("https://codeload.github.com/{repository}/zip/{commit}");
+    if external.arguments["url"].as_str() != Some(expected_url.as_str()) {
+        return Err(ApiError::Conflict(
+            "authorized archive URL is not the immutable GitHub commit URL".into(),
+        ));
+    }
+    Ok(expected_url)
+}
+
+async fn pinned_skill_download_client(
+    constraints: &ActionConstraints,
+) -> Result<reqwest::Client, ApiError> {
+    let addresses = tokio::net::lookup_host(("codeload.github.com", 443))
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("skill download DNS failed: {error}")))?
+        .collect::<Vec<_>>();
+    if addresses.is_empty()
+        || addresses
+            .iter()
+            .any(|address| !public_download_address(address.ip()))
+    {
+        return Err(ApiError::Conflict(
+            "skill download DNS resolved to a non-public address".into(),
+        ));
+    }
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(constraints.timeout_seconds))
+        .resolve_to_addrs("codeload.github.com", &addresses)
+        .build()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))
 }
 
 async fn download_skill(
@@ -3351,6 +4980,16 @@ async fn download_skill(
     Json(body): Json<DownloadSkillRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    if body.approved && body.action_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "approved skill download requires the exact previously proposed action_id".into(),
+        ));
+    }
+    if !body.approved && body.action_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "action_id is accepted only when executing an explicitly approved download".into(),
+        ));
+    }
     let session_id = parse_session_id(&body.session_id)?;
     let session = state.store.lock().await.load(session_id)?;
     let repository = session
@@ -3372,9 +5011,8 @@ async fn download_skill(
             "invalid GitHub candidate identity".into(),
         ));
     }
-    let urls = ["main", "master"].map(|branch| {
-        format!("https://codeload.github.com/{repository_name}/zip/refs/heads/{branch}")
-    });
+    let commit = normalize_full_git_commit(&body.commit)?;
+    let url = format!("https://codeload.github.com/{repository_name}/zip/{commit}");
     let constraints = ActionConstraints {
         working_directory: repository,
         network: true,
@@ -3383,101 +5021,75 @@ async fn download_skill(
         allowed_write_globs: Vec::new(),
         maximum_changed_files: 0,
     };
-    let action_id = ActionId::new();
     let action = ProposedAction::ExternalTool(ExternalToolAction {
         server_id: "purrcode.skill-registry".into(),
         tool_name: "download-source-archive".into(),
-        arguments: serde_json::json!({"candidate_id": body.candidate_id, "urls": urls}),
+        arguments: serde_json::json!({
+            "candidate_id": body.candidate_id,
+            "commit": commit,
+            "url": url,
+        }),
         working_directory: constraints.working_directory.clone(),
     });
-    let action_digest = action
-        .digest(&constraints)
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    {
+    let action_id = if let Some(action_id) = body.action_id.as_deref() {
+        parse_action_id(action_id)?
+    } else {
         let mut store = state.store.lock().await;
-        store.append(
+        let (action_id, action_digest) = append_exact_approval_proposal(
+            &mut store,
             session_id,
-            &SessionEvent::ActionProposed {
-                action_id,
-                action: action.clone(),
-            },
+            action.clone(),
+            constraints.clone(),
+            "downloading an executable skill archive requires separate approval",
         )?;
-        store.append(
-            session_id,
-            &SessionEvent::JudgmentRecorded {
-                action_id,
-                decision: JudgmentDecision::RequireApproval {
-                    reason: "downloading an executable skill archive requires separate approval"
-                        .into(),
-                    constraints: constraints.clone(),
-                },
-            },
-        )?;
-    }
-    if !body.approved {
         return Ok(Json(serde_json::json!({
             "requires_approval": true,
             "action_id": action_id.0,
             "action_digest": action_digest,
+            "candidate_id": body.candidate_id,
+            "commit": commit,
         })));
-    }
+    };
     {
         let mut store = state.store.lock().await;
-        store.authorize(&Authorization {
-            action_id,
+        authorize_exact_human_action(
+            &mut store,
             session_id,
-            action_digest: action_digest.clone(),
-            constraints: constraints.clone(),
-            authorized_at: Utc::now(),
-            approved_by: ApprovalAuthority::Human,
-        })?;
-        store
-            .consume_authorization(action_id, &action_digest)
-            .map_err(|_| ApiError::Conflict("download authorization unavailable".into()))?;
-        store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+            action_id,
+            &action,
+            "skill download",
+            true,
+        )?;
     }
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(constraints.timeout_seconds))
-        .build()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let mut archive = None;
-    for url in &urls {
-        let response = client
-            .get(url)
-            .header(
-                "User-Agent",
-                concat!("PurrCode/", env!("CARGO_PKG_VERSION")),
-            )
-            .send()
-            .await
+    let url = validate_skill_download_boundary(&action, &constraints)?;
+    let client = pinned_skill_download_client(&constraints).await?;
+    let response = client
+        .get(&url)
+        .header(
+            "User-Agent",
+            concat!("PurrCode/", env!("CARGO_PKG_VERSION")),
+        )
+        .send()
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("skill download failed: {error}")))?;
+    if !response.status().is_success() || response.status().is_redirection() {
+        return Err(ApiError::BadRequest(format!(
+            "skill archive returned HTTP {}",
+            response.status()
+        )));
+    }
+    let mut archive = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+        let chunk = chunk
             .map_err(|error| ApiError::BadRequest(format!("skill download failed: {error}")))?;
-        if response.status() == StatusCode::NOT_FOUND {
-            continue;
+        if archive.len().saturating_add(chunk.len()) > constraints.maximum_output_bytes {
+            return Err(ApiError::BadRequest(
+                "skill archive exceeds 10 MiB limit".into(),
+            ));
         }
-        if !response.status().is_success() || response.status().is_redirection() {
-            return Err(ApiError::BadRequest(format!(
-                "skill archive returned HTTP {}",
-                response.status()
-            )));
-        }
-        let mut bytes = Vec::new();
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-            let chunk = chunk
-                .map_err(|error| ApiError::BadRequest(format!("skill download failed: {error}")))?;
-            if bytes.len().saturating_add(chunk.len()) > constraints.maximum_output_bytes {
-                return Err(ApiError::BadRequest(
-                    "skill archive exceeds 10 MiB limit".into(),
-                ));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        archive = Some(bytes);
-        break;
+        archive.extend_from_slice(&chunk);
     }
-    let archive = archive.ok_or_else(|| ApiError::NotFound)?;
     let download_root = state
         .database
         .parent()
@@ -3520,6 +5132,7 @@ async fn download_skill(
         "source_path": source_path,
         "content_digest": digest,
         "archive_digest": blake3::hash(&archive).to_hex().to_string(),
+        "commit": commit,
         "name": manifest.name,
         "version": manifest.version,
         "publisher": parts[0],
@@ -3533,6 +5146,7 @@ struct FetchResearchRequest {
     url: String,
     #[serde(default)]
     approved: bool,
+    action_id: Option<String>,
     #[serde(default)]
     domain_approved: bool,
 }
@@ -3553,6 +5167,16 @@ async fn fetch_research_page(
     Json(body): Json<FetchResearchRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    if body.approved && body.action_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "approved research fetch requires the exact previously proposed action_id".into(),
+        ));
+    }
+    if !body.approved && body.action_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "action_id is accepted only when executing an explicitly approved fetch".into(),
+        ));
+    }
     let session_id = parse_session_id(&body.session_id)?;
     let session = state.store.lock().await.load(session_id)?;
     let repository = session
@@ -3565,6 +5189,27 @@ async fn fetch_research_page(
             "public research is disabled in local-only mode".into(),
         ));
     }
+    let parsed_url = reqwest::Url::parse(&body.url)
+        .map_err(|_| ApiError::BadRequest("research URL is invalid".into()))?;
+    let approved_domains = if body.domain_approved {
+        vec![parsed_url
+            .host_str()
+            .ok_or_else(|| ApiError::BadRequest("research URL has no DNS host".into()))?
+            .trim_end_matches('.')
+            .to_ascii_lowercase()]
+    } else {
+        Vec::new()
+    };
+    let public_action = PublicWebAction::Fetch {
+        url: body.url.clone(),
+    };
+    PublicWebAuthorization::new(
+        "proposal-validation",
+        public_action.clone(),
+        approved_domains.clone(),
+        Utc::now() + chrono::Duration::seconds(30),
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let action = ProposedAction::ExternalTool(ExternalToolAction {
         server_id: "purrcode.web-research".into(),
         tool_name: "fetch-page".into(),
@@ -3582,51 +5227,34 @@ async fn fetch_research_page(
         allowed_write_globs: Vec::new(),
         maximum_changed_files: 0,
     };
-    let action_id = ActionId::new();
-    let digest = action
-        .digest(&constraints)
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    {
+    let action_id = if let Some(action_id) = body.action_id.as_deref() {
+        parse_action_id(action_id)?
+    } else {
         let mut store = state.store.lock().await;
-        store.append(
+        let (action_id, digest) = append_exact_approval_proposal(
+            &mut store,
             session_id,
-            &SessionEvent::ActionProposed {
-                action_id,
-                action: action.clone(),
-            },
+            action.clone(),
+            constraints.clone(),
+            "fetching untrusted public content requires explicit approval",
         )?;
-        store.append(
-            session_id,
-            &SessionEvent::JudgmentRecorded {
-                action_id,
-                decision: JudgmentDecision::RequireApproval {
-                    reason: "fetching untrusted public content requires explicit approval".into(),
-                    constraints: constraints.clone(),
-                },
-            },
-        )?;
-    }
-    if !body.approved {
         return Ok(Json(serde_json::json!({
             "requires_approval": true,
             "action_id": action_id.0,
             "action_digest": digest,
+            "domain_approved": body.domain_approved,
         })));
-    }
+    };
     {
         let mut store = state.store.lock().await;
-        store.authorize(&Authorization {
-            action_id,
+        authorize_exact_human_action(
+            &mut store,
             session_id,
-            action_digest: digest.clone(),
-            constraints: constraints.clone(),
-            authorized_at: Utc::now(),
-            approved_by: ApprovalAuthority::Human,
-        })?;
-        store
-            .consume_authorization(action_id, &digest)
-            .map_err(|_| ApiError::Conflict("research authorization unavailable".into()))?;
-        store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+            action_id,
+            &action,
+            "research fetch",
+            true,
+        )?;
     }
     let section: WebResearchSection = config
         .extensions
@@ -3638,14 +5266,20 @@ async fn fetch_research_page(
     let policy = DomainPolicy {
         allow_list: section.allow_list,
         deny_list: section.deny_list,
-        approval_required: if body.domain_approved {
-            Vec::new()
-        } else {
-            section.approval_required
-        },
+        approval_required: section.approval_required,
     };
     let engine = ResearchEngine::new(Box::new(StubSearchProvider), policy);
-    let page = match engine.fetch_page(&body.url).await {
+    let adapter_authorization = PublicWebAuthorization::new(
+        action_id.0.to_string(),
+        public_action,
+        approved_domains,
+        Utc::now() + chrono::Duration::seconds(30),
+    )
+    .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    let page = match engine
+        .fetch_page_authorized(&body.url, &adapter_authorization)
+        .await
+    {
         Ok(page) => page,
         Err(error) => {
             let mut store = state.store.lock().await;
@@ -3819,6 +5453,79 @@ struct SkillInstallSpec {
     publisher_public_key: Option<String>,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct QualifiedSkillInstallAction {
+    #[serde(flatten)]
+    spec: SkillInstallSpec,
+    qualification_status: purrcode_runtime_core::QualificationStatus,
+    qualified_content_digest: String,
+    qualification_report_digest: String,
+}
+
+fn qualification_allows_install(status: &purrcode_runtime_core::QualificationStatus) -> bool {
+    matches!(
+        status,
+        purrcode_runtime_core::QualificationStatus::Qualified
+            | purrcode_runtime_core::QualificationStatus::QualifiedWithConstraints
+    )
+}
+
+async fn record_skill_qualification_failure(
+    state: &AppState,
+    session_id: SessionId,
+    skill_id: &str,
+    status: purrcode_runtime_core::QualificationStatus,
+    failure: String,
+    started: std::time::Instant,
+) -> Result<(), ApiError> {
+    let mut store = state.store.lock().await;
+    store.append(
+        session_id,
+        &SessionEvent::SkillQualified {
+            skill_id: skill_id.into(),
+            status,
+            latency_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        },
+    )?;
+    store.append(
+        session_id,
+        &SessionEvent::SkillQualificationFailed {
+            skill_id: skill_id.into(),
+            failures: vec![failure],
+        },
+    )?;
+    Ok(())
+}
+
+async fn record_failed_skill_install_execution(
+    state: &AppState,
+    session_id: SessionId,
+    action_id: ActionId,
+    evidence: &str,
+) -> Result<(), ApiError> {
+    let mut store = state.store.lock().await;
+    store.append(
+        session_id,
+        &SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code: Some(1),
+            truncated: false,
+            sandbox_level: Some("atomic-qualified-skill-store".into()),
+            sandbox_backend: Some("skill-store".into()),
+        },
+    )?;
+    store.append(
+        session_id,
+        &SessionEvent::ValidationRecorded {
+            action_id,
+            status: ValidationStatus::Failed,
+            evidence: evidence.into(),
+        },
+    )?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProposeSkillInstallRequest {
@@ -3866,43 +5573,162 @@ async fn propose_skill_install(
             ))
         }
     }
+    let skill_parent = state.database.parent().unwrap_or(Path::new("."));
+    let skill_store = SkillStore::open(
+        &skill_parent.join("skills.db"),
+        &skill_parent.join("skills"),
+    )
+    .map_err(|error| ApiError::BadRequest(format!("skill store open failed: {error}")))?;
+    if spec
+        .publisher
+        .as_deref()
+        .is_some_and(|publisher| skill_store.is_publisher_blocked(publisher).unwrap_or(true))
+    {
+        return Err(ApiError::Conflict("skill publisher is blocked".into()));
+    }
+    drop(skill_store);
+    let qualification_started = std::time::Instant::now();
+    {
+        let mut store = state.store.lock().await;
+        store.append(
+            session_id,
+            &SessionEvent::SkillInspectionOpened {
+                skill_id: spec.candidate_id.clone(),
+                duration_ms: 0,
+            },
+        )?;
+        store.append(
+            session_id,
+            &SessionEvent::SkillQualificationStarted {
+                skill_id: spec.candidate_id.clone(),
+            },
+        )?;
+    }
+    let static_qualification = SkillQualifier::qualify(&spec.source_path);
+    let qualification = if matches!(
+        static_qualification.status,
+        purrcode_mcp_host::QualificationStatus::Qualified
+            | purrcode_mcp_host::QualificationStatus::QualifiedWithConstraints
+    ) {
+        let manifest = match read_skill_manifest(&spec.source_path) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                let failure = format!("dynamic qualification manifest failed: {error}");
+                record_skill_qualification_failure(
+                    &state,
+                    session_id,
+                    &spec.candidate_id,
+                    purrcode_runtime_core::QualificationStatus::Failed,
+                    failure.clone(),
+                    qualification_started,
+                )
+                .await?;
+                return Err(ApiError::BadRequest(failure));
+            }
+        };
+        let fixture = match manifest.qualification {
+            Some(fixture) => fixture,
+            None => {
+                let failure = "skill does not declare a dynamic qualification fixture".to_string();
+                record_skill_qualification_failure(
+                    &state,
+                    session_id,
+                    &spec.candidate_id,
+                    purrcode_runtime_core::QualificationStatus::Unverified,
+                    failure.clone(),
+                    qualification_started,
+                )
+                .await?;
+                return Err(ApiError::BadRequest(failure));
+            }
+        };
+        let mut session_store = state.store.lock().await;
+        SkillQualifier::qualify_dynamic(
+            &mut session_store,
+            session_id,
+            &spec.source_path,
+            &DynamicQualificationRequest {
+                entrypoint: fixture.entrypoint,
+                arguments: fixture.arguments,
+                timeout_seconds: fixture.timeout_seconds,
+                expected_output_schema: fixture.expected_output_schema,
+            },
+        )
+        .await
+    } else {
+        static_qualification
+    };
+    let qualification_status = map_skill_qualification(&qualification.status);
+    let qualification_report_digest = blake3::hash(
+        &serde_json::to_vec(&qualification)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+    )
+    .to_hex()
+    .to_string();
+    {
+        let mut store = state.store.lock().await;
+        store.append(
+            session_id,
+            &SessionEvent::SkillQualified {
+                skill_id: spec.candidate_id.clone(),
+                status: qualification_status.clone(),
+                latency_ms: qualification_started
+                    .elapsed()
+                    .as_millis()
+                    .min(u64::MAX as u128) as u64,
+            },
+        )?;
+        if !qualification_allows_install(&qualification_status) {
+            let failures = qualification
+                .cases
+                .iter()
+                .filter(|case| !case.passed)
+                .map(|case| format!("{}: {}", case.name, case.detail))
+                .collect::<Vec<_>>();
+            store.append(
+                session_id,
+                &SessionEvent::SkillQualificationFailed {
+                    skill_id: spec.candidate_id.clone(),
+                    failures,
+                },
+            )?;
+        }
+    }
+    if !qualification_allows_install(&qualification_status) {
+        return Err(ApiError::BadRequest(format!(
+            "skill qualification did not pass: {:?}",
+            qualification.status
+        )));
+    }
+    let qualified_action = QualifiedSkillInstallAction {
+        qualified_content_digest: spec.content_digest.clone(),
+        qualification_status: qualification_status.clone(),
+        qualification_report_digest: qualification_report_digest.clone(),
+        spec,
+    };
     let constraints = ActionConstraints::read_only(source_path.clone());
     let action = ProposedAction::ExternalTool(ExternalToolAction {
         server_id: "purrcode.skill-store".into(),
         tool_name: "install".into(),
-        arguments: serde_json::to_value(&spec)
+        arguments: serde_json::to_value(&qualified_action)
             .map_err(|error| ApiError::BadRequest(error.to_string()))?,
         working_directory: source_path,
     });
-    let action_id = ActionId::new();
-    let digest = action
-        .digest(&constraints)
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let mut store = state.store.lock().await;
-    store.append(
+    let (action_id, digest) = append_exact_approval_proposal(
+        &mut store,
         session_id,
-        &SessionEvent::ActionProposed { action_id, action },
+        action,
+        constraints,
+        "installing dynamically qualified executable skill content requires explicit approval",
     )?;
-    store.append(
-        session_id,
-        &SessionEvent::JudgmentRecorded {
-            action_id,
-            decision: JudgmentDecision::RequireApproval {
-                reason: "installing executable skill content requires explicit approval".into(),
-                constraints,
-            },
-        },
-    )?;
-    store.append(
-        session_id,
-        &SessionEvent::SkillInspectionOpened {
-            skill_id: spec.candidate_id.clone(),
-            duration_ms: 0,
-        },
-    )?;
-    Ok(Json(
-        serde_json::json!({"action_id": action_id.0, "action_digest": digest, "status": "requires_approval"}),
-    ))
+    Ok(Json(serde_json::json!({
+        "action_id": action_id.0,
+        "action_digest": digest,
+        "status": "requires_approval",
+        "qualification_status": qualification_status,
+        "qualification_report_digest": qualification_report_digest,
+    })))
 }
 
 #[derive(Deserialize)]
@@ -3919,15 +5745,12 @@ async fn approve_skill_install(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
     let session_id = parse_session_id(&body.session_id)?;
-    let action_id = ActionId(
-        Uuid::parse_str(&action_id)
-            .map_err(|_| ApiError::BadRequest("invalid action id".into()))?,
-    );
+    let action_id = parse_action_id(&action_id)?;
     let session = state.store.lock().await.load(session_id)?;
     let action = session
         .proposed_actions
         .get(&action_id)
-        .ok_or_else(|| ApiError::NotFound)?;
+        .ok_or(ApiError::NotFound)?;
     let constraints = match session.judgments.get(&action_id) {
         Some(JudgmentDecision::RequireApproval { constraints, .. }) => constraints.clone(),
         _ => {
@@ -3936,31 +5759,66 @@ async fn approve_skill_install(
             ))
         }
     };
+    let ProposedAction::ExternalTool(external) = action else {
+        return Err(ApiError::Conflict(
+            "authorized action is not a qualified skill install".into(),
+        ));
+    };
+    if external.server_id != "purrcode.skill-store"
+        || external.tool_name != "install"
+        || external.working_directory != constraints.working_directory
+    {
+        return Err(ApiError::Conflict(
+            "authorized action is not a qualified skill install".into(),
+        ));
+    }
+    let qualified: QualifiedSkillInstallAction = serde_json::from_value(external.arguments.clone())
+        .map_err(|error| {
+            ApiError::BadRequest(format!("invalid qualified install action: {error}"))
+        })?;
+    if !qualification_allows_install(&qualified.qualification_status)
+        || qualified.qualified_content_digest != qualified.spec.content_digest
+        || qualified.qualification_report_digest.len() != 64
+        || !qualified
+            .qualification_report_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(ApiError::Conflict(
+            "install action is not bound to a passing qualification and exact content digest"
+                .into(),
+        ));
+    }
+    let actual_digest = skill_digest(&qualified.spec.source_path)
+        .map_err(|error| ApiError::BadRequest(format!("skill digest failed: {error}")))?;
+    if actual_digest != qualified.qualified_content_digest {
+        return Err(ApiError::Conflict(
+            "skill content changed after qualification and before approval".into(),
+        ));
+    }
     let action_digest = action
         .digest(&constraints)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    state.store.lock().await.authorize(&Authorization {
-        action_id,
-        session_id,
-        action_digest: action_digest.clone(),
-        constraints,
-        authorized_at: Utc::now(),
-        approved_by: ApprovalAuthority::Human,
-    })?;
-    let skill_id = match action {
-        ProposedAction::ExternalTool(external) => external
-            .arguments
-            .get("candidate_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unknown")
-            .to_owned(),
-        _ => "unknown".into(),
-    };
-    state.store.lock().await.append(
+    let mut store = state.store.lock().await;
+    store
+        .authorize(&Authorization {
+            action_id,
+            session_id,
+            action_digest: action_digest.clone(),
+            constraints,
+            authorized_at: Utc::now(),
+            approved_by: ApprovalAuthority::Human,
+        })
+        .map_err(|_| {
+            ApiError::Conflict(
+                "install authorization is unavailable or was already approved".into(),
+            )
+        })?;
+    store.append(
         session_id,
         &SessionEvent::SkillInstallApproved {
-            skill_id,
-            scope: "authorized exact install action".into(),
+            skill_id: qualified.spec.candidate_id,
+            scope: "authorized exact qualified install action".into(),
         },
     )?;
     Ok(Json(
@@ -3982,10 +5840,7 @@ async fn install_skill(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
     let session_id = parse_session_id(&body.session_id)?;
-    let action_id = ActionId(
-        Uuid::parse_str(&body.action_id)
-            .map_err(|_| ApiError::BadRequest("invalid action id".into()))?,
-    );
+    let action_id = parse_action_id(&body.action_id)?;
     let session = state.store.lock().await.load(session_id)?;
     let action = session
         .proposed_actions
@@ -4001,88 +5856,48 @@ async fn install_skill(
     };
     let ProposedAction::ExternalTool(external) = action else {
         return Err(ApiError::Conflict(
-            "authorized action is not a skill install".into(),
+            "authorized action is not a qualified skill install".into(),
         ));
     };
-    if external.server_id != "purrcode.skill-store" || external.tool_name != "install" {
+    if external.server_id != "purrcode.skill-store"
+        || external.tool_name != "install"
+        || external.working_directory != constraints.working_directory
+    {
         return Err(ApiError::Conflict(
-            "authorized action is not a skill install".into(),
+            "authorized action is not a qualified skill install".into(),
         ));
     }
-    let spec: SkillInstallSpec = serde_json::from_value(external.arguments.clone())
-        .map_err(|error| ApiError::BadRequest(format!("invalid authorized install: {error}")))?;
-    let digest = action
-        .digest(&constraints)
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    state
-        .store
-        .lock()
-        .await
-        .consume_authorization(action_id, &digest)
-        .map_err(|_| ApiError::Conflict("exact install authorization is unavailable".into()))?;
+    let qualified: QualifiedSkillInstallAction = serde_json::from_value(external.arguments.clone())
+        .map_err(|error| {
+            ApiError::BadRequest(format!("invalid qualified install action: {error}"))
+        })?;
+    if !qualification_allows_install(&qualified.qualification_status)
+        || qualified.qualified_content_digest != qualified.spec.content_digest
+        || qualified.qualification_report_digest.len() != 64
+        || !qualified
+            .qualification_report_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(ApiError::Conflict(
+            "install action is not bound to a passing qualification and exact content digest"
+                .into(),
+        ));
+    }
+    let spec = qualified.spec;
     let actual_digest = skill_digest(&spec.source_path)
         .map_err(|error| ApiError::BadRequest(format!("skill digest failed: {error}")))?;
-    if actual_digest != spec.content_digest {
+    if actual_digest != qualified.qualified_content_digest {
         return Err(ApiError::Conflict(
-            "skill content changed after approval".into(),
+            "skill content changed after qualification".into(),
         ));
     }
-    let qualification_started = std::time::Instant::now();
-    state.store.lock().await.append(
-        session_id,
-        &SessionEvent::SkillQualificationStarted {
-            skill_id: spec.candidate_id.clone(),
-        },
-    )?;
-    let static_qualification = SkillQualifier::qualify(&spec.source_path);
-    let qualification = if matches!(
-        static_qualification.status,
-        purrcode_mcp_host::QualificationStatus::Qualified
-            | purrcode_mcp_host::QualificationStatus::QualifiedWithConstraints
-    ) {
-        let manifest = read_skill_manifest(&spec.source_path)
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-        let fixture = manifest.qualification.ok_or_else(|| {
-            ApiError::BadRequest("skill does not declare a dynamic qualification fixture".into())
-        })?;
-        let mut session_store = state.store.lock().await;
-        SkillQualifier::qualify_dynamic(
-            &mut session_store,
-            session_id,
-            &spec.source_path,
-            &DynamicQualificationRequest {
-                entrypoint: fixture.entrypoint,
-                arguments: fixture.arguments,
-                timeout_seconds: fixture.timeout_seconds,
-                expected_output_schema: fixture.expected_output_schema,
-            },
-        )
-        .await
-    } else {
-        static_qualification
+    let scope = match spec.scope.as_str() {
+        "user" => SkillScope::User,
+        "repository" => SkillScope::Repository,
+        "session" => SkillScope::Session,
+        _ => return Err(ApiError::BadRequest("invalid scope".into())),
     };
-    let qualification_status = map_skill_qualification(&qualification.status);
-    state.store.lock().await.append(
-        session_id,
-        &SessionEvent::SkillQualified {
-            skill_id: spec.candidate_id.clone(),
-            status: qualification_status.clone(),
-            latency_ms: qualification_started
-                .elapsed()
-                .as_millis()
-                .min(u64::MAX as u128) as u64,
-        },
-    )?;
-    if !matches!(
-        qualification_status,
-        purrcode_runtime_core::QualificationStatus::Qualified
-            | purrcode_runtime_core::QualificationStatus::QualifiedWithConstraints
-    ) {
-        return Err(ApiError::BadRequest(format!(
-            "skill qualification did not pass: {:?}",
-            qualification.status
-        )));
-    }
     let db_path = state
         .database
         .parent()
@@ -4102,37 +5917,87 @@ async fn install_skill(
     {
         return Err(ApiError::Conflict("skill publisher is blocked".into()));
     }
-
-    let scope = match spec.scope.as_str() {
-        "user" => SkillScope::User,
-        "repository" => SkillScope::Repository,
-        "session" => SkillScope::Session,
-        _ => return Err(ApiError::BadRequest("invalid scope".into())),
-    };
-
-    let record = store
-        .install(
-            &spec.candidate_id,
-            &spec.version,
-            scope.clone(),
-            "registry",
-            None,
-            spec.publisher.as_deref(),
-            &spec.content_digest,
-            &spec.approved_permissions,
-            &spec.source_path,
+    let digest = action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    {
+        let mut session_store = state.store.lock().await;
+        session_store
+            .consume_authorization(action_id, &digest)
+            .map_err(|_| {
+                ApiError::Conflict(
+                    "exact qualified install authorization is unavailable or already consumed"
+                        .into(),
+                )
+            })?;
+        session_store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+    }
+    let boundary_digest = skill_digest(&spec.source_path)
+        .map_err(|error| ApiError::BadRequest(format!("skill digest failed: {error}")))?;
+    if boundary_digest != qualified.qualified_content_digest {
+        drop(store);
+        record_failed_skill_install_execution(
+            &state,
+            session_id,
+            action_id,
+            "skill content changed at the install execution boundary",
         )
-        .map_err(|e| ApiError::BadRequest(format!("install failed: {e}")))?;
+        .await?;
+        return Err(ApiError::Conflict(
+            "skill content changed at the install execution boundary".into(),
+        ));
+    }
+    let record = match store.install_qualified(
+        &spec.candidate_id,
+        &spec.version,
+        scope.clone(),
+        "registry",
+        None,
+        spec.publisher.as_deref(),
+        &spec.content_digest,
+        &spec.approved_permissions,
+        &spec.source_path,
+        &qualified.qualification_status,
+    ) {
+        Ok(record) => record,
+        Err(error) => {
+            let evidence = format!("qualified skill installation failed: {error}");
+            drop(store);
+            record_failed_skill_install_execution(&state, session_id, action_id, &evidence).await?;
+            return Err(ApiError::BadRequest(evidence));
+        }
+    };
     if spec.signature.is_some() {
         store
             .update_signature_status(&spec.candidate_id, &scope, "verified")
             .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     }
-    store
-        .update_qualification(&spec.candidate_id, &qualification_status)
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
 
     let record = store.get(&record.skill_id).unwrap_or(record);
+    {
+        let mut session_store = state.store.lock().await;
+        session_store.append(
+            session_id,
+            &SessionEvent::ExecutionFinished {
+                action_id,
+                exit_code: Some(0),
+                truncated: false,
+                sandbox_level: Some("atomic-qualified-skill-store".into()),
+                sandbox_backend: Some("skill-store".into()),
+            },
+        )?;
+        session_store.append(
+            session_id,
+            &SessionEvent::ValidationRecorded {
+                action_id,
+                status: ValidationStatus::Passed,
+                evidence: format!(
+                    "installed qualified skill with revalidated content digest {}",
+                    qualified.qualified_content_digest
+                ),
+            },
+        )?;
+    }
     Ok(Json(serde_json::to_value(&record).unwrap_or_default()))
 }
 
@@ -4251,6 +6116,13 @@ mod tests {
         Json(serde_json::json!({}))
     }
 
+    async fn compatible_generation_stream() -> impl IntoResponse {
+        (
+            [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+            "data: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+        )
+    }
+
     #[async_trait]
     impl ModelProvider for SupervisorProvider {
         async fn capabilities(&self, _model: &ModelId) -> Result<ModelCapabilities, ProviderError> {
@@ -4347,6 +6219,268 @@ mod tests {
     }
 
     #[test]
+    fn exact_human_action_allows_once_and_denies_mismatch_and_replay() {
+        let repository = tempfile::tempdir().unwrap();
+        let session_id = SessionId::new();
+        let mut store = SessionStore::in_memory().unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "govern exact external action".into(),
+                    repository: repository.path().to_path_buf(),
+                },
+            )
+            .unwrap();
+        let constraints = ActionConstraints {
+            working_directory: repository.path().to_path_buf(),
+            network: true,
+            timeout_seconds: 30,
+            maximum_output_bytes: 1024,
+            allowed_write_globs: Vec::new(),
+            maximum_changed_files: 0,
+        };
+        let action = ProposedAction::ExternalTool(ExternalToolAction {
+            server_id: "purrcode.skill-registry".into(),
+            tool_name: "search".into(),
+            arguments: serde_json::json!({"query": "terraform"}),
+            working_directory: repository.path().to_path_buf(),
+        });
+        let (action_id, _) = append_exact_approval_proposal(
+            &mut store,
+            session_id,
+            action.clone(),
+            constraints.clone(),
+            "fixture approval",
+        )
+        .unwrap();
+        authorize_exact_human_action(
+            &mut store,
+            session_id,
+            action_id,
+            &action,
+            "fixture action",
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            authorize_exact_human_action(
+                &mut store,
+                session_id,
+                action_id,
+                &action,
+                "fixture action",
+                true,
+            ),
+            Err(ApiError::Conflict(_))
+        ));
+
+        let (mismatch_id, _) = append_exact_approval_proposal(
+            &mut store,
+            session_id,
+            action,
+            constraints,
+            "fixture mismatch",
+        )
+        .unwrap();
+        let changed = ProposedAction::ExternalTool(ExternalToolAction {
+            server_id: "purrcode.skill-registry".into(),
+            tool_name: "search".into(),
+            arguments: serde_json::json!({"query": "changed"}),
+            working_directory: repository.path().to_path_buf(),
+        });
+        assert!(matches!(
+            authorize_exact_human_action(
+                &mut store,
+                session_id,
+                mismatch_id,
+                &changed,
+                "fixture action",
+                true,
+            ),
+            Err(ApiError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn every_mcp_invocation_is_independently_judged_and_authorized() {
+        let repository = tempfile::tempdir().unwrap();
+        let policy = Policy::default();
+        let first = McpHost::translate(
+            "fixture",
+            "read",
+            serde_json::json!({"path": "one"}),
+            repository.path().to_path_buf(),
+        );
+        let second = McpHost::translate(
+            "fixture",
+            "read",
+            serde_json::json!({"path": "two"}),
+            repository.path().to_path_buf(),
+        );
+        let unsafe_identity = McpHost::translate(
+            "unsafe/server",
+            "read",
+            serde_json::json!({}),
+            repository.path().to_path_buf(),
+        );
+        let first_constraints = match policy.evaluate(&first, repository.path()) {
+            JudgmentDecision::RequireApproval { constraints, .. } => constraints,
+            decision => panic!("safe MCP action was not independently gated: {decision:?}"),
+        };
+        assert!(matches!(
+            policy.evaluate(&second, repository.path()),
+            JudgmentDecision::RequireApproval { .. }
+        ));
+        assert!(matches!(
+            policy.evaluate(&unsafe_identity, repository.path()),
+            JudgmentDecision::Deny { .. }
+        ));
+
+        let session_id = SessionId::new();
+        let mut store = SessionStore::in_memory().unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "MCP fixture".into(),
+                    repository: repository.path().to_path_buf(),
+                },
+            )
+            .unwrap();
+        let (first_id, first_digest) = append_exact_approval_proposal(
+            &mut store,
+            session_id,
+            first.clone(),
+            first_constraints,
+            "first MCP invocation",
+        )
+        .unwrap();
+        authorize_exact_human_action(
+            &mut store,
+            session_id,
+            first_id,
+            &first,
+            "first MCP invocation",
+            false,
+        )
+        .unwrap();
+        store
+            .consume_authorization(first_id, &first_digest)
+            .unwrap();
+
+        let second_constraints = match policy.evaluate(&second, repository.path()) {
+            JudgmentDecision::RequireApproval { constraints, .. } => constraints,
+            _ => unreachable!(),
+        };
+        let (second_id, second_digest) = append_exact_approval_proposal(
+            &mut store,
+            session_id,
+            second,
+            second_constraints,
+            "second MCP invocation",
+        )
+        .unwrap();
+        assert_ne!(first_id, second_id);
+        assert_ne!(first_digest, second_digest);
+        assert!(store
+            .consume_authorization(second_id, &second_digest)
+            .is_err());
+    }
+
+    #[test]
+    fn qualification_gate_handles_all_seven_statuses_fail_closed() {
+        use purrcode_runtime_core::QualificationStatus;
+
+        let cases = [
+            (QualificationStatus::Qualified, true),
+            (QualificationStatus::QualifiedWithConstraints, true),
+            (QualificationStatus::Unverified, false),
+            (QualificationStatus::Failed, false),
+            (QualificationStatus::Blocked, false),
+            (QualificationStatus::Outdated, false),
+            (QualificationStatus::Incompatible, false),
+        ];
+        for (status, expected) in cases {
+            assert_eq!(
+                qualification_allows_install(&status),
+                expected,
+                "unexpected install gate for {status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn skill_download_accepts_only_immutable_full_commit_sha() {
+        assert_eq!(
+            normalize_full_git_commit("ABCDEF0123456789ABCDEF0123456789ABCDEF01").unwrap(),
+            "abcdef0123456789abcdef0123456789abcdef01"
+        );
+        for invalid in [
+            "main",
+            "abcdef0",
+            "abcdef0123456789abcdef0123456789abcdef0g",
+            "abcdef0123456789abcdef0123456789abcdef012345",
+        ] {
+            assert!(matches!(
+                normalize_full_git_commit(invalid),
+                Err(ApiError::BadRequest(_))
+            ));
+        }
+        for private in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "169.254.169.254",
+            "192.168.1.1",
+            "::1",
+            "fc00::1",
+            "fe80::1",
+        ] {
+            assert!(!public_download_address(private.parse().unwrap()));
+        }
+        assert!(public_download_address("8.8.8.8".parse().unwrap()));
+
+        let repository = tempfile::tempdir().unwrap();
+        let constraints = ActionConstraints {
+            working_directory: repository.path().to_path_buf(),
+            network: true,
+            timeout_seconds: 30,
+            maximum_output_bytes: 10 * 1024 * 1024,
+            allowed_write_globs: Vec::new(),
+            maximum_changed_files: 0,
+        };
+        let commit = "abcdef0123456789abcdef0123456789abcdef01";
+        let exact = ProposedAction::ExternalTool(ExternalToolAction {
+            server_id: "purrcode.skill-registry".into(),
+            tool_name: "download-source-archive".into(),
+            arguments: serde_json::json!({
+                "candidate_id": "github:owner/repository",
+                "commit": commit,
+                "url": format!("https://codeload.github.com/owner/repository/zip/{commit}"),
+            }),
+            working_directory: repository.path().to_path_buf(),
+        });
+        assert_eq!(
+            validate_skill_download_boundary(&exact, &constraints).unwrap(),
+            format!("https://codeload.github.com/owner/repository/zip/{commit}")
+        );
+        let changed = ProposedAction::ExternalTool(ExternalToolAction {
+            server_id: "purrcode.skill-registry".into(),
+            tool_name: "download-source-archive".into(),
+            arguments: serde_json::json!({
+                "candidate_id": "github:owner/repository",
+                "commit": commit,
+                "url": "https://127.0.0.1/archive.zip",
+            }),
+            working_directory: repository.path().to_path_buf(),
+        });
+        assert!(matches!(
+            validate_skill_download_boundary(&changed, &constraints),
+            Err(ApiError::Conflict(_))
+        ));
+    }
+
+    #[test]
     fn token_file_is_created_with_stable_secret() {
         let temporary = tempfile::tempdir().unwrap();
         let path = temporary.path().join("daemon.token");
@@ -4379,6 +6513,8 @@ mod tests {
             local_inference_slots: Arc::new(Semaphore::new(1)),
             local_inference_limit: 1,
             interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
         };
         let session_id = SessionId::new();
         let original_generation = Uuid::new_v4();
@@ -4389,6 +6525,7 @@ mod tests {
                 generation: original_generation,
                 task: original_task,
                 models: vec![ModelId::parse("local/test").unwrap()],
+                cancellation: AgentCancellation::new(),
             },
         );
 
@@ -4439,6 +6576,7 @@ mod tests {
                 generation: replacement_generation,
                 task: replacement_task,
                 models: vec![ModelId::parse("local/replacement").unwrap()],
+                cancellation: AgentCancellation::new(),
             },
         );
         assert!(
@@ -4465,6 +6603,7 @@ mod tests {
         let source = temporary.path().join("source");
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("SKILL.md"), "# Terraform inspector").unwrap();
+        let digest = skill_digest(&source).unwrap();
         let mut store = SkillStore::open(&skills_database, &library).unwrap();
         store
             .install(
@@ -4474,9 +6613,15 @@ mod tests {
                 "registry",
                 None,
                 Some("fixture"),
-                "fixture-digest",
+                &digest,
                 &serde_json::json!({}),
                 &source,
+            )
+            .unwrap();
+        store
+            .update_qualification(
+                "terraform-inspector",
+                &purrcode_runtime_core::QualificationStatus::Qualified,
             )
             .unwrap();
         store.record_use("terraform-inspector", true).unwrap();
@@ -4754,7 +6899,7 @@ mod tests {
             allow_public_bind: false,
             database: temporary.path().join("sessions.db"),
             token_file: token_file.clone(),
-            app_config,
+            app_config: app_config.clone(),
         })
         .await
         .unwrap();
@@ -4801,10 +6946,16 @@ mod tests {
         let provider_server = tokio::spawn(async move {
             axum::serve(
                 provider_listener,
-                Router::new().route(
-                    "/v1/models",
-                    get(|| async { Json(serde_json::json!({"data": []})) }),
-                ),
+                Router::new()
+                    .route(
+                        "/v1/models",
+                        get(|| async { Json(serde_json::json!({"data": []})) }),
+                    )
+                    .route("/v1/chat/completions", post(compatible_generation_stream))
+                    .route(
+                        "/bad/v1/models",
+                        get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+                    ),
             )
             .await
         });
@@ -4830,7 +6981,7 @@ local = true
             allow_public_bind: false,
             database: temporary.path().join("sessions.db"),
             token_file: token_file.clone(),
-            app_config,
+            app_config: app_config.clone(),
         })
         .await
         .unwrap();
@@ -4860,6 +7011,68 @@ local = true
         assert_eq!(result["local"], true);
         assert_eq!(result["models_configured"], serde_json::json!([]));
         assert!(result["latency_ms"].is_number());
+
+        let configured = client
+            .post(format!("http://{}/v1/providers", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "name": "imported",
+                "provider_type": "lm-studio",
+                "base_url": format!("http://{provider_address}/v1/"),
+                "model": "fixture-model",
+                "credential_name": null,
+                "credential_reference": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(configured.status(), StatusCode::OK);
+        let configured_body: serde_json::Value = configured.json().await.unwrap();
+        assert_eq!(configured_body["configured"], true);
+        assert_eq!(configured_body["available"], true);
+        assert!(AppConfig::load(&app_config)
+            .unwrap()
+            .providers
+            .contains_key("imported"));
+
+        let invalid_reference = client
+            .post(format!("http://{}/v1/providers", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "name": "raw-secret",
+                "provider_type": "openai-compatible",
+                "base_url": format!("http://{provider_address}/v1/"),
+                "model": "fixture-model",
+                "credential_name": null,
+                "credential_reference": {
+                    "kind": "environment",
+                    "value": "sk-must-not-be-a-reference"
+                },
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid_reference.status(), StatusCode::BAD_REQUEST);
+
+        let failed_probe = client
+            .post(format!("http://{}/v1/providers", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "name": "unhealthy",
+                "provider_type": "lm-studio",
+                "base_url": format!("http://{provider_address}/bad/v1/"),
+                "model": "fixture-model",
+                "credential_name": null,
+                "credential_reference": null,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(failed_probe.status(), StatusCode::BAD_REQUEST);
+        let persisted = std::fs::read_to_string(&app_config).unwrap();
+        assert!(!persisted.contains("raw-secret"));
+        assert!(!persisted.contains("must-not-be-a-reference"));
+        assert!(!persisted.contains("unhealthy"));
 
         handle.abort();
         provider_server.abort();
@@ -4910,14 +7123,20 @@ local = true
             .json(&serde_json::json!({
                 "name": "ollama",
                 "provider_type": "ollama",
-                "base_url": "http://127.0.0.1:11434/v1/",
+                "base_url": "http://127.0.0.1:11434/",
                 "model": model,
                 "credential_name": null
             }))
             .send()
             .await
             .unwrap();
-        assert_eq!(connected.status(), StatusCode::OK);
+        let connected_status = connected.status();
+        let connected_body = connected.text().await.unwrap();
+        assert_eq!(
+            connected_status,
+            StatusCode::OK,
+            "connect failed: {connected_body}"
+        );
         let health = client
             .post(format!("http://{}/v1/providers/test", report.bind))
             .bearer_auth(token.trim())
@@ -4979,6 +7198,16 @@ local = true
             }
         }
         assert!(!second.trim().is_empty());
+        let runtime = configured_ollama_runtime(&config).unwrap();
+        let unloaded = runtime
+            .unload(&UnloadLocalModelRequest {
+                model: Some(model.clone()),
+                all: false,
+            })
+            .await
+            .unwrap();
+        assert_eq!(unloaded, vec![model]);
+        assert!(runtime.inspect().await.unwrap().loaded.is_empty());
         handle.abort();
     }
 
@@ -5129,8 +7358,11 @@ allow_same_model = true
         provider_server.abort();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn skill_install_requires_exact_single_use_authorization_and_rechecks_digest() {
+        use std::os::unix::fs::PermissionsExt;
+
         let temporary = tempfile::tempdir().unwrap();
         let database = temporary.path().join("sessions.db");
         let repository = temporary.path().join("repo");
@@ -5140,9 +7372,14 @@ allow_same_model = true
         std::fs::write(source.join("SKILL.md"), "# safe").unwrap();
         std::fs::write(
             source.join("manifest.toml"),
-            "name='safe'\nversion='1.0.0'\n",
+            "name='safe'\nversion='1.0.0'\n[entrypoints]\nrun='run'\n[qualification]\nentrypoint='run'\ntimeout_seconds=5\n",
         )
         .unwrap();
+        let entrypoint = source.join("run");
+        std::fs::write(&entrypoint, "#!/bin/sh\nprintf '{\"ok\":true}'\n").unwrap();
+        let mut permissions = std::fs::metadata(&entrypoint).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&entrypoint, permissions).unwrap();
         let session_id = SessionId::new();
         SessionStore::open(&database)
             .unwrap()
@@ -5158,7 +7395,7 @@ allow_same_model = true
         let (report, server) = bind_and_report(DaemonConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             allow_public_bind: false,
-            database,
+            database: database.clone(),
             token_file: token_file.clone(),
             app_config: temporary.path().join("unused-config.toml"),
         })
@@ -5184,9 +7421,66 @@ allow_same_model = true
             .send()
             .await
             .unwrap();
+        if !purrcode_claw::sandbox_capability().network_isolation {
+            assert_eq!(proposal.status(), StatusCode::BAD_REQUEST);
+            let events = SessionStore::open(&database)
+                .unwrap()
+                .events(session_id)
+                .unwrap();
+            assert!(events.iter().any(|event| matches!(
+                event,
+                SessionEvent::SkillQualified {
+                    status: purrcode_runtime_core::QualificationStatus::Unverified,
+                    ..
+                }
+            )));
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                SessionEvent::ActionProposed {
+                    action: ProposedAction::ExternalTool(external),
+                    ..
+                } if external.server_id == "purrcode.skill-store"
+                    && external.tool_name == "install"
+            )));
+            handle.abort();
+            return;
+        }
         assert_eq!(proposal.status(), StatusCode::OK);
         let proposal: serde_json::Value = proposal.json().await.unwrap();
         let action_id = proposal["action_id"].as_str().unwrap();
+        let events = SessionStore::open(&database)
+            .unwrap()
+            .events(session_id)
+            .unwrap();
+        let qualification_index = events
+            .iter()
+            .position(|event| matches!(event, SessionEvent::SkillQualified { .. }))
+            .unwrap();
+        let install_proposal_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    SessionEvent::ActionProposed {
+                        action: ProposedAction::ExternalTool(external),
+                        ..
+                    } if external.server_id == "purrcode.skill-store"
+                        && external.tool_name == "install"
+                )
+            })
+            .unwrap();
+        assert!(
+            qualification_index < install_proposal_index,
+            "dynamic qualification must finish before install approval is proposed"
+        );
+        let unauthorized = client
+            .post(format!("http://{}/v1/skills/install", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"session_id": session_id.0, "action_id": action_id}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::CONFLICT);
         let approval = client
             .post(format!(
                 "http://{}/v1/skills/install/{action_id}/approve",
@@ -5207,6 +7501,15 @@ allow_same_model = true
             .await
             .unwrap();
         assert_eq!(rejected.status(), StatusCode::CONFLICT);
+        std::fs::write(source.join("SKILL.md"), "# safe").unwrap();
+        let installed = client
+            .post(format!("http://{}/v1/skills/install", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"session_id": session_id.0, "action_id": action_id}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(installed.status(), StatusCode::OK);
         let replay = client
             .post(format!("http://{}/v1/skills/install", report.bind))
             .bearer_auth(token.trim())
@@ -5235,13 +7538,19 @@ allow_same_model = true
                 },
             )
             .unwrap();
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(
+            &app_config,
+            "schema_version = 1\n[privacy]\nmode = 'mixed'\n",
+        )
+        .unwrap();
         let token_file = temporary.path().join("daemon.token");
         let (report, server) = bind_and_report(DaemonConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             allow_public_bind: false,
             database: database.clone(),
             token_file: token_file.clone(),
-            app_config: temporary.path().join("unused.toml"),
+            app_config,
         })
         .await
         .unwrap();
@@ -5264,6 +7573,39 @@ allow_same_model = true
         assert_eq!(response.status(), StatusCode::OK);
         let value: serde_json::Value = response.json().await.unwrap();
         assert_eq!(value["requires_approval"], true);
+        assert_eq!(value["external_search_avoided"], false);
+        let action_id = value["action_id"].as_str().unwrap();
+        let raw_approval = reqwest::Client::new()
+            .post(format!("http://{}/v1/skills/search", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "session_id": session_id.0,
+                "approved": true,
+                "capability": "terraform-schema-inspection",
+                "keywords": ["terraform"],
+                "platform": "macos",
+                "purrcode_version": env!("CARGO_PKG_VERSION")
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(raw_approval.status(), StatusCode::BAD_REQUEST);
+        let mismatched = reqwest::Client::new()
+            .post(format!("http://{}/v1/skills/search", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "session_id": session_id.0,
+                "approved": true,
+                "action_id": action_id,
+                "capability": "different-capability",
+                "keywords": ["terraform"],
+                "platform": "macos",
+                "purrcode_version": env!("CARGO_PKG_VERSION")
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(mismatched.status(), StatusCode::CONFLICT);
         let events = SessionStore::open(&database)
             .unwrap()
             .events(session_id)
@@ -5278,6 +7620,105 @@ allow_same_model = true
         assert!(!events
             .iter()
             .any(|event| matches!(event, SessionEvent::ExecutionStarted { .. })));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn qualified_installed_skill_avoids_action_creation_and_external_search() {
+        let temporary = tempfile::tempdir().unwrap();
+        let database = temporary.path().join("sessions.db");
+        let repository = temporary.path().join("repo");
+        let source = temporary.path().join("terraform-inspector-source");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# Terraform inspector").unwrap();
+        let session_id = SessionId::new();
+        SessionStore::open(&database)
+            .unwrap()
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "inspect terraform schema".into(),
+                    repository,
+                },
+            )
+            .unwrap();
+        let digest = skill_digest(&source).unwrap();
+        let mut library = SkillStore::open(
+            &temporary.path().join("skills.db"),
+            &temporary.path().join("skills"),
+        )
+        .unwrap();
+        library
+            .install_qualified(
+                "terraform-inspector",
+                "1.0.0",
+                SkillScope::User,
+                "registry",
+                None,
+                Some("fixture"),
+                &digest,
+                &serde_json::json!({}),
+                &source,
+                &purrcode_runtime_core::QualificationStatus::Qualified,
+            )
+            .unwrap();
+        library.record_use("terraform-inspector", true).unwrap();
+        drop(library);
+
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: database.clone(),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("unused.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let response = reqwest::Client::new()
+            .post(format!("http://{}/v1/skills/search", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "session_id": session_id.0,
+                "approved": false,
+                "capability": "terraform",
+                "keywords": ["terraform"],
+                "platform": "macos",
+                "purrcode_version": env!("CARGO_PKG_VERSION")
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(response["resolution"], "installed");
+        assert_eq!(response["external_search_avoided"], true);
+        assert_eq!(
+            response["selected_skill"]["skill_id"],
+            "terraform-inspector"
+        );
+        let events = SessionStore::open(&database)
+            .unwrap()
+            .events(session_id)
+            .unwrap();
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::InstalledSkillMatched { .. })));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::InstalledSkillReused { .. })));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ExternalSearchAvoided { .. })));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SkillSearchStarted { .. })));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ActionProposed { .. })));
         handle.abort();
     }
 

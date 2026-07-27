@@ -19,6 +19,8 @@ pub struct SkillBrowser {
     pub selected: usize,
     pub loading: bool,
     pub error: Option<String>,
+    pub pending_search_action: Option<String>,
+    pub pending_search_query: Option<String>,
 }
 
 impl SkillBrowser {
@@ -28,6 +30,8 @@ impl SkillBrowser {
             selected: 0,
             loading: false,
             error: None,
+            pending_search_action: None,
+            pending_search_query: None,
         }
     }
 
@@ -56,20 +60,37 @@ impl SkillBrowser {
         token: &str,
         query: &str,
         session_id: Option<&str>,
-        approved: bool,
+        approve_pending: bool,
     ) {
         self.loading = true;
         let url = format!("{}/v1/skills/search", daemon_url.trim_end_matches('/'));
-        let body = serde_json::json!({"session_id": session_id, "approved": approved, "capability": query, "keywords": [query], "platform": std::env::consts::OS, "purrcode_version": env!("CARGO_PKG_VERSION")});
+        let action_id = if approve_pending && self.pending_search_query.as_deref() == Some(query) {
+            self.pending_search_action.clone()
+        } else {
+            None
+        };
+        if approve_pending && action_id.is_none() {
+            self.loading = false;
+            self.error = Some(
+                "No exact pending search matches this query. Run /skills search <query> first."
+                    .into(),
+            );
+            return;
+        }
+        let body = serde_json::json!({"session_id": session_id, "approved": approve_pending, "action_id": action_id, "capability": query, "keywords": [query], "platform": std::env::consts::OS, "purrcode_version": env!("CARGO_PKG_VERSION")});
         let req = client.post(&url).bearer_auth(token).json(&body);
         match req.send().await {
             Ok(resp) => {
                 if let Ok(val) = resp.json::<Value>().await {
                     if val["requires_approval"].as_bool() == Some(true) {
                         self.skills.clear();
-                        self.error = Some("Network approval required. Return to chat and use /skill-search-approve <query>.".into());
+                        self.pending_search_action = val["action_id"].as_str().map(str::to_owned);
+                        self.pending_search_query = Some(query.to_owned());
+                        self.error = Some("Network approval required. Return to chat and use /skill-search-approve with the same query.".into());
                     } else {
                         self.skills = parse_candidates(&val);
+                        self.pending_search_action = None;
+                        self.pending_search_query = None;
                         self.error = None;
                     }
                 }

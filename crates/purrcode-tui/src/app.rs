@@ -2,14 +2,16 @@
 
 use crate::command_palette::CommandPalette;
 use crate::composer::Composer;
-use crate::conversation::Conversation;
+use crate::conversation::{Conversation, Message};
 use crate::diff_view::DiffView;
 use crate::keybindings::handle_key;
 use crate::provider_setup::ProviderSetup;
 use crate::render::draw;
 use crate::skill_browser::SkillBrowser;
 use crate::status_bar::StatusBar;
-use crate::streaming::{StreamController, StreamEvent};
+use crate::streaming::{
+    SseDecoder, StreamController, StreamEvent, StreamOutput, VerifiedStreamEnd,
+};
 use crate::theme::Theme;
 use crate::ui_state::UiState;
 use crate::workspace::WorkspaceContext;
@@ -56,6 +58,34 @@ pub struct SecretReview {
     pub provider_candidate: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingModelPull {
+    pub action_id: String,
+    pub action_digest: String,
+    pub session_id: String,
+    pub model: String,
+    pub approved: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingResearch {
+    pub action_id: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingSkillDownload {
+    pub action_id: String,
+    pub candidate_id: String,
+    pub commit: String,
+}
+
+#[derive(serde::Serialize)]
+struct StoreCredentialPayload<'a> {
+    name: &'a str,
+    secret: &'a str,
+}
+
 pub struct App {
     pub config: TuiConfig,
     pub client: reqwest::Client,
@@ -70,6 +100,7 @@ pub struct App {
     pub skill_browser: Option<SkillBrowser>,
     pub diff_view: Option<DiffView>,
     pub stream: StreamController,
+    pub(crate) reconciliation: Option<tokio::task::JoinHandle<ReconciliationSnapshot>>,
     pub last_refresh: Instant,
     pub message_bar: String,
     pub session_id: Option<String>,
@@ -80,9 +111,20 @@ pub struct App {
     pub quit_requested: bool,
     pub downloaded_skill: Option<Value>,
     pub pending_skill_install_action: Option<String>,
+    pub pending_research: Option<PendingResearch>,
+    pub pending_skill_download: Option<PendingSkillDownload>,
+    pub pending_model_pull: Option<PendingModelPull>,
+    pub active_pull_action: Option<String>,
+    pub active_pull_session: Option<String>,
     pub theme: Theme,
     pub palette_query: String,
     pub palette_selected: usize,
+}
+
+pub(crate) struct ReconciliationSnapshot {
+    messages: Option<Vec<Message>>,
+    events: Option<Vec<Value>>,
+    pull_progress: Option<Result<Value, String>>,
 }
 
 pub async fn run(config: TuiConfig) -> Result<()> {
@@ -110,6 +152,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         skill_browser: None,
         diff_view: None,
         stream: StreamController::new(),
+        reconciliation: None,
         last_refresh: Instant::now(),
         message_bar: String::new(),
         session_id: None,
@@ -120,6 +163,11 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         quit_requested: false,
         downloaded_skill: None,
         pending_skill_install_action: None,
+        pending_research: None,
+        pending_skill_download: None,
+        pending_model_pull: None,
+        active_pull_action: None,
+        active_pull_session: None,
         theme: Theme::detect(),
         palette_query: String::new(),
         palette_selected: 0,
@@ -170,36 +218,17 @@ async fn event_loop(
         {
             app.finish_provider_setup().await;
         }
-        // Refresh state
-        if app.last_refresh.elapsed() >= Duration::from_millis(100) {
-            app.refresh().await;
+        // Reconciliation stays off the input/render tick. While SSE is active, its durable-audit
+        // increments replace the two legacy polling GETs.
+        app.poll_reconciliation().await;
+        if app.last_refresh.elapsed() >= Duration::from_secs(1) {
+            app.start_reconciliation();
             app.last_refresh = Instant::now();
         }
 
-        // Poll SSE stream
-        if let Some(ref mut rx) = app.stream.receiver {
-            match rx.try_recv() {
-                Ok(StreamEvent::Delta(text)) => {
-                    app.conversation.append_streaming(&text);
-                }
-                Ok(StreamEvent::ToolCall(tc)) => {
-                    app.conversation.pending_action = Some(tc);
-                }
-                Ok(StreamEvent::Done) => {
-                    app.conversation.finalize_streaming();
-                    app.stream.active = false;
-                    app.message_bar = "Done.".into();
-                }
-                Ok(StreamEvent::Error(e)) => {
-                    app.conversation.cancel_streaming();
-                    app.stream.active = false;
-                    app.message_bar = format!("Stream error: {e}");
-                }
-                Ok(StreamEvent::Usage { input, output }) => {
-                    app.status_bar.context_info = format!("{input} in / {output} out");
-                }
-                Err(_) => {} // no events ready
-            }
+        app.drain_live_stream(Instant::now());
+        if let Some(stall) = app.stream.actionable_stall(Instant::now()) {
+            app.message_bar = stall.into();
         }
 
         // Process pending command
@@ -262,14 +291,15 @@ async fn event_loop(
                         continue;
                     }
                 }
+                app.cancel_reconciliation();
+                let selected_model = app.status_bar.model.clone();
                 app.conversation
-                    .start_streaming(Some(app.status_bar.model.clone()));
+                    .start_streaming(Some(selected_model.clone()));
 
-                let tx = app.stream.start();
+                let tx = app.stream.start(Some(selected_model), Instant::now());
 
                 let daemon_url = app.daemon_url().to_string();
                 let token = app.token.clone();
-                let client = app.client.clone();
                 let session_id = app.session_id.clone();
 
                 tokio::spawn(async move {
@@ -279,91 +309,67 @@ async fn event_loop(
                         daemon_url.trim_end_matches('/'),
                         sid
                     );
+                    let client = match reqwest::Client::builder()
+                        .connect_timeout(Duration::from_secs(3))
+                        .build()
+                    {
+                        Ok(client) => client,
+                        Err(error) => {
+                            let _ = tx
+                                .send(StreamEvent::TransportError(error.to_string()))
+                                .await;
+                            return;
+                        }
+                    };
                     let resp = client.get(&url).bearer_auth(&token).send().await;
                     match resp {
-                        Ok(rsp) => {
+                        Ok(rsp) if rsp.status().is_success() => {
                             let mut stream = rsp.bytes_stream();
-                            let mut buffer = String::new();
+                            let mut decoder = SseDecoder::default();
                             while let Some(chunk) = stream.next().await {
                                 match chunk {
                                     Ok(bytes) => {
-                                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-                                        while let Some(pos) = buffer.find("\n\n") {
-                                            let event_block = buffer[..pos].to_string();
-                                            buffer = buffer[pos + 2..].to_string();
-                                            for line in event_block.lines() {
-                                                if let Some(data) = line.strip_prefix("data: ") {
-                                                    if let Ok(val) =
-                                                        serde_json::from_str::<serde_json::Value>(
-                                                            data,
-                                                        )
-                                                    {
-                                                        if let Some(delta) = val
-                                                            .get("delta")
-                                                            .and_then(|value| value.as_str())
-                                                        {
-                                                            let _ = tx
-                                                                .send(StreamEvent::Delta(
-                                                                    delta.to_owned(),
-                                                                ))
-                                                                .await;
-                                                        }
-                                                        if let Some(tc) =
-                                                            val.pointer("/data/action")
-                                                        {
-                                                            let _ = tx
-                                                                .send(StreamEvent::ToolCall(
-                                                                    tc.clone(),
-                                                                ))
-                                                                .await;
-                                                        }
-                                                        if let Some(usage) = val.get("usage") {
-                                                            let input = usage
-                                                                .get("input_tokens")
-                                                                .and_then(|v| v.as_u64())
-                                                                .unwrap_or(0);
-                                                            let output = usage
-                                                                .get("output_tokens")
-                                                                .and_then(|v| v.as_u64())
-                                                                .unwrap_or(0);
-                                                            let _ = tx
-                                                                .send(StreamEvent::Usage {
-                                                                    input,
-                                                                    output,
-                                                                })
-                                                                .await;
-                                                        }
-                                                        if matches!(
-                                                            val.get("event")
-                                                                .and_then(|v| v.as_str()),
-                                                            Some(
-                                                                "session_completed"
-                                                                    | "session_failed"
-                                                                    | "outcome_review_required"
-                                                            )
-                                                        ) {
-                                                            let _ =
-                                                                tx.send(StreamEvent::Done).await;
-                                                            return;
-                                                        }
-                                                    }
-                                                }
+                                        let decoded = match decoder.push(&bytes) {
+                                            Ok(decoded) => decoded,
+                                            Err(error) => {
+                                                let _ = tx
+                                                    .send(StreamEvent::TransportError(error))
+                                                    .await;
+                                                return;
+                                            }
+                                        };
+                                        for event in decoded {
+                                            if tx.send(event).await.is_err() {
+                                                return;
                                             }
                                         }
                                     }
-                                    Err(e) => {
-                                        let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+                                    Err(error) => {
+                                        let _ = tx
+                                            .send(StreamEvent::TransportError(error.to_string()))
+                                            .await;
                                         return;
                                     }
                                 }
                             }
+                            let _ = tx.send(StreamEvent::TransportClosed).await;
                         }
-                        Err(e) => {
-                            let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+                        Ok(response) => {
+                            let _ = tx
+                                .send(StreamEvent::TransportError(format!(
+                                    "daemon stream returned HTTP {}",
+                                    response.status()
+                                )))
+                                .await;
+                        }
+                        Err(error) => {
+                            let _ = tx
+                                .send(StreamEvent::TransportError(error.to_string()))
+                                .await;
                         }
                     }
                 });
-                app.message_bar = "Processing...".into();
+                app.message_bar = "Preparing context...".into();
             }
         }
 
@@ -371,19 +377,15 @@ async fn event_loop(
         terminal.draw(|frame| draw(frame, app))?;
 
         // Wait for input
-        if !event::poll(Duration::from_millis(50))? {
+        if !event::poll(Duration::from_millis(16))? {
             continue;
         }
 
         let input = event::read()?;
         if let Event::Mouse(mouse) = input {
             match mouse.kind {
-                MouseEventKind::ScrollUp => {
-                    app.conversation.scroll = app.conversation.scroll.saturating_sub(3)
-                }
-                MouseEventKind::ScrollDown => {
-                    app.conversation.scroll = app.conversation.scroll.saturating_add(3)
-                }
+                MouseEventKind::ScrollUp => app.conversation.user_scroll_up(3),
+                MouseEventKind::ScrollDown => app.conversation.user_scroll_down(3),
                 _ => {}
             }
             continue;
@@ -393,8 +395,20 @@ async fn event_loop(
                 app.composer.insert_paste(&content);
             } else if app.mode == AppMode::ProviderSetup {
                 if let Some(setup) = &mut app.provider_setup {
-                    if setup.screen == crate::provider_setup::SetupScreen::ImportSource {
-                        setup.insert_import(&content);
+                    match setup.screen {
+                        crate::provider_setup::SetupScreen::ImportSource => {
+                            setup.insert_import(&content);
+                        }
+                        crate::provider_setup::SetupScreen::ImportEnvironment => {
+                            setup.insert_environment_reference(&content);
+                        }
+                        crate::provider_setup::SetupScreen::Form
+                        | crate::provider_setup::SetupScreen::ImportReview => {
+                            setup.insert_active_paste(&content);
+                        }
+                        crate::provider_setup::SetupScreen::Discovery
+                        | crate::provider_setup::SetupScreen::ImportAuthChoice
+                        | crate::provider_setup::SetupScreen::ImportKeychainConfirm => {}
                     }
                 }
             }
@@ -412,6 +426,27 @@ async fn event_loop(
         }
         app.persist_ui_state();
     }
+}
+
+async fn daemon_get_json(
+    client: &reqwest::Client,
+    token: &str,
+    url: &str,
+) -> Result<Value, String> {
+    let response = client
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("daemon HTTP {status}"));
+    }
+    response
+        .json::<Value>()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 impl App {
@@ -432,8 +467,23 @@ impl App {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value> {
+        self.request_with_timeout(method, path, body, Duration::from_secs(60))
+            .await
+    }
+
+    pub async fn request_with_timeout(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+        timeout: Duration,
+    ) -> Result<Value> {
         let url = format!("{}{}", self.daemon_url(), path);
-        let mut req = self.client.request(method, &url).bearer_auth(&self.token);
+        let mut req = self
+            .client
+            .request(method, &url)
+            .bearer_auth(&self.token)
+            .timeout(timeout);
         if let Some(body) = body {
             req = req.json(&body);
         }
@@ -442,6 +492,23 @@ impl App {
         let value: Value = resp.json().await?;
         if !status.is_success() {
             anyhow::bail!("daemon HTTP {status}: {value}");
+        }
+        Ok(value)
+    }
+
+    async fn store_credential(&self, name: &str, secret: &str) -> Result<Value> {
+        let url = format!("{}/v1/credentials", self.daemon_url());
+        let response = self
+            .client
+            .post(url)
+            .bearer_auth(&self.token)
+            .json(&StoreCredentialPayload { name, secret })
+            .send()
+            .await?;
+        let status = response.status();
+        let value: Value = response.json().await?;
+        if !status.is_success() {
+            anyhow::bail!("daemon HTTP {status}: credential storage was rejected");
         }
         Ok(value)
     }
@@ -494,8 +561,165 @@ impl App {
         }
     }
 
+    fn drain_live_stream(&mut self, now: Instant) {
+        for output in self.stream.drain(now) {
+            match output {
+                StreamOutput::PhaseChanged(update) => {
+                    self.workspace.session_phase = update.phase.label().to_lowercase();
+                    let role = update
+                        .role
+                        .as_deref()
+                        .map(|role| format!(" · {role}"))
+                        .unwrap_or_default();
+                    let attempt = update
+                        .attempt
+                        .map(|attempt| format!(" · attempt {attempt}"))
+                        .unwrap_or_default();
+                    self.message_bar = format!("{}{}{}", update.phase.label(), role, attempt);
+                    if let Some(first_token_ms) = update.timing.first_semantic_delta_ms {
+                        self.status_bar.context_info = format!("first token {first_token_ms} ms");
+                    }
+                }
+                StreamOutput::Content { text, replace, .. } => {
+                    if replace {
+                        self.conversation.replace_streaming(&text);
+                    } else {
+                        self.conversation.append_streaming(&text);
+                    }
+                }
+                StreamOutput::DurableAudit { sequence, event } => {
+                    self.conversation.apply_durable_audit(sequence, event);
+                }
+                StreamOutput::Diagnostic(message) => {
+                    self.message_bar = message;
+                }
+                StreamOutput::TransportError(error) => {
+                    self.conversation.cancel_streaming();
+                    self.stream.stop();
+                    self.message_bar =
+                        format!("Live stream interrupted; partial output was preserved: {error}");
+                }
+                StreamOutput::VerifiedEnd(end) => {
+                    self.conversation.finalize_streaming();
+                    self.message_bar = match end {
+                        VerifiedStreamEnd::Completed => "Done.".into(),
+                        VerifiedStreamEnd::Failed => {
+                            "Session failed; partial output was preserved.".into()
+                        }
+                        VerifiedStreamEnd::Cancelled => {
+                            "Cancelled; partial output was preserved.".into()
+                        }
+                        VerifiedStreamEnd::AwaitingApproval => {
+                            "Paused for exact-action approval.".into()
+                        }
+                        VerifiedStreamEnd::AwaitingReview => "Paused for outcome review.".into(),
+                    };
+                }
+            }
+        }
+    }
+
+    fn cancel_reconciliation(&mut self) {
+        if let Some(handle) = self.reconciliation.take() {
+            handle.abort();
+        }
+    }
+
+    fn start_reconciliation(&mut self) {
+        if self.reconciliation.is_some() || self.stream.active {
+            return;
+        }
+        if self.mode != AppMode::Conversation && self.active_pull_action.is_none() {
+            return;
+        }
+        let client = self.client.clone();
+        let daemon_url = self.daemon_url().trim_end_matches('/').to_owned();
+        let token = self.token.clone();
+        let session_id = self.session_id.clone();
+        let pull_action = self.active_pull_action.clone();
+        self.reconciliation = Some(tokio::spawn(async move {
+            let session = async {
+                let Some(session_id) = session_id else {
+                    return (None, None);
+                };
+                let messages_url = format!("{daemon_url}/v1/sessions/{session_id}/messages");
+                let events_url = format!("{daemon_url}/v1/sessions/{session_id}/events");
+                let (messages, events) = tokio::join!(
+                    daemon_get_json(&client, &token, &messages_url),
+                    daemon_get_json(&client, &token, &events_url),
+                );
+                (
+                    messages
+                        .ok()
+                        .and_then(|value| serde_json::from_value::<Vec<Message>>(value).ok()),
+                    events
+                        .ok()
+                        .and_then(|value| serde_json::from_value::<Vec<Value>>(value).ok()),
+                )
+            };
+            let pull = async {
+                let action_id = pull_action?;
+                let url = format!("{daemon_url}/v1/local-models/pull/{action_id}");
+                Some(daemon_get_json(&client, &token, &url).await)
+            };
+            let ((messages, events), pull_progress) = tokio::join!(session, pull);
+            ReconciliationSnapshot {
+                messages,
+                events,
+                pull_progress,
+            }
+        }));
+    }
+
+    async fn poll_reconciliation(&mut self) {
+        if !self
+            .reconciliation
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+        {
+            return;
+        }
+        let Some(handle) = self.reconciliation.take() else {
+            return;
+        };
+        let Ok(snapshot) = handle.await else {
+            return;
+        };
+        if !self.stream.active {
+            if let Some(events) = snapshot.events {
+                self.conversation.reconcile(snapshot.messages, events);
+                self.workspace.session_phase = self.conversation.phase.clone();
+            }
+        }
+        if let Some(progress) = snapshot.pull_progress {
+            match progress {
+                Ok(progress) => self.apply_pull_progress(&progress),
+                Err(error) => {
+                    self.message_bar = format!("Model pull status failed: {error}");
+                    self.active_pull_action = None;
+                    self.active_pull_session = None;
+                }
+            }
+        }
+    }
+
+    fn apply_pull_progress(&mut self, progress: &Value) {
+        let phase = progress["phase"].as_str().unwrap_or("unknown");
+        let message = progress["message"]
+            .as_str()
+            .unwrap_or("Ollama pull state unavailable");
+        let captured = progress["captured_output_bytes"]
+            .as_u64()
+            .unwrap_or_default();
+        self.message_bar = format!("Model pull · {phase} · {captured} bytes\n{message}");
+        if matches!(phase, "completed" | "failed" | "cancelled") {
+            self.active_pull_action = None;
+            self.active_pull_session = None;
+        }
+    }
+
     pub async fn refresh(&mut self) {
-        if self.mode == AppMode::Conversation {
+        if self.mode == AppMode::Conversation && !self.stream.active {
             let token = self.token.clone();
             let url = self.daemon_url().to_string();
             let session_id = self.session_id.clone();
@@ -503,6 +727,23 @@ impl App {
                 .refresh_events(&url, &token, session_id)
                 .await;
             self.workspace.session_phase = self.conversation.phase.clone();
+        }
+        if let Some(action_id) = self.active_pull_action.clone() {
+            match self
+                .request(
+                    reqwest::Method::GET,
+                    &format!("/v1/local-models/pull/{action_id}"),
+                    None,
+                )
+                .await
+            {
+                Ok(progress) => self.apply_pull_progress(&progress),
+                Err(error) => {
+                    self.message_bar = format!("Model pull status failed: {error}");
+                    self.active_pull_action = None;
+                    self.active_pull_session = None;
+                }
+            }
         }
     }
 
@@ -556,16 +797,25 @@ impl App {
                 return;
             }
         };
-        let credential_name = if setup.api_key.is_empty() {
-            None
-        } else {
-            let result = self
-                .request(
-                    reqwest::Method::POST,
-                    "/v1/credentials",
-                    Some(serde_json::json!({"name": name, "secret": setup.api_key})),
-                )
-                .await;
+        let mut credential_name = None;
+        let mut credential_reference = setup.credential_reference();
+        if let Some(secret) = setup.pending_keychain_secret() {
+            let result = self.store_credential(&name, secret).await;
+            if let Err(error) = result {
+                setup.error = Some(format!("Credential storage failed: {error}"));
+                setup.complete = false;
+                self.provider_setup = Some(setup);
+                return;
+            }
+            if let Err(error) = setup.confirm_keychain_stored() {
+                setup.error = Some(format!("Credential confirmation failed: {error}"));
+                setup.complete = false;
+                self.provider_setup = Some(setup);
+                return;
+            }
+            credential_reference = setup.credential_reference();
+        } else if !setup.api_key.is_empty() {
+            let result = self.store_credential(&name, &setup.api_key).await;
             setup.api_key.zeroize();
             if let Err(error) = result {
                 setup.error = Some(format!("Credential storage failed: {error}"));
@@ -573,8 +823,9 @@ impl App {
                 self.provider_setup = Some(setup);
                 return;
             }
-            Some(name.clone())
-        };
+            credential_name = Some(name.clone());
+            credential_reference = None;
+        }
         let configured = self
             .request(
                 reqwest::Method::POST,
@@ -585,59 +836,49 @@ impl App {
                     "base_url": setup.base_url.clone(),
                     "model": setup.model_id.clone(),
                     "credential_name": credential_name,
+                    "credential_reference": credential_reference,
                     "replace": setup.editing_existing,
                 })),
             )
             .await;
-        if let Err(error) = configured {
-            setup.error = Some(format!("Provider configuration failed: {error}"));
-            setup.complete = false;
-            self.provider_setup = Some(setup);
-            return;
-        }
-        match self
-            .request(
-                reqwest::Method::POST,
-                "/v1/providers/test",
-                Some(serde_json::json!({"provider": name})),
-            )
-            .await
-        {
-            Ok(result) => {
-                let assigned_model = format!("{}/{}", name, setup.model_id);
-                if !setup.role.trim().is_empty() {
-                    if let Err(error) = self
-                        .request(
-                            reqwest::Method::POST,
-                            "/v1/models/roles",
-                            Some(serde_json::json!({
-                                "role": setup.role,
-                                "model": assigned_model,
-                            })),
-                        )
-                        .await
-                    {
-                        setup.error = Some(format!("Role assignment failed: {error}"));
-                        setup.complete = false;
-                        self.provider_setup = Some(setup);
-                        return;
-                    }
-                }
-                self.has_provider = true;
-                self.mode = AppMode::Conversation;
-                self.status_bar.set_model(&assigned_model);
-                self.message_bar = format!(
-                    "Provider {name} verified in {} ms: {}",
-                    result["latency_ms"].as_u64().unwrap_or_default(),
-                    result["detail"].as_str().unwrap_or("healthy response")
-                );
-            }
+        let result = match configured {
+            Ok(result) => result,
             Err(error) => {
-                setup.error = Some(format!("Connection test failed: {error}"));
+                setup.error = Some(format!(
+                    "Provider configuration or connection test failed: {error}"
+                ));
                 setup.complete = false;
                 self.provider_setup = Some(setup);
+                return;
+            }
+        };
+        let assigned_model = format!("{}/{}", name, setup.model_id);
+        if !setup.role.trim().is_empty() {
+            if let Err(error) = self
+                .request(
+                    reqwest::Method::POST,
+                    "/v1/models/roles",
+                    Some(serde_json::json!({
+                        "role": setup.role,
+                        "model": assigned_model,
+                    })),
+                )
+                .await
+            {
+                setup.error = Some(format!("Role assignment failed: {error}"));
+                setup.complete = false;
+                self.provider_setup = Some(setup);
+                return;
             }
         }
+        self.has_provider = true;
+        self.mode = AppMode::Conversation;
+        self.status_bar.set_model(&assigned_model);
+        self.message_bar = format!(
+            "Provider {name} verified in {} ms: {}",
+            result["latency_ms"].as_u64().unwrap_or_default(),
+            result["detail"].as_str().unwrap_or("healthy response")
+        );
     }
 
     async fn discover_local_models(&mut self) {

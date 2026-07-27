@@ -1,6 +1,9 @@
 //! Provider discovery, manual setup, and script-import review state.
 
-use purrcode_provider_import::{import_provider, ProviderImportCandidate, ProviderKind};
+use purrcode_provider_import::{
+    import_provider_secure, ImportedSecretState, ParsedProviderImport, ProviderImportCandidate,
+    ProviderKind, SecretReference, DEFAULT_MAX_INPUT_BYTES,
+};
 use zeroize::Zeroize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,6 +20,9 @@ pub enum SetupScreen {
     Discovery,
     Form,
     ImportSource,
+    ImportAuthChoice,
+    ImportKeychainConfirm,
+    ImportEnvironment,
     ImportReview,
 }
 
@@ -39,6 +45,10 @@ pub struct ProviderSetup {
     pub discovery_requested: bool,
     pub import_source: String,
     pub import_candidate: Option<ProviderImportCandidate>,
+    pub secure_import: Option<ParsedProviderImport>,
+    pub import_auth_choice: usize,
+    pub environment_reference: String,
+    pub keychain_storage_confirmed: bool,
     pub editing_existing: bool,
 }
 
@@ -69,6 +79,10 @@ impl ProviderSetup {
             discovery_requested: false,
             import_source: String::new(),
             import_candidate: None,
+            secure_import: None,
+            import_auth_choice: 0,
+            environment_reference: String::new(),
+            keychain_storage_confirmed: false,
             editing_existing: false,
         }
     }
@@ -155,7 +169,7 @@ impl ProviderSetup {
         self.error = None;
         match provider {
             ProviderType::Ollama => {
-                self.configure_defaults("ollama", "http://127.0.0.1:11434/v1", true, true)
+                self.configure_defaults("ollama", "http://127.0.0.1:11434", true, true)
             }
             ProviderType::LmStudio => {
                 self.configure_defaults("lm-studio", "http://127.0.0.1:1234/v1", true, true)
@@ -185,27 +199,65 @@ impl ProviderSetup {
         self.error = None;
     }
 
+    pub fn insert_active_paste(&mut self, content: &str) {
+        self.active_value_mut().push_str(content);
+        self.error = None;
+    }
+
     pub fn backspace(&mut self) {
         self.active_value_mut().pop();
         self.error = None;
     }
 
     pub fn insert_import(&mut self, source: &str) {
-        self.import_source
-            .push_str(&source.replace("\r\n", "\n").replace('\r', "\n"));
+        if self.import_source.len().saturating_add(source.len()) > DEFAULT_MAX_INPUT_BYTES {
+            self.error = Some(format!(
+                "Provider import is limited to {DEFAULT_MAX_INPUT_BYTES} bytes"
+            ));
+            return;
+        }
+        // Provider import preserves the exact pasted bytes, including original newline style.
+        self.import_source.push_str(source);
+        self.error = None;
     }
 
     pub fn review_import(&mut self) {
-        match import_provider(&self.import_source, None) {
-            Ok(candidate) => {
+        let source = std::mem::take(&mut self.import_source);
+        match import_provider_secure(source, None) {
+            Ok(mut parsed) => {
+                let candidate = parsed.candidate.clone();
                 self.apply_candidate(candidate);
-                self.import_source.zeroize();
-                self.import_source.clear();
-                self.screen = SetupScreen::ImportReview;
+                let requires_choice = matches!(
+                    parsed.secret_state,
+                    ImportedSecretState::DetectedTransient(_)
+                );
+                if requires_choice {
+                    if let Err(error) = parsed.secret_state.begin_storage_choice() {
+                        self.error = Some(error.to_string());
+                        return;
+                    }
+                } else {
+                    self.environment_reference = parsed
+                        .secret_state
+                        .reference()
+                        .and_then(|reference| match reference {
+                            SecretReference::Environment(variable) => Some(variable),
+                            SecretReference::Keychain(_) => None,
+                        })
+                        .unwrap_or_default();
+                }
+                self.secure_import = Some(parsed);
+                self.screen = if requires_choice {
+                    SetupScreen::ImportAuthChoice
+                } else {
+                    SetupScreen::ImportReview
+                };
                 self.active_field = 0;
                 self.error = None;
             }
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => {
+                self.error = Some(error.to_string());
+            }
         }
     }
 
@@ -218,10 +270,172 @@ impl ProviderSetup {
             self.error = Some("Base URL is required".into());
         } else if self.model_id.trim().is_empty() {
             self.error = Some("Select or enter a real model ID".into());
+        } else if !self.import_auth_is_resolved() {
+            self.error = Some(
+                "Authentication is unresolved. Confirm keychain storage, choose an environment reference, or enter another API key.".into(),
+            );
         } else {
             self.complete = true;
             self.error = None;
         }
+    }
+
+    pub fn move_import_auth_choice(&mut self, delta: isize) {
+        self.import_auth_choice = self.import_auth_choice.saturating_add_signed(delta).min(2);
+    }
+
+    pub fn choose_import_auth(&mut self) {
+        match self.import_auth_choice {
+            0 => {
+                self.screen = SetupScreen::ImportKeychainConfirm;
+                self.error = None;
+            }
+            1 => {
+                if self.environment_reference.is_empty() {
+                    self.environment_reference =
+                        suggested_environment_reference(&self.profile_name);
+                }
+                self.screen = SetupScreen::ImportEnvironment;
+                self.error = None;
+            }
+            _ => {
+                if let Some(parsed) = &mut self.secure_import {
+                    parsed.secret_state.discard();
+                }
+                self.keychain_storage_confirmed = false;
+                self.environment_reference.clear();
+                self.screen = SetupScreen::ImportReview;
+                self.active_field = 2;
+                self.error =
+                    Some("Detected secret discarded. Enter another API key before saving.".into());
+            }
+        }
+    }
+
+    pub fn confirm_keychain_choice(&mut self, confirmed: bool) {
+        if confirmed {
+            self.keychain_storage_confirmed = true;
+            self.screen = SetupScreen::ImportReview;
+            self.active_field = 0;
+            self.error = None;
+        } else {
+            self.keychain_storage_confirmed = false;
+            self.screen = SetupScreen::ImportAuthChoice;
+        }
+    }
+
+    pub fn edit_environment_reference(&mut self, character: char) {
+        if self.environment_reference.len() < 128 {
+            self.environment_reference.push(character);
+        }
+        self.error = None;
+    }
+
+    pub fn insert_environment_reference(&mut self, content: &str) {
+        if self
+            .environment_reference
+            .len()
+            .saturating_add(content.len())
+            <= 128
+        {
+            self.environment_reference.push_str(content);
+            self.error = None;
+        } else {
+            self.error = Some("Environment reference is limited to 128 bytes".into());
+        }
+    }
+
+    pub fn backspace_environment_reference(&mut self) {
+        self.environment_reference.pop();
+        self.error = None;
+    }
+
+    pub fn confirm_environment_reference(&mut self) {
+        let Some(parsed) = &mut self.secure_import else {
+            self.error = Some("No secure provider import is active".into());
+            return;
+        };
+        match parsed
+            .secret_state
+            .confirm_environment_reference(self.environment_reference.trim(), true)
+        {
+            Ok(()) => {
+                self.keychain_storage_confirmed = false;
+                self.screen = SetupScreen::ImportReview;
+                self.active_field = 0;
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+    }
+
+    pub fn pending_keychain_secret(&self) -> Option<&str> {
+        if !self.keychain_storage_confirmed {
+            return None;
+        }
+        self.secure_import
+            .as_ref()?
+            .secret_state
+            .transient_secrets()?
+            .single()
+            .ok()
+            .map(|secret| secret.expose_secret())
+    }
+
+    pub fn confirm_keychain_stored(&mut self) -> Result<(), String> {
+        let parsed = self
+            .secure_import
+            .as_mut()
+            .ok_or_else(|| "No secure provider import is active".to_owned())?;
+        parsed
+            .secret_state
+            .confirm_keychain_stored(self.profile_name.trim(), true)
+            .map_err(|error| error.to_string())?;
+        self.keychain_storage_confirmed = false;
+        Ok(())
+    }
+
+    pub fn credential_reference(&self) -> Option<SecretReference> {
+        self.secure_import
+            .as_ref()
+            .and_then(|parsed| parsed.secret_state.reference())
+    }
+
+    pub fn auth_status(&self) -> &'static str {
+        if !self.api_key.is_empty() {
+            return "new secret ready for confirmed keychain storage";
+        }
+        if self.keychain_storage_confirmed {
+            return "detected secret ready for confirmed keychain storage";
+        }
+        match self
+            .secure_import
+            .as_ref()
+            .map(|parsed| &parsed.secret_state)
+        {
+            Some(ImportedSecretState::Stored(_)) => "stored in OS keychain",
+            Some(ImportedSecretState::EnvironmentReference(_)) => "environment reference selected",
+            Some(
+                ImportedSecretState::DetectedTransient(_)
+                | ImportedSecretState::AwaitingStorageChoice(_),
+            ) => "detected secret awaiting storage choice",
+            Some(ImportedSecretState::Discarded) => "detected secret discarded",
+            Some(ImportedSecretState::None) => "not required",
+            None if self.provider_type == Some(ProviderType::Openai) => "not set (required)",
+            None => "not required or not set",
+        }
+    }
+
+    fn import_auth_is_resolved(&self) -> bool {
+        if !self.api_key.is_empty() || self.keychain_storage_confirmed {
+            return true;
+        }
+        if self.secure_import.is_none() && self.provider_type == Some(ProviderType::Openai) {
+            return false;
+        }
+        self.secure_import
+            .as_ref()
+            .is_none_or(|parsed| parsed.validate_auth_resolved().is_ok())
     }
 
     fn configure_defaults(&mut self, name: &str, base_url: &str, local: bool, discover: bool) {
@@ -264,6 +478,28 @@ impl ProviderSetup {
     }
 }
 
+fn suggested_environment_reference(profile_name: &str) -> String {
+    let mut variable = profile_name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    while variable.contains("__") {
+        variable = variable.replace("__", "_");
+    }
+    let variable = variable.trim_matches('_');
+    if variable.is_empty() {
+        "PROVIDER_API_KEY".into()
+    } else {
+        format!("{variable}_API_KEY")
+    }
+}
+
 fn slug(value: &str) -> String {
     let slug = value
         .chars()
@@ -299,13 +535,26 @@ mod tests {
     }
 
     #[test]
+    fn manual_openai_setup_never_treats_missing_auth_as_complete() {
+        let mut setup = ProviderSetup::new();
+        setup.select_provider(ProviderType::Openai);
+        setup.model_id = "gpt-test".into();
+        setup.request_test_and_save();
+        assert!(!setup.complete);
+        assert_eq!(setup.auth_status(), "not set (required)");
+        setup.api_key = "replacement-secret".into();
+        setup.request_test_and_save();
+        assert!(setup.complete);
+    }
+
+    #[test]
     fn pasted_script_becomes_an_editable_redacted_review() {
         let mut setup = ProviderSetup::import_mode();
         setup.insert_import(include_str!(
             "../../provider-import/tests/fixtures/provider.py"
         ));
         setup.review_import();
-        assert_eq!(setup.screen, SetupScreen::ImportReview);
+        assert_eq!(setup.screen, SetupScreen::ImportAuthChoice);
         assert_eq!(setup.profile_name, "nvidia-nim");
         assert_eq!(setup.model_id, "z-ai/glm-5.2");
         assert!(setup.import_source.is_empty());
@@ -313,6 +562,65 @@ mod tests {
             .import_candidate
             .as_ref()
             .is_some_and(|candidate| !candidate.redacted_source.contains("nvapi-fixture-secret")));
+        setup.request_test_and_save();
+        assert!(!setup.complete);
+        setup.choose_import_auth();
+        assert_eq!(setup.screen, SetupScreen::ImportKeychainConfirm);
+        setup.confirm_keychain_choice(true);
+        setup.request_test_and_save();
+        assert!(setup.complete);
+        assert!(setup.pending_keychain_secret().is_some());
+        setup.confirm_keychain_stored().unwrap();
+        assert_eq!(
+            setup.credential_reference(),
+            Some(SecretReference::Keychain("keychain:nvidia-nim".into()))
+        );
+        assert!(setup.pending_keychain_secret().is_none());
+    }
+
+    #[test]
+    fn environment_and_discard_choices_have_truthful_auth_state() {
+        let source =
+            "BASE_URL=https://example.com/v1\nMODEL=test\nAPI_KEY=static-secret-value".to_owned();
+        let mut environment = ProviderSetup::import_mode();
+        environment.insert_import(&source);
+        environment.review_import();
+        environment.import_auth_choice = 1;
+        environment.choose_import_auth();
+        assert_eq!(environment.screen, SetupScreen::ImportEnvironment);
+        environment.environment_reference = "EXAMPLE_API_KEY".into();
+        environment.confirm_environment_reference();
+        environment.request_test_and_save();
+        assert!(environment.complete);
+        assert_eq!(
+            environment.credential_reference(),
+            Some(SecretReference::Environment("EXAMPLE_API_KEY".into()))
+        );
+
+        let mut discarded = ProviderSetup::import_mode();
+        discarded.insert_import(&source);
+        discarded.review_import();
+        discarded.import_auth_choice = 2;
+        discarded.choose_import_auth();
+        discarded.request_test_and_save();
+        assert!(!discarded.complete);
+        discarded.api_key = "replacement-secret".into();
+        discarded.request_test_and_save();
+        assert!(discarded.complete);
+    }
+
+    #[test]
+    fn import_surface_preserves_newlines_and_rejects_oversized_paste_atomically() {
+        let mut setup = ProviderSetup::import_mode();
+        setup.insert_import("first\r\n  second\rthird");
+        assert_eq!(setup.import_source, "first\r\n  second\rthird");
+        let before = setup.import_source.clone();
+        setup.insert_import(&"x".repeat(DEFAULT_MAX_INPUT_BYTES));
+        assert_eq!(setup.import_source, before);
+        assert!(setup
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("limited")));
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! Conversation state, message types, and event polling.
 
-use crate::timeline::{cards_from_events, pending_action_from_events, TimelineCard};
+use crate::timeline::{
+    cards_from_events, collapsed_card_from_event, pending_action_from_events, TimelineCard,
+};
 use chrono::{DateTime, Utc};
 use purrcode_runtime_core::ConversationMode;
 use serde::{Deserialize, Serialize};
@@ -21,11 +23,14 @@ pub struct Conversation {
     pub pending_action: Option<Value>,
     pub mode: ConversationMode,
     pub scroll: usize,
+    pub auto_follow: bool,
+    pub new_output: bool,
     pub evidence: Vec<String>,
     pub phase: String,
     pub timeline: Vec<TimelineCard>,
     pub selected_card: Option<usize>,
     pub expanded_card: Option<usize>,
+    last_durable_sequence: u64,
 }
 
 impl Conversation {
@@ -36,11 +41,14 @@ impl Conversation {
             pending_action: None,
             mode: ConversationMode::Build,
             scroll: 0,
+            auto_follow: true,
+            new_output: false,
             evidence: Vec::new(),
             phase: "ready".into(),
             timeline: Vec::new(),
             selected_card: None,
             expanded_card: None,
+            last_durable_sequence: 0,
         }
     }
 
@@ -52,9 +60,11 @@ impl Conversation {
             timestamp: Utc::now(),
             model: None,
         });
+        self.note_new_output();
     }
 
     pub fn start_streaming(&mut self, model: Option<String>) {
+        self.finalize_streaming();
         self.streaming_message = Some(Message {
             id: uuid::Uuid::new_v4().to_string(),
             role: "assistant".into(),
@@ -62,11 +72,21 @@ impl Conversation {
             timestamp: Utc::now(),
             model,
         });
+        self.note_new_output();
     }
 
     pub fn append_streaming(&mut self, delta: &str) {
         if let Some(msg) = &mut self.streaming_message {
             msg.content.push_str(delta);
+            self.note_new_output();
+        }
+    }
+
+    pub fn replace_streaming(&mut self, content: &str) {
+        if let Some(message) = &mut self.streaming_message {
+            message.content.clear();
+            message.content.push_str(content);
+            self.note_new_output();
         }
     }
 
@@ -80,11 +100,87 @@ impl Conversation {
             {
                 self.messages.push(msg);
             }
+            self.note_new_output();
         }
     }
 
+    /// Preserve partial assistant output when a live request is cancelled or interrupted.
     pub fn cancel_streaming(&mut self) {
-        self.streaming_message = None;
+        self.finalize_streaming();
+    }
+
+    pub fn apply_durable_audit(&mut self, sequence: u64, event: Value) {
+        if sequence <= self.last_durable_sequence {
+            return;
+        }
+        self.last_durable_sequence = sequence;
+        let name = event
+            .get("event")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        self.phase = runtime_phase(name).to_owned();
+
+        if name == "action_proposed" {
+            self.pending_action = pending_action_from_events(std::slice::from_ref(&event));
+        } else if matches!(
+            name,
+            "approval_rejected"
+                | "authorization_persisted"
+                | "execution_started"
+                | "session_completed"
+                | "session_failed"
+                | "session_cancelled"
+        ) {
+            self.pending_action = None;
+        }
+
+        if let Some(evidence) = collapsed_evidence(&event) {
+            self.evidence.insert(0, evidence);
+            self.evidence.truncate(3);
+        }
+
+        let is_streamed_assistant_snapshot = name == "conversation_message_added"
+            && event.pointer("/data/message/role").and_then(Value::as_str) == Some("assistant")
+            && self.streaming_message.is_some();
+        if !is_streamed_assistant_snapshot {
+            self.timeline.push(collapsed_card_from_event(&event));
+        }
+        self.note_new_output();
+    }
+
+    pub fn user_scroll_up(&mut self, amount: usize) {
+        if self.auto_follow {
+            self.scroll = self.display_item_count().saturating_sub(amount.max(1) + 1);
+        } else {
+            self.scroll = self.scroll.saturating_sub(amount);
+        }
+        self.auto_follow = false;
+    }
+
+    pub fn user_scroll_down(&mut self, amount: usize) {
+        let latest = self.display_item_count().saturating_sub(1);
+        self.scroll = self.scroll.saturating_add(amount).min(latest);
+        if self.scroll >= latest {
+            self.resume_auto_follow();
+        }
+    }
+
+    pub fn resume_auto_follow(&mut self) {
+        self.auto_follow = true;
+        self.new_output = false;
+    }
+
+    pub fn display_item_count(&self) -> usize {
+        let base = if self.timeline.is_empty() {
+            self.messages.len()
+        } else {
+            self.timeline.len()
+        };
+        base + usize::from(self.streaming_message.is_some())
+    }
+
+    fn note_new_output(&mut self) {
+        self.new_output = !self.auto_follow;
     }
 
     pub async fn refresh_events(
@@ -100,18 +196,20 @@ impl Conversation {
             "{}/v1/sessions/{session_id}/messages",
             daemon_url.trim_end_matches('/')
         );
-        if let Ok(response) = reqwest::Client::new()
+        let messages = if let Ok(response) = reqwest::Client::new()
             .get(url)
             .bearer_auth(token)
             .send()
             .await
         {
             if response.status().is_success() {
-                if let Ok(messages) = response.json::<Vec<Message>>().await {
-                    self.messages = messages;
-                }
+                response.json::<Vec<Message>>().await.ok()
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
         let events_url = format!(
             "{}/v1/sessions/{session_id}/events",
             daemon_url.trim_end_matches('/')
@@ -123,42 +221,36 @@ impl Conversation {
             .await
         {
             if let Ok(events) = response.json::<Vec<Value>>().await {
-                self.phase = events
-                    .iter()
-                    .rev()
-                    .find_map(|event| event["event"].as_str())
-                    .map(runtime_phase)
-                    .unwrap_or("ready")
-                    .to_owned();
-                self.pending_action = pending_action_from_events(&events);
-                self.evidence = events
-                    .iter()
-                    .filter_map(|event| match event["event"].as_str() {
-                        Some("judgment_recorded") => Some(format!(
-                            "Judgment: {}",
-                            event.pointer("/data/decision").unwrap_or(&Value::Null)
-                        )),
-                        Some("validation_recorded") => Some(format!(
-                            "Validation: {} — {}",
-                            event
-                                .pointer("/data/status")
-                                .and_then(Value::as_str)
-                                .unwrap_or("unknown"),
-                            event
-                                .pointer("/data/evidence")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                        )),
-                        _ => None,
-                    })
-                    .rev()
-                    .take(3)
-                    .collect();
-                self.timeline = cards_from_events(&events);
-                self.selected_card = self
-                    .selected_card
-                    .map(|index| index.min(self.timeline.len().saturating_sub(1)));
+                self.reconcile(messages, events);
             }
+        }
+    }
+
+    pub fn reconcile(&mut self, messages: Option<Vec<Message>>, events: Vec<Value>) {
+        if let Some(messages) = messages {
+            self.messages = messages;
+        }
+        self.phase = events
+            .iter()
+            .rev()
+            .find_map(|event| event["event"].as_str())
+            .map(runtime_phase)
+            .unwrap_or("ready")
+            .to_owned();
+        self.pending_action = pending_action_from_events(&events);
+        self.evidence = events
+            .iter()
+            .filter_map(collapsed_evidence)
+            .rev()
+            .take(3)
+            .collect();
+        self.timeline = cards_from_events(&events);
+        self.last_durable_sequence = events.len() as u64;
+        self.selected_card = self
+            .selected_card
+            .map(|index| index.min(self.timeline.len().saturating_sub(1)));
+        if self.auto_follow {
+            self.new_output = false;
         }
     }
 
@@ -186,6 +278,27 @@ impl Conversation {
     }
 }
 
+fn collapsed_evidence(event: &Value) -> Option<String> {
+    match event.get("event").and_then(Value::as_str) {
+        Some("judgment_recorded") => Some(format!(
+            "Judgment: {}",
+            event.pointer("/data/decision").unwrap_or(&Value::Null)
+        )),
+        Some("validation_recorded") => Some(format!(
+            "Validation: {} — {}",
+            event
+                .pointer("/data/status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            event
+                .pointer("/data/evidence")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        )),
+        _ => None,
+    }
+}
+
 fn runtime_phase(event: &str) -> &'static str {
     match event {
         "provider_request_started" => "thinking",
@@ -199,5 +312,82 @@ fn runtime_phase(event: &str) -> &'static str {
         "session_cancelled" => "cancelled",
         "recovery_required" => "recovery required",
         _ => "active",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Conversation;
+    use serde_json::json;
+
+    #[test]
+    fn scroll_up_pauses_follow_and_new_output_sets_indicator() {
+        let mut conversation = Conversation::new();
+        for index in 0..4 {
+            conversation.add_user_message(&format!("message {index}"));
+        }
+        conversation.user_scroll_up(2);
+        assert!(!conversation.auto_follow);
+        assert!(!conversation.new_output);
+        conversation.start_streaming(Some("model".into()));
+        conversation.append_streaming("new");
+        assert!(conversation.new_output);
+        conversation.user_scroll_down(usize::MAX);
+        assert!(conversation.auto_follow);
+        assert!(!conversation.new_output);
+    }
+
+    #[test]
+    fn cancellation_keeps_partial_assistant_output() {
+        let mut conversation = Conversation::new();
+        conversation.start_streaming(Some("model".into()));
+        conversation.append_streaming("partial answer");
+        conversation.cancel_streaming();
+        assert!(conversation.streaming_message.is_none());
+        assert_eq!(
+            conversation
+                .messages
+                .last()
+                .map(|message| message.content.as_str()),
+            Some("partial answer")
+        );
+    }
+
+    #[test]
+    fn durable_audit_is_collapsed_and_not_used_as_stream_text() {
+        let mut conversation = Conversation::new();
+        conversation.start_streaming(None);
+        conversation.append_streaming("live");
+        conversation.apply_durable_audit(
+            1,
+            json!({
+                "event": "conversation_message_added",
+                "data": {
+                    "message": {
+                        "role": "assistant",
+                        "content": "durable snapshot must not replace live text"
+                    }
+                }
+            }),
+        );
+        assert_eq!(
+            conversation
+                .streaming_message
+                .as_ref()
+                .map(|message| message.content.as_str()),
+            Some("live")
+        );
+        assert!(conversation.timeline.is_empty());
+
+        conversation.apply_durable_audit(
+            2,
+            json!({
+                "event": "future_runtime_event",
+                "data": {"secret": "must not render"}
+            }),
+        );
+        let card = conversation.timeline.last().unwrap();
+        assert_eq!(card.title, "Runtime audit");
+        assert!(!card.summary.contains("must not render"));
     }
 }

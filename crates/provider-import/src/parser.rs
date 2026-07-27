@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::{Map, Value};
 use tree_sitter::{Language, Parser};
+use url::Url;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -14,13 +15,13 @@ pub enum InputFormat {
     Toml,
 }
 
-pub fn import_provider(
+pub(crate) fn parse_provider(
     input: &str,
     format_hint: Option<InputFormat>,
+    secret_detected: bool,
 ) -> Result<ProviderImportCandidate, ImportError> {
-    enforce_size(input, DEFAULT_MAX_INPUT_BYTES)?;
     let format = format_hint.unwrap_or_else(|| detect_format(input));
-    let mut candidate = empty_candidate(input)?;
+    let mut candidate = empty_candidate(input, secret_detected);
     match format {
         InputFormat::Python => parse_syntax_source(
             input,
@@ -69,6 +70,7 @@ pub fn import_provider(
             extract_structured(&value, input, &mut candidate);
         }
     }
+    sanitize_candidate(&mut candidate);
     finalize_candidate(&mut candidate);
     if candidate.base_url.is_none()
         && candidate.model_id.is_none()
@@ -114,11 +116,10 @@ fn detect_format(input: &str) -> InputFormat {
     InputFormat::Yaml
 }
 
-fn empty_candidate(input: &str) -> Result<ProviderImportCandidate, ImportError> {
-    let redacted = redact_source(input)?;
-    let auth = (!redacted.findings.is_empty())
+fn empty_candidate(input: &str, secret_detected: bool) -> ProviderImportCandidate {
+    let auth = secret_detected
         .then(|| extracted(AuthReference::SecretDetected, Confidence::High, None, true));
-    Ok(ProviderImportCandidate {
+    ProviderImportCandidate {
         provider_kind: ProviderKind::Unknown,
         suggested_name: "Imported provider".into(),
         base_url: None,
@@ -129,16 +130,16 @@ fn empty_candidate(input: &str) -> Result<ProviderImportCandidate, ImportError> 
         custom_headers: BTreeMap::new(),
         extra_body: None,
         is_local: None,
-        warnings: if redacted.findings.is_empty() {
-            Vec::new()
-        } else {
+        warnings: if secret_detected {
             vec![warning(
                 "secret_redacted",
                 "Secret-like source values were removed before review.",
             )]
+        } else {
+            Vec::new()
         },
-        redacted_source: redacted.display,
-    })
+        redacted_source: input.to_owned(),
+    }
 }
 
 fn parse_syntax_source(
@@ -365,12 +366,21 @@ fn parse_dotenv(input: &str, candidate: &mut ProviderImportCandidate) {
                 candidate.model_id = Some(high_string(input, value))
             }
             "OPENAI_API_KEY" | "API_KEY" | "TOKEN" => {
-                candidate.auth = Some(extracted(
-                    AuthReference::Environment(key),
-                    Confidence::High,
-                    find_span(input, raw_key.trim()),
-                    false,
-                ));
+                candidate.auth = if let Some(variable) = dotenv_environment_reference(value) {
+                    Some(extracted(
+                        AuthReference::Environment(variable),
+                        Confidence::High,
+                        find_span(input, raw_key.trim()),
+                        false,
+                    ))
+                } else {
+                    Some(extracted(
+                        AuthReference::SecretDetected,
+                        Confidence::High,
+                        find_span(input, value),
+                        true,
+                    ))
+                };
             }
             _ => {}
         }
@@ -386,7 +396,7 @@ fn parse_curl(input: &str, candidate: &mut ProviderImportCandidate) {
             "-H" | "--header" => {
                 if let Some(header) = tokens.get(index + 1) {
                     if let Some((name, value)) = header.split_once(':') {
-                        if name.eq_ignore_ascii_case("authorization") {
+                        if is_sensitive_header(name) || value.contains(REDACTION_TOKEN) {
                             candidate.auth = Some(extracted(
                                 AuthReference::SecretDetected,
                                 Confidence::High,
@@ -424,6 +434,14 @@ fn parse_curl(input: &str, candidate: &mut ProviderImportCandidate) {
                 if token.contains("/responses") {
                     candidate.api_mode = Some(extracted(
                         ApiMode::Responses,
+                        Confidence::High,
+                        find_span(input, token),
+                        false,
+                    ));
+                }
+                if token.contains("/api/chat") {
+                    candidate.api_mode = Some(extracted(
+                        ApiMode::OllamaNative,
                         Confidence::High,
                         find_span(input, token),
                         false,
@@ -469,6 +487,23 @@ fn visit_object(object: &Map<String, Value>, input: &str, candidate: &mut Provid
                     true,
                 ))
             }
+            "api_mode" | "mode" if value.is_string() => {
+                let mode = match value
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .replace('-', "_")
+                    .as_str()
+                {
+                    "responses" => Some(ApiMode::Responses),
+                    "chat_completions" | "openai_compatible" => Some(ApiMode::ChatCompletions),
+                    "ollama_native" | "native" => Some(ApiMode::OllamaNative),
+                    _ => None,
+                };
+                if let Some(mode) = mode {
+                    candidate.api_mode = Some(extracted(mode, Confidence::High, None, false));
+                }
+            }
             "temperature" | "top_p" | "max_tokens" | "seed" | "stream" | "timeout" => {
                 candidate.defaults.insert(
                     normalized,
@@ -476,13 +511,27 @@ fn visit_object(object: &Map<String, Value>, input: &str, candidate: &mut Provid
                 );
             }
             "extra_body" => {
-                candidate.extra_body = Some(extracted(value.clone(), Confidence::High, None, false))
+                if contains_redaction(value) || contains_sensitive_key(value) {
+                    candidate.warnings.push(warning(
+                        "sensitive_extra_body_omitted",
+                        "An extra-body value contained authentication material and was omitted.",
+                    ));
+                    candidate.auth = Some(extracted(
+                        AuthReference::SecretDetected,
+                        Confidence::High,
+                        None,
+                        true,
+                    ));
+                } else {
+                    candidate.extra_body =
+                        Some(extracted(value.clone(), Confidence::High, None, false));
+                }
             }
             "headers" | "custom_headers" => {
                 if let Some(headers) = value.as_object() {
                     for (name, value) in headers {
                         if let Some(value) = value.as_str() {
-                            if name.eq_ignore_ascii_case("authorization") {
+                            if is_sensitive_header(name) || value.contains(REDACTION_TOKEN) {
                                 candidate.auth = Some(extracted(
                                     AuthReference::SecretDetected,
                                     Confidence::High,
@@ -504,6 +553,48 @@ fn visit_object(object: &Map<String, Value>, input: &str, candidate: &mut Provid
             visit_object(nested, input, candidate);
         }
     }
+}
+
+fn sanitize_candidate(candidate: &mut ProviderImportCandidate) {
+    let Some(base) = candidate.base_url.as_mut() else {
+        return;
+    };
+    let Ok(mut url) = Url::parse(&base.value) else {
+        if base.value.contains(REDACTION_TOKEN) {
+            candidate.base_url = None;
+            candidate.warnings.push(warning(
+                "credentialed_url_requires_review",
+                "Credentials were removed from the URL; enter a credential-free base URL.",
+            ));
+        }
+        return;
+    };
+    let had_userinfo = !url.username().is_empty() || url.password().is_some();
+    let had_query_or_fragment = url.query().is_some() || url.fragment().is_some();
+    if had_userinfo {
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        candidate.warnings.push(warning(
+            "url_credentials_removed",
+            "URL credentials were removed and must be resolved through a secret reference.",
+        ));
+        candidate.auth = Some(extracted(
+            AuthReference::SecretDetected,
+            Confidence::High,
+            None,
+            true,
+        ));
+    }
+    if had_query_or_fragment {
+        url.set_query(None);
+        url.set_fragment(None);
+        candidate.warnings.push(warning(
+            "url_query_removed",
+            "URL query and fragment components were removed from the provider base URL.",
+        ));
+    }
+    base.value = url.to_string();
+    base.requires_confirmation |= had_userinfo || had_query_or_fragment;
 }
 
 fn finalize_candidate(candidate: &mut ProviderImportCandidate) {
@@ -552,12 +643,75 @@ fn finalize_candidate(candidate: &mut ProviderImportCandidate) {
 }
 
 fn endpoint_base(url: &str) -> String {
-    for suffix in ["/chat/completions", "/responses", "/models"] {
+    for suffix in ["/chat/completions", "/responses", "/models", "/api/chat"] {
         if let Some(base) = url.strip_suffix(suffix) {
             return base.to_owned();
         }
     }
     url.to_owned()
+}
+
+fn dotenv_environment_reference(value: &str) -> Option<String> {
+    let value = value
+        .strip_prefix("${")
+        .and_then(|value| value.strip_suffix('}'))
+        .or_else(|| value.strip_prefix('$'))?;
+    validate_environment_reference(value)
+        .ok()
+        .map(|()| value.to_owned())
+}
+
+fn is_sensitive_header(name: &str) -> bool {
+    let normalized = name.trim().to_ascii_lowercase().replace('_', "-");
+    matches!(
+        normalized.as_str(),
+        "authorization"
+            | "proxy-authorization"
+            | "api-key"
+            | "x-api-key"
+            | "x-auth-token"
+            | "x-access-token"
+            | "cookie"
+            | "set-cookie"
+    ) || ["auth", "credential", "key", "password", "secret", "token"]
+        .iter()
+        .any(|marker| normalized.contains(marker))
+}
+
+fn contains_redaction(value: &Value) -> bool {
+    match value {
+        Value::String(value) => value.contains(REDACTION_TOKEN),
+        Value::Array(values) => values.iter().any(contains_redaction),
+        Value::Object(values) => values.values().any(contains_redaction),
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
+    }
+}
+
+fn contains_sensitive_key(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(contains_sensitive_key),
+        Value::Object(values) => values
+            .iter()
+            .any(|(key, value)| is_sensitive_key(key) || contains_sensitive_key(value)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+    }
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().replace('-', "_").as_str(),
+        "api_key"
+            | "token"
+            | "access_token"
+            | "refresh_token"
+            | "auth_token"
+            | "credential"
+            | "client_secret"
+            | "private_key"
+            | "cookie"
+            | "password"
+            | "authorization"
+    )
 }
 
 fn shell_like_tokens(input: &str) -> Vec<String> {
@@ -701,6 +855,25 @@ mod tests {
             "http://127.0.0.1:1234/v1"
         );
         assert_eq!(js_candidate.provider_kind, ProviderKind::LmStudio);
+    }
+
+    #[test]
+    fn ollama_native_curl_is_distinct_from_openai_compatible_mode() {
+        let source = r#"curl http://127.0.0.1:11434/api/chat -d '{"model":"qwen","stream":true}'"#;
+        let candidate = import_provider(source, Some(InputFormat::Curl)).unwrap();
+        assert_eq!(candidate.provider_kind, ProviderKind::Ollama);
+        assert_eq!(candidate.base_url.unwrap().value, "http://127.0.0.1:11434/");
+        assert_eq!(candidate.api_mode.unwrap().value, ApiMode::OllamaNative);
+    }
+
+    #[test]
+    fn dotenv_variable_indirection_remains_an_environment_reference() {
+        let source = "BASE_URL=https://example.com/v1\nMODEL=test\nAPI_KEY=$PROVIDER_API_KEY";
+        let candidate = import_provider(source, Some(InputFormat::Dotenv)).unwrap();
+        assert_eq!(
+            candidate.auth.unwrap().value,
+            AuthReference::Environment("PROVIDER_API_KEY".into())
+        );
     }
 
     #[test]

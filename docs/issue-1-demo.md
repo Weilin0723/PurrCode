@@ -19,7 +19,8 @@ PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
 
 The live provider test passed discovery, configuration through the authenticated daemon API,
 provider health, and two streamed turns with the second request containing the first assistant
-turn. No fixture provider was used for this test.
+turn. It then unloaded the model and verified that `/api/ps` returned `{"models":[]}`. No fixture
+provider was used for this test.
 
 ## Eighteen-step product path
 
