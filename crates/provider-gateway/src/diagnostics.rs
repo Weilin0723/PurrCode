@@ -321,11 +321,8 @@ pub(crate) fn request_too_large_diagnostic(
         api_mode,
         None,
         Some(
-            format!(
-                "{actual} bytes exceeds the {} byte limit",
-                MAX_PROVIDER_HTTP_REQUEST_BYTES
-            )
-            .as_bytes(),
+            format!("{actual} bytes exceeds the {MAX_PROVIDER_HTTP_REQUEST_BYTES} byte limit")
+                .as_bytes(),
         ),
         false,
     )
