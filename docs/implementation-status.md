@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated: 2026-07-27 (v0.5.2 provider-routing hotfix implemented; release qualification in progress)
+Updated: 2026-07-27 (v0.5.2 provider-routing hotfix implemented; v0.5.3 immutable-release recovery in progress)
 
 ## v0.5.2 provider-routing hotfix — implemented
 

@@ -14,7 +14,7 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. Every 
 bound to a durable authorization, checked again immediately before execution, and followed by
 recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
-PurrCode v0.5.2 focuses on dependable daily use: provider profiles reconnect through the OS
+PurrCode v0.5.3 ships the v0.5.2 reliability work through a fresh immutable release: provider profiles reconnect through the OS
 keychain, NVIDIA NIM and Ollama use their selected models, sessions recover explicitly, approvals
 continue execution, and the terminal stays readable with a high-contrast dark theme.
 
@@ -44,7 +44,7 @@ npm install --global @minaovo/purrcode
 Node.js 18 or newer can also install the signed-release launcher directly from GitHub:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.2/purrcode-0.5.2.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.3/purrcode-0.5.3.tgz
 ```
 
 The package selects the correct macOS, Linux, or Windows binary, verifies its pinned SHA-256 digest,
@@ -53,7 +53,7 @@ and exposes both `purrcode` and `purrcoded`.
 ### macOS and Linux installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.2/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.3/scripts/install.sh | sh
 ```
 
 This installer verifies the release archive against `SHA256SUMS` and installs into `~/.local/bin`.
