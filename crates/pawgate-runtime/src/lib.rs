@@ -544,6 +544,11 @@ mod tests {
     use purrcode_runtime_core::CommandAction;
     use std::collections::BTreeMap;
 
+    #[cfg(not(windows))]
+    const TEST_REPOSITORY: &str = "/repo";
+    #[cfg(windows)]
+    const TEST_REPOSITORY: &str = r"C:\repo";
+
     fn action(args: &[&str]) -> ProposedAction {
         command("git", args)
     }
@@ -552,7 +557,7 @@ mod tests {
         ProposedAction::Command(CommandAction {
             program: program.into(),
             arguments: args.iter().map(|s| (*s).to_owned()).collect(),
-            working_directory: "/repo".into(),
+            working_directory: TEST_REPOSITORY.into(),
             environment: BTreeMap::new(),
         })
     }
@@ -560,7 +565,7 @@ mod tests {
     #[test]
     fn hard_deny_wins_over_allowlisted_program() {
         assert!(matches!(
-            Policy::default().evaluate(&action(&["reset", "--hard"]), Path::new("/repo")),
+            Policy::default().evaluate(&action(&["reset", "--hard"]), Path::new(TEST_REPOSITORY)),
             JudgmentDecision::Deny { .. }
         ));
     }
@@ -615,7 +620,8 @@ mod tests {
     #[test]
     fn mutating_git_subcommand_is_denied() {
         assert!(matches!(
-            Policy::default().evaluate(&action(&["commit", "-m", "no"]), Path::new("/repo")),
+            Policy::default()
+                .evaluate(&action(&["commit", "-m", "no"]), Path::new(TEST_REPOSITORY)),
             JudgmentDecision::Deny { .. }
         ));
     }
@@ -623,11 +629,11 @@ mod tests {
     #[test]
     fn bounded_repository_listings_are_allowed_without_approval() {
         for proposed in [
-            command("ls", &["-la", "/repo"]),
+            command("ls", &["-la", TEST_REPOSITORY]),
             command(
                 "find",
                 &[
-                    "/repo",
+                    TEST_REPOSITORY,
                     "-maxdepth",
                     "3",
                     "-not",
@@ -640,7 +646,7 @@ mod tests {
             ),
         ] {
             assert!(matches!(
-                Policy::default().evaluate(&proposed, Path::new("/repo")),
+                Policy::default().evaluate(&proposed, Path::new(TEST_REPOSITORY)),
                 JudgmentDecision::AllowWithConstraints(_)
             ));
         }
@@ -649,20 +655,20 @@ mod tests {
     #[test]
     fn unsafe_repository_listings_are_denied() {
         for proposed in [
-            command("ls", &["-R", "/repo"]),
+            command("ls", &["-R", TEST_REPOSITORY]),
             command("ls", &["/etc"]),
             command("ls", &["../outside"]),
-            command("find", &["/repo", "-maxdepth", "99"]),
+            command("find", &[TEST_REPOSITORY, "-maxdepth", "99"]),
             command("find", &["/tmp", "-maxdepth", "2"]),
-            command("find", &["/repo", "-maxdepth", "2", "-exec", "sh"]),
-            command("find", &["/repo", "-type", "d"]),
+            command("find", &[TEST_REPOSITORY, "-maxdepth", "2", "-exec", "sh"]),
+            command("find", &[TEST_REPOSITORY, "-type", "d"]),
             command(
                 "find",
-                &["/repo", "-maxdepth", "2", "-not", "-path", "/tmp/*"],
+                &[TEST_REPOSITORY, "-maxdepth", "2", "-not", "-path", "/tmp/*"],
             ),
         ] {
             assert!(matches!(
-                Policy::default().evaluate(&proposed, Path::new("/repo")),
+                Policy::default().evaluate(&proposed, Path::new(TEST_REPOSITORY)),
                 JudgmentDecision::Deny { .. }
             ));
         }
@@ -676,7 +682,10 @@ mod tests {
         };
         command.program = "/tmp/git".into();
         assert!(matches!(
-            Policy::default().evaluate(&ProposedAction::Command(command), Path::new("/repo")),
+            Policy::default().evaluate(
+                &ProposedAction::Command(command),
+                Path::new(TEST_REPOSITORY)
+            ),
             JudgmentDecision::Deny { .. }
         ));
     }
@@ -687,10 +696,10 @@ mod tests {
             server_id: "docs".into(),
             tool_name: "search".into(),
             arguments: serde_json::json!({"query":"safe"}),
-            working_directory: "/repo".into(),
+            working_directory: TEST_REPOSITORY.into(),
         });
         assert!(matches!(
-            Policy::default().evaluate(&action, Path::new("/repo")),
+            Policy::default().evaluate(&action, Path::new(TEST_REPOSITORY)),
             JudgmentDecision::RequireApproval { .. }
         ));
     }
