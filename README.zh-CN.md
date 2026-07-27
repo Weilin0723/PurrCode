@@ -38,12 +38,10 @@ PurrCode v0.5 专注首次使用可靠性：安全的多行 Provider 导入、Ol
 ### npm
 
 ```bash
-npm install --global purrcode
+npm install --global @minaovo/purrcode
 ```
 
-首次 npm registry 发布完成前，可从 GitHub Release 安装同一个已签名 launcher：
-
-使用 Node.js 18 或更高版本，可以直接从 GitHub 安装：
+使用 Node.js 18 或更高版本，也可以直接从 GitHub 安装同一个已签名 launcher：
 
 ```bash
 npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.0/purrcode-0.5.0.tgz

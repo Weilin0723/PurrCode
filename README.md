@@ -38,13 +38,10 @@ phases, governed skill/MCP discovery, and lazy tiered repository indexing.
 ### npm
 
 ```bash
-npm install --global purrcode
+npm install --global @minaovo/purrcode
 ```
 
-Until the first npm registry publication completes, install the same signed launcher from the
-GitHub release:
-
-Node.js 18 or newer can install the signed-release launcher directly from GitHub:
+Node.js 18 or newer can also install the signed-release launcher directly from GitHub:
 
 ```bash
 npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.0/purrcode-0.5.0.tgz

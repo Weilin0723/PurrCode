@@ -4,12 +4,12 @@ This package installs the native `purrcode` and `purrcoded` binaries from the ma
 [PurrCode release](https://github.com/Weilin0723/PurrCode/releases).
 
 ```bash
-npm install --global purrcode
+npm install --global @minaovo/purrcode
 purrcode init
 purrcode
 ```
 
-Until the package is published to the public npm registry, install the release tarball directly:
+You can also install the signed release tarball directly:
 
 ```bash
 npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.0/purrcode-0.5.0.tgz

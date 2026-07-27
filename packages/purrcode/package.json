@@ -1,5 +1,5 @@
 {
-  "name": "purrcode",
+  "name": "@minaovo/purrcode",
   "version": "0.5.0",
   "description": "Secure installer and launcher for the PurrCode coding agent",
   "license": "Apache-2.0",
