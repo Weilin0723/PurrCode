@@ -576,7 +576,7 @@ async fn record_terminal(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use purrcode_runtime_core::SessionEvent;
