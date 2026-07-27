@@ -508,7 +508,11 @@ impl App {
         let status = response.status();
         let value: Value = response.json().await?;
         if !status.is_success() {
-            anyhow::bail!("daemon HTTP {status}: credential storage was rejected");
+            let detail = value
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("credential storage was rejected");
+            anyhow::bail!("daemon HTTP {status}: {detail}");
         }
         Ok(value)
     }

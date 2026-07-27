@@ -96,7 +96,9 @@ jobs:
       - name: Pin launcher checksums to this release's native archives
         run: node packages/purrcode/scripts/write-checksums.js dist
       - name: Package npm-compatible launcher
-        run: npm pack ./packages/purrcode --ignore-scripts --pack-destination dist
+        run: |
+          packed_name="$(npm pack ./packages/purrcode --ignore-scripts --pack-destination dist)"
+          mv "dist/${packed_name}" "dist/purrcode-${GITHUB_REF_NAME#v}.tgz"
       - name: Create checksum manifest
         working-directory: dist
         run: sha256sum purrcode-* > SHA256SUMS

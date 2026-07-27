@@ -12,7 +12,7 @@ purrcode
 You can also install the signed release tarball directly:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.0/purrcode-0.5.0.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.1/purrcode-0.5.1.tgz
 ```
 
 The installer supports macOS ARM64/x64, Linux ARM64/x64, and Windows x64. It downloads over HTTPS,

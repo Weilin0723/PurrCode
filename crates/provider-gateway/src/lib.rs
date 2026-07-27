@@ -52,16 +52,12 @@ pub fn set_keychain_credential(name: &str, secret: &str) -> Result<(), ProviderE
     if secret.trim().is_empty() {
         return Err(ProviderError::InvalidCredential(name.into()));
     }
-    keyring::Entry::new(KEYCHAIN_SERVICE, name)
-        .and_then(|entry| entry.set_password(secret))
-        .map_err(|error| ProviderError::Keychain(error.to_string()))
+    set_os_credential(name, secret)
 }
 
 pub fn delete_keychain_credential(name: &str) -> Result<(), ProviderError> {
     validate_credential_name(name)?;
-    keyring::Entry::new(KEYCHAIN_SERVICE, name)
-        .and_then(|entry| entry.delete_credential())
-        .map_err(|error| ProviderError::Keychain(error.to_string()))
+    delete_os_credential(name)
 }
 
 pub fn keychain_reference(name: &str) -> Result<String, ProviderError> {
@@ -117,11 +113,69 @@ fn validate_credential_name(name: &str) -> Result<(), ProviderError> {
 fn resolve_credential(reference: &str) -> Result<String, ProviderError> {
     if let Some(name) = reference.strip_prefix(KEYCHAIN_PREFIX) {
         validate_credential_name(name)?;
-        return keyring::Entry::new(KEYCHAIN_SERVICE, name)
-            .and_then(|entry| entry.get_password())
-            .map_err(|_| ProviderError::MissingCredential(format!("OS keychain entry `{name}`")));
+        return get_os_credential(name);
     }
     env::var(reference).map_err(|_| ProviderError::MissingCredential(reference.into()))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_default_keychain(
+) -> Result<security_framework::os::macos::keychain::SecKeychain, ProviderError> {
+    // `keyring` 4.1 selects `SecKeychainCopyDomainDefault(User)`, which returns
+    // errSecNoSuchKeychain on otherwise healthy modern macOS accounts whose login keychain is
+    // available only through `SecKeychainCopyDefault`. The `security` CLI uses this same default
+    // keychain path. Keep the workaround narrow to macOS; other platforms retain keyring's native
+    // stores.
+    security_framework::os::macos::keychain::SecKeychain::default()
+        .map_err(|error| ProviderError::Keychain(error.to_string()))
+}
+
+#[cfg(target_os = "macos")]
+fn set_os_credential(name: &str, secret: &str) -> Result<(), ProviderError> {
+    macos_default_keychain()?
+        .set_generic_password(KEYCHAIN_SERVICE, name, secret.as_bytes())
+        .map_err(|error| ProviderError::Keychain(error.to_string()))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_os_credential(name: &str, secret: &str) -> Result<(), ProviderError> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, name)
+        .and_then(|entry| entry.set_password(secret))
+        .map_err(|error| ProviderError::Keychain(error.to_string()))
+}
+
+#[cfg(target_os = "macos")]
+fn get_os_credential(name: &str) -> Result<String, ProviderError> {
+    let keychain = macos_default_keychain()?;
+    let (password, _) = keychain
+        .find_generic_password(KEYCHAIN_SERVICE, name)
+        .map_err(|_| ProviderError::MissingCredential(format!("OS keychain entry `{name}`")))?;
+    String::from_utf8(password.to_vec())
+        .map_err(|_| ProviderError::InvalidCredential(format!("OS keychain entry `{name}`")))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn get_os_credential(name: &str) -> Result<String, ProviderError> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, name)
+        .and_then(|entry| entry.get_password())
+        .map_err(|_| ProviderError::MissingCredential(format!("OS keychain entry `{name}`")))
+}
+
+#[cfg(target_os = "macos")]
+fn delete_os_credential(name: &str) -> Result<(), ProviderError> {
+    let keychain = macos_default_keychain()?;
+    let (_, item) = keychain
+        .find_generic_password(KEYCHAIN_SERVICE, name)
+        .map_err(|error| ProviderError::Keychain(error.to_string()))?;
+    item.delete();
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn delete_os_credential(name: &str) -> Result<(), ProviderError> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, name)
+        .and_then(|entry| entry.delete_credential())
+        .map_err(|error| ProviderError::Keychain(error.to_string()))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1771,6 +1825,17 @@ mod tests {
         let encoded = toml::to_string(&config).unwrap();
         assert!(encoded.contains("keychain:primary-openai"));
         assert!(!encoded.contains("sk-"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "writes a disposable entry to the user login keychain"]
+    fn macos_login_keychain_round_trip() {
+        let name = format!("live-keychain-{}", Uuid::new_v4());
+        set_keychain_credential(&name, "disposable-secret").unwrap();
+        assert_eq!(get_os_credential(&name).unwrap(), "disposable-secret");
+        delete_keychain_credential(&name).unwrap();
+        assert!(get_os_credential(&name).is_err());
     }
 
     #[test]

@@ -15,8 +15,8 @@ use purrcode_ninelives::SessionStore;
 use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
     delete_keychain_credential, qualify_model, set_keychain_credential, AppConfig,
-    JudgmentRuntimeConfig, ModelId, ModelsConfig, PrivacyConfig, PrivacyMode, ProviderConfig,
-    ProviderRouter,
+    JudgmentRuntimeConfig, ModelCapabilities, ModelId, ModelsConfig, PrivacyConfig, PrivacyMode,
+    ProviderConfig, ProviderRouter,
 };
 use purrcode_repository_engine::{ApplicationStrategy, RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use sysinfo::System;
 use tracing_subscriber::EnvFilter;
 use zeroize::Zeroize;
 
@@ -2382,19 +2383,23 @@ async fn initialize_product(
     let mut provider_name = None;
     let mut provider_config = None;
     let mut discovered_models = Vec::new();
+    let mut observed_model_sizes = BTreeMap::new();
     if let Ok(response) = client.get("http://127.0.0.1:11434/api/tags").send().await {
         if response.status().is_success() {
             let value: serde_json::Value = response.json().await?;
-            discovered_models = value["models"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|model| model["name"].as_str().map(str::to_owned))
-                .collect();
+            for model in value["models"].as_array().into_iter().flatten() {
+                let Some(name) = model["name"].as_str() else {
+                    continue;
+                };
+                discovered_models.push(name.to_owned());
+                if let Some(size) = model["size"].as_u64() {
+                    observed_model_sizes.insert(name.to_owned(), size);
+                }
+            }
             if !discovered_models.is_empty() {
                 provider_name = Some("ollama".to_owned());
                 provider_config = Some(ProviderConfig::Ollama {
-                    base_url: url::Url::parse("http://127.0.0.1:11434/v1/")?,
+                    base_url: url::Url::parse("http://127.0.0.1:11434/")?,
                     capabilities: BTreeMap::new(),
                 });
             }
@@ -2423,16 +2428,38 @@ async fn initialize_product(
             }
         }
     }
-    let (provider_name, provider_config) = provider_name.zip(provider_config).context(
+    let (provider_name, mut provider_config) = provider_name.zip(provider_config).context(
         "no local model server was discovered; start Ollama or LM Studio with at least one model",
     )?;
     discovered_models.sort();
     discovered_models.dedup();
-    let coder = format!("{provider_name}/{}", discovered_models[0]);
-    let judge = format!(
-        "{provider_name}/{}",
-        discovered_models.get(1).unwrap_or(&discovered_models[0])
-    );
+    let local = provider_config.is_local();
+    let capabilities = match &mut provider_config {
+        ProviderConfig::Ollama { capabilities, .. }
+        | ProviderConfig::OpenaiCompatible { capabilities, .. } => capabilities,
+        _ => bail!("local discovery created an unsupported provider profile"),
+    };
+    for model in &discovered_models {
+        capabilities.insert(model.clone(), ModelCapabilities::unknown(local));
+    }
+    let total_memory = {
+        let mut system = System::new();
+        system.refresh_memory();
+        system.total_memory()
+    };
+    let low_memory = total_memory <= 16 * 1024 * 1024 * 1024;
+    let coder_model = select_initial_model(&discovered_models, &observed_model_sizes, low_memory);
+    let coder = format!("{provider_name}/{coder_model}");
+    let judge_model = if low_memory {
+        coder_model
+    } else {
+        discovered_models
+            .iter()
+            .find(|model| model.as_str() != coder_model)
+            .map(String::as_str)
+            .unwrap_or(coder_model)
+    };
+    let judge = format!("{provider_name}/{judge_model}");
     let allow_same_model = coder == judge;
     let mut roles = BTreeMap::new();
     for role in ["router", "summarizer", "planner", "coder", "reviewer"] {
@@ -2470,7 +2497,7 @@ async fn initialize_product(
     println!("judge: {judge}");
     if allow_same_model {
         println!(
-            "warning: only one model was found; coder/judge separation is reduced until a second model is installed"
+            "warning: single-model mode is active; coder/judge separation is reduced to preserve the detected memory budget"
         );
     }
     let capability = sandbox_capability();
@@ -2483,6 +2510,23 @@ async fn initialize_product(
         return Ok(());
     }
     ensure_daemon_started(config_path, database, daemon_url, token_file, true).await
+}
+
+fn select_initial_model<'a>(
+    models: &'a [String],
+    observed_sizes: &BTreeMap<String, u64>,
+    low_memory: bool,
+) -> &'a str {
+    if low_memory {
+        models
+            .iter()
+            .filter_map(|model| observed_sizes.get(model).map(|size| (model, size)))
+            .min_by_key(|(_, size)| *size)
+            .map(|(model, _)| model.as_str())
+            .unwrap_or(models[0].as_str())
+    } else {
+        models[0].as_str()
+    }
 }
 
 async fn ensure_daemon_started(
@@ -2838,6 +2882,27 @@ mod cli_tests {
             std::time::Duration::from_secs(300)
         );
         assert!(live_benchmark_timeout(0).is_err());
+    }
+
+    #[test]
+    fn low_memory_initialization_selects_the_smallest_observed_model() {
+        let models = vec!["large".to_owned(), "small".to_owned(), "medium".to_owned()];
+        let sizes = BTreeMap::from([
+            ("large".to_owned(), 8_000),
+            ("small".to_owned(), 1_000),
+            ("medium".to_owned(), 4_000),
+        ]);
+        assert_eq!(select_initial_model(&models, &sizes, true), "small");
+        assert_eq!(select_initial_model(&models, &sizes, false), "large");
+    }
+
+    #[test]
+    fn initial_model_selection_falls_back_when_size_evidence_is_missing() {
+        let models = vec!["first".to_owned(), "second".to_owned()];
+        assert_eq!(
+            select_initial_model(&models, &BTreeMap::new(), true),
+            "first"
+        );
     }
 
     #[test]
