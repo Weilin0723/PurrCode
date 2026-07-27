@@ -1,6 +1,19 @@
 # Implementation status
 
-Updated: 2026-07-26 (v0.5 usability recovery Phases 1–6 complete; release qualification in progress)
+Updated: 2026-07-26 (v0.5.1 connection recovery implemented; release qualification in progress)
+
+## v0.5.1 connection recovery — implemented
+
+- macOS provider secrets use the actual default login keychain, fixing credential storage on
+  accounts where the User-domain lookup returns `errSecNoSuchKeychain`.
+- Credential-store failures retain the daemon's bounded redacted diagnostic instead of collapsing
+  into a generic rejection.
+- First-run Ollama setup uses observed model sizes on low-memory systems, selects the smallest
+  installed model, enables single-model coder/judge mode, and persists every discovered model.
+- Fresh setup on the affected 8 GB Mac selected `llama3.2:1b`; real Keychain, authenticated daemon
+  credential storage, Ollama connection, multi-turn streaming, and unload tests passed.
+- Root-cause and real-environment evidence is recorded in
+  `docs/reports/v0.5.1-connection-recovery.md`.
 
 ## v0.5 usability recovery — Phases 1–6 complete
 
