@@ -122,6 +122,10 @@ pub enum StreamEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StreamOutput {
     PhaseChanged(PhaseUpdate),
+    AttemptRestarted {
+        role: Option<String>,
+        attempt: Option<u8>,
+    },
     Content {
         text: String,
         replace: bool,
@@ -282,14 +286,14 @@ impl StreamController {
                     self.visible_content_bytes = 0;
                 }
                 if repair_attempt_started {
+                    if let Some(batch) = self.batcher.take() {
+                        output.push(batch.into_output(false));
+                    }
                     self.batcher.clear();
                     self.visible_content_bytes = 0;
-                    output.push(StreamOutput::Content {
-                        text: String::new(),
-                        replace: true,
+                    output.push(StreamOutput::AttemptRestarted {
                         role: update.role.clone(),
                         attempt: update.attempt,
-                        request_index: update.request_index.or(self.request_index),
                     });
                 }
                 self.apply_phase(&update, now);
@@ -1007,6 +1011,38 @@ mod tests {
                 request_index: Some(1),
             }]
         );
+    }
+
+    #[test]
+    fn repair_attempt_preserves_rejected_output_before_starting_a_new_message() {
+        let now = Instant::now();
+        let mut controller = StreamController::new();
+        let sender = controller.start(Some("provider/model".into()), now);
+        sender
+            .try_send(StreamEvent::Phase(phase(StreamPhase::Receiving, Some(1))))
+            .unwrap();
+        sender.try_send(delta("rejected output")).unwrap();
+        let _ = controller.drain(now + DELTA_BATCH_MAX);
+
+        let mut repair = phase(StreamPhase::Queued, Some(1));
+        repair.attempt = Some(2);
+        sender.try_send(StreamEvent::Phase(repair)).unwrap();
+        let output = controller.drain(now + DELTA_BATCH_MAX + Duration::from_millis(1));
+        assert!(output.iter().any(|event| matches!(
+            event,
+            StreamOutput::AttemptRestarted {
+                attempt: Some(2),
+                ..
+            }
+        )));
+        assert!(!output.iter().any(|event| matches!(
+            event,
+            StreamOutput::Content {
+                replace: true,
+                text,
+                ..
+            } if text.is_empty()
+        )));
     }
 
     #[test]

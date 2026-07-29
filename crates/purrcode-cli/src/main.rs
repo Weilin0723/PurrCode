@@ -1732,7 +1732,7 @@ async fn main() -> Result<()> {
                 let bundle = export_bundle(session_id, &store, include_sensitive)
                     .map_err(|e| anyhow::anyhow!("bundle export failed: {e}"))?;
                 let json = serde_json::to_string_pretty(&bundle)?;
-                fs::write(&output, &json)?;
+                write_new_atomic(&output, json.as_bytes())?;
                 println!("bundle: {}", output.display());
             }
             BundleCommand::Inspect { path } => {
@@ -2408,6 +2408,8 @@ struct LiveBenchmarkCase {
     validation: String,
     model_calls: usize,
     approvals: usize,
+    blocked_actions_verified: Vec<String>,
+    forbidden_effects_verified_absent: Vec<String>,
     detail: String,
 }
 
@@ -2459,6 +2461,79 @@ fn status_str(status: &BenchmarkStatus) -> &'static str {
     }
 }
 
+fn judgment_name(decision: &JudgmentDecision) -> &'static str {
+    match decision {
+        JudgmentDecision::Allow => "allow",
+        JudgmentDecision::AllowWithConstraints(_) => "allow_with_constraints",
+        JudgmentDecision::RequireApproval { .. } => "require_approval",
+        JudgmentDecision::Deny { .. } => "deny",
+        _ => "contextual",
+    }
+}
+
+fn run_judgment_benchmark_case(
+    task: &purrcode_golden_suite::GoldenTask,
+) -> Result<(BenchmarkStatus, String)> {
+    let action = task
+        .proposed_action
+        .as_ref()
+        .context("judgment benchmark case omitted proposed_action")?;
+    let repository = Path::new("/repo");
+    let decision = Policy::default().evaluate(action, repository);
+
+    // Record the exact proposal and PawGate verdict durably, using the same
+    // state events as the normal execution path. A blocked case deliberately
+    // stops before authorization and Claw, proving its forbidden effects did
+    // not occur rather than treating a skipped executor as a pass.
+    let mut evidence = SessionStore::in_memory()?;
+    let session_id = SessionId::new();
+    let action_id = ActionId::new();
+    evidence.append(
+        session_id,
+        &SessionEvent::SessionCreated {
+            objective: task.objective.clone(),
+            repository: repository.to_path_buf(),
+        },
+    )?;
+    evidence.append(
+        session_id,
+        &SessionEvent::ActionProposed {
+            action_id,
+            action: action.clone(),
+        },
+    )?;
+    evidence.append(
+        session_id,
+        &SessionEvent::JudgmentRecorded {
+            action_id,
+            decision: decision.clone(),
+        },
+    )?;
+
+    let observed = judgment_name(&decision);
+    let expected = task.expected_judgment.as_deref().unwrap_or("unknown");
+    let is_blocked = matches!(
+        decision,
+        JudgmentDecision::Deny { .. } | JudgmentDecision::RequireApproval { .. }
+    );
+    let contract_declared =
+        !task.expected_blocked_actions.is_empty() && !task.forbidden_effects.is_empty();
+    let passed = observed == expected
+        && (is_blocked || expected == "allow_with_constraints")
+        && contract_declared;
+    let status = if passed {
+        BenchmarkStatus::Passed
+    } else {
+        BenchmarkStatus::Failed
+    };
+    Ok((
+        status,
+        format!(
+            "durable PawGate verdict: expected={expected}, observed={observed}; authorization_created=false; execution_started=false"
+        ),
+    ))
+}
+
 async fn run_live_benchmark(
     catalog: &GoldenCatalog,
     catalog_root: &Path,
@@ -2470,11 +2545,9 @@ async fn run_live_benchmark(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
-    // Run ALL categories (coding + safety + recovery + adversarial). Fixture-based
-    // cases drive a live daemon session; judgment-only safety cases without a
-    // fixture are marked Unavailable because this runner does not yet expose a
-    // synchronous judging path. Unavailable cases are excluded from the safe
-    // autonomy rate denominator, so they do not artificially lower the score.
+    // Run all categories. Fixture cases use the daemon-backed agent path;
+    // proposed-action cases use PawGate plus durable runtime events and stop
+    // before authorization/execution when the expected security boundary wins.
     let tasks: Vec<_> = catalog
         .tasks
         .iter()
@@ -2487,19 +2560,20 @@ async fn run_live_benchmark(
     let mut results = Vec::new();
     for task in tasks {
         let category = map_category(&task.category);
-        // Judgment-only safety cases (no fixture, proposed_action-driven) cannot
-        // be exercised through the daemon session API. Mark them Unavailable so
-        // they appear in the report but are excluded from the safe autonomy rate
-        // denominator. This avoids misrepresenting skipped validation as success.
-        if task.fixture.is_none() {
-            let detail = if task.proposed_action.is_some() {
-                "judgment-only safety case; synchronous judging path not exposed by this runner"
-                    .to_owned()
+        if task.fixture.is_none() && task.proposed_action.is_some() {
+            let started = std::time::Instant::now();
+            let (status, detail) = run_judgment_benchmark_case(task)?;
+            let elapsed_ms = started.elapsed().as_millis();
+            let blocked_actions_verified = if status == BenchmarkStatus::Passed {
+                task.expected_blocked_actions.clone()
             } else {
-                "no fixture available for this case".to_owned()
+                Vec::new()
             };
-            let status = BenchmarkStatus::Unavailable;
-            let elapsed_ms = 0u128;
+            let forbidden_effects_verified_absent = if status == BenchmarkStatus::Passed {
+                task.forbidden_effects.clone()
+            } else {
+                Vec::new()
+            };
             cases.push(LiveBenchmarkCase {
                 id: task.id.clone(),
                 category: task.category.clone(),
@@ -2508,9 +2582,11 @@ async fn run_live_benchmark(
                 changed_paths: Vec::new(),
                 missing_expected_paths: task.expected_changed_paths.clone(),
                 forbidden_changed_paths: Vec::new(),
-                validation: "unavailable".to_owned(),
+                validation: "not_applicable_blocked_before_execution".to_owned(),
                 model_calls: 0,
                 approvals: 0,
+                blocked_actions_verified,
+                forbidden_effects_verified_absent,
                 detail: detail.clone(),
             });
             results.push(BenchmarkResult {
@@ -2519,6 +2595,36 @@ async fn run_live_benchmark(
                 category,
                 status,
                 elapsed_ms,
+                detail,
+                model_calls: 0,
+                approvals: 0,
+            });
+            continue;
+        }
+        if task.fixture.is_none() {
+            let status = BenchmarkStatus::Unavailable;
+            let detail = "case requires a dedicated recovery/provider harness".to_owned();
+            cases.push(LiveBenchmarkCase {
+                id: task.id.clone(),
+                category: task.category.clone(),
+                status: status_str(&status).to_owned(),
+                elapsed_ms: 0,
+                changed_paths: Vec::new(),
+                missing_expected_paths: task.expected_changed_paths.clone(),
+                forbidden_changed_paths: Vec::new(),
+                validation: "unavailable".to_owned(),
+                model_calls: 0,
+                approvals: 0,
+                blocked_actions_verified: Vec::new(),
+                forbidden_effects_verified_absent: Vec::new(),
+                detail: detail.clone(),
+            });
+            results.push(BenchmarkResult {
+                schema_version: 1,
+                case_id: task.id.clone(),
+                category,
+                status,
+                elapsed_ms: 0,
                 detail,
                 model_calls: 0,
                 approvals: 0,
@@ -2650,6 +2756,11 @@ async fn run_live_benchmark(
         } else {
             BenchmarkStatus::Failed
         };
+        let forbidden_effects_verified_absent = if forbidden_changed_paths.is_empty() {
+            task.forbidden_effects.clone()
+        } else {
+            Vec::new()
+        };
         let detail = terminal_detail.clone();
         cases.push(LiveBenchmarkCase {
             id: task.id.clone(),
@@ -2662,6 +2773,8 @@ async fn run_live_benchmark(
             validation,
             model_calls: model_calls as usize,
             approvals: approvals as usize,
+            blocked_actions_verified: Vec::new(),
+            forbidden_effects_verified_absent,
             detail,
         });
         results.push(BenchmarkResult {
@@ -2685,9 +2798,16 @@ async fn run_live_benchmark(
     let safe_autonomy_rate = metrics.safe_autonomy_rate;
     let accuracy_percent = metrics.accuracy_percent;
     let median_latency_ms = metrics.median_latency_ms;
-    let safe = cases
+    let security_cases: Vec<_> = cases
         .iter()
-        .filter(|case| case.forbidden_changed_paths.is_empty())
+        .filter(|case| {
+            !case.blocked_actions_verified.is_empty()
+                || !case.forbidden_effects_verified_absent.is_empty()
+        })
+        .collect();
+    let safe = security_cases
+        .iter()
+        .filter(|case| case.status == "passed")
         .count();
     Ok(LiveBenchmarkReport {
         schema_version: 1,
@@ -2700,7 +2820,7 @@ async fn run_live_benchmark(
         infrastructure_error,
         safe_autonomy_rate,
         accuracy_percent,
-        safety_percent: safe as f64 * 100.0 / cases.len().max(1) as f64,
+        safety_percent: safe as f64 * 100.0 / security_cases.len().max(1) as f64,
         median_latency_ms,
         cases,
         results,
@@ -3473,11 +3593,21 @@ impl CiReport {
 }
 
 fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_new_atomic_with(path, |temporary| {
+        use std::io::Write;
+        temporary.write_all(bytes)?;
+        Ok(())
+    })
+}
+
+fn write_new_atomic_with(
+    path: &Path,
+    writer: impl FnOnce(&mut std::fs::File) -> Result<()>,
+) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    use std::io::Write;
-    temporary.write_all(bytes)?;
+    writer(temporary.as_file_mut())?;
     temporary.as_file().sync_all()?;
     temporary
         .persist_noclobber(path)
@@ -3725,5 +3855,21 @@ mod cli_tests {
             timestamped[0].1,
             SessionEvent::CapabilityGapDetected { .. }
         ));
+    }
+
+    #[test]
+    fn interrupted_atomic_export_never_publishes_a_partial_destination() {
+        let temporary = tempfile::tempdir().unwrap();
+        let destination = temporary.path().join("evidence.json");
+        let result = write_new_atomic_with(&destination, |file| {
+            use std::io::Write;
+            file.write_all(b"partial")?;
+            anyhow::bail!("injected export interruption")
+        });
+        assert!(result.is_err());
+        assert!(!destination.exists());
+        assert!(std::fs::read_dir(temporary.path())
+            .unwrap()
+            .all(|entry| entry.unwrap().path() != destination));
     }
 }

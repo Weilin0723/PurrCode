@@ -1,4 +1,5 @@
 use schemars::JsonSchema;
+use serde::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -17,9 +18,10 @@ pub type AgentReadAction = RepositoryReadAction;
 #[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentTurn {
+    #[serde(default, deserialize_with = "deserialize_optional_string_list")]
     pub plan: Option<Vec<String>>,
     pub current_step_index: Option<usize>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_list")]
     pub expected_postconditions: Vec<String>,
     pub rationale: String,
     pub action: Option<AgentAction>,
@@ -29,9 +31,43 @@ pub struct AgentTurn {
 #[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentPlan {
+    #[serde(deserialize_with = "deserialize_string_list")]
     pub steps: Vec<String>,
+    #[serde(deserialize_with = "deserialize_string_list")]
     pub assumptions: Vec<String>,
+    #[serde(deserialize_with = "deserialize_string_list")]
     pub risks: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StringList {
+    One(String),
+    Many(Vec<String>),
+}
+
+fn deserialize_string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match StringList::deserialize(deserializer)? {
+        StringList::One(value) => vec![value],
+        StringList::Many(values) => values,
+    })
+}
+
+fn deserialize_optional_string_list<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(
+        Option::<StringList>::deserialize(deserializer)?.map(|value| match value {
+            StringList::One(value) => vec![value],
+            StringList::Many(values) => values,
+        }),
+    )
 }
 
 #[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
@@ -123,6 +159,36 @@ pub(crate) fn validate_plan(plan: &AgentPlan) -> Result<(), AgentError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn scalar_string_lists_are_normalized_without_weakening_validation() {
+        let plan: AgentPlan = serde_json::from_value(serde_json::json!({
+            "steps": "inspect the repository",
+            "assumptions": ".",
+            "risks": []
+        }))
+        .unwrap();
+        assert_eq!(plan.steps, ["inspect the repository"]);
+        assert_eq!(plan.assumptions, ["."]);
+        validate_plan(&plan).unwrap();
+
+        let turn: AgentTurn = serde_json::from_value(serde_json::json!({
+            "plan": "inspect",
+            "current_step_index": 0,
+            "expected_postconditions": "tests pass",
+            "rationale": "start safely",
+            "action": null,
+            "complete": true
+        }))
+        .unwrap();
+        assert_eq!(turn.plan.unwrap(), ["inspect"]);
+        assert_eq!(turn.expected_postconditions, ["tests pass"]);
+    }
 }
 
 pub(crate) fn objective_requests_advice_only(objective: &str) -> bool {

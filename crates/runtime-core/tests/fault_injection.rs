@@ -292,7 +292,10 @@ fn missing_execution_finished_leaves_session_executing_not_completed() {
         sandbox_backend: None,
     });
     assert!(
-        matches!(stray_finish, Err(DomainError::InvalidStateTransition { .. })),
+        matches!(
+            stray_finish,
+            Err(DomainError::InvalidStateTransition { .. })
+        ),
         "ExecutionFinished for an action that is not currently Executing must \
          be rejected, not silently recorded as completion"
     );
@@ -462,10 +465,7 @@ fn interrupted_bundle_export_fails_verification_and_reports_partial_state() {
         )
         .unwrap();
     store
-        .append(
-            session_id,
-            &SessionEvent::ExecutionStarted { action_id },
-        )
+        .append(session_id, &SessionEvent::ExecutionStarted { action_id })
         .unwrap();
 
     let full = export_bundle(session_id, &store, true).unwrap();

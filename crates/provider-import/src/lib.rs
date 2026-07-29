@@ -728,6 +728,41 @@ mod tests {
     }
 
     #[test]
+    fn requests_post_sample_extracts_endpoint_model_and_api_mode() {
+        let secret = "nvapi-parser-fixture-123456";
+        let source = format!(
+            r#"invoke_url = "https://integrate.api.nvidia.com/v1/chat/completions"
+headers = {{"Authorization": "{secret}"}}
+payload = {{"model": "minimaxai/minimax-m3", "stream": False}}
+response = requests.post(invoke_url, headers=headers, json=payload)"#
+        );
+        let parsed = import_provider_secure(source, None).unwrap();
+        assert_eq!(
+            parsed
+                .candidate
+                .base_url
+                .as_ref()
+                .map(|value| value.value.as_str()),
+            Some("https://integrate.api.nvidia.com/v1")
+        );
+        assert_eq!(
+            parsed
+                .candidate
+                .model_id
+                .as_ref()
+                .map(|value| value.value.as_str()),
+            Some("minimaxai/minimax-m3")
+        );
+        assert_eq!(
+            parsed.candidate.api_mode.as_ref().map(|value| value.value),
+            Some(ApiMode::ChatCompletions)
+        );
+        assert!(!serde_json::to_string(&parsed.candidate)
+            .unwrap()
+            .contains(secret));
+    }
+
+    #[test]
     fn authorization_headers_urls_and_nested_json_are_redacted() {
         for source in [
             "Authorization: Bearer token.that-is-secret",

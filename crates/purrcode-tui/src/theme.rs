@@ -21,10 +21,10 @@ pub struct Palette {
 impl Palette {
     pub const fn dark() -> Self {
         Self {
-            canvas: Color::Rgb(0x0B, 0x0F, 0x14),
-            surface: Color::Rgb(0x11, 0x18, 0x27),
-            elevated: Color::Rgb(0x17, 0x20, 0x33),
-            border: Color::Rgb(0x26, 0x32, 0x44),
+            canvas: Color::Black,
+            surface: Color::Black,
+            elevated: Color::Black,
+            border: Color::DarkGray,
             text_primary: Color::Rgb(0xD7, 0xE3, 0xF4),
             text_muted: Color::Rgb(0x7F, 0x8E, 0xA3),
             accent: Color::Rgb(0x7D, 0xD3, 0xFC),
@@ -39,10 +39,10 @@ impl Palette {
 
     pub const fn light() -> Self {
         Self {
-            canvas: Color::Rgb(0xF8, 0xFA, 0xFC),
-            surface: Color::Rgb(0xF1, 0xF5, 0xF9),
-            elevated: Color::Rgb(0xE2, 0xE8, 0xF0),
-            border: Color::Rgb(0x94, 0xA3, 0xB8),
+            canvas: Color::White,
+            surface: Color::White,
+            elevated: Color::White,
+            border: Color::Gray,
             text_primary: Color::Rgb(0x0F, 0x17, 0x2A),
             text_muted: Color::Rgb(0x64, 0x74, 0x8B),
             accent: Color::Rgb(0x0E, 0x74, 0x9A),
@@ -57,10 +57,10 @@ impl Palette {
 
     pub const fn monochrome() -> Self {
         Self {
-            canvas: Color::Rgb(0x00, 0x00, 0x00),
-            surface: Color::Rgb(0x1A, 0x1A, 0x1A),
-            elevated: Color::Rgb(0x2E, 0x2E, 0x2E),
-            border: Color::Rgb(0x55, 0x55, 0x55),
+            canvas: Color::Black,
+            surface: Color::Black,
+            elevated: Color::Black,
+            border: Color::DarkGray,
             text_primary: Color::Rgb(0xFF, 0xFF, 0xFF),
             text_muted: Color::Rgb(0xAA, 0xAA, 0xAA),
             accent: Color::Rgb(0xCC, 0xCC, 0xCC),
@@ -84,9 +84,16 @@ pub struct Theme {
 impl Theme {
     pub fn detect() -> Self {
         let colors_enabled = std::env::var_os("NO_COLOR").is_none();
-        let unicode_enabled = std::env::var("TERM").map_or(true, |term| term != "dumb");
+        let unicode_enabled =
+            colors_enabled && std::env::var("TERM").map_or(true, |term| term != "dumb");
+        let requested = std::env::var("PURRCODE_THEME").ok();
+        let colorfgbg = std::env::var("COLORFGBG").ok();
         Self {
-            palette: Palette::dark(),
+            palette: palette_for_environment(
+                requested.as_deref(),
+                colorfgbg.as_deref(),
+                colors_enabled,
+            ),
             colors_enabled,
             unicode_enabled,
         }
@@ -95,6 +102,31 @@ impl Theme {
     pub fn with_palette(mut self, palette: Palette) -> Self {
         self.palette = palette;
         self
+    }
+}
+
+fn palette_for_environment(
+    requested: Option<&str>,
+    colorfgbg: Option<&str>,
+    colors_enabled: bool,
+) -> Palette {
+    if !colors_enabled || requested == Some("monochrome") {
+        return Palette::monochrome();
+    }
+    match requested {
+        Some("light") => Palette::light(),
+        Some("dark") => Palette::dark(),
+        _ => {
+            let light_background = colorfgbg
+                .and_then(|value| value.rsplit(';').next())
+                .and_then(|value| value.parse::<u8>().ok())
+                .is_some_and(|background| background >= 7);
+            if light_background {
+                Palette::light()
+            } else {
+                Palette::dark()
+            }
+        }
     }
 }
 
@@ -113,6 +145,22 @@ mod tests {
     }
 
     #[test]
+    fn terminal_background_and_explicit_override_choose_consistent_palettes() {
+        assert_eq!(
+            palette_for_environment(None, Some("0;15"), true).canvas,
+            Palette::light().canvas
+        );
+        assert_eq!(
+            palette_for_environment(Some("dark"), Some("0;15"), true).canvas,
+            Palette::dark().canvas
+        );
+        assert_eq!(
+            palette_for_environment(None, None, false).canvas,
+            Palette::monochrome().canvas
+        );
+    }
+
+    #[test]
     fn dark_palette_has_expected_accent() {
         let palette = Palette::dark();
         assert_eq!(palette.accent, Color::Rgb(0x7D, 0xD3, 0xFC));
@@ -127,6 +175,15 @@ mod tests {
     #[test]
     fn monochrome_palette_uses_grayscale() {
         let palette = Palette::monochrome();
-        assert_eq!(palette.canvas, Color::Rgb(0x00, 0x00, 0x00));
+        assert_eq!(palette.canvas, Color::Black);
+    }
+
+    #[test]
+    fn every_background_is_strictly_white_or_black() {
+        for palette in [Palette::dark(), Palette::light(), Palette::monochrome()] {
+            for background in [palette.canvas, palette.surface, palette.elevated] {
+                assert!(matches!(background, Color::Black | Color::White));
+            }
+        }
     }
 }

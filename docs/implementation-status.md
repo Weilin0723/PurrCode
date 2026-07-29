@@ -54,7 +54,12 @@ Extended `crates/golden-suite` and `integration-tests/golden/catalog.toml`:
 Extended CLI with:
 - `purrcode benchmark list` — list benchmark case IDs and categories
 - `purrcode benchmark validate-cases` — validate all cases against schema
+- `purrcode benchmark run` — run fixture cases through the daemon and proposed-action security
+  cases through PawGate with durable proposal and judgment events
+- `purrcode benchmark report` — render a versioned JSON report
 - `purrcode benchmark compare` — compare two benchmark reports
+- Security scoring verifies declared blocked actions and absent forbidden effects; unavailable
+  recovery/provider harnesses are kept distinct and excluded by the documented denominator rules
 - Existing `audit`, `baseline`, `live` commands preserved
 
 #### 4. Trace and Explain
@@ -76,30 +81,56 @@ New crate providing:
 - `replay_bundle()` — reconstructs SessionState via `reduce_event` (never executes actions,
   contacts providers, restores authorizations, or modifies repositories)
 - CLI commands: `purrcode bundle export`, `inspect`, `verify`, `replay`
-- 9 unit tests covering export, verification, replay, and redaction
+- Atomic no-clobber CLI export; environment values and other sensitive fields are redacted without
+  destroying the event shape required for authoritative replay
+- 11 unit tests covering export, verification, replay, redaction, and non-fabrication
 
 #### 6. Fault-Injection Verification
 
-9 integration tests in `crates/runtime-core/tests/fault_injection.rs`:
-- Partial provider output → Uncertain state
-- Authorization without execution → not replayed as execution
-- Duplicate execution rejected
-- Cancelled session → not completed
-- Orphan execution permitted for replay
-- Completed action allows new proposals
-- Validation timeout → Uncertain status
-- Mixed approval/rejection tracked separately
-- Cancellation during execution preserves partial state
+Six focused recovery tests in `crates/runtime-core/tests/fault_injection.rs`, supplemented by the
+real provider-stream, NineLives restart, Whisker cancellation, and repository-effect tests in their
+own component crates:
+- append/transition failures surface explicitly
+- restart while awaiting approval preserves the exact boundary
+- authorization persistence without execution never silently executes
+- missing execution completion is not reported as success
+- cancellation during indexing stays terminal and replayable
+- interrupted/truncated bundle evidence fails verification
 
 #### 7. TUI Design Foundation
 
-New reusable components (no existing render code modified):
+New reusable components integrated into the primary renderer:
 - `theme.rs` — `Palette` struct with 13 semantic color tokens; dark, light, and monochrome built-in themes
 - `glyphs.rs` — `StatusGlyph` enum with 13 distinct unicode/ASCII glyphs per event kind (color-independent)
 - `status_header.rs` — compact header component that abbreviates in narrow terminals
 - `action_area.rs` — contextual action area collapsing to 1 row when idle, 4 rows when active
 - `trace_inspector.rs` — centered overlay with textwrapping and keyboard navigation hints
-- `test_fixtures.rs` — `test_terminal()` helper and dimension constants (60, 80, 120, 160)
+- `test_fixtures.rs` — `TestBackend` helpers plus complete-layout stability checks at widths 60,
+  80, 120, and 160
+- Primary conversation rendering uses semantic palette tokens and color-independent status glyphs;
+  the action area collapses when idle and the trace overlay opens from a selected timeline event
+- Provider onboarding accepts Python `requests.post` samples with separate endpoint/header/payload
+  variables, canonicalizes `/chat/completions` to the provider base URL, and extracts quoted payload
+  model fields without retaining credentials. A manual structured-entry path asks for Base URL,
+  authentication, and Model ID; fields can be cleared and discovered models can be selected.
+- Startup checks the selected local model against the daemon's observed memory and qualification
+  recommendation. A not-recommended model produces a visible warning and names a smaller qualified
+  alternative when one exists; it is never silently loaded or switched.
+- `/models` opens an interactive model selector instead of rendering raw daemon JSON. A selection
+  is validated against configured model IDs and persisted to the active session or the
+  `coding_worker` role before the status bar changes.
+- Theme detection honors `PURRCODE_THEME=light|dark|monochrome`, uses `COLORFGBG` when available,
+  restricts every canvas/surface/elevated background to ANSI pure white or pure black, and removes
+  color-dependent Unicode glyphs in no-color mode. Rejected structured responses are
+  shown as bounded control-character-safe output, survive the repair boundary, and remain visible
+  when a session fails. Scalar strings in model-produced string-list fields are normalized before
+  the existing semantic validation runs.
+- The TUI leaves terminal mouse capture disabled by default so native drag selection and `Cmd+C`
+  work in macOS Terminal; keyboard scrolling and card expansion remain available.
+- Validation processes receive an isolated repository/worktree-local `HOME`, never the user's real
+  home directory or provider credentials. This lets tools such as npm resolve their required home
+  directory without the prior `uv_os_homedir ... ENOENT` failure while keeping generated cache
+  writes inside the exact authorized validation effects.
 
 ### External gates
 

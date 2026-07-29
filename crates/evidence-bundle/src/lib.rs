@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use purrcode_ninelives::{SessionStore, StoreError};
-use purrcode_runtime_core::{
-    ActionId, DomainError, SessionEvent, SessionId, SessionState,
-};
+use purrcode_runtime_core::{ActionId, DomainError, SessionEvent, SessionId, SessionState};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use thiserror::Error;
@@ -117,20 +115,24 @@ pub fn export_bundle(
 
 // Fields redacted in a non-sensitive export per event type. The path is a
 // JSON pointer-like list of segment keys to null out in the serialized event
-// before it is stored in the bundle. Documented here so the redaction policy
-// is auditable from one place.
+// before it is stored in the bundle. The first segment is always `data`
+// because the runtime serializes `SessionEvent` with
+// `#[serde(tag = "event", content = "data")]`.
+//
+// Documented here so the redaction policy is auditable from one place.
 fn redacted_paths_for(event_type: &str) -> &'static [&'static [&'static str]] {
     match event_type {
-        "conversation_message_added" => &[&["message", "content"]],
-        "action_proposed" => &[
-            &["action", "working_directory"],
-            &["action", "environment"],
-        ],
-        "action_output_recorded" => &[&["stdout"], &["stderr"]],
-        "research_search_performed" => &[&["query"], &["url"], &["excerpt"]],
-        "session_created" => &[&["repository"]],
-        "worktree_created" => &[&["path"]],
-        "checkpoint_created" => &[&["patch_digest"]],
+        "conversation_message_added" => &[&["data", "message", "content"]],
+        // `environment` is handled separately below: its object shape is
+        // preserved while every value is replaced with the redaction marker.
+        "action_proposed" => &[&["data", "action", "working_directory"]],
+        "action_output_recorded" => &[&["data", "stdout"], &["data", "stderr"]],
+        "research_search_performed" => {
+            &[&["data", "query"], &["data", "url"], &["data", "excerpt"]]
+        }
+        "session_created" => &[&["data", "repository"]],
+        "worktree_created" => &[&["data", "path"]],
+        "checkpoint_created" => &[&["data", "patch_digest"]],
         _ => &[],
     }
 }
@@ -162,6 +164,26 @@ fn redact_json(value: &mut serde_json::Value, path: &[&str]) -> bool {
         }
     }
     false
+}
+
+fn redact_object_values(value: &mut serde_json::Value, path: &[&str]) -> bool {
+    let mut current = value;
+    for segment in path {
+        match current {
+            serde_json::Value::Object(map) => match map.get_mut(*segment) {
+                Some(next) => current = next,
+                None => return false,
+            },
+            _ => return false,
+        }
+    }
+    let serde_json::Value::Object(map) = current else {
+        return false;
+    };
+    for value in map.values_mut() {
+        *value = serde_json::Value::String(REDACTED_MARKER.to_string());
+    }
+    true
 }
 
 fn build_bundle_event(
@@ -197,6 +219,12 @@ fn build_bundle_event(
     for path in redacted_paths_for(&event_type) {
         if redact_json(&mut evidence, path) {
             redacted_fields.push(path.join("."));
+        }
+    }
+    if event_type == "action_proposed" {
+        let environment_path = ["data", "action", "environment"];
+        if redact_object_values(&mut evidence, &environment_path) {
+            redacted_fields.push(environment_path.join("."));
         }
     }
 
@@ -424,7 +452,10 @@ mod tests {
                         program: "echo".into(),
                         arguments: vec!["hello".into()],
                         working_directory: repo,
-                        environment: BTreeMap::new(),
+                        environment: BTreeMap::from([(
+                            "API_TOKEN".into(),
+                            "super-secret-value".into(),
+                        )]),
                     }),
                 },
             )
@@ -528,7 +559,10 @@ mod tests {
             .find(|e| e.event_type == "session_created")
             .expect("session_created event must be present");
         assert!(
-            session_created.redacted_fields.iter().any(|f| f == "repository"),
+            session_created
+                .redacted_fields
+                .iter()
+                .any(|f| f == "data.repository"),
             "session_created.repository must be marked redacted, got {:?}",
             session_created.redacted_fields
         );
@@ -538,8 +572,9 @@ mod tests {
         );
 
         // The action_proposed event must keep the action shape (so replay can
-        // round-trip the original event) but redact working_directory and
-        // environment, which are the documented sensitive fields.
+        // round-trip the original event) while redacting working_directory and
+        // every environment value. Keeping the environment as an object lets
+        // serde reconstruct the action without exposing credential values.
         let action_proposed = bundle
             .events
             .iter()
@@ -548,11 +583,11 @@ mod tests {
         assert!(action_proposed
             .redacted_fields
             .iter()
-            .any(|f| f == "action.working_directory"));
+            .any(|f| f == "data.action.working_directory"));
         assert!(action_proposed
             .redacted_fields
             .iter()
-            .any(|f| f == "action.environment"));
+            .any(|f| f == "data.action.environment"));
 
         // State-bearing execution events are preserved.
         assert!(bundle
@@ -612,7 +647,10 @@ mod tests {
                         program: PathBuf::from("/usr/bin/unique-binary"),
                         arguments: vec!["--flag".into(), "value".into()],
                         working_directory: PathBuf::from("/unique/workdir"),
-                        environment: BTreeMap::new(),
+                        environment: BTreeMap::from([(
+                            "API_TOKEN".into(),
+                            "super-secret-value".into(),
+                        )]),
                     }),
                 },
             )
@@ -628,6 +666,8 @@ mod tests {
             .unwrap();
 
         let bundle = export_bundle(session_id, &store, false).unwrap();
+        let encoded = serde_json::to_string(&bundle).unwrap();
+        assert!(!encoded.contains("super-secret-value"));
         let state = replay_bundle(&bundle, &store).unwrap();
         let restored = state
             .proposed_actions
@@ -637,9 +677,16 @@ mod tests {
         match restored {
             ProposedAction::Command(cmd) => {
                 assert_eq!(cmd.program, PathBuf::from("/usr/bin/unique-binary"));
-                assert_eq!(cmd.arguments, vec!["--flag".to_string(), "value".to_string()]);
+                assert_eq!(
+                    cmd.arguments,
+                    vec!["--flag".to_string(), "value".to_string()]
+                );
                 // Redacted field is replaced with the marker, not fabricated.
                 assert_eq!(cmd.working_directory, PathBuf::from("<redacted>"));
+                assert_eq!(
+                    cmd.environment.get("API_TOKEN").map(String::as_str),
+                    Some("<redacted>")
+                );
             }
             other => panic!("expected Command action, got {other:?}"),
         }
@@ -670,7 +717,7 @@ mod tests {
                     }
                 }
             }),
-            redacted_fields: vec!["action.working_directory".into()],
+            redacted_fields: vec!["data.action.working_directory".into()],
         };
         match restore_event(&bundle_event) {
             Err(BundleError::Redacted { event_type, .. }) => {

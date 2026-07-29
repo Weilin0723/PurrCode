@@ -28,10 +28,12 @@ impl ActionArea {
 
         let mut lines = Vec::new();
         if let Some(msg) = &self.message {
-            lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(
-                msg,
-                Style::default().fg(palette.text_primary),
-            )));
+            lines.extend(msg.lines().map(|line| {
+                ratatui::text::Line::from(ratatui::text::Span::styled(
+                    line.to_owned(),
+                    Style::default().fg(palette.text_primary),
+                ))
+            }));
         }
         if self.pending_approval {
             lines.push(ratatui::text::Line::from(ratatui::text::Span::styled(

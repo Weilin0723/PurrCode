@@ -1140,6 +1140,57 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_grep_never_reads_an_external_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let repository = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::write(external.path().join("secret.txt"), "EXTERNAL_SECRET_TOKEN").unwrap();
+        symlink(
+            external.path().join("secret.txt"),
+            repository.path().join("linked-secret.txt"),
+        )
+        .unwrap();
+
+        let action = ProposedAction::RepositoryRead(RepositoryReadAction::RepositoryGrep {
+            pattern: "EXTERNAL_SECRET_TOKEN".into(),
+            paths: vec![PathBuf::from(".")],
+            case_insensitive: false,
+            max_results: 64,
+            max_bytes: 4096,
+        });
+        let constraints = ActionConstraints {
+            working_directory: repository.path().to_path_buf(),
+            network: false,
+            timeout_seconds: 10,
+            maximum_output_bytes: 4096,
+            allowed_write_globs: Vec::new(),
+            maximum_changed_files: 0,
+        };
+        let action_id = ActionId::new();
+        let mut store = SessionStore::in_memory().unwrap();
+        store
+            .authorize(&Authorization {
+                action_id,
+                session_id: SessionId::new(),
+                action_digest: action.digest(&constraints).unwrap(),
+                constraints: constraints.clone(),
+                authorized_at: Utc::now(),
+                approved_by: ApprovalAuthority::DeterministicPolicy,
+            })
+            .unwrap();
+
+        let result = ToolRuntime::execute(&mut store, action_id, &action, &constraints)
+            .await
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&result.stdout).contains("EXTERNAL_SECRET_TOKEN"),
+            "native repository grep followed a symlink outside its directory capability"
+        );
+    }
+
     #[tokio::test]
     async fn native_read_file_returns_bounded_content() {
         let temporary = tempfile::tempdir().unwrap();
