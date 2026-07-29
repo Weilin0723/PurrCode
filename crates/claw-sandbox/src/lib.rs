@@ -1238,7 +1238,12 @@ mod tests {
         assert!(!result.truncated);
         let capability = sandbox_capability();
         assert_eq!(result.sandbox_level, capability.level);
-        assert_eq!(result.sandbox_backend, capability.backend);
+        assert!(result.sandbox_backend.starts_with(&capability.backend));
+        if !capability.network_isolation {
+            assert!(result
+                .sandbox_backend
+                .contains("network isolation unavailable"));
+        }
         assert!(
             ToolRuntime::execute(&mut store, action_id, &action, &constraints)
                 .await
