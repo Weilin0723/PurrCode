@@ -14,9 +14,10 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. Every 
 bound to a durable authorization, checked again immediately before execution, and followed by
 recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
-PurrCode v0.5.3 ships the v0.5.2 reliability work through a fresh immutable release: provider profiles reconnect through the OS
-keychain, NVIDIA NIM and Ollama use their selected models, sessions recover explicitly, approvals
-continue execution, and the terminal stays readable with a high-contrast dark theme.
+PurrCode v0.6.0 introduces typed repository actions and a deterministic session state machine. It
+also completes the terminal recovery work: long responses wrap and scroll, detail cards expand by
+click or keyboard, completed advice tasks retain their concrete plan, and retries replace partial
+stream output instead of duplicating it.
 
 ## Why PurrCode
 
@@ -44,7 +45,7 @@ npm install --global @minaovo/purrcode
 Node.js 18 or newer can also install the signed-release launcher directly from GitHub:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.3/purrcode-0.5.3.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.6.0/purrcode-0.6.0.tgz
 ```
 
 The package selects the correct macOS, Linux, or Windows binary, verifies its pinned SHA-256 digest,
@@ -53,7 +54,7 @@ and exposes both `purrcode` and `purrcoded`.
 ### macOS and Linux installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.3/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.6.0/scripts/install.sh | sh
 ```
 
 This installer verifies the release archive against `SHA256SUMS` and installs into `~/.local/bin`.
@@ -88,6 +89,21 @@ context or tool processes.
 Paste Python, JavaScript, cURL, JSON, YAML, TOML, or dotenv provider examples with
 `/connect import`. PurrCode parses them without execution, keeps extracted secrets transient, and
 requires a keychain or environment reference before saving.
+
+## What changed in v0.6
+
+- **Typed repository reads:** file, directory, search, and read-only Git operations use structured
+  actions from model schema through PawGate and Claw. Unsafe paths and ambiguous legacy forms fail
+  closed before authorization.
+- **Deterministic session state:** one reducer validates every lifecycle transition and rejects
+  stale or mismatched approvals without corrupting the active session.
+- **Reliable completion:** advice-only tasks publish the concrete numbered plan as durable output;
+  execution tasks continue from verified tool results and preserve truthful failure states.
+- **Usable long conversations:** assistant text wraps to the timeline width, the timeline scrolls
+  with keyboard or mouse, recent activity follows automatically, and cards expand by click, Space,
+  or E.
+- **Clean streaming retries:** a retry replaces the incomplete attempt rather than concatenating
+  duplicate rationale or leaving the interface stuck on an obsolete stream.
 
 ## What changed in v0.5
 

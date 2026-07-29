@@ -2,7 +2,24 @@
 
 use crate::app::{App, AppMode};
 use crate::provider_setup::{ProviderSetup, SetupScreen};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
+
+pub fn handle_mouse(app: &mut App, mouse: MouseEvent, terminal: Rect) {
+    match mouse.kind {
+        MouseEventKind::ScrollUp => app.conversation.user_scroll_up(3),
+        MouseEventKind::ScrollDown => app.conversation.user_scroll_down(3),
+        MouseEventKind::Down(MouseButton::Left) => {
+            if let Some(index) =
+                crate::render::timeline_card_at(app, terminal, mouse.column, mouse.row)
+            {
+                app.conversation.selected_card = Some(index);
+                app.conversation.toggle_selected_card();
+            }
+        }
+        _ => {}
+    }
+}
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if is_active_pull_cancel_key(key, app.active_pull_action.is_some()) {
@@ -99,6 +116,12 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         } else if is_bare_resume_message(&msg) {
             app.message_bar =
                 "“resume” is task text, not a session command. Choose Resume at startup or use /resume for the selected session.".into();
+        } else if let Some(decision) = bare_approval_word(&msg) {
+            if app.conversation.pending_action.is_some() {
+                app.pending_command = Some(bare_approval_command(decision));
+            } else {
+                app.message_bar = bare_approval_explanation().into();
+            }
         } else if !msg.is_empty() {
             app.conversation.add_user_message(&msg);
             app.pending_user_message = true;
@@ -216,6 +239,37 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
 
 fn is_bare_resume_message(message: &str) -> bool {
     message.trim().eq_ignore_ascii_case("resume")
+}
+
+/// Map exact plain `approve`, `deny`, and `reject` words to the matching
+/// exact-action command when an approval card is visible. When no approval
+/// card is visible, return a clear explanation so the words are rejected
+/// locally without transitioning the session to Failed.
+pub(crate) fn bare_approval_word(message: &str) -> Option<BareApprovalDecision> {
+    let trimmed = message.trim();
+    let word = trimmed.to_ascii_lowercase();
+    match word.as_str() {
+        "approve" => Some(BareApprovalDecision::Approve),
+        "deny" | "reject" => Some(BareApprovalDecision::Reject(trimmed.to_owned())),
+        _ => None,
+    }
+}
+
+pub(crate) enum BareApprovalDecision {
+    Approve,
+    Reject(String),
+}
+
+pub(crate) fn bare_approval_command(decision: BareApprovalDecision) -> String {
+    match decision {
+        BareApprovalDecision::Approve => "/approve".to_owned(),
+        BareApprovalDecision::Reject(reason) => format!("/deny {reason}"),
+    }
+}
+
+pub(crate) fn bare_approval_explanation() -> &'static str {
+    "No approval card is visible. \"approve\", \"deny\", and \"reject\" are exact-action commands \
+     that only take effect when a pending action is on screen. Type your reply as task text."
 }
 
 fn model_pull_shortcut(
@@ -622,9 +676,10 @@ fn handle_diff_key(app: &mut App, _key: KeyEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_active_pull_cancel_key, is_active_stream_cancel_key, is_bare_resume_message,
-        is_submit_key, model_pull_shortcut, session_choice_action, session_resume_behavior,
-        SessionChoiceAction, SessionResumeBehavior,
+        bare_approval_command, bare_approval_word, is_active_pull_cancel_key,
+        is_active_stream_cancel_key, is_bare_resume_message, is_submit_key, model_pull_shortcut,
+        session_choice_action, session_resume_behavior, BareApprovalDecision, SessionChoiceAction,
+        SessionResumeBehavior,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -726,5 +781,47 @@ mod tests {
                 SessionResumeBehavior::Reject
             );
         }
+    }
+
+    #[test]
+    fn bare_approval_words_are_detected_exactly() {
+        for word in ["approve", " APPROVE ", "Approve"] {
+            assert!(
+                matches!(
+                    bare_approval_word(word),
+                    Some(BareApprovalDecision::Approve)
+                ),
+                "{word:?} should map to Approve"
+            );
+        }
+        for word in ["deny", "reject", " DENY "] {
+            assert!(
+                matches!(
+                    bare_approval_word(word),
+                    Some(BareApprovalDecision::Reject(_))
+                ),
+                "{word:?} should map to Reject"
+            );
+        }
+        for word in ["approved", "denying", "approval", "rejection", "resuming"] {
+            assert!(
+                bare_approval_word(word).is_none(),
+                "{word:?} must not be treated as an approval word"
+            );
+        }
+        assert!(bare_approval_word("").is_none());
+        assert!(bare_approval_word("   ").is_none());
+    }
+
+    #[test]
+    fn bare_approval_command_maps_to_exact_action() {
+        assert_eq!(
+            bare_approval_command(BareApprovalDecision::Approve),
+            "/approve"
+        );
+        assert_eq!(
+            bare_approval_command(BareApprovalDecision::Reject("no".into())),
+            "/deny no"
+        );
     }
 }

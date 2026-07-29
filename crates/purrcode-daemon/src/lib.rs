@@ -39,9 +39,9 @@ use purrcode_provider_gateway::{
 };
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
-    ActionConstraints, ActionId, ApprovalAuthority, Authorization, CommandAction,
-    ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
-    SessionEvent, SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
+    ActionConstraints, ActionId, ApprovalAuthority, Authorization, ConversationMessage,
+    DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction, SessionEvent,
+    SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
 };
 use purrcode_skill_registry::{
     ExternalSearchAuthorization, GitHubRegistryAdapter, Qualifier as RegistryQualifier,
@@ -894,13 +894,11 @@ impl IsolatedWorker for JudgedSupervisorWorker {
             .action
             .ok_or_else(|| "worker omitted both action and completion".to_owned())?
         {
-            AgentAction::ReadCommand { program, arguments } => {
-                ProposedAction::Command(CommandAction {
-                    program: PathBuf::from(program),
-                    arguments,
-                    working_directory: workspace.path.clone(),
-                    environment: BTreeMap::new(),
-                })
+            AgentAction::Read(read) => ProposedAction::RepositoryRead(read),
+            AgentAction::ReadCommand(_) => {
+                return Err(
+                    "legacy read commands must be normalized by the primary agent runtime".into(),
+                )
             }
             AgentAction::WriteFile {
                 path,

@@ -196,6 +196,7 @@ impl<'a> ContextualJudge<'a> {
 pub fn classify_risk(action: &ProposedAction) -> RiskClass {
     match action {
         ProposedAction::DeleteFile(_) | ProposedAction::ExternalTool(_) => RiskClass::High,
+        ProposedAction::RepositoryRead(_) => RiskClass::Low,
         ProposedAction::Command(command) => {
             let text = format!(
                 "{} {}",

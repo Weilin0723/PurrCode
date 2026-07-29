@@ -14,9 +14,9 @@ PurrCode 是一个在隔离 Git worktree 中工作的终端编程智能体。每
 持久化授权，并在执行前再次校验，随后记录真实验证结果。仓库内容、模型输出和下载的技能
 始终被视为不可信数据。
 
-PurrCode v0.5.3 通过新的 immutable release 发布 v0.5.2 稳定性改进：Provider 配置可通过系统钥匙串重新连接，NVIDIA NIM
-和 Ollama 会使用用户选择的模型，会话恢复需要明确选择，审批后会继续执行，终端界面则默认
-采用高对比度深色主题。
+PurrCode v0.6.0 引入类型化仓库操作和确定性会话状态机，并完成终端恢复工作：长回复会自动
+换行并可滚动，详情卡片支持点击或键盘展开，建议类任务完成后会保留具体计划，重试时则会
+替换未完成的流式输出而不是重复拼接。
 
 ## 为什么选择 PurrCode
 
@@ -44,7 +44,7 @@ npm install --global @minaovo/purrcode
 使用 Node.js 18 或更高版本，也可以直接从 GitHub 安装同一个已签名 launcher：
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.5.3/purrcode-0.5.3.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.6.0/purrcode-0.6.0.tgz
 ```
 
 安装包会选择正确的 macOS、Linux 或 Windows 二进制文件，校验固定的 SHA-256 摘要，并
@@ -53,7 +53,7 @@ npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0
 ### macOS 和 Linux 安装脚本
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.5.3/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.6.0/scripts/install.sh | sh
 ```
 
 脚本会使用 `SHA256SUMS` 校验发布归档，并默认安装到 `~/.local/bin`。可通过
@@ -87,6 +87,19 @@ purrcode
 使用 `/connect import` 可粘贴 Python、JavaScript、cURL、JSON、YAML、TOML 或 dotenv
 示例。PurrCode 只解析、不执行；提取出的密钥只短暂保存在内存中，保存前必须转换为钥匙串或
 环境变量引用。
+
+## v0.6 更新
+
+- **类型化仓库读取：** 文件、目录、搜索和只读 Git 操作从模型 schema 到 PawGate、Claw
+  始终使用结构化操作；不安全路径和含糊的旧命令会在授权前安全拒绝。
+- **确定性会话状态：** 单一 reducer 校验所有生命周期转换，并拒绝过期或不匹配的审批，
+  不会破坏当前会话。
+- **可靠的完成输出：** 纯建议任务会将具体编号计划保存为持久输出；执行任务只依据已验证
+  的工具结果继续，并保留真实失败状态。
+- **可用的长对话：** 助手文本按时间线宽度换行，时间线支持键盘和鼠标滚动并自动跟随最新
+  活动，卡片可通过点击、Space 或 E 展开。
+- **干净的流式重试：** 重试会替换不完整尝试，不再重复拼接推理文本，也不会停留在过期
+  的流式状态。
 
 ## v0.5 更新
 

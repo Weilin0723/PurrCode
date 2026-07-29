@@ -175,6 +175,15 @@ impl Conversation {
         let is_streamed_assistant_snapshot = name == "conversation_message_added"
             && event.pointer("/data/message/role").and_then(Value::as_str) == Some("assistant")
             && self.streaming_message.is_some();
+        if is_streamed_assistant_snapshot {
+            if let Some(content) = event
+                .pointer("/data/message/content")
+                .and_then(Value::as_str)
+                .filter(|content| content.contains("\n\nProposed plan:\n"))
+            {
+                self.replace_streaming(content);
+            }
+        }
         if !is_streamed_assistant_snapshot {
             let card = collapsed_card_from_event(&event);
             let expand_plan = card.kind == crate::timeline::CardKind::Plan;
@@ -220,7 +229,15 @@ impl Conversation {
     }
 
     fn note_new_output(&mut self) {
-        self.new_output = !self.auto_follow;
+        if self.auto_follow {
+            // Keep enough recent cards visible to preserve context while ensuring the
+            // final response and terminal event cannot land below the viewport.
+            const RECENT_CARD_WINDOW: usize = 8;
+            self.scroll = self.display_item_count().saturating_sub(RECENT_CARD_WINDOW);
+            self.new_output = false;
+        } else {
+            self.new_output = true;
+        }
     }
 
     pub async fn refresh_events(
@@ -449,5 +466,42 @@ mod tests {
         let card = conversation.timeline.last().unwrap();
         assert_eq!(card.title, "Runtime audit");
         assert!(!card.summary.contains("must not render"));
+    }
+
+    #[test]
+    fn durable_advice_completion_replaces_temporary_rationale_with_the_plan() {
+        let mut conversation = Conversation::new();
+        conversation.start_streaming(None);
+        conversation.append_streaming("I have enough information");
+        conversation.apply_durable_audit(
+            1,
+            json!({
+                "event": "conversation_message_added",
+                "data": {"message": {
+                    "role": "assistant",
+                    "content": "Repository review complete.\n\nProposed plan:\n1. Split the daemon router\n2. Add regression tests"
+                }}
+            }),
+        );
+        let content = &conversation.streaming_message.as_ref().unwrap().content;
+        assert!(content.contains("1. Split the daemon router"));
+        assert!(!content.contains("enough information"));
+    }
+
+    #[test]
+    fn auto_follow_keeps_the_latest_terminal_cards_in_view() {
+        let mut conversation = Conversation::new();
+        for sequence in 1..=12 {
+            conversation.apply_durable_audit(
+                sequence,
+                json!({
+                    "event": "context_indexed",
+                    "data": {"files": sequence, "symbols": 0, "sensitive_files": 0}
+                }),
+            );
+        }
+        assert!(conversation.auto_follow);
+        assert_eq!(conversation.scroll, 4);
+        assert!(!conversation.new_output);
     }
 }
