@@ -1644,9 +1644,9 @@ async fn main() -> Result<()> {
                         timestamp.format("%H:%M:%S%.3f"),
                         action_id
                     );
-                    println!("         {}", event_type);
+                    println!("         {event_type}");
                     if !summary.is_empty() {
-                        println!("         {}", summary);
+                        println!("         {summary}");
                     }
                 }
             }
@@ -1862,8 +1862,8 @@ async fn main() -> Result<()> {
                     baseline.display(),
                     candidate.display()
                 );
-                println!("  baseline:  {} passed, {} failed", b_passed, b_failed);
-                println!("  candidate: {} passed, {} failed", c_passed, c_failed);
+                println!("  baseline:  {b_passed} passed, {b_failed} failed");
+                println!("  candidate: {c_passed} passed, {c_failed} failed");
                 if c_passed > b_passed {
                     println!("  improvement: +{} passed", c_passed - b_passed);
                 }
@@ -3529,7 +3529,7 @@ fn event_summary(event: &SessionEvent) -> String {
             exit_code,
             truncated,
             ..
-        } => format!("exit_code={:?} truncated={truncated}", exit_code),
+        } => format!("exit_code={exit_code:?} truncated={truncated}"),
         ValidationRecorded {
             status, evidence, ..
         } => {
