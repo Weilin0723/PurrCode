@@ -267,6 +267,14 @@ fn card_from_event(value: &Value) -> Option<TimelineCard> {
         "session_cancelled" => {
             TimelineCard::new(CardKind::Recovery, "Session cancelled", text("reason"))
         }
+        "session_paused" => TimelineCard::new(
+            CardKind::Recovery,
+            "Outcome review required",
+            text("reason"),
+        )
+        .details(vec![
+            "Review the validation cards above, then start a new session or explicitly resume after correcting the reported environment or code failures.".into(),
+        ]),
         "session_completed" => TimelineCard::new(
             CardKind::Completion,
             "Session completed",
@@ -462,6 +470,21 @@ mod tests {
         ]);
         assert!(cards[0].details[0].len() < 820);
         assert!(!cards[0].summary.contains("{\""));
+    }
+
+    #[test]
+    fn paused_session_exposes_the_review_reason_and_recovery_guidance() {
+        let cards = cards_from_events(&[json!({
+            "event": "session_paused",
+            "data": {
+                "reason": "validation did not pass (3 checks failed); review the evidence"
+            }
+        })]);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].kind, CardKind::Recovery);
+        assert_eq!(cards[0].title, "Outcome review required");
+        assert!(cards[0].summary.contains("3 checks failed"));
+        assert!(!cards[0].details.is_empty());
     }
 
     #[test]

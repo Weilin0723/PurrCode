@@ -4,7 +4,7 @@ use crate::command_palette::CommandPalette;
 use crate::composer::Composer;
 use crate::conversation::{Conversation, Message};
 use crate::diff_view::DiffView;
-use crate::keybindings::handle_key;
+use crate::keybindings::{handle_key, handle_mouse};
 use crate::provider_setup::ProviderSetup;
 use crate::render::draw;
 use crate::skill_browser::SkillBrowser;
@@ -16,7 +16,10 @@ use crate::theme::Theme;
 use crate::ui_state::UiState;
 use crate::workspace::WorkspaceContext;
 use anyhow::Result;
-use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind};
+use crossterm::event::{
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -195,13 +198,19 @@ pub async fn run(config: TuiConfig) -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableMouseCapture
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let result = event_loop(&mut terminal, &mut app).await;
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
+        DisableMouseCapture,
         DisableBracketedPaste,
         LeaveAlternateScreen
     )?;
@@ -342,6 +351,16 @@ async fn event_loop(
                     }
                 }
             }
+            app.persist_ui_state();
+            continue;
+        }
+        if let Event::Mouse(mouse) = input {
+            let size = terminal.size()?;
+            handle_mouse(
+                app,
+                mouse,
+                ratatui::layout::Rect::new(0, 0, size.width, size.height),
+            );
             app.persist_ui_state();
             continue;
         }
@@ -678,7 +697,21 @@ impl App {
                         VerifiedStreamEnd::AwaitingApproval => {
                             "Paused for exact-action approval.".into()
                         }
-                        VerifiedStreamEnd::AwaitingReview => "Paused for outcome review.".into(),
+                        VerifiedStreamEnd::AwaitingReview => self
+                            .conversation
+                            .timeline
+                            .iter()
+                            .rev()
+                            .find(|card| card.title == "Outcome review required")
+                            .map(|card| {
+                                format!(
+                                    "Paused: {} · click the outcome or press E to review details.",
+                                    card.summary
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                "Paused for outcome review; click the latest validation card or press E to inspect evidence.".into()
+                            }),
                     };
                 }
             }

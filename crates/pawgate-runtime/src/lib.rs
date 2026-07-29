@@ -146,6 +146,24 @@ impl Policy {
                     reason: format!("program `{program}` is not present in policy"),
                 }
             }
+            ProposedAction::RepositoryRead(read) => {
+                if repository.as_os_str().is_empty() {
+                    return JudgmentDecision::Deny {
+                        reason: "repository read requires a bounded worktree path".into(),
+                    };
+                }
+                if let Some(reason) = unsafe_repository_read(read, repository) {
+                    return JudgmentDecision::Deny { reason };
+                }
+                JudgmentDecision::AllowWithConstraints(ActionConstraints {
+                    working_directory: repository.to_path_buf(),
+                    network: false,
+                    timeout_seconds: self.timeout_seconds,
+                    maximum_output_bytes: self.maximum_output_bytes,
+                    allowed_write_globs: Vec::new(),
+                    maximum_changed_files: 0,
+                })
+            }
             ProposedAction::WriteFile(write) => {
                 self.evaluate_file_mutation(repository, &write.path, "write")
             }
@@ -407,6 +425,153 @@ fn unsafe_read_command(program: &str, arguments: &[String], repository: &Path) -
         "find" => unsafe_find(arguments, repository),
         _ => None,
     }
+}
+
+fn unsafe_repository_read(
+    read: &purrcode_runtime_core::RepositoryReadAction,
+    repository: &Path,
+) -> Option<String> {
+    use purrcode_runtime_core::{canonicalize_repository_path, RepositoryReadAction};
+    match read {
+        RepositoryReadAction::GitStatus | RepositoryReadAction::GitLog { .. } => None,
+        RepositoryReadAction::GitRevParse { revision } => {
+            if revision.is_empty()
+                || revision.starts_with('-')
+                || revision.chars().any(char::is_whitespace)
+                || revision.contains("..")
+            {
+                Some("git rev-parse revision must reference one safe revision".into())
+            } else {
+                None
+            }
+        }
+        RepositoryReadAction::GitLsFiles { pathspec } => {
+            // Gap 4: GitLsFiles pathspec previously bypassed path validation.
+            // Treat each pathspec entry as a repository-relative path and pass
+            // it through the same containment check applied to other variants.
+            let specs: Vec<PathBuf> = pathspec.to_vec();
+            unsafe_paths(&specs, repository, "git ls-files")
+        }
+        RepositoryReadAction::GitDiff { paths } => unsafe_paths(paths, repository, "git diff"),
+        RepositoryReadAction::GitShow { revision, path } => {
+            if revision.is_empty()
+                || revision.chars().any(char::is_whitespace)
+                || revision.contains("..")
+            {
+                return Some("git_show revision must reference a single revision".into());
+            }
+            if path.as_os_str().is_empty() {
+                None
+            } else {
+                unsafe_paths(std::slice::from_ref(path), repository, "git show")
+            }
+        }
+        RepositoryReadAction::RepositoryGrep {
+            pattern,
+            paths,
+            case_insensitive: _,
+            max_results,
+            max_bytes,
+        } => {
+            if pattern.is_empty() || pattern.contains('\n') {
+                return Some("repository_grep pattern must not be empty or multi-line".into());
+            }
+            if let Err(reason) = read.validate_bounds() {
+                return Some(reason.to_string());
+            }
+            if *max_results == 0 {
+                return Some("repository_grep max_results must be greater than zero".into());
+            }
+            if *max_bytes == 0 {
+                return Some("repository_grep max_bytes must be greater than zero".into());
+            }
+            unsafe_paths(paths, repository, "repository grep")
+        }
+        RepositoryReadAction::Find {
+            paths,
+            max_depth,
+            max_entries,
+        } => {
+            if let Err(reason) = read.validate_bounds() {
+                return Some(reason.to_string());
+            }
+            if *max_depth == 0 {
+                return Some("find max_depth must be between 1 and 5".into());
+            }
+            if *max_depth > purrcode_runtime_core::DEFAULT_FIND_MAX_DEPTH {
+                return Some(format!(
+                    "find max_depth must be at most {}",
+                    purrcode_runtime_core::DEFAULT_FIND_MAX_DEPTH
+                ));
+            }
+            if *max_entries == 0 {
+                return Some("find max_entries must be greater than zero".into());
+            }
+            unsafe_paths(paths, repository, "find")
+        }
+        RepositoryReadAction::List { paths, max_entries } => {
+            if *max_entries == 0 {
+                return Some("list max_entries must be greater than zero".into());
+            }
+            unsafe_paths(paths, repository, "list")
+        }
+        RepositoryReadAction::ReadFile { path, max_bytes } => {
+            if *max_bytes == 0 {
+                return Some("read_file max_bytes must be greater than zero".into());
+            }
+            if *max_bytes > purrcode_runtime_core::MAX_READ_FILE_BYTES {
+                return Some(format!(
+                    "read_file max_bytes must be at most {}",
+                    purrcode_runtime_core::MAX_READ_FILE_BYTES
+                ));
+            }
+            let canonical = canonicalize_repository_path(path)?;
+            if canonical.as_os_str().is_empty() {
+                return Some("read_file path must name a file, not the repository root".into());
+            }
+            unsafe_paths(std::slice::from_ref(path), repository, "read_file")
+        }
+    }
+}
+
+fn unsafe_paths(paths: &[PathBuf], repository: &Path, verb: &str) -> Option<String> {
+    use std::path::Component;
+    for path in paths {
+        // The canonical repository root is represented by an empty relative
+        // path. Single-file reads reject it separately above.
+        if path.as_os_str().is_empty() {
+            continue;
+        }
+        if path.is_absolute() {
+            return Some(format!("{verb} path must be repository-relative"));
+        }
+        if path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+        {
+            return Some(format!("{verb} path may not traverse out of the worktree"));
+        }
+        if path == Path::new("..") || path.starts_with("../") {
+            return Some(format!("{verb} path may not escape the worktree"));
+        }
+        let joined = repository.join(path);
+        if !joined.starts_with(repository) {
+            return Some(format!("{verb} path resolves outside the worktree"));
+        }
+        // Resolve symlinks for existing paths to detect symlink-based escapes.
+        // Non-existent paths are not checked here because they will be created
+        // (and execution-level containment still applies), but if a symlink
+        // chain redirects outside the repository it must be rejected.
+        if let Ok(canonical) = joined.canonicalize() {
+            if !canonical.starts_with(repository) {
+                return Some(format!(
+                    "{verb} path follows a symlink outside the worktree: {}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    None
 }
 
 fn unsafe_ls(arguments: &[String], repository: &Path) -> Option<String> {
@@ -701,6 +866,127 @@ mod tests {
         assert!(matches!(
             Policy::default().evaluate(&action, Path::new(TEST_REPOSITORY)),
             JudgmentDecision::RequireApproval { .. }
+        ));
+    }
+
+    #[test]
+    fn typed_repository_reads_with_relative_or_canonical_root_are_allowed() {
+        use purrcode_runtime_core::RepositoryReadAction;
+        let proposed = [
+            RepositoryReadAction::GitStatus,
+            RepositoryReadAction::GitLog {
+                max_count: Some(5),
+                oneline: true,
+            },
+            RepositoryReadAction::GitLsFiles { pathspec: vec![] },
+            RepositoryReadAction::Find {
+                paths: vec![PathBuf::from(".")],
+                max_depth: 3,
+                max_entries: 64,
+            },
+            RepositoryReadAction::Find {
+                paths: vec![PathBuf::from("./")],
+                max_depth: 3,
+                max_entries: 64,
+            },
+            RepositoryReadAction::Find {
+                paths: vec![PathBuf::from("src")],
+                max_depth: 3,
+                max_entries: 64,
+            },
+            RepositoryReadAction::List {
+                paths: vec![PathBuf::from(".")],
+                max_entries: 32,
+            },
+            RepositoryReadAction::List {
+                paths: vec![PathBuf::from("./src")],
+                max_entries: 32,
+            },
+            RepositoryReadAction::RepositoryGrep {
+                pattern: "TODO".into(),
+                paths: vec![PathBuf::from("src")],
+                case_insensitive: false,
+                max_results: 64,
+                max_bytes: 4096,
+            },
+        ];
+        for read in proposed {
+            let action = ProposedAction::RepositoryRead(read);
+            assert!(
+                matches!(
+                    Policy::default().evaluate(&action, Path::new(TEST_REPOSITORY)),
+                    JudgmentDecision::AllowWithConstraints(_)
+                ),
+                "expected typed repository read to be allowed: {action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_repository_reads_with_unsafe_paths_are_denied() {
+        use purrcode_runtime_core::RepositoryReadAction;
+        let proposed = [
+            RepositoryReadAction::Find {
+                paths: vec![PathBuf::from("..")],
+                max_depth: 3,
+                max_entries: 64,
+            },
+            RepositoryReadAction::Find {
+                paths: vec![PathBuf::from("../outside")],
+                max_depth: 3,
+                max_entries: 64,
+            },
+            RepositoryReadAction::Find {
+                paths: vec![PathBuf::from("/etc")],
+                max_depth: 3,
+                max_entries: 64,
+            },
+            RepositoryReadAction::List {
+                paths: vec![PathBuf::from("/etc")],
+                max_entries: 32,
+            },
+            RepositoryReadAction::GitDiff {
+                paths: vec![PathBuf::from("../sibling.txt")],
+            },
+            RepositoryReadAction::GitShow {
+                revision: "HEAD^".into(),
+                path: PathBuf::from("../outside.txt"),
+            },
+            RepositoryReadAction::RepositoryGrep {
+                pattern: "TODO\nmore".into(),
+                paths: vec![PathBuf::from("src")],
+                case_insensitive: false,
+                max_results: 64,
+                max_bytes: 4096,
+            },
+            RepositoryReadAction::GitShow {
+                revision: "HEAD bad".into(),
+                path: PathBuf::from("src/file.rs"),
+            },
+        ];
+        for read in proposed {
+            let action = ProposedAction::RepositoryRead(read);
+            assert!(
+                matches!(
+                    Policy::default().evaluate(&action, Path::new(TEST_REPOSITORY)),
+                    JudgmentDecision::Deny { .. }
+                ),
+                "expected typed repository read to be denied: {action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_repository_read_with_empty_root_is_denied() {
+        use purrcode_runtime_core::RepositoryReadAction;
+        let action = ProposedAction::RepositoryRead(RepositoryReadAction::Find {
+            paths: vec![PathBuf::new()],
+            max_depth: 3,
+            max_entries: 64,
+        });
+        assert!(matches!(
+            Policy::default().evaluate(&action, Path::new("")),
+            JudgmentDecision::Deny { .. }
         ));
     }
 }

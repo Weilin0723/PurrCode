@@ -198,7 +198,10 @@ fn workspace_layout(width: u16) -> WorkspaceLayout {
 }
 
 fn layout_full(frame: &Frame<'_>, app: &App) -> [Rect; 5] {
-    let area = frame.area();
+    layout_full_rect(frame.area(), app)
+}
+
+fn layout_full_rect(area: Rect, app: &App) -> [Rect; 5] {
     let composer_height = (app.composer.line_count().clamp(3, 10) as u16).saturating_add(2);
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -293,6 +296,7 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let content_width = area.width.saturating_sub(4) as usize;
     let mut items: Vec<ListItem> = if app.conversation.timeline.is_empty() {
         app.conversation
             .messages
@@ -309,7 +313,10 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     "assistant" => Style::default().fg(Color::Reset),
                     _ => Style::default().fg(Color::Gray),
                 };
-                ListItem::new(render_markdown(prefix, &msg.content, style))
+                ListItem::new(wrap_text(
+                    render_markdown(prefix, &msg.content, style),
+                    content_width,
+                ))
             })
             .collect()
     } else {
@@ -324,14 +331,19 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     index,
                     app.conversation.selected_card == Some(index),
                     app.conversation.expanded_card == Some(index),
+                    content_width,
                 )
             })
             .collect()
     };
 
     if let Some(ref msg) = app.conversation.streaming_message {
-        let text = format!("PurrCode: {}", msg.content);
-        items.push(ListItem::new(text).style(Style::default().fg(Color::Reset)));
+        let text = render_markdown(
+            "PurrCode: ",
+            &msg.content,
+            Style::default().fg(Color::Reset),
+        );
+        items.push(ListItem::new(wrap_text(text, content_width)));
     }
 
     if items.is_empty() {
@@ -359,12 +371,13 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
     );
 }
 
-fn timeline_item<'a>(
-    card: &'a TimelineCard,
+fn timeline_item(
+    card: &TimelineCard,
     index: usize,
     selected: bool,
     expanded: bool,
-) -> ListItem<'a> {
+    width: usize,
+) -> ListItem<'static> {
     let (glyph, color) = match card.kind {
         CardKind::Conversation => ("●", Color::Reset),
         CardKind::Plan => ("◆", Color::Blue),
@@ -383,7 +396,7 @@ fn timeline_item<'a>(
     let mut lines = vec![Line::from(vec![
         Span::styled(format!("{marker}{glyph} "), Style::default().fg(color)),
         Span::styled(
-            &card.title,
+            card.title.clone(),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
     ])];
@@ -395,7 +408,7 @@ fn timeline_item<'a>(
     } else if !card.details.is_empty() {
         lines.push(Line::from(Span::styled(
             format!(
-                "    {} detail line(s) · Ctrl+Space to expand",
+                "    {} detail line(s) · click or press E to expand",
                 card.details.len()
             ),
             Style::default().fg(Color::Gray),
@@ -403,7 +416,94 @@ fn timeline_item<'a>(
     }
     lines.push(Line::from(""));
     let _ = index;
-    ListItem::new(Text::from(lines))
+    ListItem::new(wrap_styled_lines(lines, width.max(1)))
+}
+
+fn wrap_styled_lines(lines: Vec<Line<'_>>, width: usize) -> Text<'static> {
+    let mut wrapped = Vec::new();
+    for line in lines {
+        let mut current = Vec::new();
+        let mut current_width = 0usize;
+        for span in line.spans {
+            let style = span.style;
+            let mut chunk = String::new();
+            for grapheme in span.content.graphemes(true) {
+                let grapheme_width = UnicodeWidthStr::width(grapheme);
+                if current_width > 0 && current_width.saturating_add(grapheme_width) > width {
+                    if !chunk.is_empty() {
+                        current.push(Span::styled(std::mem::take(&mut chunk), style));
+                    }
+                    wrapped.push(Line::from(std::mem::take(&mut current)));
+                    current_width = 0;
+                }
+                chunk.push_str(grapheme);
+                current_width = current_width.saturating_add(grapheme_width);
+            }
+            if !chunk.is_empty() {
+                current.push(Span::styled(chunk, style));
+            }
+        }
+        wrapped.push(Line::from(current));
+    }
+    Text::from(wrapped)
+}
+
+fn wrap_text(text: Text<'_>, width: usize) -> Text<'static> {
+    wrap_styled_lines(text.lines, width.max(1))
+}
+
+pub(crate) fn timeline_card_at(app: &App, terminal: Rect, column: u16, row: u16) -> Option<usize> {
+    if app.mode != AppMode::Conversation {
+        return None;
+    }
+    let rows = layout_full_rect(terminal, app);
+    let body = rows[1];
+    let layout = workspace_layout(terminal.width);
+    let show_files = layout == WorkspaceLayout::Wide || app.workspace.file_panel_visible;
+    let timeline = if layout == WorkspaceLayout::Narrow && show_files {
+        return None;
+    } else if show_files {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(30), Constraint::Min(40)])
+            .split(body);
+        columns[1]
+    } else {
+        body
+    };
+    if column <= timeline.x
+        || column >= timeline.right().saturating_sub(1)
+        || row <= timeline.y
+        || row >= timeline.bottom().saturating_sub(1)
+    {
+        return None;
+    }
+    let width = timeline.width.saturating_sub(4) as usize;
+    let mut y = timeline.y.saturating_add(1);
+    for (index, card) in app
+        .conversation
+        .timeline
+        .iter()
+        .enumerate()
+        .skip(app.conversation.scroll)
+    {
+        let height = timeline_item(
+            card,
+            index,
+            app.conversation.selected_card == Some(index),
+            app.conversation.expanded_card == Some(index),
+            width,
+        )
+        .height() as u16;
+        if row >= y && row < y.saturating_add(height) {
+            return Some(index);
+        }
+        y = y.saturating_add(height);
+        if y >= timeline.bottom() {
+            break;
+        }
+    }
+    None
 }
 
 fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -864,6 +964,18 @@ mod tests {
         assert_eq!(workspace_layout(80), WorkspaceLayout::Compact);
         assert_eq!(workspace_layout(79), WorkspaceLayout::Narrow);
         assert_eq!(workspace_layout(40), WorkspaceLayout::Narrow);
+    }
+
+    #[test]
+    fn timeline_text_wraps_to_the_available_width() {
+        let text = wrap_styled_lines(
+            vec![Line::from(Span::raw(
+                "a long model response that must wrap instead of extending horizontally",
+            ))],
+            18,
+        );
+        assert!(text.lines.len() > 1);
+        assert!(text.lines.iter().all(|line| line.width() <= 18));
     }
 
     #[test]

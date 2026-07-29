@@ -190,9 +190,18 @@ impl SessionStore {
         let events = self.events(session_id)?;
         let mut state = SessionState::empty(session_id);
         for event in events {
-            state.apply(&event);
+            // Recovery semantics: replay whatever was persisted. Skip events
+            // that would otherwise violate the current reducer's invariants
+            // rather than corrupting the loaded state.
+            if let Err(error) = state.reduce_event(&event) {
+                Self::log_skipped_event(session_id, error);
+            }
         }
         Ok(state)
+    }
+
+    fn log_skipped_event(session_id: SessionId, error: purrcode_runtime_core::DomainError) {
+        eprintln!("purrcode-ninelives: session {session_id:?} skipped invalid event: {error}");
     }
 
     pub fn events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>, StoreError> {

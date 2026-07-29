@@ -1,6 +1,46 @@
 # Implementation status
 
-Updated: 2026-07-27 (v0.5.2 provider-routing hotfix implemented; v0.5.3 immutable-release recovery in progress)
+Updated: 2026-07-29 (v0.6.0 release scope implemented and locally qualified)
+
+## v0.6.0 typed actions and deterministic state machine — release candidate
+
+- `purrcode-agent-runtime` is decomposed into six focused modules (`agent`, `context`, `errors`,
+  `normalize`, `schema`, `stream`) and a small re-export wrapper. All 47 unit tests pass.
+  The file `agent.rs` is 1,443 lines — above the ~1,200 soft target but justified by the five
+  extracted sibling modules and the five public items (`AgentCancellation`, `NativeAgent`,
+  `AgentOutcome`, `CapabilityResolution`, `SkillResolver`) that live together for coherence.
+- `purrcode-runtime-core::RepositoryReadAction` is the typed read class with bounded native file,
+  directory, and search reads plus explicit read-only Git queries, including `GitRevParse`.
+  Transitional `ReadCommand` inputs are converted to canonical typed reads before PawGate; unsafe
+  or ambiguous forms fail closed and never reach authorization or execution.
+- `ProposedAction::RepositoryRead` is the new variant. Claw has an explicit typed branch; PawGate
+  validates paths via `unsafe_repository_read` (no traversal, no absolute roots, no resolved
+  outside-worktree targets) and returns `AllowWithConstraints` for typed reads without contextual
+  judgment. `purrcode-agent-runtime::AgentAction::Read` mirrors the runtime type so the model
+  schema, the durable event, PawGate, and Claw share the same shape.
+- `purrcode-runtime-core::SessionState::reduce_event` is the authoritative reducer. It validates
+  transitions and returns `DomainError::InvalidStateTransition` or `DomainError::UnexpectedApproval`
+  for forbidden moves. `SessionState::apply` is the deprecated wrapper. `is_valid_transition`
+  documents the full state machine.
+- `purrcode-claw` test coverage now includes `authorized_repository_read_executes_through_sandbox`
+  (typed read digest and single-use consumption) and the existing
+  `timeout_terminates_the_entire_process_group` and `authorized_write_is_atomic_and_single_use`
+  tests continue to pass.
+- `purrcode-pawgate` typed-read tests cover allowed relative and canonical root scans
+  (`typed_repository_reads_with_relative_or_canonical_root_are_allowed`) and unsafe predicates
+  (`typed_repository_reads_with_unsafe_paths_are_denied`).
+- `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and
+  `cargo test --workspace` are green after the change.
+- The v0.5.2 follow-up — plain `approve`/`deny`/`reject` composer words being treated as task
+  input — is resolved in the daemon/TUI approval pipeline: typed approval words route to the
+  matching exact-action command when an approval card is visible and are rejected locally with a
+  clear explanation otherwise; the durable PawGate boundary and Claw digest recheck are
+  preserved in both paths.
+- Long assistant messages wrap at the timeline width. Keyboard and mouse scrolling, automatic
+  follow mode, click/Space/E detail expansion, concrete advice-plan completion output, and clean
+  retry replacement are covered by TUI tests.
+- External gates unchanged: live provider qualification, signed release upstream execution,
+  opt-in telemetry, and cross-platform integration runs remain out of scope for this change set.
 
 ## v0.5.2 provider-routing hotfix — implemented
 
@@ -18,7 +58,8 @@ Updated: 2026-07-27 (v0.5.2 provider-routing hotfix implemented; v0.5.3 immutabl
   action automatically resumes the agent loop.
 - The terminal uses an opaque black high-contrast canvas and shows the active provider and model.
 - Common unbounded `find` forms and plain-text approval aliases remain tracked for follow-up in
-  [Issue #21](https://github.com/Weilin0723/PurrCode/issues/21).
+  [Issue #21](https://github.com/Weilin0723/PurrCode/issues/21) until the v0.6 typed-read and
+  typed-approval work lands; see the v0.6 milestone above.
 
 ## v0.5.1 connection recovery — implemented
 

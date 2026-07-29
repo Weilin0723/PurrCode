@@ -271,11 +271,26 @@ impl StreamController {
     fn consume(&mut self, event: StreamEvent, now: Instant, output: &mut Vec<StreamOutput>) {
         match event {
             StreamEvent::Phase(update) => {
+                let repair_attempt_started = update.attempt.is_some()
+                    && self.attempt.is_some()
+                    && update.attempt != self.attempt
+                    && update.request_index.or(self.request_index) == self.request_index;
                 if update.request_index != self.request_index {
                     if let Some(batch) = self.batcher.take() {
                         output.push(batch.into_output(false));
                     }
                     self.visible_content_bytes = 0;
+                }
+                if repair_attempt_started {
+                    self.batcher.clear();
+                    self.visible_content_bytes = 0;
+                    output.push(StreamOutput::Content {
+                        text: String::new(),
+                        replace: true,
+                        role: update.role.clone(),
+                        attempt: update.attempt,
+                        request_index: update.request_index.or(self.request_index),
+                    });
                 }
                 self.apply_phase(&update, now);
                 if matches!(
