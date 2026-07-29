@@ -56,6 +56,7 @@ function digest(file) {
 async function main() {
   if (process.env.PURRCODE_SKIP_DOWNLOAD === "1") return;
   const target = targetFor(process.platform, process.arch);
+  const releaseVersion = metadata.purrcodeRelease || metadata.version;
   const extension = process.platform === "win32" ? "zip" : "tar.gz";
   const archiveName = `purrcode-${target}.${extension}`;
   const expected = checksums[archiveName];
@@ -65,7 +66,7 @@ async function main() {
   try {
     const archive = path.join(temporary, archiveName);
     const url = new URL(
-      `https://github.com/Weilin0723/PurrCode/releases/download/v${metadata.version}/${archiveName}`
+      `https://github.com/Weilin0723/PurrCode/releases/download/v${releaseVersion}/${archiveName}`
     );
     await download(url, archive);
     const actual = await digest(archive);
