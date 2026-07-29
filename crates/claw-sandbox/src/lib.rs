@@ -1236,10 +1236,9 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, Some(0));
         assert!(!result.truncated);
-        assert_eq!(
-            result.sandbox_level,
-            SandboxLevel::RestrictedProcessNoNetwork
-        );
+        let capability = sandbox_capability();
+        assert_eq!(result.sandbox_level, capability.level);
+        assert_eq!(result.sandbox_backend, capability.backend);
         assert!(
             ToolRuntime::execute(&mut store, action_id, &action, &constraints)
                 .await
