@@ -1089,7 +1089,7 @@ mod tests {
         let result = ToolRuntime::execute(&mut store, action_id, &action, &constraints)
             .await
             .unwrap();
-        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stdout = String::from_utf8_lossy(&result.stdout).replace('\\', "/");
         assert!(stdout.contains("a.txt"), "find should find a.txt");
         assert!(
             stdout.contains("sub/b.txt"),
