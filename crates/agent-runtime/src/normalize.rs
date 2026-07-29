@@ -342,10 +342,8 @@ fn convert_rg(args: &[&str]) -> Option<RepositoryReadAction> {
             arg if !arg.starts_with('-') => {
                 if pattern.is_none() {
                     pattern = Some(arg.to_string());
-                } else {
-                    if let Some(canon) = canonicalize_repository_path(Path::new(arg)) {
-                        paths.push(canon);
-                    }
+                } else if let Some(canon) = canonicalize_repository_path(Path::new(arg)) {
+                    paths.push(canon);
                 }
             }
             _ => {}
