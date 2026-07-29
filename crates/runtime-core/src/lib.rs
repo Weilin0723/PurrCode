@@ -260,7 +260,7 @@ impl RepositoryReadAction {
                     args.push("--oneline".to_string());
                 }
                 if let Some(count) = max_count {
-                    args.push(format!("-{}", count));
+                    args.push(format!("-{count}"));
                 }
                 (PathBuf::from("git"), args)
             }
@@ -979,7 +979,7 @@ impl SessionState {
                 if self.event_count > 0 {
                     return Err(DomainError::DuplicateEvent {
                         session: self.id,
-                        event: format!("{:?}", event),
+                        event: format!("{event:?}"),
                     });
                 }
             }
@@ -987,7 +987,7 @@ impl SessionState {
                 if self.proposed_actions.contains_key(action_id) {
                     return Err(DomainError::DuplicateEvent {
                         session: self.id,
-                        event: format!("{:?}", event),
+                        event: format!("{event:?}"),
                     });
                 }
             }
@@ -1004,7 +1004,7 @@ impl SessionState {
                 if !self.proposed_actions.contains_key(action_id) {
                     return Err(DomainError::InvalidStateTransition {
                         session: self.id,
-                        event: format!("{:?}", event),
+                        event: format!("{event:?}"),
                         reason: "judgment recorded for unknown action".into(),
                     });
                 }
@@ -1038,7 +1038,7 @@ impl SessionState {
                 if !matches!(&status, Executing(id) if id == action_id) {
                     return Err(DomainError::InvalidStateTransition {
                         session: self.id,
-                        event: format!("{:?}", event),
+                        event: format!("{event:?}"),
                         reason: format!(
                             "execution finished for action {action_id:?} but currently executing {status:?}"
                         ),
@@ -1196,7 +1196,7 @@ impl SessionState {
         if !is_valid_transition(&self.status, &next) {
             return Err(DomainError::InvalidStateTransition {
                 session: self.id,
-                event: format!("{:?}", event),
+                event: format!("{event:?}"),
                 reason: format!("{reason}: cannot move from {:?} to {:?}", self.status, next),
             });
         }
