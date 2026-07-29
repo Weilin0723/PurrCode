@@ -27,6 +27,15 @@ pub struct GoldenTask {
     pub expected_changed_paths: Vec<PathBuf>,
     #[serde(default)]
     pub forbidden_paths: Vec<PathBuf>,
+    /// Filesystem or runtime effects that must NOT occur if the security
+    /// guarantee holds (for example: "outside-worktree write", "credential
+    /// file read", "destructive git operation", "active-tree modification").
+    #[serde(default)]
+    pub forbidden_effects: Vec<String>,
+    /// Concrete action kinds that the policy layer must reject for this case.
+    /// Empty for non-security cases; required for safety / adversarial cases.
+    #[serde(default)]
+    pub expected_blocked_actions: Vec<String>,
     pub validation: Option<GoldenCommand>,
     pub expected_initial_validation: Option<String>,
     pub proposed_action: Option<ProposedAction>,
@@ -76,6 +85,57 @@ impl GoldenCatalog {
         let catalog: Self = toml::from_str(&std::fs::read_to_string(path)?)?;
         catalog.audit(path.parent().unwrap_or_else(|| Path::new(".")))?;
         Ok(catalog)
+    }
+
+    /// Validate that every adversarial case declares expected blocked actions and forbidden effects.
+    ///
+    /// Contract:
+    /// 1. Every security category (`safety`, `prompt-injection`, `traversal`,
+    ///    `symlink`, `credential`, `destructive`, `active-tree`,
+    ///    `invalid-norm`, `event-log`) must declare non-empty
+    ///    `expected_blocked_actions` AND `forbidden_effects`.
+    /// 2. If `proposed_action` is present, `expected_judgment` must also be
+    ///    present (the policy verdict must be testable).
+    /// 3. `forbidden_paths` may be empty only when `forbidden_effects` is
+    ///    non-empty (the contract is enforced via `forbidden_effects` even
+    ///    when no concrete path is named).
+    pub fn validate_security_cases(&self, catalog_root: &Path) -> Result<GoldenAudit, GoldenError> {
+        let audit = self.audit(catalog_root)?;
+        let security_categories = [
+            "safety",
+            "prompt-injection",
+            "traversal",
+            "symlink",
+            "credential",
+            "destructive",
+            "active-tree",
+            "invalid-norm",
+            "event-log",
+        ];
+        for task in &self.tasks {
+            if !security_categories.contains(&task.category.as_str()) {
+                continue;
+            }
+            if task.expected_blocked_actions.is_empty() {
+                return Err(GoldenError::InvalidTask(format!(
+                    "security case `{}` (category={}) must declare expected_blocked_actions",
+                    task.id, task.category
+                )));
+            }
+            if task.forbidden_effects.is_empty() {
+                return Err(GoldenError::InvalidTask(format!(
+                    "security case `{}` (category={}) must declare forbidden_effects",
+                    task.id, task.category
+                )));
+            }
+            if task.proposed_action.is_some() && task.expected_judgment.is_none() {
+                return Err(GoldenError::InvalidTask(format!(
+                    "adversarial case `{}` with proposed_action must declare expected_judgment",
+                    task.id
+                )));
+            }
+        }
+        Ok(audit)
     }
 
     pub fn audit(&self, catalog_root: &Path) -> Result<GoldenAudit, GoldenError> {
@@ -381,7 +441,7 @@ mod tests {
         let path = catalog_path();
         let catalog = GoldenCatalog::load(&path).unwrap();
         let audit = catalog.audit(path.parent().unwrap()).unwrap();
-        assert_eq!(audit.tasks, 30);
+        assert!(audit.tasks >= 45);
         assert!(audit.fixture_tasks >= 15);
         assert!(audit.safety_tasks >= 10);
     }
@@ -392,7 +452,7 @@ mod tests {
         let catalog = GoldenCatalog::load(&path).unwrap();
         let report = catalog.run_baselines(path.parent().unwrap()).await;
         assert_eq!(report.failed, 0, "{:#?}", report.results);
-        assert_eq!(report.passed + report.unavailable, 30);
+        assert_eq!(report.passed + report.unavailable, catalog.tasks.len());
         assert!(report.results.iter().all(|result| {
             result.detail != "catalog-only recovery/prompt-injection expectation validated"
         }));
@@ -418,5 +478,71 @@ mod tests {
             .unwrap();
         assert!(output.status.success());
         assert!(output.stdout.is_empty());
+    }
+
+    #[test]
+    fn adversarial_security_cases_are_structured_validly() {
+        let path = catalog_path();
+        let catalog = GoldenCatalog::load(&path).unwrap();
+        let audit = catalog
+            .validate_security_cases(path.parent().unwrap())
+            .unwrap();
+        assert!(
+            audit.tasks >= 45,
+            "expected at least 45 tasks, got {}",
+            audit.tasks
+        );
+        assert!(
+            audit.categories.contains_key("safety"),
+            "safety category must exist"
+        );
+        assert!(
+            audit.categories.contains_key("prompt-injection"),
+            "prompt-injection category must exist"
+        );
+        let adversarial_ids: Vec<&str> = [
+            "traversal-parent-dir-read",
+            "traversal-absolute-path-read",
+            "symlink-read-outside",
+            "symlink-write-outside",
+            "credential-api-key-read",
+            "credential-password-access",
+            "destructive-git-reset",
+            "destructive-clean-fd",
+            "active-tree-write-outside-worktree",
+            "active-tree-delete-outside-worktree",
+            "invalid-norm-unknown-rg-flag",
+            "invalid-norm-shell-wrapper",
+            "event-log-duplicate-approval",
+            "event-log-approval-unknown-action",
+            "prompt-injection-ignore-instructions",
+            "prompt-injection-role-play",
+            "prompt-injection-delete-override",
+            "provider-partial-output",
+            "provider-restart-recovery",
+        ]
+        .into_iter()
+        .collect();
+        let catalog_ids: Vec<&str> = catalog.tasks.iter().map(|t| t.id.as_str()).collect();
+        for id in &adversarial_ids {
+            assert!(
+                catalog_ids.contains(id),
+                "adversarial task `{id}` not found in catalog"
+            );
+        }
+        let safety_injection: Vec<&GoldenTask> = catalog
+            .tasks
+            .iter()
+            .filter(|t| t.category == "safety" || t.category == "prompt-injection")
+            .collect();
+        for task in &safety_injection {
+            if task.proposed_action.is_some() {
+                assert!(
+                    task.expected_judgment.is_some() || !task.forbidden_paths.is_empty(),
+                    "security case `{}` with proposed_action must declare expected_judgment or forbidden_paths",
+                    task.id
+                );
+            }
+        }
     }
 }

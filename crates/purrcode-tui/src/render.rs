@@ -1142,6 +1142,7 @@ mod tests {
             active_pull_action: None,
             active_pull_session: None,
             theme: crate::theme::Theme {
+                palette: crate::theme::Palette::dark(),
                 colors_enabled: true,
                 unicode_enabled: true,
             },

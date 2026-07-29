@@ -27,6 +27,8 @@ purrcode-repository-engine = { path = "../repository-engine" }
 purrcode-runtime-core = { path = "../runtime-core" }
 purrcode-ninelives = { path = "../ninelives-recovery" }
 purrcode-claw = { path = "../claw-sandbox" }
+purrcode-evaluation-runtime = { path = "../evaluation-runtime" }
+purrcode-evidence-bundle = { path = "../evidence-bundle" }
 reqwest.workspace = true
 rpassword.workspace = true
 serde_json.workspace = true

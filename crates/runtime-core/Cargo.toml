@@ -13,3 +13,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+purrcode-evidence-bundle = { path = "../evidence-bundle" }
+purrcode-ninelives = { path = "../ninelives-recovery" }
+
