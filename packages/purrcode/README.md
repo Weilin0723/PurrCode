@@ -9,7 +9,7 @@ purrcode init
 purrcode
 ```
 
-The npm package installs PurrCode v0.6.0 and exposes both `purrcode` and `purrcoded`. Provider
+The npm package v0.6.1 installs PurrCode core v0.6.0 and exposes both `purrcode` and `purrcoded`. Provider
 profiles support Ollama, NVIDIA NIM, LM Studio, and OpenAI-compatible endpoints; credentials remain
 in the operating-system secret store.
 
