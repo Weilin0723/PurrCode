@@ -32,8 +32,8 @@ fn model_switch_updates_header() {
 
         harness.run_command("/model local/reviewer:3b")?;
         harness.wait_for_request("POST", "/v1/models/roles")?;
-        let screen = harness.wait_for_text("local/reviewer:3b")?;
-        assertions::assert_readable(&screen, "Switched model to local/reviewer:3b.");
+        let screen = harness.wait_for_wrapped("Switched model to local/reviewer:3b.")?;
+        assertions::assert_visible(&screen, &["local/reviewer:3b"]);
         Ok(())
     });
 }
@@ -122,10 +122,10 @@ fn insufficient_memory_warns_before_task() {
     let mut harness = Harness::start(script).expect("start workbench");
     with_artifacts("model-insufficient-memory", &mut harness, |harness| {
         // This warning is surfaced as a startup message, before any task runs.
-        let screen = harness.wait_for_wrapped("Safety warning")?;
+        let screen = harness.wait_for_wrapped("/model ollama/small:3b")?;
         assertions::assert_readable(&screen, "local model local/big:70b is not recommended");
         assertions::assert_readable(&screen, "small:3b");
-        assertions::assert_readable(&screen, "/model ollama/small:3b");
+        assertions::assert_readable(&screen, "Safety warning");
         Ok(())
     });
 }
