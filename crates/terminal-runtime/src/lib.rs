@@ -215,7 +215,7 @@ pub struct DetachTerminalAction {
 #[serde(tag = "action", content = "data", rename_all = "snake_case")]
 pub enum TerminalAction {
     ExecuteCommand(ExecuteCommandAction),
-    StartTerminal(StartTerminalAction),
+    StartTerminal(Box<StartTerminalAction>),
     SendInput(SendTerminalInputAction),
     ResizeTerminal(ResizeTerminalAction),
     InspectProcess(InspectProcessAction),
@@ -908,12 +908,12 @@ fn default_shell() -> PathBuf {
 }
 
 fn process_group(
-    master: &dyn portable_pty::MasterPty,
+    _master: &dyn portable_pty::MasterPty,
     child: &dyn portable_pty::Child,
 ) -> Option<i32> {
     #[cfg(unix)]
     {
-        master
+        _master
             .process_group_leader()
             .or_else(|| child.process_id().map(|id| id as i32))
     }
