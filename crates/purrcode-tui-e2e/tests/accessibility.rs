@@ -270,11 +270,13 @@ fn a_very_short_terminal_still_shows_the_composer_and_hints() {
     let mut harness = Harness::start_with(local_provider(), HarnessOptions::size(80, 10))
         .expect("start workbench");
     with_artifacts("accessibility-short", &mut harness, |harness| {
-        let screen = harness.wait_for_text("PurrCode")?;
-        assertions::assert_no_overflow(&screen);
         // Even at ten rows the user can see where to type and what to press.
-        assertions::assert_visible(&screen, &["Ask PurrCode"]);
-        assertions::assert_readable(&screen, "Ctrl+G Send");
+        // Waited for together, not checked piecemeal on an earlier snapshot:
+        // a frame can arrive across multiple partial PTY reads, so a screen
+        // that already shows "PurrCode" does not guarantee the composer's
+        // title and hint line have finished rendering too.
+        let screen = harness.wait_for_all(&["PurrCode", "Ask PurrCode", "Ctrl+G Send"])?;
+        assertions::assert_no_overflow(&screen);
         Ok(())
     });
 }

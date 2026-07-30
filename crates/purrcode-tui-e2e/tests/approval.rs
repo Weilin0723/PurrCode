@@ -207,9 +207,16 @@ fn digest_mismatch_fails_visibly() {
         // The surface notices the substitution and blocks itself before the key
         // is even pressed. Whichever guard fires — the surface refusing, or the
         // submit-time re-derivation — the invariants are the same.
-        let screen = harness.wait_for_text("Approval blocked")?;
-        assertions::assert_readable(&screen, "no longer the action");
-        assertions::assert_absent(&screen, &["A Approve exact action"]);
+        //
+        // Waited for together rather than checked piecemeal on an earlier
+        // snapshot: a frame can arrive across multiple partial PTY reads, so a
+        // screen already showing the blocked body does not guarantee the
+        // footer hint bar has finished re-rendering to drop the stale
+        // "A Approve exact action" hint from the previous frame.
+        harness.wait_for_all_and_absent(
+            &["Approval blocked", "no longer the action"],
+            &["A Approve exact action"],
+        )?;
 
         harness.key(Key::Char('a'))?;
 

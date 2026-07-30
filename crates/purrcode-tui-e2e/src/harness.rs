@@ -200,6 +200,27 @@ impl Harness {
         })
     }
 
+    /// Wait until every `present` needle is visible and every `absent` needle
+    /// is not, all on the same screen.
+    ///
+    /// Use this instead of a `wait_for_text` followed by a separate
+    /// `assert_absent` on that same snapshot: a terminal frame can arrive
+    /// across multiple partial PTY reads, so a screen that already shows one
+    /// expected string does not guarantee an unrelated region (e.g. the
+    /// footer hint bar) has finished re-rendering to drop stale content from
+    /// the previous frame. Checking both together keeps waiting until they
+    /// hold simultaneously, on one consistent render.
+    pub fn wait_for_all_and_absent(&self, present: &[&str], absent: &[&str]) -> Result<Screen> {
+        self.wait_until(
+            DEFAULT_TIMEOUT,
+            &format!("all of {present:?} and none of {absent:?}"),
+            |screen| {
+                present.iter().all(|needle| screen.contains(needle))
+                    && absent.iter().all(|needle| !screen.contains(needle))
+            },
+        )
+    }
+
     /// Wait until `needle` is no longer visible.
     pub fn wait_until_absent(&self, needle: &str) -> Result<Screen> {
         self.wait_until(
@@ -428,7 +449,11 @@ mod tests {
     /// The artifact set the release process requires. Asserted on a harness whose
     /// child exited immediately, so it holds even for a workbench that failed to
     /// start — which is exactly when the artifacts matter most.
+    ///
+    /// Drives `/bin/sh` directly as a trivial, controlled child (not the real
+    /// `purrcode` binary), which does not exist on Windows -- POSIX-only.
     #[test]
+    #[cfg(unix)]
     fn a_failing_run_writes_every_required_artifact() {
         let workspace = Workspace::new().expect("workspace");
         let daemon = FakeDaemon::start(DaemonScript::default(), workspace.token()).expect("daemon");
@@ -481,7 +506,10 @@ mod tests {
         );
     }
 
+    /// Drives `/bin/sh` directly as a trivial, controlled child (not the real
+    /// `purrcode` binary), which does not exist on Windows -- POSIX-only.
     #[test]
+    #[cfg(unix)]
     fn a_wait_that_never_succeeds_reports_the_screen_it_saw() {
         let workspace = Workspace::new().expect("workspace");
         let daemon = FakeDaemon::start(DaemonScript::default(), workspace.token()).expect("daemon");
