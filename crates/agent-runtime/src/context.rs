@@ -9,7 +9,9 @@ use purrcode_runtime_core::{
     OutcomeJudgmentRequest, PlanSnapshot, PlanStep, PriorActionResult, ProposedAction, RiskClass,
     SessionEvent, SessionId, SessionState, TaskIntent, ValidationStatus,
 };
-use purrcode_validation_runtime::{EvidenceStatus, ValidationReport};
+use purrcode_test_orchestrator::{
+    classify_failure, EvidenceStatus, ValidationEvidence, ValidationReport,
+};
 use purrcode_whisker::{
     ContextError, ContextHit, ContextIndex, RetrievalBudget, Tier1Budget, Tier1Report, Tier1Request,
 };
@@ -640,6 +642,45 @@ pub(crate) fn build_messages(
         .collect::<Vec<_>>()
         .join("\n");
     let compacted_context = state.context_summary.as_deref().unwrap_or("none");
+    let validation_context = session_events
+        .iter()
+        .rev()
+        .filter_map(|event| match event {
+            SessionEvent::ValidationRecorded { evidence, .. } => {
+                let parsed = serde_json::from_str::<ValidationEvidence>(evidence).ok();
+                Some(match parsed {
+                    Some(parsed)
+                        if matches!(
+                            parsed.status,
+                            EvidenceStatus::Failed
+                                | EvidenceStatus::TimedOut
+                                | EvidenceStatus::Uncertain
+                        ) =>
+                    {
+                        let route = classify_failure(&parsed);
+                        format!(
+                            "stage={:?}; status={:?}; class={:?}; specialist={}; evidence={}",
+                            parsed.stage,
+                            parsed.status,
+                            route.class,
+                            route.specialist_role,
+                            route.evidence_excerpt
+                        )
+                    }
+                    Some(parsed) => format!(
+                        "stage={:?}; status={:?}; evidence={}",
+                        parsed.stage,
+                        parsed.status,
+                        parsed.detail.chars().take(2048).collect::<String>()
+                    ),
+                    None => evidence.chars().take(2048).collect(),
+                })
+            }
+            _ => None,
+        })
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("\n");
     let repository_context = context_hits
         .iter()
         .map(|hit| {
@@ -669,7 +710,7 @@ pub(crate) fn build_messages(
     messages.push(ModelMessage {
             role: "user".into(),
             content: format!(
-                "Respond with EXACTLY this JSON structure filling in values:\n{{\n  \"rationale\": \"reason for action\",\n  \"action\": null or {{\"type\":\"read\",\"kind\":\"git_status\"|\"git_log\"|\"git_diff\"|\"git_show\"|\"git_ls_files\"|\"repository_grep\"|\"find\"|\"list\",\"...\":\"...\"}} or {{\"type\":\"write_file\",\"path\":\"...\",\"content\":\"...\",\"expected_digest\":null}} or {{\"type\":\"delete_file\",\"path\":\"...\",\"expected_digest\":\"...\"}},\n  \"complete\": false,\n  \"plan\": null or [\"step1\",\"step2\"],\n  \"current_step_index\": null or 0,\n  \"expected_postconditions\": []\n}}\n\nReads are typed — pick the closest variant for the evidence you need:\n  - git_status: working-tree status\n  - git_log {{max_count, oneline}}: commit history\n  - git_diff {{paths}}: pending diff\n  - git_show {{revision, path}}: file at revision\n  - git_ls_files {{pathspec}}: tracked paths\n  - repository_grep {{pattern, paths, case_insensitive}}: code search\n  - find {{paths}}: filesystem walk\n  - list {{paths}}: directory listing\n\nObjective: {objective}\nIsolated worktree: {}\nCompacted prior context: {compacted_context}\nCurrent plan revision: {}\nCurrent plan: {:?}\nRecent actions:\n{history}\nRetrieved repository context:\n{repository_context}",
+                "Respond with EXACTLY this JSON structure filling in values:\n{{\n  \"rationale\": \"reason for action\",\n  \"action\": null or {{\"type\":\"read\",\"kind\":\"git_status\"|\"git_log\"|\"git_diff\"|\"git_show\"|\"git_ls_files\"|\"repository_grep\"|\"find\"|\"list\",\"...\":\"...\"}} or {{\"type\":\"write_file\",\"path\":\"...\",\"content\":\"...\",\"expected_digest\":null}} or {{\"type\":\"delete_file\",\"path\":\"...\",\"expected_digest\":\"...\"}},\n  \"complete\": false,\n  \"plan\": null or [\"step1\",\"step2\"],\n  \"current_step_index\": null or 0,\n  \"expected_postconditions\": []\n}}\n\nReads are typed — pick the closest variant for the evidence you need:\n  - git_status: working-tree status\n  - git_log {{max_count, oneline}}: commit history\n  - git_diff {{paths}}: pending diff\n  - git_show {{revision, path}}: file at revision\n  - git_ls_files {{pathspec}}: tracked paths\n  - repository_grep {{pattern, paths, case_insensitive}}: code search\n  - find {{paths}}: filesystem walk\n  - list {{paths}}: directory listing\n\nObjective: {objective}\nIsolated worktree: {}\nCompacted prior context: {compacted_context}\nCurrent plan revision: {}\nCurrent plan: {:?}\nRecent actions:\n{history}\nRecent validation and repair routing:\n{validation_context}\nRetrieved repository context:\n{repository_context}",
                 worktree.display(),
                 state.plan_revision,
                 state.plan_steps,

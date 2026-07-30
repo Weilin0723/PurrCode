@@ -13,6 +13,7 @@ members = [
   "crates/mcp-host",
   "crates/supervisor-runtime",
   "crates/validation-runtime",
+  "crates/test-orchestrator",
   "crates/agent-runtime",
   "crates/purrcode-daemon",
   "crates/purrcode-cli",

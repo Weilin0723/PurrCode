@@ -1,6 +1,32 @@
 # Implementation status
 
-Updated: 2026-07-30 (v0.8 PR5 — Environment doctor in progress)
+Updated: 2026-07-30 (v0.8 PR6 — Test orchestration complete locally)
+
+## v0.8 PR6 — Test orchestration (complete locally)
+
+- `purrcode-test-orchestrator` is the public orchestration crate, with the existing validation
+  engine retained behind it for durable v0.7 evidence-schema compatibility. Repository detection
+  is bounded and covers Cargo, npm/pnpm/yarn/Bun, pytest/unittest, Maven, Gradle wrapper or system
+  Gradle, Go, .NET, Make, CMake, Docker Compose, and declared package/Make CI and smoke scripts.
+  Nested projects become module-test stages and directory traversal does not follow symlinks.
+- Plans use the explicit syntax/static, focused, module, full-unit, integration, packaging, and
+  production-smoke progression. Commands are explicit program-plus-argv actions with network
+  disabled; each is durably proposed, judged, exactly authorized, and reverified by Claw before
+  execution. Missing tools and undetected stages remain unavailable/not-detected evidence, never
+  passing evidence.
+- Validation output is classified into compilation, dependency, assertion, configuration,
+  environment, compatibility, migration, network, timeout, resource, infrastructure, or unknown
+  failures and routed to a bounded specialist repair prompt. The native agent permits three repair
+  cycles, reruns only unresolved stages before the complete plan, and pauses with durable routing
+  evidence when the budget is exhausted.
+- Completion now requires a derived completion event plus every detected required stage passing,
+  unless a blueprint explicitly accepts an unavailable required stage. A model's `complete` claim
+  alone cannot complete an implementation session.
+- A real integration test starts with a failing Make check, observes the failure, routes a model
+  repair, requires durable human approval for the write, reruns the affected stage, runs final
+  validation, and only then completes. Nine detector/runner tests and 50 agent tests pass, including
+  external-symlink rejection and .NET/unittest/custom-CI detection. Platform-specific tools not
+  installed on this host are covered by detection tests and are not represented as live passes.
 
 ## v0.8 PR5 — Environment provisioning (in progress)
 

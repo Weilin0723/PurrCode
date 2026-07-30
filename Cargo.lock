@@ -2152,7 +2152,7 @@ dependencies = [
  "purrcode-provider-gateway",
  "purrcode-repository-engine",
  "purrcode-runtime-core",
- "purrcode-validation-runtime",
+ "purrcode-test-orchestrator",
  "purrcode-whisker",
  "schemars",
  "serde",
@@ -2576,6 +2576,13 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "uuid",
+]
+
+[[package]]
+name = "purrcode-test-orchestrator"
+version = "0.7.0"
+dependencies = [
+ "purrcode-validation-runtime",
 ]
 
 [[package]]

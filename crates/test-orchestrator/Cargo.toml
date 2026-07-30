@@ -1,0 +1,8 @@
+[package]
+name = "purrcode-test-orchestrator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+purrcode-validation-runtime = { path = "../validation-runtime" }
