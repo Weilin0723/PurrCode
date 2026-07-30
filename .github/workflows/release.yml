@@ -50,7 +50,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --workspace
-      - run: cargo test --workspace --no-fail-fast
+      - name: Test workspace with real PTY integration
+        if: runner.os != 'Windows'
+        run: cargo test --workspace --no-fail-fast
+      - name: Test Windows workspace without the external ConPTY execution gate
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --exclude purrcode-tui-e2e --no-fail-fast
+      - name: Test Windows e2e harness library
+        if: runner.os == 'Windows'
+        run: cargo test -p purrcode-tui-e2e --lib
       - run: cargo build --release --locked --target ${{ matrix.target }} -p purrcode-cli -p purrcode-daemon
       - name: Package Unix binaries
         if: runner.os != 'Windows'
