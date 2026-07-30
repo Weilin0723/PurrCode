@@ -41,6 +41,12 @@ pub struct Conversation {
     last_durable_sequence: u64,
 }
 
+impl Default for Conversation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Conversation {
     pub fn last_durable_sequence(&self) -> u64 {
         self.last_durable_sequence

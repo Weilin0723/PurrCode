@@ -8,6 +8,12 @@ pub struct StatusBar {
     pub context_info: String,
 }
 
+impl Default for StatusBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StatusBar {
     pub fn new() -> Self {
         Self {

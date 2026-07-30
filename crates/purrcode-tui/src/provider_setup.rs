@@ -60,6 +60,12 @@ impl Drop for ProviderSetup {
     }
 }
 
+impl Default for ProviderSetup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProviderSetup {
     pub fn new() -> Self {
         Self {

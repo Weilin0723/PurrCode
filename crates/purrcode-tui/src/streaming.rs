@@ -159,6 +159,12 @@ pub struct StreamController {
     visible_content_bytes: usize,
 }
 
+impl Default for StreamController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamController {
     pub fn new() -> Self {
         Self {

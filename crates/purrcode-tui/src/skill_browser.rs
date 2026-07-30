@@ -23,6 +23,12 @@ pub struct SkillBrowser {
     pub pending_search_query: Option<String>,
 }
 
+impl Default for SkillBrowser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkillBrowser {
     pub fn new() -> Self {
         Self {

@@ -39,6 +39,12 @@ pub struct Composer {
     pasted_since_submit: bool,
 }
 
+impl Default for Composer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Composer {
     pub fn new() -> Self {
         Self {

@@ -1963,7 +1963,13 @@ async fn main() -> Result<()> {
                 let rows = purrcode_tui::coverage(purrcode_tui::command_palette::DISPATCH_COMMANDS);
                 println!(
                     "{:<28} {:<10} {:<38} {:<22} {:<5} {:<5} {:<5} {:<5} Status",
-                    "Action", "Category", "Entry points", "Availability", "PTY", "Real", "Fail",
+                    "Action",
+                    "Category",
+                    "Entry points",
+                    "Availability",
+                    "PTY",
+                    "Real",
+                    "Fail",
                     "Recov",
                 );
                 for row in &rows {
