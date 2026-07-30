@@ -100,6 +100,8 @@ impl Harness {
         let arguments = vec![
             "--daemon-url".to_owned(),
             daemon.url(),
+            "--database".to_owned(),
+            workspace.database_path().display().to_string(),
             "workbench".to_owned(),
             "--repository".to_owned(),
             workspace.repository().display().to_string(),

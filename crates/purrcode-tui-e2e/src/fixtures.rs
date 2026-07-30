@@ -70,6 +70,15 @@ impl Workspace {
         self.root.path().join("state")
     }
 
+    /// The CLI's local session store. Every command opens one of these
+    /// regardless of `workbench` mode attaching to a separate (fake) daemon,
+    /// so without an isolated path here concurrent tests contend on the real
+    /// shared default (`~/.local/share/purrcode/sessions.db`) and intermittently
+    /// fail with "database is locked".
+    pub fn database_path(&self) -> PathBuf {
+        self.root.path().join("sessions.db")
+    }
+
     /// Where failure artifacts are written.
     pub fn artifacts_dir(&self) -> PathBuf {
         self.root.path().join("artifacts")
