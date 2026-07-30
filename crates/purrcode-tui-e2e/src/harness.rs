@@ -116,6 +116,18 @@ impl Harness {
             // Deterministic theme unless the test overrides it.
             ("PURRCODE_THEME".to_owned(), "dark".to_owned()),
             ("RUST_LOG".to_owned(), "warn".to_owned()),
+            // reqwest respects HTTP(S)_PROXY / system proxy settings by
+            // default, and the workbench's client sets no explicit
+            // `.no_proxy()`. Some CI runner images configure a proxy at the
+            // environment or OS level; without an explicit exclusion, every
+            // request to this test's loopback fake daemon would be routed
+            // through it and silently stall until the client's own timeout,
+            // rather than actually connecting. Exclude the loopback
+            // addresses explicitly so the daemon is always reached directly,
+            // matching what a real deployment would want for localhost
+            // anyway.
+            ("NO_PROXY".to_owned(), "127.0.0.1,localhost".to_owned()),
+            ("no_proxy".to_owned(), "127.0.0.1,localhost".to_owned()),
         ];
         environment.extend(options.environment.clone());
         PtySession::spawn(
