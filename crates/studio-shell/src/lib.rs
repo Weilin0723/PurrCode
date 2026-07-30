@@ -7,6 +7,7 @@
 
 use anyhow::{bail, Context, Result};
 use axum::body::{Body, Bytes};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, State};
 use axum::http::header::{
     ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, ORIGIN,
@@ -17,6 +18,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{any, get};
 use axum::Router;
 use chrono::{DateTime, Utc};
+use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -144,9 +146,73 @@ fn router(state: Arc<StudioState>) -> Router {
         .route("/app.css", get(styles))
         .route("/app.js", get(script))
         .route("/studio/config", get(browser_config))
+        .route("/studio/terminals/{id}/stream", get(terminal_socket))
         .route("/api/{*path}", any(proxy))
         .fallback(not_found)
         .with_state(state)
+}
+
+async fn terminal_socket(
+    State(state): State<Arc<StudioState>>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if !authorized(&state, &headers) {
+        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+    }
+    if !same_origin(&state, &headers) {
+        return secured_text(StatusCode::FORBIDDEN, "cross-origin request rejected");
+    }
+    if Uuid::parse_str(&id).is_err() {
+        return secured_text(StatusCode::BAD_REQUEST, "terminal ID is not a UUID");
+    }
+    upgrade
+        .on_upgrade(move |socket| run_terminal_socket(socket, state, id))
+        .into_response()
+}
+
+async fn run_terminal_socket(socket: WebSocket, state: Arc<StudioState>, id: String) {
+    let (mut sender, mut receiver) = socket.split();
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(80));
+    let endpoint = match state.daemon_url.join(&format!("v1/terminals/{id}")) {
+        Ok(endpoint) => endpoint,
+        Err(_) => return,
+    };
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let response = state.client.get(endpoint.clone())
+                    .bearer_auth(state.daemon_token.as_ref()).send().await;
+                let Ok(response) = response else { continue };
+                let Ok(body) = response.text().await else { continue };
+                if sender.send(Message::Text(body.into())).await.is_err() { break; }
+            }
+            incoming = receiver.next() => {
+                let Some(Ok(message)) = incoming else { break; };
+                match message {
+                    Message::Text(body) => {
+                        let Ok(input) = serde_json::from_str::<TerminalSocketInput>(&body) else { continue; };
+                        let Ok(endpoint) = state.daemon_url.join(&format!("v1/terminals/{id}/input")) else { continue; };
+                        let _ = state.client.post(endpoint)
+                            .bearer_auth(state.daemon_token.as_ref())
+                            .json(&input).send().await;
+                    }
+                    Message::Close(_) => break,
+                    Message::Ping(payload) => {
+                        if sender.send(Message::Pong(payload)).await.is_err() { break; }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct TerminalSocketInput {
+    generation: u64,
+    input: String,
 }
 
 async fn verify_compatibility(client: &reqwest::Client, config: &StudioConfig) -> Result<()> {
@@ -674,13 +740,14 @@ mod tests {
     }
 
     #[test]
-    fn embedded_workbench_separates_conversation_activity_and_inspector() {
+    fn embedded_studio_exposes_workbench_and_terminal_surfaces() {
         for heading in [
             "Conversation",
             "Activity",
             "Inspector",
             "Diff review",
             "Validation",
+            "Native PTY",
         ] {
             assert!(INDEX_HTML.contains(heading), "missing {heading} surface");
         }
@@ -689,7 +756,10 @@ mod tests {
         assert!(APP_JS.contains("/messages"));
         assert!(APP_JS.contains("/events"));
         assert!(APP_JS.contains("/diff"));
+        assert!(APP_JS.contains("new WebSocket"));
+        assert!(APP_JS.contains("/studio/terminals/"));
         assert!(APP_CSS.contains("grid-template-columns"));
+        assert!(APP_CSS.contains("user-select: text"));
         assert!(APP_CSS.contains("@media (max-width: 780px)"));
     }
 }

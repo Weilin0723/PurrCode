@@ -82,6 +82,23 @@
         <div class="page-heading compact-heading"><div><span class="eyebrow">Evidence gate</span><h1>Validation</h1></div><button id="refresh-validation" class="secondary">Refresh</button></div>
         <div id="validation-events" class="validation-events">Select a run from Home first.</div>
       </section>
+      <section id="terminals-screen" class="screen hidden">
+        <div class="page-heading compact-heading">
+          <div><span class="eyebrow">Native PTY</span><h1>Terminals</h1></div>
+          <div class="heading-actions"><button id="new-terminal">New terminal</button><button id="refresh-terminals" class="secondary">Refresh</button></div>
+        </div>
+        <div class="terminal-layout">
+          <aside id="terminal-list" class="terminal-list" aria-label="Terminal sessions"></aside>
+          <section class="terminal-console">
+            <div class="terminal-toolbar">
+              <div><strong id="terminal-title">No terminal selected</strong><span id="terminal-owner">—</span></div>
+              <div class="heading-actions"><button id="take-terminal" class="secondary">Take control</button><button id="return-terminal" class="secondary">Return to agent</button><button id="stop-terminal" class="secondary">Stop</button></div>
+            </div>
+            <pre id="terminal-output" tabindex="0">Start or select a terminal. Output remains available after detach and reconnect.</pre>
+            <form id="terminal-input-form" class="terminal-input"><textarea id="terminal-input" rows="2" placeholder="Type terminal input; Enter sends, Shift+Enter adds a line"></textarea><button>Send</button></form>
+          </section>
+        </div>
+      </section>
       <section id="placeholder-screen" class="screen hidden">
         <span class="eyebrow">PurrCode Studio</span><h1 id="placeholder-title">Workbench</h1>
         <p id="placeholder-copy">This surface is connected to the same authenticated daemon and durable runtime.</p>

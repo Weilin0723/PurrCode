@@ -32,6 +32,7 @@ purrcode-skill-store = { path = "../skill-store" }
 purrcode-skill-registry = { path = "../skill-registry" }
 purrcode-web-research = { path = "../web-research" }
 purrcode-ui-contracts = { path = "../ui-contracts" }
+purrcode-terminal-runtime = { path = "../terminal-runtime" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

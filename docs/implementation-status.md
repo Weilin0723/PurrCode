@@ -1,6 +1,30 @@
 # Implementation status
 
-Updated: 2026-07-30 (v0.8 PR3 — Studio Workbench)
+Updated: 2026-07-30 (v0.8 PR4 — Native PTY terminals)
+
+## v0.8 PR4 — Native PTY terminals (complete locally)
+
+- `purrcode-terminal-runtime` now opens the platform-native backend supplied by `portable-pty`
+  (Unix PTY and Windows ConPTY), always spawns an explicit program plus argv, uses absolute working
+  directories, and rebuilds child environments from a small system allowlist. Credential-like
+  environment keys are rejected and provider credentials are never inherited.
+- Long-lived terminals support bounded transcript replay, attach/detach without termination,
+  resize, inspect/list, timed wait, process-group termination with escalation, and one-shot command
+  execution. Ownership transitions increment a generation and input must match it exactly, closing
+  delayed-agent-input races after human takeover.
+- The authenticated daemon exposes list/start/get/input/resize/attach/detach/owner/stop terminal
+  routes. Studio exposes a real terminal screen with complete selectable output, terminal tabs,
+  human takeover/return, stop, responsive layout, and same-origin WebSocket updates. The browser
+  retains only its HttpOnly Studio cookie; the daemon bearer token remains confined to the shell.
+- Eleven runtime tests exercise real PTY commands, interactive input, replay, resize, detach,
+  takeover rejection, secret-environment rejection, stop, and exit evidence. A real daemon HTTP
+  test drives `/bin/cat`, proves stale generation conflict, observes PTY output, and stops it.
+  Real-browser acceptance created an interactive login shell, observed WebSocket output, transferred
+  ownership in both directions, confirmed selectable text and no page overflow, stopped the process,
+  refreshed Studio, and recovered the complete exited-terminal transcript.
+- Terminal records currently survive browser disconnect and Studio restart while the daemon remains
+  alive. Durable recovery across daemon/VM restart belongs to the v0.9 Forever Runtime and is not
+  represented as complete here. Windows ConPTY compilation/execution remains a cross-platform gate.
 
 ## v0.8 PR3 — Workbench (complete)
 
