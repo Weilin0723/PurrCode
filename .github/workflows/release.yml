@@ -49,6 +49,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - run: cargo build --workspace
       - run: cargo test --workspace --no-fail-fast
       - run: cargo build --release --locked --target ${{ matrix.target }} -p purrcode-cli -p purrcode-daemon
       - name: Package Unix binaries
