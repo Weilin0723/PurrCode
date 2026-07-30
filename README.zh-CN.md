@@ -53,7 +53,7 @@ npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0
 ### macOS 和 Linux 安装脚本
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.8.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.8.1/scripts/install.sh | sh
 ```
 
 脚本会使用 `SHA256SUMS` 校验发布归档，并默认安装到 `~/.local/bin`。可通过
