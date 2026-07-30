@@ -130,8 +130,11 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         arguments: Vec<String>,
     },
-    /// Check the local persistence subsystem.
-    Doctor,
+    /// Check persistence plus the repository's real build environment.
+    Doctor {
+        #[arg(long)]
+        repository: Option<PathBuf>,
+    },
     /// Resume the latest or selected session.
     Resume { session: Option<String> },
     /// List durable sessions.
@@ -888,7 +891,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Command::Doctor => {
+        Command::Doctor { repository } => {
             println!("database: {}", database.display());
             println!(
                 "sqlite_integrity: {}",
@@ -899,6 +902,21 @@ async fn main() -> Result<()> {
                 }
             );
             println!("daemon: use `purrcoded` for the authenticated loopback service");
+            let repository = resolve_product_repository(repository)?;
+            let environment = purrcode_environment_runtime::inspect_environment(
+                &repository,
+                &default_toolchain_root()?,
+            )
+            .await?;
+            println!(
+                "environment: {}",
+                if environment.ready {
+                    "ready"
+                } else {
+                    "repair-required"
+                }
+            );
+            println!("{}", serde_json::to_string_pretty(&environment)?);
         }
         Command::Resume { session } => {
             let session = resolve_daemon_session(&daemon_url, &daemon_token, session).await?;
@@ -3067,6 +3085,12 @@ fn default_daemon_token_path() -> Result<PathBuf> {
     let dirs = ProjectDirs::from("dev", "PurrCode", "PurrCode")
         .context("operating system did not provide a PurrCode data directory")?;
     Ok(dirs.data_local_dir().join("daemon.token"))
+}
+
+fn default_toolchain_root() -> Result<PathBuf> {
+    let dirs = ProjectDirs::from("dev", "PurrCode", "PurrCode")
+        .context("operating system did not provide a PurrCode data directory")?;
+    Ok(dirs.data_local_dir().join("toolchains"))
 }
 
 fn resolve_product_repository(repository: Option<PathBuf>) -> Result<PathBuf> {

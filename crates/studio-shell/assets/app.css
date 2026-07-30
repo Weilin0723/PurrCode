@@ -96,6 +96,12 @@ button:disabled { opacity: .45; cursor: wait; }
 .terminal-toolbar span { color: var(--muted); font-size: 11px; }
 #terminal-output { margin: 0; overflow: auto; padding: 16px; background: var(--bg); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; user-select: text; }
 .terminal-input { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 12px; border-top: 1px solid var(--line); padding: 12px 14px; }
+.environment-summary { display: grid; margin-top: 28px; border-top: 1px solid var(--line); }
+.environment-host { display: flex; flex-wrap: wrap; gap: 7px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.environment-host span { border: 1px solid var(--line); padding: 6px 9px; color: var(--muted); font-size: 11px; }
+.environment-tool { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; padding: 15px 2px; border-bottom: 1px solid var(--soft-line); }
+.environment-tool h3 { margin: 0 0 5px; font-size: 14px; }
+.environment-tool p { margin: 0; color: var(--muted); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
 footer { grid-column: 1 / -1; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; padding: 0 16px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; }
 footer span:first-child { overflow: hidden; text-overflow: ellipsis; }
 #toast { position: fixed; right: 20px; bottom: 52px; max-width: 420px; background: var(--inverse); color: var(--inverse-fg); padding: 12px 14px; font-size: 13px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s ease; }

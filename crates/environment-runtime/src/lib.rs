@@ -1,11 +1,9 @@
 //! Environment detection and toolchain-provisioning contracts (PRD §9).
 //!
 //! This crate fixes the data shapes for *what the project needs* and *what the
-//! host has*, and the actions that bridge the two. The actual detection
-//! (`which <tool>`, parsing manifest files) and the managed-install downloads
-//! land in PR5; here we only pin the typed contract the orchestrator, the UI
-//! inspector, and the doctor command agree on — so a missing-JDK plan and a
-//! successful auto-install report the same shapes the studio renders.
+//! host has*, and the actions that bridge the two. Detection is bounded and
+//! uses explicit argument vectors; missing tools produce governed provisioning
+//! plans and independent verification checks rather than placeholder success.
 //!
 //! `EnvironmentPlan` is the central type (PRD §9.2). It is plain serializable
 //! data: required tools the project declares, tools detected on the host,
@@ -15,7 +13,11 @@
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -369,8 +371,510 @@ pub enum OsFamily {
     Windows,
 }
 
+/// Complete, evidence-bearing result used by `purrcode doctor` and Studio.
+#[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct EnvironmentDoctorReport {
+    pub host: HostEnvironment,
+    pub plan: EnvironmentPlan,
+    pub checks: Vec<CheckEvidence>,
+    pub ready: bool,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+/// Inspect one repository without modifying it or accessing the network.
+/// Manifest reads are bounded and tool probes use explicit argv with a timeout.
+pub async fn inspect_environment(
+    repository: &Path,
+    managed_root: &Path,
+) -> Result<EnvironmentDoctorReport, EnvironmentError> {
+    if !repository.is_absolute() || !repository.is_dir() {
+        return Err(EnvironmentError::InvalidRepository(
+            repository.display().to_string(),
+        ));
+    }
+    if !managed_root.is_absolute() {
+        return Err(EnvironmentError::InvalidManagedRoot(
+            managed_root.display().to_string(),
+        ));
+    }
+    let host = detect_host();
+    let required_tools = detect_project_requirements(repository)?;
+    let kinds: BTreeSet<_> = required_tools.iter().map(|item| item.kind).collect();
+    let mut detected_tools = Vec::new();
+    for kind in kinds {
+        if let Some(tool) = detect_tool(repository, managed_root, kind).await {
+            detected_tools.push(tool);
+        }
+    }
+    detected_tools.sort_by_key(|tool| (tool.kind, tool.origin.preference_rank()));
+    let mut plan = EnvironmentPlan::new(new_profile_id());
+    plan.required_tools = required_tools;
+    plan.detected_tools = detected_tools;
+    plan.compute_missing();
+    plan.installation_actions = plan
+        .missing_tools
+        .iter()
+        .map(|requirement| provision_action(managed_root, requirement))
+        .collect();
+    plan.validation_actions = plan.detected_tools.iter().map(validation_check).collect();
+    let checks = run_environment_checks(&plan.validation_actions).await;
+    let checks_pass = checks
+        .iter()
+        .all(|evidence| evidence.result == CheckResult::Passed);
+    let ready = plan.all_required_satisfied() && checks_pass;
+    let warnings = plan
+        .missing_tools
+        .iter()
+        .map(|tool| {
+            format!(
+                "{} is missing; provisioning requires exact authorization and post-install verification",
+                tool.kind
+            )
+        })
+        .collect();
+    Ok(EnvironmentDoctorReport {
+        host,
+        plan,
+        checks,
+        ready,
+        warnings,
+    })
+}
+
+pub async fn run_environment_checks(checks: &[EnvironmentCheck]) -> Vec<CheckEvidence> {
+    let mut evidence = Vec::with_capacity(checks.len());
+    for check in checks {
+        let timeout = Duration::from_secs(u64::from(check.timeout_secs.clamp(1, 30)));
+        let mut command = tokio::process::Command::new(&check.program);
+        command
+            .args(&check.arguments)
+            .env_clear()
+            .envs(safe_environment())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let outcome = tokio::time::timeout(timeout, command.output()).await;
+        let checked_at = Some(Utc::now());
+        let item = match outcome {
+            Err(_) => CheckEvidence {
+                check: check.clone(),
+                result: CheckResult::TimedOut,
+                exit_code: None,
+                stdout_tail: String::new(),
+                checked_at,
+            },
+            Ok(Err(error)) => CheckEvidence {
+                check: check.clone(),
+                result: CheckResult::Failed,
+                exit_code: None,
+                stdout_tail: bounded_text(error.to_string().as_bytes()),
+                checked_at,
+            },
+            Ok(Ok(output)) => {
+                let mut combined = output.stdout;
+                combined.extend_from_slice(&output.stderr);
+                let rendered = bounded_text(&combined);
+                let matched = check.expected_output_contains.is_empty()
+                    || rendered.contains(&check.expected_output_contains);
+                CheckEvidence {
+                    check: check.clone(),
+                    result: if output.status.success() && matched {
+                        CheckResult::Passed
+                    } else {
+                        CheckResult::Failed
+                    },
+                    exit_code: output.status.code(),
+                    stdout_tail: rendered,
+                    checked_at,
+                }
+            }
+        };
+        evidence.push(item);
+    }
+    evidence
+}
+
+fn detect_host() -> HostEnvironment {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_memory();
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    HostEnvironment {
+        os_family: if cfg!(target_os = "macos") {
+            OsFamily::Macos
+        } else if cfg!(windows) {
+            OsFamily::Windows
+        } else {
+            OsFamily::Linux
+        },
+        arch: std::env::consts::ARCH.into(),
+        distribution: sysinfo::System::long_os_version(),
+        shell: std::env::var("SHELL")
+            .ok()
+            .or_else(|| std::env::var("COMSPEC").ok()),
+        package_manager: ["brew", "apt-get", "dnf", "yum", "pacman", "winget"]
+            .into_iter()
+            .find(|program| find_on_path(program).is_some())
+            .map(str::to_owned),
+        sudo_available: find_on_path("sudo").is_some(),
+        container_runtime_present: find_on_path("docker").is_some()
+            || find_on_path("podman").is_some(),
+        available_memory_bytes: Some(system.available_memory()),
+        available_disk_bytes: Some(disks.iter().map(sysinfo::Disk::available_space).sum()),
+    }
+}
+
+fn detect_project_requirements(
+    repository: &Path,
+) -> Result<Vec<ToolRequirement>, EnvironmentError> {
+    let mut requirements = BTreeMap::<ToolKind, ToolRequirement>::new();
+    {
+        let mut add = |kind, min_version: Option<String>, required, reason: &str| {
+            requirements
+                .entry(kind)
+                .and_modify(|existing| {
+                    existing.required |= required;
+                    if existing.min_version.is_none() {
+                        existing.min_version.clone_from(&min_version);
+                    }
+                    if !existing.reason.contains(reason) {
+                        existing.reason.push_str("; ");
+                        existing.reason.push_str(reason);
+                    }
+                })
+                .or_insert(ToolRequirement {
+                    kind,
+                    min_version,
+                    required,
+                    reason: reason.into(),
+                });
+        };
+
+        if let Some(package) = read_bounded(repository.join("package.json"))? {
+            add(
+                ToolKind::Node,
+                json_string_at(&package, &["engines", "node"]).and_then(first_version),
+                true,
+                "package.json",
+            );
+            let manager = json_string_at(&package, &["packageManager"])
+                .unwrap_or_default()
+                .split('@')
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            match manager.as_str() {
+                "pnpm" => add(ToolKind::Pnpm, None, true, "packageManager"),
+                "yarn" => add(ToolKind::Yarn, None, true, "packageManager"),
+                "bun" => add(ToolKind::Bun, None, true, "packageManager"),
+                _ => add(ToolKind::Npm, None, true, "package.json"),
+            }
+        }
+        if repository.join("pnpm-lock.yaml").exists() {
+            add(ToolKind::Pnpm, None, true, "pnpm lockfile");
+        }
+        if repository.join("yarn.lock").exists() {
+            add(ToolKind::Yarn, None, true, "yarn lockfile");
+        }
+        if repository.join("bun.lockb").exists() || repository.join("bun.lock").exists() {
+            add(ToolKind::Bun, None, true, "bun lockfile");
+        }
+        if let Some(pom) = read_bounded(repository.join("pom.xml"))? {
+            add(
+                ToolKind::Java,
+                xml_version(&pom, &["maven.compiler.release", "java.version"]),
+                true,
+                "pom.xml",
+            );
+            add(ToolKind::Maven, None, true, "pom.xml");
+        }
+        if repository.join("build.gradle").exists() || repository.join("build.gradle.kts").exists()
+        {
+            add(ToolKind::Java, None, true, "Gradle build");
+            add(ToolKind::Gradle, None, true, "Gradle build");
+        }
+        if repository.join("pyproject.toml").exists()
+            || repository.join("requirements.txt").exists()
+        {
+            add(ToolKind::Python, None, true, "Python project manifest");
+            if repository.join("uv.lock").exists() {
+                add(ToolKind::Uv, None, true, "uv lockfile");
+            }
+        }
+        if let Some(cargo) = read_bounded(repository.join("Cargo.toml"))? {
+            let version = cargo
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("rust-version"))
+                .and_then(|line| line.split('=').nth(1))
+                .map(|value| value.trim().trim_matches('"').to_owned());
+            add(ToolKind::Rust, version, true, "Cargo.toml");
+        }
+        if let Some(go_mod) = read_bounded(repository.join("go.mod"))? {
+            let version = go_mod
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("go "))
+                .and_then(first_version);
+            add(ToolKind::Go, version, true, "go.mod");
+        }
+        let dotnet = std::fs::read_dir(repository)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .any(|entry| {
+                matches!(
+                    entry.path().extension().and_then(|v| v.to_str()),
+                    Some("csproj" | "fsproj" | "sln")
+                )
+            });
+        if dotnet {
+            add(ToolKind::Dotnet, None, true, ".NET project");
+        }
+        if repository.join("Dockerfile").exists()
+            || repository.join("compose.yaml").exists()
+            || repository.join("docker-compose.yml").exists()
+        {
+            add(ToolKind::Docker, None, false, "container manifest");
+        }
+    }
+    if !requirements.is_empty() {
+        requirements.insert(
+            ToolKind::Git,
+            ToolRequirement {
+                kind: ToolKind::Git,
+                min_version: None,
+                required: true,
+                reason: "repository operations".into(),
+            },
+        );
+    }
+    Ok(requirements.into_values().collect())
+}
+
+async fn detect_tool(
+    repository: &Path,
+    managed_root: &Path,
+    kind: ToolKind,
+) -> Option<DetectedTool> {
+    let (names, arguments): (&[&str], &[&str]) = match kind {
+        ToolKind::Git => (&["git"], &["--version"]),
+        ToolKind::Node => (&["node"], &["--version"]),
+        ToolKind::Npm => (&["npm"], &["--version"]),
+        ToolKind::Pnpm => (&["pnpm"], &["--version"]),
+        ToolKind::Yarn => (&["yarn"], &["--version"]),
+        ToolKind::Bun => (&["bun"], &["--version"]),
+        ToolKind::Python => (&["python3", "python"], &["--version"]),
+        ToolKind::Uv => (&["uv"], &["--version"]),
+        ToolKind::Java => (&["java"], &["-version"]),
+        ToolKind::Maven => (&["mvn"], &["--version"]),
+        ToolKind::Gradle => (&["gradle"], &["--version"]),
+        ToolKind::Go => (&["go"], &["version"]),
+        ToolKind::Rust => (&["rustc"], &["--version"]),
+        ToolKind::Dotnet => (&["dotnet"], &["--version"]),
+        ToolKind::Docker | ToolKind::ContainerRuntime => (&["docker", "podman"], &["--version"]),
+        ToolKind::BuildEssential => (&["cc", "clang", "gcc"], &["--version"]),
+        _ => return None,
+    };
+    let wrapper = match kind {
+        ToolKind::Maven => Some(repository.join("mvnw")),
+        ToolKind::Gradle => Some(repository.join("gradlew")),
+        _ => None,
+    };
+    let candidates = wrapper
+        .into_iter()
+        .map(|path| (path, ToolOrigin::RepositoryWrapper))
+        .chain(names.iter().filter_map(|name| {
+            find_in_root(managed_root, name).map(|path| (path, ToolOrigin::Managed))
+        }))
+        .chain(
+            names
+                .iter()
+                .filter_map(|name| find_on_path(name).map(|path| (path, ToolOrigin::System))),
+        );
+    for (path, origin) in candidates {
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(version) = probe_version(&path, arguments).await {
+            return Some(DetectedTool {
+                kind,
+                path,
+                version,
+                origin,
+            });
+        }
+    }
+    None
+}
+
+async fn probe_version(path: &Path, arguments: &[&str]) -> Option<String> {
+    let mut command = tokio::process::Command::new(path);
+    command
+        .args(arguments)
+        .env_clear()
+        .envs(safe_environment())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let bytes = if output.stdout.is_empty() {
+        &output.stderr
+    } else {
+        &output.stdout
+    };
+    first_version(String::from_utf8_lossy(bytes))
+}
+
+fn validation_check(tool: &DetectedTool) -> EnvironmentCheck {
+    let arguments = match tool.kind {
+        ToolKind::Java => vec!["-version".into()],
+        ToolKind::Go => vec!["version".into()],
+        _ => vec!["--version".into()],
+    };
+    EnvironmentCheck {
+        kind: tool.kind,
+        program: tool.path.clone(),
+        arguments,
+        expected_output_contains: String::new(),
+        timeout_secs: 5,
+    }
+}
+
+fn provision_action(managed_root: &Path, requirement: &ToolRequirement) -> ProvisionAction {
+    let version = requirement
+        .min_version
+        .clone()
+        .unwrap_or_else(|| "latest-qualified".into());
+    ProvisionAction {
+        kind: requirement.kind,
+        strategy: InstallStrategy::Managed,
+        target_path: Some(
+            managed_root
+                .join(requirement.kind.label().replace(' ', "-"))
+                .join(&version),
+        ),
+        target_version: version.clone(),
+        estimated_bytes: 0,
+        requires_elevation: false,
+        description: format!(
+            "install a checksum-verified {} {} into managed storage",
+            requirement.kind, version
+        ),
+    }
+}
+
+fn read_bounded(path: PathBuf) -> Result<Option<String>, EnvironmentError> {
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(EnvironmentError::Io(error.to_string())),
+    };
+    if !metadata.file_type().is_file() || metadata.len() > 1024 * 1024 {
+        return Err(EnvironmentError::UnsafeManifest(path.display().to_string()));
+    }
+    std::fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|error| EnvironmentError::Io(error.to_string()))
+}
+
+fn json_string_at(source: &str, path: &[&str]) -> Option<String> {
+    let mut value: &serde_json::Value = &serde_json::from_str::<serde_json::Value>(source).ok()?;
+    for key in path {
+        value = value.get(*key)?;
+    }
+    value.as_str().map(str::to_owned)
+}
+
+fn xml_version(source: &str, tags: &[&str]) -> Option<String> {
+    tags.iter().find_map(|tag| {
+        let start = format!("<{tag}>");
+        let end = format!("</{tag}>");
+        let value = source.split_once(&start)?.1.split_once(&end)?.0;
+        first_version(value)
+    })
+}
+
+fn first_version(value: impl AsRef<str>) -> Option<String> {
+    let value = value.as_ref();
+    let start = value.find(|character: char| character.is_ascii_digit())?;
+    let version: String = value[start..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit() || *character == '.')
+        .collect();
+    (!version.is_empty()).then_some(version)
+}
+
+fn find_in_root(root: &Path, name: &str) -> Option<PathBuf> {
+    [
+        root.join(name).join("bin").join(name),
+        root.join("bin").join(name),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .flat_map(|directory| {
+            let direct = directory.join(name);
+            #[cfg(windows)]
+            {
+                vec![
+                    direct.clone(),
+                    direct.with_extension("exe"),
+                    direct.with_extension("cmd"),
+                    direct.with_extension("bat"),
+                ]
+            }
+            #[cfg(not(windows))]
+            {
+                vec![direct]
+            }
+        })
+        .find(|path| path.is_file())
+}
+
+fn safe_environment() -> BTreeMap<String, String> {
+    [
+        "PATH",
+        "TMPDIR",
+        "TEMP",
+        "LANG",
+        "LC_ALL",
+        "SystemRoot",
+        "WINDIR",
+    ]
+    .into_iter()
+    .filter_map(|key| std::env::var(key).ok().map(|value| (key.into(), value)))
+    .collect()
+}
+
+fn bounded_text(bytes: &[u8]) -> String {
+    let start = bytes.len().saturating_sub(16 * 1024);
+    String::from_utf8_lossy(&bytes[start..])
+        .chars()
+        .filter(|character| *character == '\n' || *character == '\t' || !character.is_control())
+        .collect()
+}
+
 #[derive(Clone, Debug, Error, JsonSchema, PartialEq, Serialize, Deserialize)]
 pub enum EnvironmentError {
+    #[error("repository must be an existing absolute directory: {0}")]
+    InvalidRepository(String),
+    #[error("managed toolchain root must be absolute: {0}")]
+    InvalidManagedRoot(String),
+    #[error("manifest is not a bounded regular file: {0}")]
+    UnsafeManifest(String),
+    #[error("environment inspection I/O failed: {0}")]
+    Io(String),
     #[error("tool {kind} is required but missing and could not be installed")]
     RequiredMissing { kind: ToolKind },
     #[error("install verification failed for {kind}")]
@@ -509,5 +1013,81 @@ mod tests {
         assert_eq!(ToolKind::Java.label(), "java");
         assert_eq!(ToolKind::BuildEssential.label(), "build-essential");
         assert_eq!(format!("{}", ToolKind::Node), "node");
+    }
+
+    #[tokio::test]
+    async fn bounded_project_detection_builds_real_node_and_rust_plan() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("package.json"),
+            r#"{"engines":{"node":">=22"},"packageManager":"pnpm@9.1.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nrust-version = \"1.88\"\n",
+        )
+        .unwrap();
+        let managed = root.path().join("managed");
+        let report = inspect_environment(root.path(), &managed).await.unwrap();
+        assert!(report
+            .plan
+            .required_tools
+            .iter()
+            .any(|tool| tool.kind == ToolKind::Node && tool.min_version.as_deref() == Some("22")));
+        assert!(report
+            .plan
+            .required_tools
+            .iter()
+            .any(|tool| tool.kind == ToolKind::Pnpm));
+        assert!(
+            report
+                .plan
+                .required_tools
+                .iter()
+                .any(|tool| tool.kind == ToolKind::Rust
+                    && tool.min_version.as_deref() == Some("1.88"))
+        );
+        assert!(report
+            .plan
+            .required_tools
+            .iter()
+            .any(|tool| tool.kind == ToolKind::Git));
+        assert_eq!(report.ready, report.plan.all_required_satisfied());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_symlink_is_rejected_instead_of_reading_external_content() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::write(external.path().join("package.json"), "{}").unwrap();
+        symlink(
+            external.path().join("package.json"),
+            root.path().join("package.json"),
+        )
+        .unwrap();
+        assert!(matches!(
+            detect_project_requirements(root.path()),
+            Err(EnvironmentError::UnsafeManifest(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn verification_records_real_exit_and_output() {
+        let checks = vec![EnvironmentCheck {
+            kind: ToolKind::Git,
+            program: PathBuf::from("/usr/bin/printf"),
+            arguments: vec!["doctor-evidence".into()],
+            expected_output_contains: "doctor-evidence".into(),
+            timeout_secs: 2,
+        }];
+        let evidence = run_environment_checks(&checks).await;
+        assert_eq!(evidence[0].result, CheckResult::Passed);
+        assert_eq!(evidence[0].exit_code, Some(0));
+        assert!(evidence[0].stdout_tail.contains("doctor-evidence"));
+        assert!(evidence[0].checked_at.is_some());
     }
 }

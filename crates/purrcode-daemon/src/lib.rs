@@ -349,6 +349,7 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
     };
     let router = Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/environment/inspect", post(inspect_environment))
         .route("/v1/terminals", get(list_terminals).post(start_terminal))
         .route(
             "/v1/terminals/{id}",
@@ -500,6 +501,7 @@ pub async fn bind_and_report(
     };
     let router = Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/environment/inspect", post(inspect_environment))
         .route("/v1/terminals", get(list_terminals).post(start_terminal))
         .route(
             "/v1/terminals/{id}",
@@ -622,6 +624,29 @@ pub async fn bind_and_report(
 struct StartTerminalRequest {
     workspace_id: WorkspaceId,
     action: StartTerminalAction,
+}
+
+#[derive(Deserialize)]
+struct InspectEnvironmentRequest {
+    repository: PathBuf,
+}
+
+async fn inspect_environment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<InspectEnvironmentRequest>,
+) -> Result<Json<purrcode_environment_runtime::EnvironmentDoctorReport>, ApiError> {
+    authorize(&state, &headers)?;
+    let managed_root = state
+        .database
+        .parent()
+        .unwrap_or_else(|| Path::new("/"))
+        .join("toolchains");
+    let report =
+        purrcode_environment_runtime::inspect_environment(&request.repository, &managed_root)
+            .await
+            .map_err(ApiError::environment)?;
+    Ok(Json(report))
 }
 
 #[derive(Deserialize)]
@@ -3350,6 +3375,7 @@ enum ApiError {
     Conflict(String),
     Store(StoreError),
     Terminal(String),
+    Environment(String),
 }
 
 impl ApiError {
@@ -3370,6 +3396,17 @@ impl ApiError {
             _ => Self::Terminal(error.to_string()),
         }
     }
+
+    fn environment(error: purrcode_environment_runtime::EnvironmentError) -> Self {
+        match error {
+            purrcode_environment_runtime::EnvironmentError::InvalidRepository(_)
+            | purrcode_environment_runtime::EnvironmentError::InvalidManagedRoot(_)
+            | purrcode_environment_runtime::EnvironmentError::UnsafeManifest(_) => {
+                Self::BadRequest(error.to_string())
+            }
+            _ => Self::Environment(error.to_string()),
+        }
+    }
 }
 
 fn error_message(error: &ApiError) -> String {
@@ -3379,6 +3416,7 @@ fn error_message(error: &ApiError) -> String {
         ApiError::BadRequest(message) | ApiError::Conflict(message) => message.clone(),
         ApiError::Store(_) => "session store error".into(),
         ApiError::Terminal(_) => "terminal runtime error".into(),
+        ApiError::Environment(_) => "environment inspection error".into(),
     }
 }
 
@@ -3407,6 +3445,13 @@ impl IntoResponse for ApiError {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "terminal runtime error".into(),
+                )
+            }
+            Self::Environment(error) => {
+                let _redacted = error;
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "environment inspection error".into(),
                 )
             }
         };
@@ -7444,6 +7489,46 @@ default = "ollama/small"
             .await
             .unwrap();
         assert_eq!(stopped.status(), StatusCode::OK);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn authenticated_environment_inspection_reports_real_check_evidence() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::write(
+            repository.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nrust-version = \"1.88\"\n",
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let response = reqwest::Client::new()
+            .post(format!("http://{}/v1/environment/inspect", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"repository": repository}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let report: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(report["ready"], true);
+        assert!(report["checks"].as_array().unwrap().iter().any(|check| {
+            check["check"]["kind"] == "rust"
+                && check["result"] == "passed"
+                && check["exit_code"] == 0
+        }));
         handle.abort();
     }
 

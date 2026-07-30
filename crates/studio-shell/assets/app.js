@@ -52,7 +52,7 @@ function toast(message) {
 function setScreen(screen) {
   state.screen = screen;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.screen === screen));
-  const mapped = ["home", "workbench", "diff", "validation", "terminals"];
+  const mapped = ["home", "workbench", "diff", "validation", "terminals", "settings"];
   for (const name of mapped) {
     document.querySelector(`#${name}-screen`).classList.toggle("hidden", name !== screen);
   }
@@ -468,6 +468,35 @@ async function stopSelectedTerminal() {
   } catch (error) { toast(error.message); }
 }
 
+async function inspectEnvironment() {
+  const button = document.querySelector("#inspect-environment");
+  const container = document.querySelector("#environment-summary");
+  button.disabled = true;
+  container.innerHTML = '<div class="empty">Inspecting manifests and verifying detected tools…</div>';
+  try {
+    const report = await request("/api/v1/environment/inspect", {
+      method: "POST", body: JSON.stringify({ repository: state.config.repository })
+    });
+    const tools = report.plan.detected_tools || [];
+    const missing = report.plan.missing_tools || [];
+    const checks = new Map((report.checks || []).map((check) => [check.check.kind, check]));
+    container.innerHTML = `
+      <div class="environment-host">
+        <span>${escapeHtml(report.host.os_family)} · ${escapeHtml(report.host.arch)}</span>
+        <span>${escapeHtml(report.host.distribution || "distribution unknown")}</span>
+        <span>${report.ready ? "ready" : "repair required"}</span>
+      </div>
+      ${tools.map((tool) => {
+        const check = checks.get(tool.kind);
+        return `<article class="environment-tool"><div><h3>${escapeHtml(tool.kind)}</h3><p>${escapeHtml(tool.path)} · ${escapeHtml(tool.version || "version unavailable")}</p></div><span class="status">${escapeHtml(check?.result || "unchecked")}</span></article>`;
+      }).join("")}
+      ${missing.map((tool) => `<article class="environment-tool"><div><h3>${escapeHtml(tool.kind)}</h3><p>${escapeHtml(tool.reason)} · ${escapeHtml(tool.min_version || "compatible version")}</p></div><span class="status">missing</span></article>`).join("")}
+      ${!tools.length && !missing.length ? '<div class="empty">No supported project manifests were detected.</div>' : ""}`;
+  } catch (error) {
+    container.innerHTML = `<div class="empty">Inspection failed: ${escapeHtml(error.message)}</div>`;
+  } finally { button.disabled = false; }
+}
+
 const screenCopy = {
   workspaces: ["Workspaces", "Open local and remote repositories without creating a second execution path."],
   runs: ["Agent runs", "Follow durable plans, specialist activity, approvals, and outcomes."],
@@ -493,6 +522,7 @@ document.querySelector("#terminal-input").addEventListener("keydown", (event) =>
 document.querySelector("#take-terminal").addEventListener("click", () => setTerminalOwner({ kind: "human" }));
 document.querySelector("#return-terminal").addEventListener("click", () => setTerminalOwner({ kind: "agent", data: { role: "Coding Agent" } }));
 document.querySelector("#stop-terminal").addEventListener("click", stopSelectedTerminal);
+document.querySelector("#inspect-environment").addEventListener("click", inspectEnvironment);
 document.querySelectorAll(".nav-item").forEach((button) => button.addEventListener("click", async () => {
   const screen = button.dataset.screen;
   setScreen(screen);

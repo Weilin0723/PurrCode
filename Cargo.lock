@@ -2206,6 +2206,7 @@ dependencies = [
  "purrcode-claw",
  "purrcode-codex-bridge",
  "purrcode-daemon",
+ "purrcode-environment-runtime",
  "purrcode-evaluation-runtime",
  "purrcode-evidence-bundle",
  "purrcode-golden-suite",
@@ -2277,6 +2278,7 @@ dependencies = [
  "futures",
  "purrcode-agent-runtime",
  "purrcode-claw",
+ "purrcode-environment-runtime",
  "purrcode-mcp-host",
  "purrcode-ninelives",
  "purrcode-pawgate",
@@ -2314,7 +2316,10 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sysinfo",
+ "tempfile",
  "thiserror 2.0.19",
+ "tokio",
  "uuid",
 ]
 

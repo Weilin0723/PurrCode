@@ -1,6 +1,25 @@
 # Implementation status
 
-Updated: 2026-07-30 (v0.8 PR4 — Native PTY terminals)
+Updated: 2026-07-30 (v0.8 PR5 — Environment doctor in progress)
+
+## v0.8 PR5 — Environment provisioning (in progress)
+
+- The environment runtime performs bounded, read-only project detection for Node package managers,
+  Maven/Gradle/JDK, Python/uv, Rust, Go, .NET, Docker, and Git. It rejects symlinked or oversized
+  manifests rather than following untrusted repository content outside the workspace.
+- Host inspection records the real OS, architecture, distribution, shell, package manager,
+  elevation/container availability, memory, and disk evidence. Tool discovery prefers repository
+  wrappers and managed roots before PATH tools, executes only explicit argv probes in a scrubbed
+  environment, applies a five-second timeout, and fails closed when a version cannot be observed.
+- `purrcode doctor --repository PATH`, authenticated `POST /v1/environment/inspect`, and Studio's
+  explicit Environment surface return one evidence-bearing plan with detected, missing, install,
+  and verification records. A local run against this repository observed Git 2.39.3 and Rust
+  1.97.1, independently re-probed both, and reported ready from real exit-zero evidence.
+- Twelve environment tests cover manifest/version inference, missing requirements, real process
+  evidence, and external-symlink rejection; a daemon HTTP test verifies the authenticated surface.
+- Checksum-verified managed downloads, atomic installation, repair execution through durable exact
+  authorization, and Windows/Linux execution evidence remain pending. Missing tools produce an
+  explicit plan and warning; they are never represented as installed or ready.
 
 ## v0.8 PR4 — Native PTY terminals (complete locally)
 
