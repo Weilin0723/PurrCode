@@ -74,7 +74,11 @@ fn daemon_unavailable_reports_recovery_action() {
     };
     let mut harness = Harness::start(script).expect("start workbench");
     with_artifacts("startup-daemon-unavailable", &mut harness, |harness| {
-        let screen = harness.wait_for_text("cannot reach its local daemon")?;
+        let screen = harness.wait_for_all(&[
+            "cannot reach its local daemon",
+            "purrcode serve",
+            "reconnect",
+        ])?;
         // A failure with no recovery path is a dead end; this must offer one.
         assertions::assert_failure_offers_recovery(
             &screen,
