@@ -1,8 +1,56 @@
 # Implementation status
 
-Updated: 2026-07-29 (v0.7.0 evaluation runtime, adversarial suite, evidence bundles, and TUI foundation)
+Updated: 2026-07-30 (v0.8 PR1 — UI and runtime contract crates)
+
+## v0.8 PR1 — UI and runtime contracts (complete)
+
+PRD §24 PR1 pins the shapes of the v0.8 UI↔daemon boundary, the workspace/run
+lifecycle, terminal actions, environment provisioning, human authority, and
+automatic model selection as six dependency-light contract crates. They carry no
+I/O and no tokio dependency, so PR2–PR6 build stable targets against them.
+
+### New crates
+
+- `purrcode-workspace-contracts` — `Workspace` / `WorkspaceId` / `RunId` /
+  `RunStatus` / `RepositoryReference` (Local | Remote) / `EnvironmentProfileId`
+  / `TerminalId` / `GrantId` per PRD §11.2. Owns the shared newtype ids that the
+  sibling crates re-export. `WorkspaceStatus` includes `Disconnected` which is
+  *live* so builds/tests/tests survive client disconnect (PRD §11.3).
+  7 unit tests.
+- `purrcode-terminal-runtime` — `TerminalAction` enum (ExecuteCommand /
+  StartTerminal / SendInput / ResizeTerminal / InspectProcess / WaitForProcess /
+  StopProcess / AttachTerminal / DetachTerminal) with concrete action structs,
+  `TerminalOwner` (Human | Agent | Shared), `OwnershipGeneration` for stale-
+  input rejection (PRD §12.1), `ManagedProcessSpec`/`ReadinessProbe`/
+  `HealthProbe`/`RestartPolicy` (§12.2), and `TerminalSnapshot` for reconnect.
+  Pure contracts; the PTY backend lands in PR4. 7 unit tests.
+- `purrcode-environment-runtime` — `EnvironmentPlan` (PRD §9.2) with
+  required/detected/missing tools, `ProvisionAction`, `EnvironmentCheck`
+  verification actions, `ToolKind`, `ToolOrigin` with §9.3 preference ranking,
+  `InstallStrategy` and the exact `INSTALL_PREFERENCE_ORDER`,
+  `HostEnvironment`/`OsFamily`. `compute_missing`/`satisfies`/`version_at_least`
+  fail closed on an empty observed version. 9 unit tests.
+- `purrcode-authority-contracts` — `HumanAuthorityMode` (Governed/Elevated/
+  Unrestricted, §15.1), `AutonomyGrant` (§15.2), `HumanSubject` with BLAKE3
+  identity-claims digest, `CapabilitySet`, `PersistScope` (§15.3), `AgentId`,
+  `AzureResourceScope`. The six PRD §15.5 model-restriction invariants are
+  pure `assert_model_may_not_*` guards with no allow path: a model can never
+  create, widen, re-scope, impersonate, escalate, or hide a grant. 9 unit tests.
+- `purrcode-model-selection` — `ModelRole` (§7.2, `as_str()` canonicalizes the
+  existing loose role strings), `ModelDeployment`, `QualificationReport`/
+  `QualificationStatus` (Unverified is never Qualified), `ModelSelectionPolicy`
+  with the §7.4 default, and a pure `select_models` that errors only when the
+  policy is unsatisfiable (PRD §7.5), plus `selection_is_stale`. 8 unit tests.
+- `purrcode-ui-contracts` — `StudioAction`/`StudioEvent` tagged enums (PRD
+  §4/§10), `StudioScreen` registry of all eleven §10.1 screens,
+  `STUDIO_API_VERSION = 1` with `is_compatible` exact-major-match gate, and
+  `UiContractError`. 7 unit tests.
+
+Total: 47 new unit tests; `cargo fmt --check`, `cargo clippy --workspace
+--all-targets -- -D warnings`, and the six-crate test run are green.
 
 ## v0.7.0 evaluation runtime, adversarial suite, evidence bundles, and TUI foundation
+
 
 ### Gate 0 — v0.6 Runtime Hardening (complete)
 

@@ -23,6 +23,12 @@ members = [
   "crates/golden-suite",
   "crates/evaluation-runtime",
   "crates/evidence-bundle",
+  "crates/workspace-contracts",
+  "crates/terminal-runtime",
+  "crates/environment-runtime",
+  "crates/authority-contracts",
+  "crates/model-selection",
+  "crates/ui-contracts",
 ]
 resolver = "2"
 

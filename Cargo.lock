@@ -2071,6 +2071,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "purrcode-authority-contracts"
+version = "0.7.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "purrcode-workspace-contracts",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "purrcode-claw"
 version = "0.7.0"
 dependencies = [
@@ -2196,6 +2210,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "purrcode-environment-runtime"
+version = "0.7.0"
+dependencies = [
+ "chrono",
+ "purrcode-workspace-contracts",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "purrcode-evaluation-runtime"
 version = "0.7.0"
 dependencies = [
@@ -2254,6 +2281,18 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "uuid",
+]
+
+[[package]]
+name = "purrcode-model-selection"
+version = "0.7.0"
+dependencies = [
+ "chrono",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
  "uuid",
 ]
 
@@ -2401,6 +2440,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "purrcode-terminal-runtime"
+version = "0.7.0"
+dependencies = [
+ "chrono",
+ "purrcode-workspace-contracts",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "purrcode-tui"
 version = "0.7.0"
 dependencies = [
@@ -2423,6 +2475,21 @@ dependencies = [
  "unicode-width 0.2.0",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "purrcode-ui-contracts"
+version = "0.7.0"
+dependencies = [
+ "chrono",
+ "purrcode-authority-contracts",
+ "purrcode-terminal-runtime",
+ "purrcode-workspace-contracts",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
@@ -2472,6 +2539,18 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+]
+
+[[package]]
+name = "purrcode-workspace-contracts"
+version = "0.7.0"
+dependencies = [
+ "chrono",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
