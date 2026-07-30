@@ -1032,7 +1032,7 @@ mod tests {
     fn validate_working_directory_rejects_relative() {
         assert!(validate_working_directory(PathBuf::from("rel").as_path()).is_err());
         assert!(validate_working_directory(PathBuf::from("").as_path()).is_err());
-        assert!(validate_working_directory(PathBuf::from("/abs/wk").as_path()).is_ok());
+        assert!(validate_working_directory(&std::env::current_dir().unwrap()).is_ok());
     }
 
     #[test]
