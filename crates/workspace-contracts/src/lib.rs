@@ -486,6 +486,6 @@ mod tests {
     fn validate_worktree_path_rejects_relative_and_empty() {
         assert!(validate_worktree_path(std::path::Path::new("rel/x")).is_err());
         assert!(validate_worktree_path(std::path::Path::new("")).is_err());
-        assert!(validate_worktree_path(std::path::Path::new("/abs/x")).is_ok());
+        assert!(validate_worktree_path(&std::env::temp_dir().join("purrcode-absolute")).is_ok());
     }
 }
