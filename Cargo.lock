@@ -2124,7 +2124,9 @@ dependencies = [
  "purrcode-provider-import",
  "purrcode-repository-engine",
  "purrcode-runtime-core",
+ "purrcode-studio-shell",
  "purrcode-tui",
+ "purrcode-ui-contracts",
  "reqwest",
  "rpassword",
  "semver",
@@ -2193,6 +2195,7 @@ dependencies = [
  "purrcode-skill-registry",
  "purrcode-skill-store",
  "purrcode-supervisor-runtime",
+ "purrcode-ui-contracts",
  "purrcode-web-research",
  "reqwest",
  "schemars",
@@ -2422,6 +2425,28 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "purrcode-studio-shell"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "blake3",
+ "chrono",
+ "futures",
+ "purrcode-authority-contracts",
+ "purrcode-terminal-runtime",
+ "purrcode-ui-contracts",
+ "purrcode-workspace-contracts",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
  "uuid",
 ]
 

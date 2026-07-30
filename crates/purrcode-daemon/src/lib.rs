@@ -602,6 +602,7 @@ async fn health(
         product: "purrcode",
         version: env!("CARGO_PKG_VERSION"),
         daemon_api_version: DAEMON_API_VERSION,
+        studio_api_version: purrcode_ui_contracts::STUDIO_API_VERSION,
     }))
 }
 
@@ -3089,6 +3090,7 @@ struct Health {
     product: &'static str,
     version: &'static str,
     daemon_api_version: u32,
+    studio_api_version: u32,
 }
 
 #[derive(Serialize)]

@@ -29,6 +29,7 @@ members = [
   "crates/authority-contracts",
   "crates/model-selection",
   "crates/ui-contracts",
+  "crates/studio-shell",
 ]
 resolver = "2"
 

@@ -1,0 +1,637 @@
+//! Authenticated local web shell for PurrCode Studio.
+//!
+//! The browser never receives the daemon bearer token.  It authenticates to
+//! this loopback-only shell with an HttpOnly cookie and the shell forwards
+//! `/api/v1/*` requests to the daemon with the bearer token attached.  The
+//! daemon remains the only execution path.
+
+use anyhow::{bail, Context, Result};
+use axum::body::{Body, Bytes};
+use axum::extract::{Path as AxumPath, State};
+use axum::http::header::{
+    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, ORIGIN,
+    REFERRER_POLICY, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
+};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
+use axum::response::{IntoResponse, Redirect, Response};
+use axum::routing::{any, get};
+use axum::Router;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+use url::Url;
+use uuid::Uuid;
+
+const INDEX_HTML: &str = include_str!("../assets/index.html");
+const APP_CSS: &str = include_str!("../assets/app.css");
+const APP_JS: &str = include_str!("../assets/app.js");
+const SESSION_COOKIE: &str = "purrcode_studio";
+
+/// Configuration for one Studio shell process.
+#[derive(Clone, Debug)]
+pub struct StudioConfig {
+    pub bind: SocketAddr,
+    pub daemon_url: Url,
+    pub daemon_token: String,
+    pub repository: PathBuf,
+    pub expected_daemon_api_version: u32,
+    pub expected_studio_api_version: u32,
+}
+
+/// Safe startup information.  `bootstrap_url` contains a one-time secret and
+/// must only be handed to the local browser process or printed to its owner.
+#[derive(Clone, Debug, Serialize)]
+pub struct StudioReport {
+    pub bind: SocketAddr,
+    pub bootstrap_url: Url,
+    pub started_at: DateTime<Utc>,
+}
+
+#[derive(Clone)]
+struct StudioState {
+    client: reqwest::Client,
+    daemon_url: Url,
+    daemon_token: Arc<str>,
+    repository: PathBuf,
+    origin: Arc<str>,
+    session_secret: Arc<str>,
+    session_digest: [u8; 32],
+    bootstrap_digest: Arc<Mutex<Option<[u8; 32]>>>,
+    daemon_api_version: u32,
+    studio_api_version: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct DaemonHealth {
+    product: String,
+    daemon_api_version: u32,
+    studio_api_version: u32,
+}
+
+#[derive(Serialize)]
+struct BrowserConfig<'a> {
+    product: &'static str,
+    repository: &'a std::path::Path,
+    daemon_api_version: u32,
+    studio_api_version: u32,
+}
+
+/// Validate the daemon, bind the loopback Studio server, and return its
+/// future.  The caller owns the lifetime and may run it in the foreground or
+/// spawn it under a supervised process.
+pub async fn bind_and_report(
+    config: StudioConfig,
+) -> Result<(
+    StudioReport,
+    impl std::future::Future<Output = std::io::Result<()>>,
+)> {
+    if !config.bind.ip().is_loopback() {
+        bail!(
+            "Studio shell refuses non-loopback bind {}; expose the daemon through an authenticated TLS reverse proxy instead",
+            config.bind.ip()
+        );
+    }
+    if config.daemon_token.trim().len() < 32 {
+        bail!("daemon token is missing or invalid");
+    }
+    validate_daemon_url(&config.daemon_url)?;
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    verify_compatibility(&client, &config).await?;
+
+    let listener = TcpListener::bind(config.bind)
+        .await
+        .with_context(|| format!("bind Studio shell at {}", config.bind))?;
+    let bind = listener.local_addr()?;
+    let origin = format!("http://{bind}");
+    let bootstrap_secret = random_secret();
+    let session_secret = random_secret();
+    let state = Arc::new(StudioState {
+        client,
+        daemon_url: normalize_base_url(config.daemon_url),
+        daemon_token: Arc::from(config.daemon_token.trim()),
+        repository: config.repository,
+        origin: Arc::from(origin.as_str()),
+        session_digest: digest(&session_secret),
+        session_secret: Arc::from(session_secret),
+        bootstrap_digest: Arc::new(Mutex::new(Some(digest(&bootstrap_secret)))),
+        daemon_api_version: config.expected_daemon_api_version,
+        studio_api_version: config.expected_studio_api_version,
+    });
+    let app = router(state);
+    let bootstrap_url = Url::parse(&format!("{origin}/bootstrap/{bootstrap_secret}"))?;
+    let report = StudioReport {
+        bind,
+        bootstrap_url,
+        started_at: Utc::now(),
+    };
+    let server = async move { axum::serve(listener, app).await };
+    Ok((report, server))
+}
+
+fn router(state: Arc<StudioState>) -> Router {
+    Router::new()
+        .route("/bootstrap/{token}", get(bootstrap))
+        .route("/", get(index))
+        .route("/app.css", get(styles))
+        .route("/app.js", get(script))
+        .route("/studio/config", get(browser_config))
+        .route("/api/{*path}", any(proxy))
+        .fallback(not_found)
+        .with_state(state)
+}
+
+async fn verify_compatibility(client: &reqwest::Client, config: &StudioConfig) -> Result<()> {
+    let url = normalize_base_url(config.daemon_url.clone()).join("v1/health")?;
+    let response = client
+        .get(url)
+        .bearer_auth(config.daemon_token.trim())
+        .send()
+        .await
+        .context("connect to authenticated PurrCode daemon")?;
+    if response.status() != reqwest::StatusCode::OK {
+        bail!("daemon health check returned HTTP {}", response.status());
+    }
+    let health: DaemonHealth = response
+        .json()
+        .await
+        .context("decode daemon compatibility response")?;
+    if health.product != "purrcode" {
+        bail!("connected service is not PurrCode");
+    }
+    if health.daemon_api_version != config.expected_daemon_api_version {
+        bail!(
+            "daemon API version {} is incompatible with Studio version {}",
+            health.daemon_api_version,
+            config.expected_daemon_api_version
+        );
+    }
+    if health.studio_api_version != config.expected_studio_api_version {
+        bail!(
+            "Studio API version {} is incompatible with client version {}",
+            health.studio_api_version,
+            config.expected_studio_api_version
+        );
+    }
+    Ok(())
+}
+
+fn validate_daemon_url(url: &Url) -> Result<()> {
+    if !matches!(url.scheme(), "http" | "https") {
+        bail!("daemon URL must use http or https");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        bail!("daemon URL must not contain credentials");
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        bail!("daemon URL must not contain a query or fragment");
+    }
+    Ok(())
+}
+
+fn normalize_base_url(mut url: Url) -> Url {
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    url
+}
+
+async fn bootstrap(
+    State(state): State<Arc<StudioState>>,
+    AxumPath(token): AxumPath<String>,
+) -> Response {
+    let supplied = digest(&token);
+    let mut expected = state.bootstrap_digest.lock().await;
+    let valid = expected
+        .as_ref()
+        .is_some_and(|value| constant_time_eq(value, &supplied));
+    if !valid {
+        return secured_text(StatusCode::UNAUTHORIZED, "invalid or expired Studio link");
+    }
+    *expected = None;
+    let cookie = format!(
+        "{SESSION_COOKIE}={}; HttpOnly; SameSite=Strict; Path=/",
+        state.session_secret
+    );
+    let mut response = Redirect::to("/").into_response();
+    response.headers_mut().insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&cookie).expect("generated cookie is valid ASCII"),
+    );
+    apply_security_headers(response.headers_mut());
+    response
+}
+
+async fn index(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
+    if !authorized(&state, &headers) {
+        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+    }
+    secured_asset(StatusCode::OK, "text/html; charset=utf-8", INDEX_HTML)
+}
+
+async fn styles(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
+    if !authorized(&state, &headers) {
+        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+    }
+    secured_asset(StatusCode::OK, "text/css; charset=utf-8", APP_CSS)
+}
+
+async fn script(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
+    if !authorized(&state, &headers) {
+        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+    }
+    secured_asset(
+        StatusCode::OK,
+        "application/javascript; charset=utf-8",
+        APP_JS,
+    )
+}
+
+async fn browser_config(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
+    if !authorized(&state, &headers) {
+        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+    }
+    let body = serde_json::to_vec(&BrowserConfig {
+        product: "purrcode",
+        repository: &state.repository,
+        daemon_api_version: state.daemon_api_version,
+        studio_api_version: state.studio_api_version,
+    })
+    .expect("browser configuration is serializable");
+    secured_bytes(StatusCode::OK, "application/json", body)
+}
+
+async fn proxy(
+    State(state): State<Arc<StudioState>>,
+    AxumPath(path): AxumPath<String>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if !authorized(&state, &headers) {
+        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+    }
+    if !valid_proxy_path(&path) {
+        return secured_text(StatusCode::NOT_FOUND, "unknown daemon API path");
+    }
+    if is_mutating(&method) && !same_origin(&state, &headers) {
+        return secured_text(StatusCode::FORBIDDEN, "cross-origin request rejected");
+    }
+
+    let mut target = match state.daemon_url.join(&path) {
+        Ok(target) => target,
+        Err(_) => return secured_text(StatusCode::BAD_REQUEST, "invalid daemon API path"),
+    };
+    target.set_query(uri.query());
+    let mut request = state
+        .client
+        .request(method, target)
+        .header(AUTHORIZATION, format!("Bearer {}", state.daemon_token));
+    for name in [CONTENT_TYPE, ACCEPT] {
+        if let Some(value) = headers.get(&name) {
+            request = request.header(name, value);
+        }
+    }
+    if !body.is_empty() {
+        request = request.body(body);
+    }
+    let upstream = match request.send().await {
+        Ok(response) => response,
+        Err(_) => {
+            return secured_text(
+                StatusCode::BAD_GATEWAY,
+                "PurrCode daemon is unavailable; the run remains durable",
+            )
+        }
+    };
+    let status = upstream.status();
+    let content_type = upstream.headers().get(CONTENT_TYPE).cloned();
+    let cache_control = upstream.headers().get(CACHE_CONTROL).cloned();
+    let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
+    *response.status_mut() = status;
+    if let Some(value) = content_type {
+        response.headers_mut().insert(CONTENT_TYPE, value);
+    }
+    if let Some(value) = cache_control {
+        response.headers_mut().insert(CACHE_CONTROL, value);
+    } else {
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
+}
+
+async fn not_found() -> Response {
+    secured_text(StatusCode::NOT_FOUND, "not found")
+}
+
+fn authorized(state: &StudioState, headers: &HeaderMap) -> bool {
+    let supplied = headers
+        .get(COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|cookie| {
+                let (name, value) = cookie.trim().split_once('=')?;
+                (name == SESSION_COOKIE).then_some(value)
+            })
+        });
+    supplied.is_some_and(|value| {
+        let supplied = digest(value);
+        constant_time_eq(&state.session_digest, &supplied)
+    })
+}
+
+fn same_origin(state: &StudioState, headers: &HeaderMap) -> bool {
+    headers
+        .get(ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|origin| origin == state.origin.as_ref())
+}
+
+fn is_mutating(method: &Method) -> bool {
+    !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+}
+
+fn valid_proxy_path(path: &str) -> bool {
+    (path == "v1" || path.starts_with("v1/"))
+        && path.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
+}
+
+fn random_secret() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+fn digest(value: &str) -> [u8; 32] {
+    *blake3::hash(value.as_bytes()).as_bytes()
+}
+
+fn constant_time_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
+    left.iter()
+        .zip(right)
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
+        == 0
+}
+
+fn secured_asset(status: StatusCode, content_type: &'static str, body: &'static str) -> Response {
+    secured_bytes(status, content_type, body.as_bytes().to_vec())
+}
+
+fn secured_text(status: StatusCode, body: &'static str) -> Response {
+    secured_bytes(
+        status,
+        "text/plain; charset=utf-8",
+        body.as_bytes().to_vec(),
+    )
+}
+
+fn secured_bytes(status: StatusCode, content_type: &'static str, body: Vec<u8>) -> Response {
+    let mut response = (status, body).into_response();
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    apply_security_headers(response.headers_mut());
+    response
+}
+
+fn apply_security_headers(headers: &mut HeaderMap) {
+    headers.insert(
+        CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+        ),
+    );
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    headers.insert(
+        "permissions-policy",
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::State as TestState;
+    use axum::http::header::AUTHORIZATION as TEST_AUTHORIZATION;
+    use axum::routing::get as test_get;
+    use axum::{Json, Router as TestRouter};
+    use serde_json::json;
+
+    async fn fake_health(headers: HeaderMap) -> Response {
+        if headers
+            .get(TEST_AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            != Some("Bearer daemon-secret-that-is-long-enough")
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        Json(json!({
+            "product": "purrcode",
+            "daemon_api_version": 2,
+            "studio_api_version": 1,
+            "status": "ok"
+        }))
+        .into_response()
+    }
+
+    async fn fake_sessions(
+        TestState(counter): TestState<Arc<Mutex<u32>>>,
+        headers: HeaderMap,
+    ) -> Response {
+        if headers
+            .get(TEST_AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            != Some("Bearer daemon-secret-that-is-long-enough")
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        *counter.lock().await += 1;
+        Json(json!([])).into_response()
+    }
+
+    async fn fake_start(headers: HeaderMap) -> Response {
+        if headers
+            .get(TEST_AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            != Some("Bearer daemon-secret-that-is-long-enough")
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        (StatusCode::ACCEPTED, Json(json!({"id": "run-1"}))).into_response()
+    }
+
+    async fn start_pair() -> (StudioReport, tokio::task::JoinHandle<()>, Arc<Mutex<u32>>) {
+        let counter = Arc::new(Mutex::new(0));
+        let daemon = TestRouter::new()
+            .route("/v1/health", test_get(fake_health))
+            .route("/v1/sessions", test_get(fake_sessions).post(fake_start))
+            .with_state(counter.clone());
+        let daemon_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let daemon_bind = daemon_listener.local_addr().unwrap();
+        let daemon_task = tokio::spawn(async move {
+            axum::serve(daemon_listener, daemon).await.unwrap();
+        });
+        let (report, server) = bind_and_report(StudioConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            daemon_url: Url::parse(&format!("http://{daemon_bind}/")).unwrap(),
+            daemon_token: "daemon-secret-that-is-long-enough".into(),
+            repository: PathBuf::from("/example/repository"),
+            expected_daemon_api_version: 2,
+            expected_studio_api_version: 1,
+        })
+        .await
+        .unwrap();
+        let studio_task = tokio::spawn(async move {
+            server.await.unwrap();
+        });
+        let joined = tokio::spawn(async move {
+            let _ = tokio::join!(daemon_task, studio_task);
+        });
+        (report, joined, counter)
+    }
+
+    async fn authenticate(client: &reqwest::Client, report: &StudioReport) -> String {
+        let response = client
+            .get(report.bootstrap_url.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::SEE_OTHER);
+        response
+            .headers()
+            .get(reqwest::header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn shell_requires_cookie_and_bootstrap_is_single_use() {
+        let (report, task, _) = start_pair().await;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let root = client
+            .get(format!("http://{}/", report.bind))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(root.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+        let cookie = authenticate(&client, &report).await;
+        let replay = client
+            .get(report.bootstrap_url.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), reqwest::StatusCode::UNAUTHORIZED);
+        let root = client
+            .get(format!("http://{}/", report.bind))
+            .header(reqwest::header::COOKIE, cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(root.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            root.headers()
+                .get(reqwest::header::X_CONTENT_TYPE_OPTIONS)
+                .unwrap(),
+            "nosniff"
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn proxy_hides_daemon_token_and_rejects_cross_origin_mutation() {
+        let (report, task, counter) = start_pair().await;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let cookie = authenticate(&client, &report).await;
+        let sessions = client
+            .get(format!("http://{}/api/v1/sessions", report.bind))
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(sessions.status(), reqwest::StatusCode::OK);
+        assert_eq!(*counter.lock().await, 1);
+
+        let denied = client
+            .post(format!("http://{}/api/v1/sessions", report.bind))
+            .header(reqwest::header::COOKIE, &cookie)
+            .header(reqwest::header::ORIGIN, "https://attacker.invalid")
+            .json(&json!({"objective": "x", "repository": "/tmp"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), reqwest::StatusCode::FORBIDDEN);
+
+        let accepted = client
+            .post(format!("http://{}/api/v1/sessions", report.bind))
+            .header(reqwest::header::COOKIE, &cookie)
+            .header(reqwest::header::ORIGIN, format!("http://{}", report.bind))
+            .json(&json!({"objective": "x", "repository": "/tmp"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), reqwest::StatusCode::ACCEPTED);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn public_bind_and_incompatible_daemon_fail_closed() {
+        let result = bind_and_report(StudioConfig {
+            bind: "0.0.0.0:0".parse().unwrap(),
+            daemon_url: Url::parse("http://127.0.0.1:7377/").unwrap(),
+            daemon_token: "daemon-secret-that-is-long-enough".into(),
+            repository: PathBuf::from("/tmp"),
+            expected_daemon_api_version: 2,
+            expected_studio_api_version: 1,
+        })
+        .await;
+        let error = match result {
+            Ok(_) => panic!("public Studio bind must fail closed"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("non-loopback"));
+    }
+
+    #[test]
+    fn proxy_path_cannot_escape_the_versioned_api() {
+        assert!(valid_proxy_path("v1/sessions/123/events"));
+        assert!(!valid_proxy_path("v1/../health"));
+        assert!(!valid_proxy_path("v1//sessions"));
+        assert!(!valid_proxy_path("internal/metrics"));
+        assert!(!valid_proxy_path("v1/%2e%2e/health"));
+    }
+}

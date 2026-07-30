@@ -1,6 +1,35 @@
 # Implementation status
 
-Updated: 2026-07-30 (v0.8 PR1 — UI and runtime contract crates)
+Updated: 2026-07-30 (v0.8 PR2 — authenticated Studio shell)
+
+## v0.8 PR2 — Studio shell (complete)
+
+- `purrcode-studio-shell` serves a real responsive graphical application from a loopback-only
+  Axum server. The dashboard shows daemon health, repository/HEAD/dirty state, durable runs, a
+  one-goal run composer, the eleven PRD §10.1 product surfaces, and a visible human-authority
+  summary. It uses only white/black canvases with system light/dark mode and a responsive mobile
+  navigation layout.
+- The browser never receives the daemon bearer credential. `purrcode ui` verifies the daemon and
+  Studio API versions before binding, then exchanges a 256-bit one-time bootstrap link for an
+  HttpOnly, SameSite=Strict session cookie. The shell consumes the bootstrap exactly once, rejects
+  non-loopback binds, rejects cross-origin mutations, applies a restrictive CSP/security headers,
+  and forwards only `/v1/*` to the authenticated daemon. PawGate/Claw and the existing daemon remain
+  the only execution path.
+- `purrcode ui [--remote URL] [--no-open] [--repository PATH]` is available; a display-capable bare
+  `purrcode` launches Studio, while `purrcode tui` preserves the terminal client and headless hosts
+  continue there automatically. Browser opening uses explicit platform argument vectors, never a
+  shell string. `--daemon-token` supports isolated daemon instances without changing the secure
+  default token location.
+- Daemon health now advertises `studio_api_version` from `purrcode-ui-contracts`; incompatible
+  clients fail before the UI server is exposed.
+- Three real-HTTP Studio tests prove cookie enforcement, one-time bootstrap consumption, daemon
+  credential confinement, authenticated proxying, same-origin mutation enforcement, public-bind
+  rejection, and compatibility failure. A real local daemon plus in-app browser acceptance proved
+  bootstrap redirect, dashboard rendering, repository inspection, zero sessions/model requests at
+  startup, Workbench navigation, and a 700 px layout with no page overflow.
+- `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and
+  `cargo test --workspace --no-fail-fast` pass. The existing live Ollama and disposable macOS
+  Keychain tests remain explicitly ignored external checks; they were not represented as passing.
 
 ## v0.8 PR1 — UI and runtime contracts (complete)
 
@@ -15,7 +44,7 @@ I/O and no tokio dependency, so PR2–PR6 build stable targets against them.
   `RunStatus` / `RepositoryReference` (Local | Remote) / `EnvironmentProfileId`
   / `TerminalId` / `GrantId` per PRD §11.2. Owns the shared newtype ids that the
   sibling crates re-export. `WorkspaceStatus` includes `Disconnected` which is
-  *live* so builds/tests/tests survive client disconnect (PRD §11.3).
+  *live* so builds and tests survive client disconnect (PRD §11.3).
   7 unit tests.
 - `purrcode-terminal-runtime` — `TerminalAction` enum (ExecuteCommand /
   StartTerminal / SendInput / ResizeTerminal / InspectProcess / WaitForProcess /

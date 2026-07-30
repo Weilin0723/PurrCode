@@ -31,6 +31,7 @@ purrcode-claw = { path = "../claw-sandbox" }
 purrcode-skill-store = { path = "../skill-store" }
 purrcode-skill-registry = { path = "../skill-registry" }
 purrcode-web-research = { path = "../web-research" }
+purrcode-ui-contracts = { path = "../ui-contracts" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

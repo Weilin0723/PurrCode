@@ -56,6 +56,9 @@ struct Cli {
     config: Option<PathBuf>,
     #[arg(long, global = true, default_value = "http://127.0.0.1:7377")]
     daemon_url: String,
+    /// Override the daemon bearer-token file (useful for isolated or remote runtimes).
+    #[arg(long, global = true)]
+    daemon_token: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -68,6 +71,26 @@ enum Command {
         force: bool,
         #[arg(long)]
         no_start: bool,
+    },
+    /// Launch the authenticated graphical PurrCode Studio.
+    Ui {
+        /// Attach Studio to an existing local or remote daemon.
+        #[arg(long)]
+        remote: Option<String>,
+        /// Loopback address for the browser-facing Studio shell.
+        #[arg(long, default_value = "127.0.0.1:0")]
+        bind: std::net::SocketAddr,
+        /// Print the one-time Studio URL instead of opening a browser.
+        #[arg(long)]
+        no_open: bool,
+        /// Repository to restore in the workspace dashboard.
+        #[arg(long)]
+        repository: Option<PathBuf>,
+    },
+    /// Launch the terminal user interface explicitly.
+    Tui {
+        #[arg(long)]
+        repository: Option<PathBuf>,
     },
     /// Start an isolated, resumable native-agent session.
     Run {
@@ -523,7 +546,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config_path = cli.config.unwrap_or(default_config_path()?);
     let daemon_url = cli.daemon_url;
-    let daemon_token = default_daemon_token_path()?;
+    let daemon_token = cli.daemon_token.unwrap_or(default_daemon_token_path()?);
     let requested_database = cli.database;
     let Some(command) = cli.command else {
         if !config_path.is_file() {
@@ -532,25 +555,29 @@ async fn main() -> Result<()> {
         let database = requested_database
             .clone()
             .unwrap_or(default_database_path()?);
-        ensure_daemon_started(&config_path, &database, &daemon_url, &daemon_token, false).await?;
-        let current = std::env::current_dir()?.canonicalize()?;
-        let repository = if is_git_repository(&current) {
-            current
+        let repository = resolve_product_repository(None)?;
+        if display_available() {
+            run_studio(
+                &config_path,
+                &database,
+                &daemon_url,
+                &daemon_token,
+                repository,
+                None,
+                "127.0.0.1:0".parse()?,
+                false,
+            )
+            .await?;
         } else {
-            let workspace = default_managed_workspace_path()?;
-            if !workspace.join(".git").is_dir() {
-                bail!(
-                    "current directory is not a Git repository and managed workspace is missing; run `purrcode init`"
-                );
-            }
-            workspace
-        };
-        purrcode_tui::run(TuiConfig {
-            daemon_url,
-            token_file: daemon_token,
-            repository,
-        })
-        .await?;
+            run_tui(
+                &config_path,
+                &database,
+                daemon_url,
+                daemon_token,
+                repository,
+            )
+            .await?;
+        }
         return Ok(());
     };
     let database = requested_database.unwrap_or(default_database_path()?);
@@ -568,6 +595,42 @@ async fn main() -> Result<()> {
                 &daemon_url,
                 force,
                 no_start,
+            )
+            .await?;
+        }
+        Command::Ui {
+            remote,
+            bind,
+            no_open,
+            repository,
+        } => {
+            if !config_path.is_file() {
+                bail!("PurrCode is not initialized; run `purrcode init`");
+            }
+            let repository = resolve_product_repository(repository)?;
+            run_studio(
+                &config_path,
+                &database,
+                &daemon_url,
+                &daemon_token,
+                repository,
+                remote,
+                bind,
+                no_open,
+            )
+            .await?;
+        }
+        Command::Tui { repository } => {
+            if !config_path.is_file() {
+                bail!("PurrCode is not initialized; run `purrcode init`");
+            }
+            let repository = resolve_product_repository(repository)?;
+            run_tui(
+                &config_path,
+                &database,
+                daemon_url,
+                daemon_token,
+                repository,
             )
             .await?;
         }
@@ -3004,6 +3067,129 @@ fn default_daemon_token_path() -> Result<PathBuf> {
     let dirs = ProjectDirs::from("dev", "PurrCode", "PurrCode")
         .context("operating system did not provide a PurrCode data directory")?;
     Ok(dirs.data_local_dir().join("daemon.token"))
+}
+
+fn resolve_product_repository(repository: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(repository) = repository {
+        let repository = repository
+            .canonicalize()
+            .with_context(|| format!("resolve repository {}", repository.display()))?;
+        if !is_git_repository(&repository) {
+            bail!("{} is not a Git repository", repository.display());
+        }
+        return Ok(repository);
+    }
+    let current = std::env::current_dir()?.canonicalize()?;
+    if is_git_repository(&current) {
+        return Ok(current);
+    }
+    let workspace = default_managed_workspace_path()?;
+    if !workspace.join(".git").is_dir() {
+        bail!(
+            "current directory is not a Git repository and managed workspace is missing; run `purrcode init`"
+        );
+    }
+    workspace
+        .canonicalize()
+        .with_context(|| format!("resolve managed workspace {}", workspace.display()))
+}
+
+async fn run_tui(
+    config_path: &Path,
+    database: &Path,
+    daemon_url: String,
+    daemon_token: PathBuf,
+    repository: PathBuf,
+) -> Result<()> {
+    ensure_daemon_started(config_path, database, &daemon_url, &daemon_token, false).await?;
+    purrcode_tui::run(TuiConfig {
+        daemon_url,
+        token_file: daemon_token,
+        repository,
+    })
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_studio(
+    config_path: &Path,
+    database: &Path,
+    daemon_url: &str,
+    daemon_token: &Path,
+    repository: PathBuf,
+    remote: Option<String>,
+    bind: std::net::SocketAddr,
+    no_open: bool,
+) -> Result<()> {
+    let target = if let Some(remote) = remote {
+        remote
+    } else {
+        ensure_daemon_started(config_path, database, daemon_url, daemon_token, false).await?;
+        daemon_url.to_owned()
+    };
+    let token = fs::read_to_string(daemon_token).with_context(|| {
+        format!(
+            "read daemon token {}; start or authenticate the target daemon first",
+            daemon_token.display()
+        )
+    })?;
+    let (report, server) =
+        purrcode_studio_shell::bind_and_report(purrcode_studio_shell::StudioConfig {
+            bind,
+            daemon_url: url::Url::parse(&target).context("parse daemon URL")?,
+            daemon_token: token,
+            repository,
+            expected_daemon_api_version: DAEMON_API_VERSION,
+            expected_studio_api_version: purrcode_ui_contracts::STUDIO_API_VERSION,
+        })
+        .await?;
+    println!("Studio: {}", report.bootstrap_url);
+    println!("The link is single-use and the daemon credential is not exposed to the browser.");
+    if !no_open && display_available() {
+        if !open_browser(report.bootstrap_url.as_str()) {
+            println!("Browser launch was unavailable; open the Studio link above manually.");
+        }
+    } else {
+        println!("Browser launch skipped; open the Studio link above from this machine.");
+    }
+    tokio::select! {
+        result = server => result.context("serve PurrCode Studio")?,
+        signal = tokio::signal::ctrl_c() => signal.context("wait for Studio shutdown signal")?,
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn display_available() -> bool {
+    std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn display_available() -> bool {
+    true
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn display_available() -> bool {
+    false
+}
+
+fn open_browser(url: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg(url).status();
+    #[cfg(target_os = "linux")]
+    let status = std::process::Command::new("xdg-open").arg(url).status();
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("rundll32")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(url)
+        .status();
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    let status: std::io::Result<std::process::ExitStatus> = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "browser launch is unsupported",
+    ));
+    status.is_ok_and(|status| status.success())
 }
 
 fn default_golden_catalog_path() -> PathBuf {

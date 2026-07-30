@@ -29,6 +29,8 @@ purrcode-ninelives = { path = "../ninelives-recovery" }
 purrcode-claw = { path = "../claw-sandbox" }
 purrcode-evaluation-runtime = { path = "../evaluation-runtime" }
 purrcode-evidence-bundle = { path = "../evidence-bundle" }
+purrcode-studio-shell = { path = "../studio-shell" }
+purrcode-ui-contracts = { path = "../ui-contracts" }
 reqwest.workspace = true
 rpassword.workspace = true
 serde_json.workspace = true
