@@ -178,14 +178,14 @@ impl Harness {
     /// This is the only sanctioned way to wait for the interface: it either
     /// observes the state or fails with the screen it saw, so a test can never
     /// pass because a sleep happened to be long enough.
-    pub fn wait_for_text(&self, needle: &str) -> Result<Screen> {
+    pub fn wait_for_text(&mut self, needle: &str) -> Result<Screen> {
         self.wait_until(DEFAULT_TIMEOUT, &format!("text {needle:?}"), |screen| {
             screen.contains(needle)
         })
     }
 
     /// Wait for a sentence that may legitimately wrap across rows.
-    pub fn wait_for_wrapped(&self, needle: &str) -> Result<Screen> {
+    pub fn wait_for_wrapped(&mut self, needle: &str) -> Result<Screen> {
         self.wait_until(
             DEFAULT_TIMEOUT,
             &format!("wrapped text {needle:?}"),
@@ -194,7 +194,7 @@ impl Harness {
     }
 
     /// Wait until every needle is visible.
-    pub fn wait_for_all(&self, needles: &[&str]) -> Result<Screen> {
+    pub fn wait_for_all(&mut self, needles: &[&str]) -> Result<Screen> {
         self.wait_until(DEFAULT_TIMEOUT, &format!("all of {needles:?}"), |screen| {
             needles.iter().all(|needle| screen.contains(needle))
         })
@@ -210,7 +210,7 @@ impl Harness {
     /// footer hint bar) has finished re-rendering to drop stale content from
     /// the previous frame. Checking both together keeps waiting until they
     /// hold simultaneously, on one consistent render.
-    pub fn wait_for_all_and_absent(&self, present: &[&str], absent: &[&str]) -> Result<Screen> {
+    pub fn wait_for_all_and_absent(&mut self, present: &[&str], absent: &[&str]) -> Result<Screen> {
         self.wait_until(
             DEFAULT_TIMEOUT,
             &format!("all of {present:?} and none of {absent:?}"),
@@ -222,7 +222,7 @@ impl Harness {
     }
 
     /// Wait until `needle` is no longer visible.
-    pub fn wait_until_absent(&self, needle: &str) -> Result<Screen> {
+    pub fn wait_until_absent(&mut self, needle: &str) -> Result<Screen> {
         self.wait_until(
             DEFAULT_TIMEOUT,
             &format!("absence of {needle:?}"),
@@ -281,7 +281,7 @@ impl Harness {
     }
 
     fn wait_until(
-        &self,
+        &mut self,
         timeout: Duration,
         description: &str,
         mut predicate: impl FnMut(&Screen) -> bool,
@@ -293,10 +293,23 @@ impl Harness {
                 return Ok(last);
             }
             if Instant::now() >= deadline {
+                // A blank screen after the full timeout is a completely
+                // different failure than a screen that rendered something
+                // else: distinguish "the child never started producing
+                // output" (still running vs. exited, and with what code) from
+                // "it rendered the wrong thing" so a failure on a platform we
+                // cannot attach a debugger to is still diagnosable from the
+                // CI log alone.
+                let process_state = match self.session.exited() {
+                    Ok(Some(code)) => format!("child exited with code {code}"),
+                    Ok(None) => "child is still running".to_owned(),
+                    Err(error) => format!("child exit status unknown: {error}"),
+                };
                 bail!(
-                    "timed out waiting for {description} at {}x{}.\nScreen:\n{}\n\nRequests:\n{}",
+                    "timed out waiting for {description} at {}x{}.\n{process_state}; output stream closed: {}\nScreen:\n{}\n\nRequests:\n{}",
                     self.options.columns,
                     self.options.rows,
+                    self.session.output_closed(),
                     last.text(),
                     self.daemon.request_log()
                 );
@@ -525,7 +538,7 @@ mod tests {
             10,
         )
         .expect("spawn");
-        let harness = Harness {
+        let mut harness = Harness {
             workspace,
             daemon,
             session,
