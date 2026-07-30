@@ -22,7 +22,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo build --workspace
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast
 
   clients:
     runs-on: ubuntu-latest
