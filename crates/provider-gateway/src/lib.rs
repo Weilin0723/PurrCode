@@ -27,7 +27,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -813,6 +813,11 @@ impl AppConfig {
                     "local providers do not require an API key".into(),
                 ));
             }
+            ProviderConfig::AzureOpenai { credential, .. } => {
+                *credential = AzureCredential::KeychainKey {
+                    name: credential_name.to_owned(),
+                };
+            }
         }
         Ok(())
     }
@@ -837,6 +842,10 @@ impl AppConfig {
                 ..
             }
             | ProviderConfig::EnterpriseGateway {
+                capabilities: models,
+                ..
+            }
+            | ProviderConfig::AzureOpenai {
                 capabilities: models,
                 ..
             } => {
@@ -893,6 +902,29 @@ pub struct ModelsConfig {
     pub roles: BTreeMap<String, String>,
 }
 
+/// How an `azure-openai` provider authenticates. Raw keys never live in config
+/// files: `KeychainKey` is a reference into the OS credential store, exactly
+/// like every other provider's `api_key_env`. `ManagedIdentity` and `AzureCli`
+/// resolve to a short-lived Entra bearer token, never a static secret.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "mode", rename_all = "kebab-case")]
+pub enum AzureCredential {
+    /// `api-key` header, value from the OS keychain (existing credential store).
+    KeychainKey { name: String },
+    /// Entra ID bearer token from the VM's Managed Identity (IMDS), scope
+    /// `https://cognitiveservices.azure.com/.default`, cached until expiry.
+    ManagedIdentity {
+        #[serde(default)]
+        client_id: Option<String>,
+    },
+    /// Developer convenience: token via `az account get-access-token`.
+    AzureCli,
+}
+
+fn azure_default_api_version() -> String {
+    "2024-10-21".into()
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ProviderConfig {
@@ -934,6 +966,16 @@ pub enum ProviderConfig {
         #[serde(default)]
         capabilities: BTreeMap<String, ModelCapabilities>,
     },
+    /// `https://{resource}.openai.azure.com` or an AI Foundry endpoint.
+    AzureOpenai {
+        endpoint: Url,
+        deployment: String,
+        #[serde(default = "azure_default_api_version")]
+        api_version: String,
+        credential: AzureCredential,
+        #[serde(default)]
+        capabilities: BTreeMap<String, ModelCapabilities>,
+    },
 }
 
 impl ProviderConfig {
@@ -945,6 +987,7 @@ impl ProviderConfig {
             } => (base_url, *local),
             Self::Ollama { base_url, .. } => (base_url, true),
             Self::EnterpriseGateway { base_url, .. } => (base_url, false),
+            Self::AzureOpenai { endpoint, .. } => (endpoint, false),
         };
         if local && !is_loopback_url(url) {
             return Err(ProviderError::Configuration(format!(
@@ -965,6 +1008,7 @@ impl ProviderConfig {
             Self::OpenaiCompatible { local, .. } => *local,
             Self::Ollama { .. } => true,
             Self::EnterpriseGateway { .. } => false,
+            Self::AzureOpenai { .. } => false,
         }
     }
 
@@ -973,7 +1017,8 @@ impl ProviderConfig {
             Self::Openai { capabilities, .. }
             | Self::OpenaiCompatible { capabilities, .. }
             | Self::Ollama { capabilities, .. }
-            | Self::EnterpriseGateway { capabilities, .. } => capabilities,
+            | Self::EnterpriseGateway { capabilities, .. }
+            | Self::AzureOpenai { capabilities, .. } => capabilities,
         }
     }
 }
@@ -1109,6 +1154,17 @@ pub struct HttpProvider {
     capabilities: BTreeMap<String, ModelCapabilities>,
     client: reqwest::Client,
     api_mode: ProviderApiMode,
+    /// `Some((deployment, api_version))` for `azure-openai`: `endpoint()` builds
+    /// `{base_url}/openai/deployments/{deployment}/{path}?api-version={v}`
+    /// instead of the generic `base_url.join(path)`.
+    azure_deployment: Option<(String, String)>,
+    /// `Some(client_id)` for `AzureCredential::ManagedIdentity`; the inner
+    /// option distinguishes the system-assigned identity (`None`) from a
+    /// user-assigned one (`Some(client_id)`).
+    managed_identity: Option<Option<String>>,
+    /// Cached Managed Identity token and its expiry instant, so a fetch only
+    /// happens once per lifetime rather than once per request.
+    managed_identity_token: tokio::sync::Mutex<Option<(String, Instant)>>,
 }
 
 impl HttpProvider {
@@ -1125,6 +1181,8 @@ impl HttpProvider {
             proxy_url,
             capabilities,
             api_mode,
+            azure_deployment,
+            managed_identity,
         ) = match config {
             ProviderConfig::Openai {
                 base_url,
@@ -1142,6 +1200,8 @@ impl HttpProvider {
                 None,
                 capabilities,
                 ProviderApiMode::Responses,
+                None,
+                None,
             ),
             ProviderConfig::OpenaiCompatible {
                 base_url,
@@ -1161,6 +1221,8 @@ impl HttpProvider {
                 None,
                 capabilities,
                 ProviderApiMode::OpenaiCompatible,
+                None,
+                None,
             ),
             ProviderConfig::Ollama {
                 base_url,
@@ -1177,6 +1239,8 @@ impl HttpProvider {
                 None,
                 capabilities,
                 ProviderApiMode::OllamaNative,
+                None,
+                None,
             ),
             ProviderConfig::EnterpriseGateway {
                 base_url,
@@ -1200,7 +1264,59 @@ impl HttpProvider {
                 proxy_url,
                 capabilities,
                 ProviderApiMode::Responses,
+                None,
+                None,
             ),
+            ProviderConfig::AzureOpenai {
+                endpoint,
+                deployment,
+                api_version,
+                credential,
+                capabilities,
+            } => {
+                let (api_key_env, credential_command, header_env, managed_identity) =
+                    match credential {
+                        AzureCredential::KeychainKey { name } => {
+                            let mut header_env = BTreeMap::new();
+                            header_env.insert("api-key".to_owned(), keychain_reference(&name)?);
+                            (None, None, header_env, None)
+                        }
+                        AzureCredential::AzureCli => (
+                            None,
+                            Some(vec![
+                                "az".to_owned(),
+                                "account".to_owned(),
+                                "get-access-token".to_owned(),
+                                "--resource".to_owned(),
+                                "https://cognitiveservices.azure.com".to_owned(),
+                                "--query".to_owned(),
+                                "accessToken".to_owned(),
+                                "--output".to_owned(),
+                                "tsv".to_owned(),
+                            ]),
+                            BTreeMap::new(),
+                            None,
+                        ),
+                        AzureCredential::ManagedIdentity { client_id } => {
+                            (None, None, BTreeMap::new(), Some(client_id))
+                        }
+                    };
+                (
+                    endpoint,
+                    api_key_env,
+                    credential_command,
+                    false,
+                    BTreeMap::new(),
+                    header_env,
+                    None,
+                    None,
+                    None,
+                    capabilities,
+                    ProviderApiMode::OpenaiCompatible,
+                    Some((deployment, api_version)),
+                    managed_identity,
+                )
+            }
         };
         let mut headers = HeaderMap::new();
         for (key, value) in raw_headers {
@@ -1245,10 +1361,31 @@ impl HttpProvider {
             capabilities,
             client,
             api_mode,
+            azure_deployment,
+            managed_identity,
+            managed_identity_token: tokio::sync::Mutex::new(None),
         })
     }
 
     fn endpoint(&self, path: &str) -> Result<Url, ProviderError> {
+        if let Some((deployment, api_version)) = &self.azure_deployment {
+            let mut url = self.base_url.clone();
+            {
+                let mut segments = url.path_segments_mut().map_err(|()| {
+                    ProviderError::Configuration("azure endpoint cannot be a base URL".into())
+                })?;
+                segments.pop_if_empty();
+                segments.push("openai");
+                segments.push("deployments");
+                segments.push(deployment);
+                for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+                    segments.push(segment);
+                }
+            }
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+            return Ok(url);
+        }
         let mut base_url = self.base_url.clone();
         if !base_url.path().ends_with('/') {
             let normalized = format!("{}/", base_url.path());
@@ -1286,6 +1423,12 @@ impl HttpProvider {
                 "credential_command".into(),
                 run_credential_command(command).await?,
             ))
+        } else if let Some(client_id) = &self.managed_identity {
+            Some((
+                "managed_identity".into(),
+                self.managed_identity_bearer_token(client_id.as_deref())
+                    .await?,
+            ))
         } else {
             None
         };
@@ -1296,6 +1439,72 @@ impl HttpProvider {
             request = request.header(AUTHORIZATION, value);
         }
         Ok(request)
+    }
+
+    /// Fetch (and cache until shortly before expiry) an Entra bearer token from
+    /// the VM's Managed Identity endpoint (IMDS). A token acquisition failure
+    /// is a provider failure with the same retry path as any other transport
+    /// error — never a silent fallback to another credential.
+    async fn managed_identity_bearer_token(
+        &self,
+        client_id: Option<&str>,
+    ) -> Result<String, ProviderError> {
+        {
+            let cached = self.managed_identity_token.lock().await;
+            if let Some((token, expires_at)) = cached.as_ref() {
+                if Instant::now() < *expires_at {
+                    return Ok(token.clone());
+                }
+            }
+        }
+        let mut url = Url::parse("http://169.254.169.254/metadata/identity/oauth2/token")
+            .expect("static IMDS URL is valid");
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("api-version", "2018-02-01");
+            query.append_pair("resource", "https://cognitiveservices.azure.com/");
+            if let Some(client_id) = client_id {
+                query.append_pair("client_id", client_id);
+            }
+        }
+        let response = self
+            .client
+            .get(url)
+            .header("Metadata", "true")
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|error| {
+                ProviderError::Unavailable(format!(
+                    "managed identity token request failed: {error}"
+                ))
+            })?;
+        if !response.status().is_success() {
+            return Err(ProviderError::Unavailable(format!(
+                "managed identity endpoint returned HTTP {}",
+                response.status()
+            )));
+        }
+        let body: Value = response.json().await.map_err(|error| {
+            ProviderError::Unavailable(format!("managed identity response was invalid: {error}"))
+        })?;
+        let token = body
+            .get("access_token")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                ProviderError::Unavailable("managed identity response had no access_token".into())
+            })?
+            .to_owned();
+        let expires_in_seconds = body
+            .get("expires_in")
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(3600);
+        let refresh_margin = Duration::from_secs(60);
+        let ttl = Duration::from_secs(expires_in_seconds).saturating_sub(refresh_margin);
+        let expires_at = Instant::now() + ttl;
+        *self.managed_identity_token.lock().await = Some((token.clone(), expires_at));
+        Ok(token)
     }
 
     async fn send_with_retry(
@@ -1754,6 +1963,114 @@ mod tests {
             "http://127.0.0.1:1234/v1/chat/completions"
         );
         assert_eq!(provider.api_mode, ProviderApiMode::OpenaiCompatible);
+    }
+
+    #[test]
+    fn azure_openai_endpoint_includes_deployment_and_api_version() {
+        let provider = HttpProvider::from_config(
+            "azure".into(),
+            ProviderConfig::AzureOpenai {
+                endpoint: Url::parse("https://acme.openai.azure.com").unwrap(),
+                deployment: "gpt-4o-mini".into(),
+                api_version: "2024-10-21".into(),
+                credential: AzureCredential::KeychainKey {
+                    name: "azure-key".into(),
+                },
+                capabilities: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            provider.endpoint("chat/completions").unwrap().as_str(),
+            "https://acme.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-10-21"
+        );
+        assert_eq!(provider.api_mode, ProviderApiMode::OpenaiCompatible);
+        assert!(!provider.local);
+    }
+
+    #[test]
+    fn azure_openai_api_version_defaults_when_omitted_from_config() {
+        let value = serde_json::json!({
+            "type": "azure-openai",
+            "endpoint": "https://acme.openai.azure.com",
+            "deployment": "gpt-4o-mini",
+            "credential": {"mode": "azure-cli"},
+        });
+        let config: ProviderConfig = serde_json::from_value(value).unwrap();
+        match config {
+            ProviderConfig::AzureOpenai { api_version, .. } => {
+                assert_eq!(api_version, "2024-10-21");
+            }
+            other => panic!("expected AzureOpenai, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn azure_openai_keychain_credential_resolves_through_the_api_key_header() {
+        let provider = HttpProvider::from_config(
+            "azure".into(),
+            ProviderConfig::AzureOpenai {
+                endpoint: Url::parse("https://acme.openai.azure.com").unwrap(),
+                deployment: "gpt-4o-mini".into(),
+                api_version: "2024-10-21".into(),
+                credential: AzureCredential::KeychainKey {
+                    name: "azure-key".into(),
+                },
+                capabilities: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+        // A keychain-backed api-key never touches Authorization/Bearer; it is
+        // the raw header value the header_env mechanism already resolves.
+        assert_eq!(
+            provider.header_env.get("api-key"),
+            Some(&"keychain:azure-key".to_owned())
+        );
+        assert!(provider.api_key_env.is_none());
+        assert!(provider.credential_command.is_none());
+    }
+
+    #[test]
+    fn azure_openai_cli_credential_shells_out_to_az_get_access_token() {
+        let provider = HttpProvider::from_config(
+            "azure".into(),
+            ProviderConfig::AzureOpenai {
+                endpoint: Url::parse("https://acme.openai.azure.com").unwrap(),
+                deployment: "gpt-4o-mini".into(),
+                api_version: "2024-10-21".into(),
+                credential: AzureCredential::AzureCli,
+                capabilities: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+        let command = provider.credential_command.as_deref().unwrap();
+        assert_eq!(command[0], "az");
+        assert!(command.contains(&"get-access-token".to_owned()));
+        assert!(command.contains(&"https://cognitiveservices.azure.com".to_owned()));
+        assert!(provider.header_env.is_empty());
+    }
+
+    #[test]
+    fn azure_openai_managed_identity_has_no_static_credential() {
+        let provider = HttpProvider::from_config(
+            "azure".into(),
+            ProviderConfig::AzureOpenai {
+                endpoint: Url::parse("https://acme.openai.azure.com").unwrap(),
+                deployment: "gpt-4o-mini".into(),
+                api_version: "2024-10-21".into(),
+                credential: AzureCredential::ManagedIdentity {
+                    client_id: Some("11111111-1111-1111-1111-111111111111".into()),
+                },
+                capabilities: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+        assert!(provider.api_key_env.is_none());
+        assert!(provider.credential_command.is_none());
+        assert_eq!(
+            provider.managed_identity,
+            Some(Some("11111111-1111-1111-1111-111111111111".to_owned()))
+        );
     }
 
     #[test]

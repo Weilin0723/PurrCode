@@ -181,7 +181,12 @@ impl Drop for PtySession {
     }
 }
 
-#[cfg(test)]
+// Every test here drives a trivial POSIX shell script through the harness's
+// own PTY wrapper -- it exercises this crate's PTY mechanics, not the real
+// product's cross-platform PTY support (portable-pty/ConPTY on Windows,
+// exercised separately by the `tests/*.rs` suites against the real binary).
+// `/bin/sh` and `/` do not exist on Windows, so this module is POSIX-only.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

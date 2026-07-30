@@ -21,7 +21,16 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo build --workspace
+      - name: Test workspace with real PTY integration
+        if: runner.os != 'Windows'
+        run: cargo test --workspace --no-fail-fast
+      - name: Test Windows workspace without the external ConPTY execution gate
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --exclude purrcode-tui-e2e --no-fail-fast
+      - name: Test Windows e2e harness library
+        if: runner.os == 'Windows'
+        run: cargo test -p purrcode-tui-e2e --lib
 
   clients:
     runs-on: ubuntu-latest

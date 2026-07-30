@@ -41,4 +41,16 @@ pub use screen::Screen;
 ///
 /// Generous enough for a cold binary on a loaded CI runner, short enough that a
 /// genuinely stuck workflow fails the test rather than hanging the suite.
-pub const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+///
+/// `App::run` makes several sequential daemon round-trips (check_provider,
+/// check_workspace, inspect_recovered_session) and inspects the repository
+/// with the OS process API (git subprocesses) before it ever enables raw
+/// mode or draws a first frame -- nothing reaches the PTY until all of that
+/// completes. Windows process creation and cross-process loopback
+/// connections are measurably slower than Unix, and this suite runs many
+/// such processes concurrently on a resource-constrained CI runner, so 20s
+/// (tuned only against Linux/macOS, since this suite never ran on Windows
+/// before) is not always enough purely for startup, independent of any
+/// actual bug. The reqwest client backing those calls already allows up to
+/// 60s per request; match that as the wait ceiling too.
+pub const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);

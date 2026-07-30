@@ -100,6 +100,8 @@ impl Harness {
         let arguments = vec![
             "--daemon-url".to_owned(),
             daemon.url(),
+            "--database".to_owned(),
+            workspace.database_path().display().to_string(),
             "workbench".to_owned(),
             "--repository".to_owned(),
             workspace.repository().display().to_string(),
@@ -114,6 +116,18 @@ impl Harness {
             // Deterministic theme unless the test overrides it.
             ("PURRCODE_THEME".to_owned(), "dark".to_owned()),
             ("RUST_LOG".to_owned(), "warn".to_owned()),
+            // reqwest respects HTTP(S)_PROXY / system proxy settings by
+            // default, and the workbench's client sets no explicit
+            // `.no_proxy()`. Some CI runner images configure a proxy at the
+            // environment or OS level; without an explicit exclusion, every
+            // request to this test's loopback fake daemon would be routed
+            // through it and silently stall until the client's own timeout,
+            // rather than actually connecting. Exclude the loopback
+            // addresses explicitly so the daemon is always reached directly,
+            // matching what a real deployment would want for localhost
+            // anyway.
+            ("NO_PROXY".to_owned(), "127.0.0.1,localhost".to_owned()),
+            ("no_proxy".to_owned(), "127.0.0.1,localhost".to_owned()),
         ];
         environment.extend(options.environment.clone());
         PtySession::spawn(
@@ -176,14 +190,14 @@ impl Harness {
     /// This is the only sanctioned way to wait for the interface: it either
     /// observes the state or fails with the screen it saw, so a test can never
     /// pass because a sleep happened to be long enough.
-    pub fn wait_for_text(&self, needle: &str) -> Result<Screen> {
+    pub fn wait_for_text(&mut self, needle: &str) -> Result<Screen> {
         self.wait_until(DEFAULT_TIMEOUT, &format!("text {needle:?}"), |screen| {
             screen.contains(needle)
         })
     }
 
     /// Wait for a sentence that may legitimately wrap across rows.
-    pub fn wait_for_wrapped(&self, needle: &str) -> Result<Screen> {
+    pub fn wait_for_wrapped(&mut self, needle: &str) -> Result<Screen> {
         self.wait_until(
             DEFAULT_TIMEOUT,
             &format!("wrapped text {needle:?}"),
@@ -192,14 +206,35 @@ impl Harness {
     }
 
     /// Wait until every needle is visible.
-    pub fn wait_for_all(&self, needles: &[&str]) -> Result<Screen> {
+    pub fn wait_for_all(&mut self, needles: &[&str]) -> Result<Screen> {
         self.wait_until(DEFAULT_TIMEOUT, &format!("all of {needles:?}"), |screen| {
             needles.iter().all(|needle| screen.contains(needle))
         })
     }
 
+    /// Wait until every `present` needle is visible and every `absent` needle
+    /// is not, all on the same screen.
+    ///
+    /// Use this instead of a `wait_for_text` followed by a separate
+    /// `assert_absent` on that same snapshot: a terminal frame can arrive
+    /// across multiple partial PTY reads, so a screen that already shows one
+    /// expected string does not guarantee an unrelated region (e.g. the
+    /// footer hint bar) has finished re-rendering to drop stale content from
+    /// the previous frame. Checking both together keeps waiting until they
+    /// hold simultaneously, on one consistent render.
+    pub fn wait_for_all_and_absent(&mut self, present: &[&str], absent: &[&str]) -> Result<Screen> {
+        self.wait_until(
+            DEFAULT_TIMEOUT,
+            &format!("all of {present:?} and none of {absent:?}"),
+            |screen| {
+                present.iter().all(|needle| screen.contains(needle))
+                    && absent.iter().all(|needle| !screen.contains(needle))
+            },
+        )
+    }
+
     /// Wait until `needle` is no longer visible.
-    pub fn wait_until_absent(&self, needle: &str) -> Result<Screen> {
+    pub fn wait_until_absent(&mut self, needle: &str) -> Result<Screen> {
         self.wait_until(
             DEFAULT_TIMEOUT,
             &format!("absence of {needle:?}"),
@@ -258,7 +293,7 @@ impl Harness {
     }
 
     fn wait_until(
-        &self,
+        &mut self,
         timeout: Duration,
         description: &str,
         mut predicate: impl FnMut(&Screen) -> bool,
@@ -270,10 +305,23 @@ impl Harness {
                 return Ok(last);
             }
             if Instant::now() >= deadline {
+                // A blank screen after the full timeout is a completely
+                // different failure than a screen that rendered something
+                // else: distinguish "the child never started producing
+                // output" (still running vs. exited, and with what code) from
+                // "it rendered the wrong thing" so a failure on a platform we
+                // cannot attach a debugger to is still diagnosable from the
+                // CI log alone.
+                let process_state = match self.session.exited() {
+                    Ok(Some(code)) => format!("child exited with code {code}"),
+                    Ok(None) => "child is still running".to_owned(),
+                    Err(error) => format!("child exit status unknown: {error}"),
+                };
                 bail!(
-                    "timed out waiting for {description} at {}x{}.\nScreen:\n{}\n\nRequests:\n{}",
+                    "timed out waiting for {description} at {}x{}.\n{process_state}; output stream closed: {}\nScreen:\n{}\n\nRequests:\n{}",
                     self.options.columns,
                     self.options.rows,
+                    self.session.output_closed(),
                     last.text(),
                     self.daemon.request_log()
                 );
@@ -426,7 +474,11 @@ mod tests {
     /// The artifact set the release process requires. Asserted on a harness whose
     /// child exited immediately, so it holds even for a workbench that failed to
     /// start — which is exactly when the artifacts matter most.
+    ///
+    /// Drives `/bin/sh` directly as a trivial, controlled child (not the real
+    /// `purrcode` binary), which does not exist on Windows -- POSIX-only.
     #[test]
+    #[cfg(unix)]
     fn a_failing_run_writes_every_required_artifact() {
         let workspace = Workspace::new().expect("workspace");
         let daemon = FakeDaemon::start(DaemonScript::default(), workspace.token()).expect("daemon");
@@ -479,7 +531,10 @@ mod tests {
         );
     }
 
+    /// Drives `/bin/sh` directly as a trivial, controlled child (not the real
+    /// `purrcode` binary), which does not exist on Windows -- POSIX-only.
     #[test]
+    #[cfg(unix)]
     fn a_wait_that_never_succeeds_reports_the_screen_it_saw() {
         let workspace = Workspace::new().expect("workspace");
         let daemon = FakeDaemon::start(DaemonScript::default(), workspace.token()).expect("daemon");
@@ -495,7 +550,7 @@ mod tests {
             10,
         )
         .expect("spawn");
-        let harness = Harness {
+        let mut harness = Harness {
             workspace,
             daemon,
             session,
