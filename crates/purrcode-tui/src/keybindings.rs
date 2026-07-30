@@ -2,24 +2,7 @@
 
 use crate::app::{App, AppMode};
 use crate::provider_setup::{ProviderSetup, SetupScreen};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::Rect;
-
-pub fn handle_mouse(app: &mut App, mouse: MouseEvent, terminal: Rect) {
-    match mouse.kind {
-        MouseEventKind::ScrollUp => app.conversation.user_scroll_up(3),
-        MouseEventKind::ScrollDown => app.conversation.user_scroll_down(3),
-        MouseEventKind::Down(MouseButton::Left) => {
-            if let Some(index) =
-                crate::render::timeline_card_at(app, terminal, mouse.column, mouse.row)
-            {
-                app.conversation.selected_card = Some(index);
-                app.conversation.toggle_selected_card();
-            }
-        }
-        _ => {}
-    }
-}
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if is_active_pull_cancel_key(key, app.active_pull_action.is_some()) {
@@ -36,10 +19,32 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         AppMode::SkillBrowse => handle_skill_key(app, key),
         AppMode::DiffView => handle_diff_key(app, key),
         AppMode::Help => handle_help_key(app, key),
+        AppMode::ModelBrowse => handle_model_browser_key(app, key),
         AppMode::LeaseConflict => handle_lease_conflict_key(app, key),
         AppMode::SessionChoice => handle_session_choice_key(app, key),
         AppMode::Conversation => handle_conversation_key(app, key),
     }
+}
+
+fn handle_model_browser_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => app.switch_mode(AppMode::Conversation),
+        KeyCode::Up => app.model_selected = app.model_selected.saturating_sub(1),
+        KeyCode::Down => {
+            app.model_selected = app
+                .model_selected
+                .saturating_add(1)
+                .min(app.model_choices.len().saturating_sub(1));
+        }
+        KeyCode::Enter => {
+            if let Some(model) = app.model_choices.get(app.model_selected) {
+                app.pending_command = Some(format!("/model {model}"));
+                app.switch_mode(AppMode::Conversation);
+            }
+        }
+        _ => {}
+    }
+    true
 }
 
 fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
@@ -81,6 +86,24 @@ fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
 }
 
 fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
+    if app.trace_inspector_visible {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('t') => app.trace_inspector_visible = false,
+            KeyCode::Left | KeyCode::Up => {
+                app.trace_event_index = app.trace_event_index.saturating_sub(1);
+                sync_trace_inspector(app);
+            }
+            KeyCode::Right | KeyCode::Down => {
+                app.trace_event_index = app
+                    .trace_event_index
+                    .saturating_add(1)
+                    .min(app.trace_total_events.saturating_sub(1));
+                sync_trace_inspector(app);
+            }
+            _ => {}
+        }
+        return true;
+    }
     if let Some(command) = model_pull_shortcut(
         key,
         app.composer.buffer.is_empty(),
@@ -169,6 +192,14 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         {
             app.conversation.toggle_selected_card()
         }
+        KeyCode::Char('t')
+            if app.composer.buffer.is_empty() && app.conversation.selected_card.is_some() =>
+        {
+            app.trace_event_index = app.conversation.selected_card.unwrap_or(0);
+            app.trace_total_events = app.conversation.timeline.len();
+            app.trace_inspector_visible = true;
+            sync_trace_inspector(app);
+        }
         KeyCode::Char('?') if app.composer.buffer.is_empty() => app.switch_mode(AppMode::Help),
         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.switch_mode(AppMode::Help)
@@ -235,6 +266,15 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         _ => {}
     }
     true
+}
+
+fn sync_trace_inspector(app: &mut App) {
+    if let Some(card) = app.conversation.timeline.get(app.trace_event_index) {
+        app.trace_event_type = card.title.clone();
+        app.trace_event_detail = std::iter::once(card.summary.clone())
+            .chain(card.details.iter().cloned())
+            .collect();
+    }
 }
 
 fn is_bare_resume_message(message: &str) -> bool {
@@ -470,6 +510,26 @@ fn handle_setup_key(app: &mut App, key: KeyEvent) -> bool {
     }
 
     match key.code {
+        KeyCode::Char('m' | 'M')
+            if app
+                .provider_setup
+                .as_ref()
+                .is_some_and(|setup| setup.screen == SetupScreen::ImportSource) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.select_provider(crate::provider_setup::ProviderType::OpenaiCompatible);
+            }
+        }
+        KeyCode::Char('u')
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && app.provider_setup.as_ref().is_some_and(|setup| {
+                    matches!(setup.screen, SetupScreen::Form | SetupScreen::ImportReview)
+                }) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.clear_active_field();
+            }
+        }
         KeyCode::Esc => {
             let nested = app.provider_setup.as_ref().map(|setup| setup.screen);
             match nested {
@@ -513,6 +573,16 @@ fn handle_setup_key(app: &mut App, key: KeyEvent) -> bool {
                 }
             }
         }
+        KeyCode::Up
+            if app.provider_setup.as_ref().is_some_and(|setup| {
+                matches!(setup.screen, SetupScreen::Form | SetupScreen::ImportReview)
+                    && setup.active_field == 3
+            }) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.cycle_discovered_model(-1);
+            }
+        }
         KeyCode::Down
             if app.provider_setup.as_ref().is_some_and(|setup| {
                 matches!(
@@ -527,6 +597,16 @@ fn handle_setup_key(app: &mut App, key: KeyEvent) -> bool {
                 } else {
                     setup.move_import_auth_choice(1);
                 }
+            }
+        }
+        KeyCode::Down
+            if app.provider_setup.as_ref().is_some_and(|setup| {
+                matches!(setup.screen, SetupScreen::Form | SetupScreen::ImportReview)
+                    && setup.active_field == 3
+            }) =>
+        {
+            if let Some(setup) = &mut app.provider_setup {
+                setup.cycle_discovered_model(1);
             }
         }
         KeyCode::Tab => {

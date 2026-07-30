@@ -1,7 +1,7 @@
 {
   "name": "@minaovo/purrcode",
-  "version": "0.6.1",
-  "purrcodeRelease": "0.6.0",
+  "version": "0.7.0",
+  "purrcodeRelease": "0.7.0",
   "description": "Secure installer and launcher for the PurrCode coding agent",
   "license": "Apache-2.0",
   "homepage": "https://github.com/Weilin0723/PurrCode",

@@ -66,6 +66,28 @@ const MAX_AUTONOMOUS_ITERATIONS: usize = 32;
 const MAX_CONSECUTIVE_POLICY_REJECTIONS: usize = 3;
 const MAX_ACTIONS_IN_PROMPT: usize = 12;
 const RETAINED_ACTIONS_AFTER_COMPACTION: usize = 6;
+const MAX_REJECTED_RESPONSE_PREVIEW_CHARS: usize = 4_096;
+
+fn safe_rejected_response_preview(output: &str, attempt: u8) -> String {
+    let preview = output
+        .chars()
+        .filter(|character| !crate::stream::is_unsafe_terminal_control(*character))
+        .take(MAX_REJECTED_RESPONSE_PREVIEW_CHARS)
+        .collect::<String>();
+    if preview.trim().is_empty() {
+        String::new()
+    } else {
+        let truncated = output.chars().count() > MAX_REJECTED_RESPONSE_PREVIEW_CHARS;
+        format!(
+            "Rejected structured response (attempt {attempt}):\n{preview}{}",
+            if truncated {
+                "\n… output truncated"
+            } else {
+                ""
+            }
+        )
+    }
+}
 /// Cooperative cancellation shared by the daemon/client owner and a [`NativeAgent`].
 #[derive(Clone, Debug, Default)]
 pub struct AgentCancellation {
@@ -405,6 +427,15 @@ impl<'a> NativeAgent<'a> {
         let parsed = match serde_json::from_str::<T>(&output) {
             Ok(parsed) => parsed,
             Err(error) => {
+                let preview = safe_rejected_response_preview(&output, attempt);
+                if !preview.is_empty() {
+                    self.emit_stream_event(AgentStreamEvent::ContentDelta {
+                        role: role.into(),
+                        attempt,
+                        delta: preview,
+                    })
+                    .await;
+                }
                 let error = AgentError::Structured(error);
                 self.emit_agent_failure(&mut tracker, role, attempt, &error)
                     .await?;

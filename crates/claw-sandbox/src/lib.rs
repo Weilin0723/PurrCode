@@ -284,7 +284,6 @@ async fn execute_typed_read(
                 };
                 let mut grep_state = GrepState {
                     directory: &directory,
-                    working_directory,
                     pattern,
                     case_insensitive: *case_insensitive,
                     max_results,
@@ -321,6 +320,7 @@ struct WalkState<'a> {
     output: &'a mut Vec<u8>,
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn collect_files(
     base_path: &Path,
     rel_path: &Path,
@@ -358,9 +358,10 @@ fn collect_files(
         state.output.extend_from_slice(line.as_bytes());
         *state.entries += 1;
         if current_depth < state.max_depth {
-            let child_abs = base_path.join(&name);
-            if child_abs.is_dir() {
-                collect_files(&child_abs, &child_rel, current_depth + 1, state)?;
+            if let Ok(meta) = state.directory.metadata(&child_rel) {
+                if meta.is_dir() {
+                    collect_files(base_path, &child_rel, current_depth + 1, state)?;
+                }
             }
         }
     }
@@ -369,7 +370,6 @@ fn collect_files(
 
 struct GrepState<'a> {
     directory: &'a Dir,
-    working_directory: &'a Path,
     pattern: &'a str,
     case_insensitive: bool,
     max_results: u32,
@@ -407,15 +407,11 @@ fn grep_file_recursive(rel_path: &Path, state: &mut GrepState) -> Result<(), Exe
         }
         return Ok(());
     }
-    // It's a file — search its contents
+    // It's a file — search its contents through cap-std to prevent symlink escapes.
     if *state.results >= state.max_results || *state.output_bytes >= state.max_bytes {
         return Ok(());
     }
-    let abs_path = state.working_directory.join(target);
-    if abs_path.is_dir() {
-        return Ok(());
-    }
-    let file = match std::fs::File::open(&abs_path) {
+    let file = match state.directory.open(target) {
         Ok(f) => f,
         Err(_) => return Ok(()),
     };
@@ -1141,6 +1137,57 @@ mod tests {
         assert!(
             !stdout.contains("other.txt"),
             "grep should not match other.txt"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_grep_never_reads_an_external_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let repository = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::write(external.path().join("secret.txt"), "EXTERNAL_SECRET_TOKEN").unwrap();
+        symlink(
+            external.path().join("secret.txt"),
+            repository.path().join("linked-secret.txt"),
+        )
+        .unwrap();
+
+        let action = ProposedAction::RepositoryRead(RepositoryReadAction::RepositoryGrep {
+            pattern: "EXTERNAL_SECRET_TOKEN".into(),
+            paths: vec![PathBuf::from(".")],
+            case_insensitive: false,
+            max_results: 64,
+            max_bytes: 4096,
+        });
+        let constraints = ActionConstraints {
+            working_directory: repository.path().to_path_buf(),
+            network: false,
+            timeout_seconds: 10,
+            maximum_output_bytes: 4096,
+            allowed_write_globs: Vec::new(),
+            maximum_changed_files: 0,
+        };
+        let action_id = ActionId::new();
+        let mut store = SessionStore::in_memory().unwrap();
+        store
+            .authorize(&Authorization {
+                action_id,
+                session_id: SessionId::new(),
+                action_digest: action.digest(&constraints).unwrap(),
+                constraints: constraints.clone(),
+                authorized_at: Utc::now(),
+                approved_by: ApprovalAuthority::DeterministicPolicy,
+            })
+            .unwrap();
+
+        let result = ToolRuntime::execute(&mut store, action_id, &action, &constraints)
+            .await
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&result.stdout).contains("EXTERNAL_SECRET_TOKEN"),
+            "native repository grep followed a symlink outside its directory capability"
         );
     }
 

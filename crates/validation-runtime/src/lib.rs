@@ -125,11 +125,20 @@ impl ValidationRunner {
                 None => repository.to_path_buf(),
             };
             let action_id = ActionId::new();
+            let mut environment = command.environment.clone();
+            environment.insert(
+                "HOME".into(),
+                working_directory.to_string_lossy().into_owned(),
+            );
+            if matches!(command.program.as_str(), "npm" | "pnpm") {
+                environment.insert("NPM_CONFIG_UPDATE_NOTIFIER".into(), "false".into());
+                environment.insert("NO_UPDATE_NOTIFIER".into(), "1".into());
+            }
             let action = ProposedAction::Command(CommandAction {
                 program: command.program.clone().into(),
                 arguments: command.arguments.clone(),
                 working_directory: working_directory.clone(),
-                environment: command.environment.clone(),
+                environment,
             });
             let constraints = ActionConstraints {
                 working_directory,
@@ -262,7 +271,12 @@ fn generated_write_globs(program: &str) -> Vec<String> {
     match program {
         "cargo" => vec!["target/**".into()],
         "go" => vec!["**/*.test".into()],
-        "npm" | "pnpm" => vec!["dist/**".into(), "build/**".into(), "coverage/**".into()],
+        "npm" | "pnpm" => vec![
+            "dist/**".into(),
+            "build/**".into(),
+            "coverage/**".into(),
+            ".npm/**".into(),
+        ],
         "./gradlew" | "mvn" => vec!["**/build/**".into(), "**/target/**".into()],
         _ => Vec::new(),
     }
@@ -722,5 +736,15 @@ mod tests {
                     ..
                 }
             )));
+        assert!(store.events(session_id).unwrap().iter().any(|event| {
+            matches!(
+                event,
+                SessionEvent::ActionProposed {
+                    action: ProposedAction::Command(action),
+                    ..
+                } if action.environment.get("HOME")
+                    == Some(&repository.path().to_string_lossy().into_owned())
+            )
+        }));
     }
 }

@@ -205,7 +205,7 @@ fn convert_git(args: &[&str]) -> Option<RepositoryReadAction> {
                         let n: u32 = arg[1..].parse().ok()?;
                         max_count = Some(n);
                     }
-                    _ => {}
+                    _ => return None,
                 }
                 i += 1;
             }
@@ -346,7 +346,13 @@ fn convert_rg(args: &[&str]) -> Option<RepositoryReadAction> {
                     paths.push(canon);
                 }
             }
-            _ => {}
+            unknown => {
+                // Reject unsupported flags to ensure normalization is semantics-preserving.
+                // Silently ignoring a flag would produce an action digest that differs from
+                // the model's intent, making deduplication and audit unreliable.
+                let _ = unknown;
+                return None;
+            }
         }
         i += 1;
     }

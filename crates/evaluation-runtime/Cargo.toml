@@ -1,0 +1,12 @@
+[package]
+name = "purrcode-evaluation-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+purrcode-runtime-core = { path = "../runtime-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true

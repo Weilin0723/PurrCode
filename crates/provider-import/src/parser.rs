@@ -91,7 +91,11 @@ fn detect_format(input: &str) -> InputFormat {
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
         return InputFormat::Json;
     }
-    if lower.contains("from openai import") || lower.contains("openai(") {
+    if lower.contains("from openai import")
+        || lower.contains("openai(")
+        || lower.contains("requests.post(")
+        || lower.contains("requests.request(")
+    {
         return InputFormat::Python;
     }
     if lower.contains("new openai") || lower.contains("require(") || lower.contains("from 'openai'")
@@ -170,10 +174,13 @@ fn parse_syntax_source(
     let literal_spans = collect_literal_spans(tree.root_node());
     extract_static_literal(
         input,
-        &["base_url", "baseURL"],
+        &["base_url", "baseURL", "invoke_url", "invokeUrl"],
         &literal_spans,
         &mut candidate.base_url,
     );
+    if let Some(base_url) = &mut candidate.base_url {
+        base_url.value = provider_base_url(&base_url.value);
+    }
     extract_static_literal(
         input,
         &["model", "model_id", "modelId"],
@@ -198,7 +205,7 @@ fn parse_syntax_source(
             find_span(input, "responses.create"),
             false,
         ));
-    } else if input.contains("chat.completions") {
+    } else if input.contains("chat.completions") || input.contains("/chat/completions") {
         candidate.api_mode = Some(extracted(
             ApiMode::ChatCompletions,
             Confidence::High,
@@ -215,6 +222,14 @@ fn parse_syntax_source(
     Ok(())
 }
 
+fn provider_base_url(value: &str) -> String {
+    value
+        .strip_suffix("/chat/completions")
+        .or_else(|| value.strip_suffix("/responses"))
+        .unwrap_or(value)
+        .to_owned()
+}
+
 fn extract_static_literal(
     input: &str,
     keys: &[&str],
@@ -223,7 +238,7 @@ fn extract_static_literal(
 ) {
     for key in keys {
         let pattern = format!(
-            r#"(?m)\b{}\b\s*[:=]\s*[\"'](?P<value>[^\"']+)[\"']"#,
+            r#"(?m)[\"']?\b{}\b[\"']?\s*[:=]\s*[\"'](?P<value>[^\"']+)[\"']"#,
             regex::escape(key)
         );
         let regex = Regex::new(&pattern).expect("escaped static field regex");
@@ -273,7 +288,7 @@ fn extract_default_literal(
     candidate: &mut ProviderImportCandidate,
 ) {
     let pattern = format!(
-        r#"(?m)\b{}\b\s*[:=]\s*(?P<value>true|false|-?[0-9]+(?:\.[0-9]+)?)"#,
+        r#"(?m)[\"']?\b{}\b[\"']?\s*[:=]\s*(?P<value>true|false|-?[0-9]+(?:\.[0-9]+)?)"#,
         regex::escape(key)
     );
     let regex = Regex::new(&pattern).unwrap();

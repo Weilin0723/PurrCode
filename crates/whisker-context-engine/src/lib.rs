@@ -12,6 +12,10 @@ use thiserror::Error;
 use tree_sitter::{Language, Node, Parser};
 
 const MAX_INDEXED_FILE_BYTES: u64 = 2 * 1024 * 1024;
+/// Maximum proportion of non-text (control/escape) bytes before a file is classified as binary.
+/// If more than 10% of examined bytes are non-printable (excluding common whitespace),
+/// the file is skipped rather than indexed.
+const BINARY_CONTENT_THRESHOLD: f64 = 0.10;
 const CHUNK_LINES: usize = 100;
 const CHUNK_OVERLAP: usize = 10;
 const DEFAULT_INPUT_LATENCY_PAUSE_MILLIS: u64 = 100;
@@ -1051,7 +1055,7 @@ fn index_file(
     }
     let content = fs::read(path)?;
     let relative_text = relative.to_string_lossy().into_owned();
-    if content.contains(&0) {
+    if is_likely_binary(&content) {
         delete_indexed_path(transaction, &relative_text)?;
         return Ok(FileIndexOutcome::Skipped);
     }
@@ -1355,6 +1359,24 @@ fn language_for(path: &Path) -> LanguageId {
         Some("md" | "markdown") => LanguageId::Markdown,
         _ => LanguageId::Other,
     }
+}
+
+fn is_likely_binary(content: &[u8]) -> bool {
+    // Quick null-byte check for known binary formats.
+    if content.contains(&0) {
+        return true;
+    }
+    // Statistical check: count non-printable, non-whitespace bytes in the first 8 KiB.
+    let examined = content.len().min(8192);
+    let non_text: usize = content[..examined]
+        .iter()
+        .filter(|&&b| {
+            b < 0x09 // below tab
+                || (b > 0x0d && b < 0x20) // above CR, below space
+                || b == 0x7f // DEL
+        })
+        .count();
+    non_text as f64 / examined as f64 > BINARY_CONTENT_THRESHOLD
 }
 
 fn is_sensitive(path: &Path) -> bool {

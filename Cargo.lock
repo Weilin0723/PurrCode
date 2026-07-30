@@ -377,6 +377,9 @@ name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "blake3"
@@ -628,6 +631,7 @@ dependencies = [
  "itoa",
  "rustversion",
  "ryu",
+ "serde",
  "static_assertions",
 ]
 
@@ -2043,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-agent-runtime"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2068,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-claw"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "cap-std",
@@ -2085,7 +2089,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2096,6 +2100,8 @@ dependencies = [
  "purrcode-claw",
  "purrcode-codex-bridge",
  "purrcode-daemon",
+ "purrcode-evaluation-runtime",
+ "purrcode-evidence-bundle",
  "purrcode-golden-suite",
  "purrcode-mcp-host",
  "purrcode-ninelives",
@@ -2124,7 +2130,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-codex-bridge"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "purrcode-repository-engine",
  "purrcode-runtime-core",
@@ -2137,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-contextual-judgment"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -2151,7 +2157,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-daemon"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2190,8 +2196,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "purrcode-evaluation-runtime"
+version = "0.7.0"
+dependencies = [
+ "chrono",
+ "purrcode-runtime-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "purrcode-evidence-bundle"
+version = "0.7.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "hex",
+ "purrcode-ninelives",
+ "purrcode-runtime-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "purrcode-golden-suite"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "purrcode-pawgate",
  "purrcode-runtime-core",
@@ -2205,7 +2238,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-mcp-host"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -2226,7 +2259,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-ninelives"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "purrcode-runtime-core",
@@ -2240,7 +2273,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-pawgate"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64",
  "blake3",
@@ -2256,7 +2289,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-provider-gateway"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2278,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-provider-import"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "purrcode-provider-gateway",
  "regex",
@@ -2296,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-repository-engine"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "globset",
@@ -2308,10 +2341,12 @@ dependencies = [
 
 [[package]]
 name = "purrcode-runtime-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "chrono",
+ "purrcode-evidence-bundle",
+ "purrcode-ninelives",
  "schemars",
  "serde",
  "serde_json",
@@ -2321,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-skill-registry"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -2338,7 +2373,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-skill-store"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -2353,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-supervisor-runtime"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -2367,7 +2402,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-tui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2382,6 +2417,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "textwrap",
  "tokio",
  "unicode-segmentation",
  "unicode-width 0.2.0",
@@ -2391,7 +2427,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-validation-runtime"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "purrcode-claw",
@@ -2406,7 +2442,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-web-research"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2422,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-whisker"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "ignore",
@@ -2550,6 +2586,7 @@ dependencies = [
  "itertools",
  "lru",
  "paste",
+ "serde",
  "strum",
  "unicode-segmentation",
  "unicode-truncate",
@@ -3088,6 +3125,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
+name = "smawk"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8e2fb0f499abb4d162f2bedad68f5ef91a1682b5a03596ddb67efd37768d100"
+
+[[package]]
 name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3216,6 +3259,17 @@ dependencies = [
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "textwrap"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c13547615a44dc9c452a8a534638acdf07120d4b6847c8178705da06306a3057"
+dependencies = [
+ "smawk",
+ "unicode-linebreak",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
@@ -3609,6 +3663,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-linebreak"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
 
 [[package]]
 name = "unicode-segmentation"

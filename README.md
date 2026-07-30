@@ -14,10 +14,10 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. Every 
 bound to a durable authorization, checked again immediately before execution, and followed by
 recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
-PurrCode v0.6.0 introduces typed repository actions and a deterministic session state machine. It
-also completes the terminal recovery work: long responses wrap and scroll, detail cards expand by
-click or keyboard, completed advice tasks retain their concrete plan, and retries replace partial
-stream output instead of duplicating it.
+PurrCode v0.7.0 adds reproducible safety evaluation, verifiable offline evidence bundles, recovery
+fault coverage, provider/model onboarding safeguards, and a consistent terminal interface. Model
+output remains visible across repair and failure boundaries, while native terminal text selection
+and copy continue to work.
 
 ## Why PurrCode
 
@@ -45,7 +45,7 @@ npm install --global @minaovo/purrcode
 Node.js 18 or newer can also install the signed-release launcher directly from GitHub:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.6.0/purrcode-0.6.0.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.7.0/purrcode-0.7.0.tgz
 ```
 
 The package selects the correct macOS, Linux, or Windows binary, verifies its pinned SHA-256 digest,
@@ -54,7 +54,7 @@ and exposes both `purrcode` and `purrcoded`.
 ### macOS and Linux installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.6.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.7.0/scripts/install.sh | sh
 ```
 
 This installer verifies the release archive against `SHA256SUMS` and installs into `~/.local/bin`.
@@ -89,6 +89,23 @@ context or tool processes.
 Paste Python, JavaScript, cURL, JSON, YAML, TOML, or dotenv provider examples with
 `/connect import`. PurrCode parses them without execution, keeps extracted secrets transient, and
 requires a keychain or environment reference before saving.
+
+## What changed in v0.7
+
+- **Reproducible safety evaluation:** versioned benchmark cases exercise production PawGate and
+  Claw paths, score expected blocked actions and forbidden effects, and report Safe Autonomy Rate.
+- **Verifiable evidence:** trace and explanation commands expose durable decisions; atomic,
+  redacted bundles can be inspected, verified, and replayed offline without executing effects.
+- **Truthful recovery testing:** injected persistence, indexing, effect-collection, and export
+  failures verify that interrupted or uncertain work never becomes a reported success.
+- **Safer provider onboarding:** pasted OpenAI-compatible request samples are parsed without
+  execution, secrets stay out of saved configuration, and manual setup asks for the base URL,
+  authentication reference, and model ID separately.
+- **Resource-aware model switching:** `/models` provides a real selector, persists the chosen model,
+  and warns when observed memory or qualification evidence favors a smaller model.
+- **Consistent and copyable TUI:** light and dark themes use only pure white or black backgrounds,
+  semantic colors stay consistent, failed model output remains on screen, and native drag-to-copy
+  works in macOS Terminal.
 
 ## What changed in v0.6
 

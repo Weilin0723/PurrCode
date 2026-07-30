@@ -1,5 +1,17 @@
 use super::*;
 
+#[test]
+fn rejected_response_preview_is_bounded_and_removes_terminal_controls() {
+    let input = format!(
+        "before\u{1b}[2J{}",
+        "x".repeat(MAX_REJECTED_RESPONSE_PREVIEW_CHARS + 10)
+    );
+    let preview = safe_rejected_response_preview(&input, 2);
+    assert!(preview.contains("attempt 2"));
+    assert!(!preview.contains('\u{1b}'));
+    assert!(preview.contains("output truncated"));
+}
+
 use async_trait::async_trait;
 use futures::stream;
 use futures::StreamExt;

@@ -523,19 +523,64 @@ impl CommandPalette {
                 }
                 match app.request(reqwest::Method::GET, "/v1/models", None).await {
                     Ok(val) => {
-                        if cmd == "model" && !args.is_empty() {
-                            app.status_bar.set_model(args);
-                            if let Some(id) = &app.session_id {
-                                let _ = app
-                                    .request(
-                                        reqwest::Method::POST,
-                                        &format!("/v1/sessions/{id}/model"),
-                                        Some(serde_json::json!({"model": args})),
-                                    )
-                                    .await;
+                        let choices = val
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|model| model["id"].as_str().map(str::to_owned))
+                            .collect::<Vec<_>>();
+                        if cmd == "models" || args.is_empty() {
+                            app.model_selected = choices
+                                .iter()
+                                .position(|model| model == &app.status_bar.model)
+                                .unwrap_or(0);
+                            app.model_choices = choices;
+                            app.switch_mode(AppMode::ModelBrowse);
+                            app.message_bar.clear();
+                            return;
+                        }
+                        let Some(selected) = choices.iter().find(|model| model.as_str() == args)
+                        else {
+                            app.message_bar = format!(
+                                "Unknown model `{args}`. Run /models and select a configured model."
+                            );
+                            return;
+                        };
+                        let update = if let Some(id) = app.session_id.clone() {
+                            app.request(
+                                reqwest::Method::POST,
+                                &format!("/v1/sessions/{id}/model"),
+                                Some(serde_json::json!({"model": selected})),
+                            )
+                            .await
+                        } else {
+                            app.request(
+                                reqwest::Method::POST,
+                                "/v1/models/roles",
+                                Some(serde_json::json!({
+                                    "role": "coding_worker",
+                                    "model": selected,
+                                })),
+                            )
+                            .await
+                        };
+                        match update {
+                            Ok(_) => {
+                                app.status_bar.set_model(selected);
+                                app.workspace.model = selected.clone();
+                                app.status_bar.local = val
+                                    .as_array()
+                                    .and_then(|models| {
+                                        models.iter().find(|model| model["id"] == selected.as_str())
+                                    })
+                                    .and_then(|model| model["local"].as_bool())
+                                    .unwrap_or(false);
+                                app.message_bar = format!("Switched model to `{selected}`.");
+                            }
+                            Err(error) => {
+                                app.message_bar = format!("Model switch failed: {error}");
                             }
                         }
-                        app.message_bar = format!("Models: {val}");
                     }
                     Err(e) => app.message_bar = format!("Error: {e}"),
                 }

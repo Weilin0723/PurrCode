@@ -4,7 +4,7 @@ use crate::command_palette::CommandPalette;
 use crate::composer::Composer;
 use crate::conversation::{Conversation, Message};
 use crate::diff_view::DiffView;
-use crate::keybindings::{handle_key, handle_mouse};
+use crate::keybindings::handle_key;
 use crate::provider_setup::ProviderSetup;
 use crate::render::draw;
 use crate::skill_browser::SkillBrowser;
@@ -16,10 +16,7 @@ use crate::theme::Theme;
 use crate::ui_state::UiState;
 use crate::workspace::WorkspaceContext;
 use anyhow::Result;
-use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyEventKind,
-};
+use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -48,6 +45,7 @@ pub enum AppMode {
     SkillBrowse,
     DiffView,
     Help,
+    ModelBrowse,
     LeaseConflict,
     /// An existing durable session was found at startup. Require an explicit
     /// resume-or-new choice before accepting conversation input.
@@ -121,6 +119,13 @@ pub struct App {
     pub session_choice: Option<SessionChoice>,
     pub session_read_only: bool,
     pub has_provider: bool,
+    /// Trace inspector modal state. The modal is rendered as an overlay by
+    /// `render::render_trace_inspector_modal` once these fields are populated.
+    pub trace_inspector_visible: bool,
+    pub trace_event_index: usize,
+    pub trace_event_type: String,
+    pub trace_event_detail: Vec<String>,
+    pub trace_total_events: usize,
     pub pending_command: Option<String>,
     pub pending_user_message: bool,
     pub running_command: bool,
@@ -135,6 +140,8 @@ pub struct App {
     pub theme: Theme,
     pub palette_query: String,
     pub palette_selected: usize,
+    pub model_choices: Vec<String>,
+    pub model_selected: usize,
 }
 
 pub(crate) struct ReconciliationSnapshot {
@@ -175,6 +182,11 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         session_choice: None,
         session_read_only: false,
         has_provider: false,
+        trace_inspector_visible: false,
+        trace_event_index: 0,
+        trace_event_type: String::new(),
+        trace_event_detail: Vec::new(),
+        trace_total_events: 0,
         pending_command: None,
         pending_user_message: false,
         running_command: false,
@@ -189,6 +201,8 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         theme: Theme::detect(),
         palette_query: String::new(),
         palette_selected: 0,
+        model_choices: Vec::new(),
+        model_selected: 0,
     };
     app.session_id = recovery.restore(&mut app.composer);
 
@@ -198,19 +212,15 @@ pub async fn run(config: TuiConfig) -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableBracketedPaste,
-        EnableMouseCapture
-    )?;
+    // Do not enable terminal mouse capture by default. Native selection and Cmd+C are more
+    // important than pointer-only navigation, and keyboard scrolling/expansion remain available.
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let result = event_loop(&mut terminal, &mut app).await;
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
-        DisableMouseCapture,
         DisableBracketedPaste,
         LeaveAlternateScreen
     )?;
@@ -355,13 +365,7 @@ async fn event_loop(
             continue;
         }
         if let Event::Mouse(mouse) = input {
-            let size = terminal.size()?;
-            handle_mouse(
-                app,
-                mouse,
-                ratatui::layout::Rect::new(0, 0, size.width, size.height),
-            );
-            app.persist_ui_state();
+            let _ = mouse;
             continue;
         }
         let Event::Key(key) = input else { continue };
@@ -608,6 +612,21 @@ impl App {
                             .and_then(|models| models.iter().find(|model| model["id"] == selected))
                             .and_then(|model| model["local"].as_bool())
                             .unwrap_or(false);
+                        if self.status_bar.local {
+                            if let Ok(report) = self
+                                .request(
+                                    reqwest::Method::GET,
+                                    "/v1/local-models/recommendations",
+                                    None,
+                                )
+                                .await
+                            {
+                                if let Some(warning) = local_model_safety_warning(selected, &report)
+                                {
+                                    self.message_bar = warning;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -664,6 +683,16 @@ impl App {
                     if let Some(first_token_ms) = update.timing.first_semantic_delta_ms {
                         self.status_bar.context_info = format!("first token {first_token_ms} ms");
                     }
+                }
+                StreamOutput::AttemptRestarted { role, attempt } => {
+                    self.conversation.finalize_streaming();
+                    self.conversation
+                        .start_streaming(Some(self.status_bar.model.clone()));
+                    self.message_bar = format!(
+                        "{} repair attempt {} started; the rejected model output remains above.",
+                        role.as_deref().unwrap_or("model"),
+                        attempt.unwrap_or_default()
+                    );
                 }
                 StreamOutput::Content { text, replace, .. } => {
                     if replace {
@@ -1070,6 +1099,34 @@ impl App {
     }
 }
 
+fn local_model_safety_warning(selected: &str, report: &Value) -> Option<String> {
+    let model = selected
+        .rsplit_once('/')
+        .map_or(selected, |(_, model)| model);
+    let selected_card = report["cards"]
+        .as_array()?
+        .iter()
+        .find(|card| card["model"].as_str() == Some(model))?;
+    if selected_card["status"].as_str() != Some("not_recommended") {
+        return None;
+    }
+    let recommended = (report["outcome"]["status"].as_str() == Some("recommended"))
+        .then(|| report["outcome"]["model"].as_str())
+        .flatten();
+    Some(recommended.map_or_else(
+        || {
+            format!(
+                "Safety warning: local model `{selected}` is not recommended for the observed memory/qualification evidence. Run /model recommend before starting a task."
+            )
+        },
+        |alternative| {
+            format!(
+                "Safety warning: local model `{selected}` is not recommended for this computer. Suggested smaller qualified model: `{alternative}`. Switch with `/model ollama/{alternative}`."
+            )
+        },
+    ))
+}
+
 fn recovered_session_is_resumable(status: &str, lease_active: bool) -> bool {
     match status {
         "active" | "paused" => true,
@@ -1105,7 +1162,7 @@ fn explicit_plan_only_intent(objective: &str) -> bool {
 
 #[cfg(test)]
 mod recovery_tests {
-    use super::recovered_session_is_resumable;
+    use super::{local_model_safety_warning, recovered_session_is_resumable};
 
     #[test]
     fn terminal_sessions_require_a_new_session() {
@@ -1127,5 +1184,19 @@ mod recovery_tests {
             assert!(recovered_session_is_resumable(status, false));
         }
         assert!(!recovered_session_is_resumable("uncertain", false));
+    }
+
+    #[test]
+    fn unsafe_selected_local_model_names_the_smaller_recommendation() {
+        let report = serde_json::json!({
+            "outcome": {"status": "recommended", "model": "tiny:3b", "score": 90},
+            "cards": [
+                {"model": "mistral:7b", "status": "not_recommended"},
+                {"model": "tiny:3b", "status": "recommended"}
+            ]
+        });
+        let warning = local_model_safety_warning("ollama/mistral:7b", &report).unwrap();
+        assert!(warning.contains("tiny:3b"));
+        assert!(warning.contains("/model ollama/tiny:3b"));
     }
 }

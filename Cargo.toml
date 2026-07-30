@@ -21,11 +21,13 @@ members = [
   "crates/skill-registry",
   "crates/web-research",
   "crates/golden-suite",
+  "crates/evaluation-runtime",
+  "crates/evidence-bundle",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Weilin0723/PurrCode"
@@ -67,6 +69,7 @@ semver = "1"
 sha2 = "0.10"
 sysinfo = "0.38.4"
 tempfile = "3"
+textwrap = "0.16"
 thiserror = "2"
 tree-sitter = "0.25"
 tree-sitter-go = "0.25"

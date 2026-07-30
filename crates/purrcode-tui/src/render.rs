@@ -1,7 +1,12 @@
 //! Ratatui rendering for all TUI modes.
 
+use crate::action_area::ActionArea;
 use crate::app::{App, AppMode};
+use crate::glyphs::StatusGlyph;
+use crate::status_header::render_status_header;
+use crate::theme::Theme;
 use crate::timeline::{action_summary, CardKind, TimelineCard};
+use crate::trace_inspector::TraceInspector;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -17,24 +22,69 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         AppMode::SkillBrowse => draw_skills(frame, app),
         AppMode::DiffView => draw_diff(frame, app),
         AppMode::Help => draw_help(frame, app),
+        AppMode::ModelBrowse => draw_model_browser(frame, app),
         AppMode::LeaseConflict => draw_lease_conflict(frame),
         AppMode::SessionChoice => draw_session_choice(frame, app),
         AppMode::Conversation => draw_conversation(frame, app),
     }
-    apply_opaque_black_theme(frame, app.theme.colors_enabled);
+    apply_canvas_background(frame, &app.theme);
+    render_trace_inspector_modal(frame, app);
 }
 
-/// Keep the interface legible independently of the terminal application's
-/// configured background (including macOS Terminal's light and translucent
-/// profiles). `Reset` delegates color choice to the terminal, so it cannot be
-/// used for either the canvas or primary text in PurrCode's dark theme.
-fn apply_opaque_black_theme(frame: &mut Frame<'_>, colors_enabled: bool) {
+fn draw_model_browser(frame: &mut Frame<'_>, app: &App) {
+    let mut text = String::from("Select a model\n\n");
+    for (index, model) in app.model_choices.iter().enumerate() {
+        let marker = if index == app.model_selected {
+            ">"
+        } else {
+            " "
+        };
+        let active = if model == &app.status_bar.model {
+            "  (current)"
+        } else {
+            ""
+        };
+        text.push_str(&format!("{marker} {model}{active}\n"));
+    }
+    if app.model_choices.is_empty() {
+        text.push_str("No configured models were reported.\n");
+    }
+    text.push_str("\nUp/Down select · Enter switch · Esc cancel");
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().title("Switch model").borders(Borders::ALL)),
+        centered(frame.area(), 80, 24),
+    );
+}
+
+/// Paint the canvas background using the palette's `canvas` color so the
+/// "Calm terminal workbench" stays consistent across dark/light/monochrome
+/// themes. Cells with no explicit foreground get the palette's `text_primary`
+/// color, which preserves legibility regardless of the terminal's profile.
+fn apply_canvas_background(frame: &mut Frame<'_>, theme: &Theme) {
+    let bg = theme.palette.canvas;
+    let fg = theme.palette.text_primary;
     for cell in frame.buffer_mut().content.iter_mut() {
-        cell.set_bg(Color::Black);
-        if !colors_enabled || cell.fg == Color::Reset || cell.fg == Color::Black {
-            cell.set_fg(Color::White);
+        cell.set_bg(bg);
+        if !theme.colors_enabled || cell.fg == Color::Reset || cell.fg == Color::Black {
+            cell.set_fg(fg);
         }
     }
+}
+
+fn render_trace_inspector_modal(frame: &mut Frame<'_>, app: &App) {
+    if app.mode != AppMode::Conversation {
+        return;
+    }
+    let inspector = TraceInspector {
+        visible: app.trace_inspector_visible,
+        event_index: app.trace_event_index,
+        event_type: app.trace_event_type.clone(),
+        event_detail: app.trace_event_detail.clone(),
+        total_events: app.trace_total_events,
+    };
+    inspector.render(frame, frame.area(), &app.theme);
 }
 
 fn draw_help(frame: &mut Frame<'_>, app: &App) {
@@ -203,12 +253,21 @@ fn layout_full(frame: &Frame<'_>, app: &App) -> [Rect; 5] {
 
 fn layout_full_rect(area: Rect, app: &App) -> [Rect; 5] {
     let composer_height = (app.composer.line_count().clamp(3, 10) as u16).saturating_add(2);
+    let action_height = ActionArea {
+        visible: true,
+        message: (!app.message_bar.is_empty() || !app.conversation.evidence.is_empty())
+            .then_some(String::new()),
+        pending_approval: app.conversation.pending_action.is_some()
+            || app.pending_model_pull.is_some(),
+        streaming: app.stream.active,
+    }
+    .height();
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(5),
-            Constraint::Length(4),
+            Constraint::Length(action_height),
             Constraint::Length(composer_height),
             Constraint::Length(1),
         ])
@@ -273,29 +332,24 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .as_deref()
         .map(|id| id.get(..8).unwrap_or(id))
         .unwrap_or("new");
-    let title = Line::from(vec![
-        Span::styled(
-            concat!("PurrCode ", env!("CARGO_PKG_VERSION")),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" · "),
-        Span::styled(repository, Style::default().fg(Color::Blue)),
-        Span::raw(" · "),
-        Span::styled(&app.status_bar.model, Style::default().fg(Color::Yellow)),
-        Span::raw(format!(
-            " · {mode_str} · {local_indicator} {privacy_indicator} · sandbox:{} · session:{session} {}",
-            app.workspace.sandbox, app.workspace.session_phase
-        )),
-    ]);
-    frame.render_widget(
-        Paragraph::new(title).block(Block::default().borders(Borders::BOTTOM)),
+    render_status_header(
+        frame,
         area,
+        &app.theme,
+        env!("CARGO_PKG_VERSION"),
+        &repository,
+        &app.status_bar.model,
+        &app.workspace.sandbox,
+        session,
+        &app.workspace.session_phase,
+        mode_str,
+        privacy_indicator,
+        local_indicator,
     );
 }
 
 fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let palette = &app.theme.palette;
     let content_width = area.width.saturating_sub(4) as usize;
     let mut items: Vec<ListItem> = if app.conversation.timeline.is_empty() {
         app.conversation
@@ -309,12 +363,12 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     _ => "System: ",
                 };
                 let style = match msg.role.as_str() {
-                    "user" => Style::default().fg(Color::Cyan),
-                    "assistant" => Style::default().fg(Color::Reset),
-                    _ => Style::default().fg(Color::Gray),
+                    "user" => Style::default().fg(palette.accent),
+                    "assistant" => Style::default().fg(palette.text_primary),
+                    _ => Style::default().fg(palette.text_muted),
                 };
                 ListItem::new(wrap_text(
-                    render_markdown(prefix, &msg.content, style),
+                    render_markdown(prefix, &msg.content, style, palette),
                     content_width,
                 ))
             })
@@ -332,6 +386,7 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     app.conversation.selected_card == Some(index),
                     app.conversation.expanded_card == Some(index),
                     content_width,
+                    &app.theme,
                 )
             })
             .collect()
@@ -341,7 +396,8 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
         let text = render_markdown(
             "PurrCode: ",
             &msg.content,
-            Style::default().fg(Color::Reset),
+            Style::default().fg(palette.text_primary),
+            palette,
         );
         items.push(ListItem::new(wrap_text(text, content_width)));
     }
@@ -351,7 +407,7 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Line::from(Span::styled(
                 "PurrCode is ready.",
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(palette.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
@@ -360,7 +416,7 @@ fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Line::from(""),
             Line::from(Span::styled(
                 "Ctrl+G sends · Enter adds a line · Ctrl+Enter works where supported",
-                Style::default().fg(Color::Gray),
+                Style::default().fg(palette.text_muted),
             )),
         ])));
     }
@@ -377,21 +433,24 @@ fn timeline_item(
     selected: bool,
     expanded: bool,
     width: usize,
+    theme: &Theme,
 ) -> ListItem<'static> {
+    let palette = &theme.palette;
     let (glyph, color) = match card.kind {
-        CardKind::Conversation => ("●", Color::Reset),
-        CardKind::Plan => ("◆", Color::Blue),
-        CardKind::Action => ("▶", Color::Yellow),
-        CardKind::PawGate => ("◆", Color::Magenta),
-        CardKind::Claw => ("▶", Color::Cyan),
-        CardKind::Output => ("│", Color::Gray),
-        CardKind::Validation => ("✓", Color::Green),
-        CardKind::Checkpoint => ("●", Color::Blue),
-        CardKind::Recovery => ("!", Color::Red),
-        CardKind::Completion => ("✓", Color::Green),
-        CardKind::Skill => ("◇", Color::Cyan),
-        CardKind::Context => ("·", Color::Gray),
+        CardKind::Conversation => (StatusGlyph::Assistant, palette.text_primary),
+        CardKind::Plan => (StatusGlyph::Plan, palette.secondary),
+        CardKind::Action => (StatusGlyph::Action, palette.warning),
+        CardKind::PawGate => (StatusGlyph::PawGate, palette.secondary),
+        CardKind::Claw => (StatusGlyph::Claw, palette.accent),
+        CardKind::Output => (StatusGlyph::Output, palette.text_muted),
+        CardKind::Validation => (StatusGlyph::Validation, palette.success),
+        CardKind::Checkpoint => (StatusGlyph::Checkpoint, palette.secondary),
+        CardKind::Recovery => (StatusGlyph::Recovery, palette.danger),
+        CardKind::Completion => (StatusGlyph::Completion, palette.success),
+        CardKind::Skill => (StatusGlyph::Skill, palette.accent),
+        CardKind::Context => (StatusGlyph::Context, palette.text_muted),
     };
+    let glyph = glyph.render(theme.unicode_enabled);
     let marker = if selected { "›" } else { " " };
     let mut lines = vec![Line::from(vec![
         Span::styled(format!("{marker}{glyph} "), Style::default().fg(color)),
@@ -400,10 +459,26 @@ fn timeline_item(
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
     ])];
-    lines.extend(render_markdown("  ", &card.summary, Style::default().fg(Color::Reset)).lines);
+    lines.extend(
+        render_markdown(
+            "  ",
+            &card.summary,
+            Style::default().fg(palette.text_primary),
+            palette,
+        )
+        .lines,
+    );
     if expanded {
         for detail in &card.details {
-            lines.extend(render_markdown("    ", detail, Style::default().fg(Color::Gray)).lines);
+            lines.extend(
+                render_markdown(
+                    "    ",
+                    detail,
+                    Style::default().fg(palette.text_muted),
+                    palette,
+                )
+                .lines,
+            );
         }
     } else if !card.details.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -411,7 +486,7 @@ fn timeline_item(
                 "    {} detail line(s) · click or press E to expand",
                 card.details.len()
             ),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(palette.text_muted),
         )));
     }
     lines.push(Line::from(""));
@@ -452,80 +527,27 @@ fn wrap_text(text: Text<'_>, width: usize) -> Text<'static> {
     wrap_styled_lines(text.lines, width.max(1))
 }
 
-pub(crate) fn timeline_card_at(app: &App, terminal: Rect, column: u16, row: u16) -> Option<usize> {
-    if app.mode != AppMode::Conversation {
-        return None;
-    }
-    let rows = layout_full_rect(terminal, app);
-    let body = rows[1];
-    let layout = workspace_layout(terminal.width);
-    let show_files = layout == WorkspaceLayout::Wide || app.workspace.file_panel_visible;
-    let timeline = if layout == WorkspaceLayout::Narrow && show_files {
-        return None;
-    } else if show_files {
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(30), Constraint::Min(40)])
-            .split(body);
-        columns[1]
-    } else {
-        body
-    };
-    if column <= timeline.x
-        || column >= timeline.right().saturating_sub(1)
-        || row <= timeline.y
-        || row >= timeline.bottom().saturating_sub(1)
-    {
-        return None;
-    }
-    let width = timeline.width.saturating_sub(4) as usize;
-    let mut y = timeline.y.saturating_add(1);
-    for (index, card) in app
-        .conversation
-        .timeline
-        .iter()
-        .enumerate()
-        .skip(app.conversation.scroll)
-    {
-        let height = timeline_item(
-            card,
-            index,
-            app.conversation.selected_card == Some(index),
-            app.conversation.expanded_card == Some(index),
-            width,
-        )
-        .height() as u16;
-        if row >= y && row < y.saturating_add(height) {
-            return Some(index);
-        }
-        y = y.saturating_add(height);
-        if y >= timeline.bottom() {
-            break;
-        }
-    }
-    None
-}
-
 fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let palette = &app.theme.palette;
     let mut lines = vec![
         Line::from(vec![
-            Span::styled("Repository  ", Style::default().fg(Color::Gray)),
+            Span::styled("Repository  ", Style::default().fg(palette.text_muted)),
             Span::raw(&app.workspace.repository_name),
         ]),
         Line::from(vec![
-            Span::styled("Branch      ", Style::default().fg(Color::Gray)),
+            Span::styled("Branch      ", Style::default().fg(palette.text_muted)),
             Span::raw(&app.workspace.branch),
         ]),
         Line::from(vec![
-            Span::styled("Source      ", Style::default().fg(Color::Gray)),
+            Span::styled("Source      ", Style::default().fg(palette.text_muted)),
             Span::raw(&app.workspace.source_state),
         ]),
         Line::from(vec![
-            Span::styled("Daemon      ", Style::default().fg(Color::Gray)),
+            Span::styled("Daemon      ", Style::default().fg(palette.text_muted)),
             Span::raw(&app.workspace.daemon_health),
         ]),
         Line::from(vec![
-            Span::styled("Model       ", Style::default().fg(Color::Gray)),
+            Span::styled("Model       ", Style::default().fg(palette.text_muted)),
             Span::styled(
                 &app.workspace.model,
                 Style::default().add_modifier(Modifier::BOLD),
@@ -535,7 +557,7 @@ fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::styled(
             "Files",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(palette.accent)
                 .add_modifier(Modifier::BOLD),
         )),
     ];
@@ -548,7 +570,7 @@ fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     if app.workspace.paths.len() > available {
         lines.push(Line::from(Span::styled(
             format!("… {} more paths", app.workspace.paths.len() - available),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(palette.text_muted),
         )));
     }
     frame.render_widget(
@@ -574,12 +596,17 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
         "Ctrl+G Send  Space/E Expand  Drag select · Cmd+C copy  Ctrl+P Commands  ? Help"
     };
     frame.render_widget(
-        Paragraph::new(text).style(Style::default().fg(Color::Gray)),
+        Paragraph::new(text).style(Style::default().fg(app.theme.palette.text_muted)),
         area,
     );
 }
 
-fn render_markdown<'a>(prefix: &str, content: &'a str, base: Style) -> Text<'a> {
+fn render_markdown<'a>(
+    prefix: &str,
+    content: &'a str,
+    base: Style,
+    palette: &crate::theme::Palette,
+) -> Text<'a> {
     let mut in_code = false;
     let mut lines = Vec::new();
     for (index, raw) in content.lines().enumerate() {
@@ -589,14 +616,14 @@ fn render_markdown<'a>(prefix: &str, content: &'a str, base: Style) -> Text<'a> 
         }
         let prefix = if index == 0 { prefix } else { "  " };
         let (text, style) = if in_code {
-            (raw, Style::default().fg(Color::Green))
+            (raw, Style::default().fg(palette.success))
         } else if raw.starts_with('#') {
             (
                 raw.trim_start_matches('#').trim_start(),
                 base.add_modifier(Modifier::BOLD),
             )
         } else if raw.starts_with("- ") || raw.starts_with("* ") {
-            (raw, base.fg(Color::Cyan))
+            (raw, base.fg(palette.accent))
         } else {
             (raw, base)
         };
@@ -642,17 +669,18 @@ fn draw_action_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
         text.push_str(evidence);
     }
 
-    frame.render_widget(
-        Paragraph::new(text)
-            .wrap(Wrap { trim: true })
-            .block(Block::default().title("Actions").borders(Borders::ALL)),
-        area,
-    );
+    ActionArea {
+        visible: true,
+        message: (!text.is_empty()).then_some(text),
+        pending_approval: false,
+        streaming: false,
+    }
+    .render(frame, area, &app.theme);
 }
 
 fn draw_composer(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let style = if app.composer.is_command() {
-        Style::default().fg(Color::Green)
+        Style::default().fg(app.theme.palette.success)
     } else {
         Style::default()
     };
@@ -728,7 +756,7 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
     let content = match setup.screen {
         crate::provider_setup::SetupScreen::Discovery => setup_discovery_text(setup),
         crate::provider_setup::SetupScreen::ImportSource => format!(
-            "Import provider configuration\n\nPaste a Python, JavaScript, cURL, dotenv, JSON, YAML, or TOML example.\nThe source is parsed locally and is never executed. Raw secret values are never rendered here.\n\nCaptured: {} / {} bytes · {} lines\n\nCtrl+G  Parse and review    Esc  Cancel{}",
+            "Import provider configuration\n\nPaste a Python, JavaScript, cURL, dotenv, JSON, YAML, or TOML example.\nThe source is parsed locally and is never executed. Raw secret values are never rendered here.\n\nCaptured: {} / {} bytes · {} lines\n\nCtrl+G  Parse and review    M  Enter Base URL, API key, and model manually    Esc  Cancel{}",
             setup.import_source.len(),
             purrcode_provider_import::DEFAULT_MAX_INPUT_BYTES,
             setup.import_source.lines().count().max(1),
@@ -768,7 +796,10 @@ fn setup_import_auth_choice_text(setup: &crate::provider_setup::ProviderSetup) -
             "Store in OS keychain",
             "recommended · saves only a keychain reference",
         ),
-        ("Use environment reference", "saves only a variable name"),
+        (
+            "Use existing environment variable",
+            "reference only · does not create or set it",
+        ),
         ("Discard and enter another", "zeroizes the detected value"),
     ];
     let cards = choices
@@ -868,7 +899,7 @@ fn setup_form_text(setup: &crate::provider_setup::ProviderSetup) -> String {
         String::new()
     };
     format!(
-        "Review provider\n\nProvider: {provider}\n\n{} Profile name  [{}]\n{} Base URL      [{}]\n{} Authentication [{}]\n{} Model          [{}]\n{} Role           [{}]\n\nDiscovered models: {}\nNetwork: {}{}{}\n\nTab/Shift+Tab  Field    Ctrl+G  Save and run real connection test    Esc  Cancel",
+        "Review provider\n\nProvider: {provider}\n\n{} Profile name  [{}]\n{} Base URL *    [{}]\n{} API key/auth  [{}]\n{} Model ID *    [{}]\n{} Role           [{}]\n\nDiscovered models: {}\nNetwork: {}{}{}\n\nType to edit · Ctrl+U clear field · ↑↓ choose discovered model\nTab/Shift+Tab field · Ctrl+G save and run real connection test · Esc cancel",
         marker(0), setup.profile_name,
         marker(1), setup.base_url,
         marker(2), setup.auth_status(),
@@ -1047,30 +1078,73 @@ mod tests {
     }
 
     #[test]
-    fn complete_ui_uses_an_opaque_black_canvas_with_readable_primary_text() {
+    fn complete_ui_uses_palette_canvas_with_readable_primary_text() {
         let backend = TestBackend::new(120, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let app = test_app();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
 
+        let canvas = app.theme.palette.canvas;
+        let text_primary = app.theme.palette.text_primary;
         for cell in &terminal.backend().buffer().content {
-            assert_eq!(cell.bg, Color::Black);
+            assert_eq!(
+                cell.bg, canvas,
+                "every cell must use the palette canvas color"
+            );
+            // Cells without an explicit foreground get the palette's primary
+            // text color, so the interface stays legible regardless of the
+            // terminal's profile.
             assert_ne!(cell.fg, Color::Reset);
             assert_ne!(cell.fg, Color::Black);
+            assert_eq!(
+                cell.fg, text_primary,
+                "cells with no explicit foreground must use the palette text_primary"
+            );
         }
     }
 
     #[test]
-    fn plain_text_fallback_still_uses_high_contrast_black_and_white() {
+    fn plain_text_fallback_uses_palette_canvas_with_high_contrast_text() {
         let backend = TestBackend::new(120, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = test_app();
         app.theme.colors_enabled = false;
         terminal.draw(|frame| draw(frame, &app)).unwrap();
 
+        let canvas = app.theme.palette.canvas;
+        let text_primary = app.theme.palette.text_primary;
         for cell in &terminal.backend().buffer().content {
-            assert_eq!(cell.bg, Color::Black);
-            assert_eq!(cell.fg, Color::White);
+            assert_eq!(
+                cell.bg, canvas,
+                "no-color fallback must still use the palette canvas"
+            );
+            assert_eq!(
+                cell.fg, text_primary,
+                "no-color fallback must use the palette text_primary for high contrast"
+            );
+        }
+    }
+
+    #[test]
+    fn complete_ui_snapshots_are_stable_at_supported_widths() {
+        for width in [60, 80, 120, 160] {
+            let render = || {
+                let backend = TestBackend::new(width, 24);
+                let mut terminal = Terminal::new(backend).unwrap();
+                let app = test_app();
+                terminal.draw(|frame| draw(frame, &app)).unwrap();
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| format!("{}|{:?}|{:?}", cell.symbol(), cell.fg, cell.bg))
+                    .collect::<Vec<_>>()
+            };
+            let first = render();
+            let second = render();
+            assert_eq!(first, second, "full UI snapshot changed at width {width}");
+            assert!(first.iter().any(|cell| cell.contains("P")));
         }
     }
 
@@ -1142,11 +1216,19 @@ mod tests {
             active_pull_action: None,
             active_pull_session: None,
             theme: crate::theme::Theme {
+                palette: crate::theme::Palette::dark(),
                 colors_enabled: true,
                 unicode_enabled: true,
             },
             palette_query: String::new(),
             palette_selected: 0,
+            model_choices: Vec::new(),
+            model_selected: 0,
+            trace_inspector_visible: false,
+            trace_event_index: 0,
+            trace_event_type: String::new(),
+            trace_event_detail: Vec::new(),
+            trace_total_events: 0,
         }
     }
 }

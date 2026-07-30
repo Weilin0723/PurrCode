@@ -1,6 +1,147 @@
 # Implementation status
 
-Updated: 2026-07-29 (v0.6.0 release scope implemented and locally qualified)
+Updated: 2026-07-29 (v0.7.0 evaluation runtime, adversarial suite, evidence bundles, and TUI foundation)
+
+## v0.7.0 evaluation runtime, adversarial suite, evidence bundles, and TUI foundation
+
+### Gate 0 — v0.6 Runtime Hardening (complete)
+
+1. **Symlink-based external reads eliminated**: `claw-sandbox` `grep_file_recursive()` now uses cap-std
+   `Dir::open()` instead of `std::fs::File::open()` for file reads, preventing symlink escape. `collect_files()`
+   uses cap-std `metadata()` instead of `child_abs.is_dir()` which follows symlinks.
+2. **Capability-safe file access**: Both `collect_files()` and `grep_file_recursive()` use cap-std `Dir`
+   operations exclusively.
+3. **Legacy command normalization fail-closed**: `convert_rg()` rejects unknown flags instead of silently
+   ignoring them. `convert_git()` log subcommand rejects unknown flags instead of silently ignoring them.
+4. **Unsupported flags/paths/exclusions rejected**: RG and Git log unknown flags now return `None` (fail-closed).
+5. **No silent invalid-event skipping**: `SessionState::apply` has zero production callers; all code uses
+   `reduce_event` which returns `Result`.
+6. **No internal production use of `SessionState::apply`**: Confirmed zero usage across workspace.
+7. **Typed-action execution compilation**: Execution is dispatched in `claw-sandbox`, not `runtime-core`.
+   `runtime-core` has only `to_command()` for deterministic serialization.
+8. **Bounded scan budgets, ignore rules, binary detection, cancellation**: Whisker context engine has
+   comprehensive budgets, Git-ignore-aware walking, enhanced binary detection (null-byte + statistical
+   non-text threshold), and cooperative indexing cancellation.
+9. **Release manifest and checksum generation**: SHA256SUMS generation, Sigstore signing, provenance
+   attestation, and CLI verification are complete.
+
+### Core v0.7 Deliverables
+
+#### 1. Evaluation Runtime (`crates/evaluation-runtime`)
+
+New crate providing:
+- Versioned `BenchmarkCase` schema (14 categories including adversarial types)
+- Versioned `BenchmarkResult` schema with 6 distinct states (Passed, Failed, Unavailable, TimedOut,
+  Cancelled, InfrastructureError)
+- `EvaluationMetrics` with Safe Autonomy Rate calculation
+- Explicit denominator rules: Unavailable and InfrastructureError excluded
+- `aggregate_metrics()` with category breakdowns and median latency
+- 5 unit tests covering autonomy rate, metrics aggregation, and edge cases
+
+#### 2. Adversarial Golden Suite
+
+Extended `crates/golden-suite` and `integration-tests/golden/catalog.toml`:
+- 19 new adversarial tasks (49 total): prompt-injection (3), traversal (2), symlink (2), credential
+  access (2), destructive command (2), active-tree protection (2), invalid normalization (2),
+  event-log corruption (2), provider interruption (2)
+- Fixture directories for each adversarial category
+- `validate_security_cases()` — enforces that every security case declares expected blocked actions
+  and forbidden effects
+- Every `proposed_action` task must declare `expected_judgment`
+
+#### 3. Reproducible Benchmark Runner
+
+Extended CLI with:
+- `purrcode benchmark list` — list benchmark case IDs and categories
+- `purrcode benchmark validate-cases` — validate all cases against schema
+- `purrcode benchmark run` — run fixture cases through the daemon and proposed-action security
+  cases through PawGate with durable proposal and judgment events
+- `purrcode benchmark report` — render a versioned JSON report
+- `purrcode benchmark compare` — compare two benchmark reports
+- Security scoring verifies declared blocked actions and absent forbidden effects; unavailable
+  recovery/provider harnesses are kept distinct and excluded by the documented denominator rules
+- Existing `audit`, `baseline`, `live` commands preserved
+
+#### 4. Trace and Explain
+
+New CLI commands:
+- `purrcode trace show <session-id>` — show human-readable event timeline
+- `purrcode trace export <session-id>` — export events as JSON
+- `purrcode explain action <session-id> <action-id>` — explain why action was allowed/denied
+- `purrcode explain completion <session-id>` — explain session outcome
+- All explanations come from durable evidence; missing evidence reported as unknown
+
+#### 5. Evidence Bundles (`crates/evidence-bundle`)
+
+New crate providing:
+- `export_bundle()` — exports verifiable session evidence (default excludes prompts, model output,
+  file contents, patches, and credentials)
+- `verify_bundle()` — validates schema version and BLAKE3 digest
+- `inspect_bundle()` — returns metadata and digest validity
+- `replay_bundle()` — reconstructs SessionState via `reduce_event` (never executes actions,
+  contacts providers, restores authorizations, or modifies repositories)
+- CLI commands: `purrcode bundle export`, `inspect`, `verify`, `replay`
+- Atomic no-clobber CLI export; environment values and other sensitive fields are redacted without
+  destroying the event shape required for authoritative replay
+- 11 unit tests covering export, verification, replay, redaction, and non-fabrication
+
+#### 6. Fault-Injection Verification
+
+Six focused recovery tests in `crates/runtime-core/tests/fault_injection.rs`, supplemented by the
+real provider-stream, NineLives restart, Whisker cancellation, and repository-effect tests in their
+own component crates:
+- append/transition failures surface explicitly
+- restart while awaiting approval preserves the exact boundary
+- authorization persistence without execution never silently executes
+- missing execution completion is not reported as success
+- cancellation during indexing stays terminal and replayable
+- interrupted/truncated bundle evidence fails verification
+
+#### 7. TUI Design Foundation
+
+New reusable components integrated into the primary renderer:
+- `theme.rs` — `Palette` struct with 13 semantic color tokens; dark, light, and monochrome built-in themes
+- `glyphs.rs` — `StatusGlyph` enum with 13 distinct unicode/ASCII glyphs per event kind (color-independent)
+- `status_header.rs` — compact header component that abbreviates in narrow terminals
+- `action_area.rs` — contextual action area collapsing to 1 row when idle, 4 rows when active
+- `trace_inspector.rs` — centered overlay with textwrapping and keyboard navigation hints
+- `test_fixtures.rs` — `TestBackend` helpers plus complete-layout stability checks at widths 60,
+  80, 120, and 160
+- Primary conversation rendering uses semantic palette tokens and color-independent status glyphs;
+  the action area collapses when idle and the trace overlay opens from a selected timeline event
+- Provider onboarding accepts Python `requests.post` samples with separate endpoint/header/payload
+  variables, canonicalizes `/chat/completions` to the provider base URL, and extracts quoted payload
+  model fields without retaining credentials. A manual structured-entry path asks for Base URL,
+  authentication, and Model ID; fields can be cleared and discovered models can be selected.
+- Startup checks the selected local model against the daemon's observed memory and qualification
+  recommendation. A not-recommended model produces a visible warning and names a smaller qualified
+  alternative when one exists; it is never silently loaded or switched.
+- `/models` opens an interactive model selector instead of rendering raw daemon JSON. A selection
+  is validated against configured model IDs and persisted to the active session or the
+  `coding_worker` role before the status bar changes.
+- Theme detection honors `PURRCODE_THEME=light|dark|monochrome`, uses `COLORFGBG` when available,
+  restricts every canvas/surface/elevated background to ANSI pure white or pure black, and removes
+  color-dependent Unicode glyphs in no-color mode. Rejected structured responses are
+  shown as bounded control-character-safe output, survive the repair boundary, and remain visible
+  when a session fails. Scalar strings in model-produced string-list fields are normalized before
+  the existing semantic validation runs.
+- The TUI leaves terminal mouse capture disabled by default so native drag selection and `Cmd+C`
+  work in macOS Terminal; keyboard scrolling and card expansion remain available.
+- Validation processes receive an isolated repository/worktree-local `HOME`, never the user's real
+  home directory or provider credentials. This lets tools such as npm resolve their required home
+  directory without the prior `uv_os_homedir ... ENOENT` failure while keeping generated cache
+  writes inside the exact authorized validation effects.
+
+### External gates
+
+The following remain external gates for v0.7:
+- Live provider qualification (requires a qualified provider)
+- Remote skill marketplace discovery and dynamic qualification
+- Cross-platform integration runs on Linux and Windows
+- Full TUI navigation redesign (deferred to v0.8)
+- Remote OpenTelemetry export
+- Competitor-specific benchmark adapters
+- Public benchmark leaderboard
 
 ## v0.6.0 typed actions and deterministic state machine — release candidate
 

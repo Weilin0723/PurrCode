@@ -6,13 +6,14 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+textwrap.workspace = true
 chrono.workspace = true
 crossterm.workspace = true
 directories.workspace = true
 futures.workspace = true
 purrcode-runtime-core = { path = "../runtime-core" }
 purrcode-provider-import = { path = "../provider-import" }
-ratatui.workspace = true
+ratatui = { workspace = true, features = ["serde"] }
 reqwest.workspace = true
 rpassword.workspace = true
 serde.workspace = true

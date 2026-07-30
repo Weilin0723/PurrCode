@@ -221,6 +221,26 @@ impl ProviderSetup {
         self.error = None;
     }
 
+    pub fn clear_active_field(&mut self) {
+        self.active_value_mut().zeroize();
+        self.error = None;
+    }
+
+    pub fn cycle_discovered_model(&mut self, delta: isize) {
+        if self.active_field != 3 || self.discovered_models.is_empty() {
+            return;
+        }
+        let current = self
+            .discovered_models
+            .iter()
+            .position(|model| model == &self.model_id)
+            .unwrap_or(0);
+        let last = self.discovered_models.len() - 1;
+        let next = current.saturating_add_signed(delta).min(last);
+        self.model_id = self.discovered_models[next].clone();
+        self.error = None;
+    }
+
     pub fn insert_import(&mut self, source: &str) {
         if self.import_source.len().saturating_add(source.len()) > DEFAULT_MAX_INPUT_BYTES {
             self.error = Some(format!(
@@ -572,6 +592,24 @@ mod tests {
         setup.api_key = "replacement-secret".into();
         setup.request_test_and_save();
         assert!(setup.complete);
+    }
+
+    #[test]
+    fn provider_form_can_clear_fields_and_choose_a_discovered_model() {
+        let mut setup = ProviderSetup::new();
+        setup.select_provider(ProviderType::OpenaiCompatible);
+        setup.active_field = 1;
+        setup.base_url = "wrong endpoint".into();
+        setup.clear_active_field();
+        assert!(setup.base_url.is_empty());
+
+        setup.active_field = 3;
+        setup.discovered_models = vec!["small".into(), "large".into()];
+        setup.model_id = "small".into();
+        setup.cycle_discovered_model(1);
+        assert_eq!(setup.model_id, "large");
+        setup.cycle_discovered_model(-1);
+        assert_eq!(setup.model_id, "small");
     }
 
     #[test]
