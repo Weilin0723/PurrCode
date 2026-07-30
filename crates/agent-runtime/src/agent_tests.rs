@@ -24,7 +24,7 @@ use purrcode_provider_gateway::{
 };
 use purrcode_runtime_core::{
     ActionId, ApprovalAuthority, ConversationMessage, ProposedAction, SessionEvent, SessionId,
-    SessionStatus, WriteFileAction,
+    SessionStatus, ValidationStatus, WriteFileAction,
 };
 use purrcode_whisker::{
     IndexLifecycleStage, IndexPauseReason, IndexStopReason, IndexingSignals, MemoryPressure,
@@ -1025,6 +1025,99 @@ async fn approval_then_resume_completes_full_turn_with_next_action() {
     assert!(durable
         .iter()
         .any(|event| matches!(event, SessionEvent::SessionCompleted)));
+}
+
+#[tokio::test]
+async fn failed_validation_routes_a_repair_then_reruns_focused_and_full_checks() {
+    let repository = repository();
+    std::fs::write(
+        repository.path().join("Makefile"),
+        "test:\n\t@test -f repaired.marker\n",
+    )
+    .unwrap();
+    assert!(Command::new("git")
+        .args(["add", "Makefile"])
+        .current_dir(repository.path())
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new("git")
+        .args([
+            "-c",
+            "user.name=PurrCode",
+            "-c",
+            "user.email=test@local.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "validation fixture",
+        ])
+        .current_dir(repository.path())
+        .status()
+        .unwrap()
+        .success());
+    let provider = MockProvider {
+        responses: Mutex::new(vec![
+            serde_json::json!({
+                "plan": ["repair the failed test", "validate"],
+                "rationale": "validation now passes",
+                "complete": true
+            }),
+            serde_json::json!({
+                "plan": ["repair the failed test", "validate"],
+                "rationale": "create the fixture required by the failed test",
+                "action": {
+                    "type": "write_file",
+                    "path": "repaired.marker",
+                    "content": "repaired\n",
+                    "expected_digest": null
+                },
+                "complete": false
+            }),
+            serde_json::json!({
+                "plan": ["run validation", "repair the failed test"],
+                "rationale": "the implementation is ready for validation",
+                "complete": true
+            }),
+        ]),
+    };
+    let agent = NativeAgent::new(
+        &provider,
+        ModelId::parse("local/test").unwrap(),
+        Policy::default(),
+    );
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(
+            &mut store,
+            repository.path(),
+            "make the validation fixture pass",
+        )
+        .await
+        .unwrap();
+    let AgentOutcome::AwaitingApproval { session_id, .. } = outcome else {
+        panic!("agent did not propose a repair after validation failed");
+    };
+    agent.approve(&mut store, session_id).await.unwrap();
+    let outcome = agent.resume(&mut store, session_id).await.unwrap();
+    assert!(matches!(outcome, AgentOutcome::Completed { .. }));
+    let validation_statuses = store
+        .events(session_id)
+        .unwrap()
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::ValidationRecorded { status, .. } => Some(status),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(validation_statuses.contains(&ValidationStatus::Failed));
+    assert!(
+        validation_statuses
+            .iter()
+            .filter(|status| **status == ValidationStatus::Passed)
+            .count()
+            >= 2
+    );
 }
 
 #[tokio::test]

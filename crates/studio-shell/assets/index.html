@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PurrCode Studio</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="mark">P</span><span>PurrCode Studio</span></div>
+      <div class="connection"><span id="health-dot" class="dot"></span><span id="health-label">Connecting</span></div>
+    </header>
+    <aside class="sidebar" aria-label="Primary navigation">
+      <nav>
+        <button class="nav-item active" data-screen="home">Home</button>
+        <button class="nav-item" data-screen="workspaces">Workspaces</button>
+        <button class="nav-item" data-screen="runs">Agent runs</button>
+        <button class="nav-item" data-screen="workbench">Workbench</button>
+        <button class="nav-item" data-screen="terminals">Terminals</button>
+        <button class="nav-item" data-screen="diff">Diff review</button>
+        <button class="nav-item" data-screen="validation">Validation</button>
+        <button class="nav-item" data-screen="factory">Agent Factory</button>
+        <button class="nav-item" data-screen="deployments">Deployments</button>
+        <button class="nav-item" data-screen="evidence">Evidence</button>
+        <button class="nav-item" data-screen="settings">Settings</button>
+      </nav>
+      <div class="authority-summary">
+        <span class="eyebrow">Authority</span>
+        <strong>Governed</strong>
+        <span>Exact actions remain bound to durable approval.</span>
+      </div>
+    </aside>
+    <main>
+      <section id="home-screen" class="screen">
+        <div class="page-heading">
+          <div><span class="eyebrow">Local workbench</span><h1>Continue useful work.</h1></div>
+          <button id="refresh" class="secondary">Refresh</button>
+        </div>
+        <section class="workspace-card" aria-labelledby="workspace-title">
+          <div><span class="eyebrow">Active workspace</span><h2 id="workspace-title">Loading repository…</h2></div>
+          <div class="workspace-meta"><span id="branch">—</span><span id="dirty">—</span></div>
+        </section>
+        <section class="objective-card">
+          <label for="objective"><span class="eyebrow">Engineering objective</span></label>
+          <textarea id="objective" rows="4" placeholder="Describe the outcome. PurrCode will plan, execute, validate, and preserve evidence."></textarea>
+          <div class="objective-actions"><span>No model request is made until you submit.</span><button id="start-run">Start continuous run</button></div>
+        </section>
+        <div class="section-heading"><div><span class="eyebrow">Durable activity</span><h2>Recent runs</h2></div><span id="run-count">0 runs</span></div>
+        <section id="runs" class="runs" aria-live="polite"></section>
+      </section>
+      <section id="workbench-screen" class="screen hidden">
+        <div class="page-heading compact-heading">
+          <div><span class="eyebrow">Agent workbench</span><h1 id="workbench-objective">Select a durable run</h1></div>
+          <div class="heading-actions"><span id="workbench-status" class="status">—</span><button id="refresh-workbench" class="secondary">Refresh</button></div>
+        </div>
+        <div class="workbench-grid">
+          <section class="workbench-panel conversation-panel" aria-labelledby="conversation-title">
+            <div class="panel-heading"><div><span class="eyebrow">Intent and response</span><h2 id="conversation-title">Conversation</h2></div><div class="panel-meta"><span id="stream-status">idle</span><span id="message-count">0</span></div></div>
+            <div id="conversation" class="conversation" aria-live="polite"></div>
+            <div class="follow-up"><textarea id="follow-up" rows="2" placeholder="Add a follow-up to an active run"></textarea><button id="send-follow-up">Send</button></div>
+          </section>
+          <section class="workbench-panel activity-panel" aria-labelledby="activity-title">
+            <div class="panel-heading"><div><span class="eyebrow">Durable runtime</span><h2 id="activity-title">Activity</h2></div><span id="event-count">0</span></div>
+            <div id="activity" class="activity" aria-live="polite"></div>
+          </section>
+          <section class="workbench-panel inspector-panel" aria-labelledby="inspector-title">
+            <div class="panel-heading"><div><span class="eyebrow">Selected evidence</span><h2 id="inspector-title">Inspector</h2></div></div>
+            <div id="inspector-summary" class="inspector-summary">Select an activity event to inspect its durable payload.</div>
+            <pre id="inspector"></pre>
+          </section>
+        </div>
+      </section>
+      <section id="diff-screen" class="screen hidden">
+        <div class="page-heading compact-heading"><div><span class="eyebrow">Isolated worktree</span><h1>Diff review</h1></div><button id="refresh-diff" class="secondary">Refresh</button></div>
+        <div id="changed-files" class="changed-files"></div>
+        <pre id="diff-content" class="diff-content">Select a run from Home first.</pre>
+      </section>
+      <section id="validation-screen" class="screen hidden">
+        <div class="page-heading compact-heading"><div><span class="eyebrow">Evidence gate</span><h1>Validation</h1></div><button id="refresh-validation" class="secondary">Refresh</button></div>
+        <div id="validation-events" class="validation-events">Select a run from Home first.</div>
+      </section>
+      <section id="terminals-screen" class="screen hidden">
+        <div class="page-heading compact-heading">
+          <div><span class="eyebrow">Native PTY</span><h1>Terminals</h1></div>
+          <div class="heading-actions"><button id="new-terminal">New terminal</button><button id="refresh-terminals" class="secondary">Refresh</button></div>
+        </div>
+        <div class="terminal-layout">
+          <aside id="terminal-list" class="terminal-list" aria-label="Terminal sessions"></aside>
+          <section class="terminal-console">
+            <div class="terminal-toolbar">
+              <div><strong id="terminal-title">No terminal selected</strong><span id="terminal-owner">—</span></div>
+              <div class="heading-actions"><button id="take-terminal" class="secondary">Take control</button><button id="return-terminal" class="secondary">Return to agent</button><button id="stop-terminal" class="secondary">Stop</button></div>
+            </div>
+            <pre id="terminal-output" tabindex="0">Start or select a terminal. Output remains available after detach and reconnect.</pre>
+            <form id="terminal-input-form" class="terminal-input"><textarea id="terminal-input" rows="2" placeholder="Type terminal input; Enter sends, Shift+Enter adds a line"></textarea><button>Send</button></form>
+          </section>
+        </div>
+      </section>
+      <section id="settings-screen" class="screen hidden">
+        <div class="page-heading compact-heading">
+          <div><span class="eyebrow">Environment doctor</span><h1>Environment</h1></div>
+          <button id="inspect-environment">Inspect repository</button>
+        </div>
+        <div id="environment-summary" class="environment-summary">
+          <div class="empty">Inspection is explicit and read-only. No tool is installed until an exact governed action is authorized.</div>
+        </div>
+      </section>
+      <section id="placeholder-screen" class="screen hidden">
+        <span class="eyebrow">PurrCode Studio</span><h1 id="placeholder-title">Workbench</h1>
+        <p id="placeholder-copy">This surface is connected to the same authenticated daemon and durable runtime.</p>
+      </section>
+    </main>
+    <footer><span id="repository-path">Loading…</span><span id="version">API —</span></footer>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

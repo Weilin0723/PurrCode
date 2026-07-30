@@ -14,10 +14,9 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. Every 
 bound to a durable authorization, checked again immediately before execution, and followed by
 recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
-PurrCode v0.7.0 adds reproducible safety evaluation, verifiable offline evidence bundles, recovery
-fault coverage, provider/model onboarding safeguards, and a consistent terminal interface. Model
-output remains visible across repair and failure boundaries, while native terminal text selection
-and copy continue to work.
+PurrCode v0.8.0 adds a secure graphical Studio, durable Workbench, real PTY terminal workspace,
+evidence-based environment doctor, and automatic progressive build/test repair. The existing
+PawGate, Claw, isolated-worktree, and durable-evidence boundaries remain authoritative.
 
 ## Why PurrCode
 
@@ -45,7 +44,7 @@ npm install --global @minaovo/purrcode
 Node.js 18 or newer can also install the signed-release launcher directly from GitHub:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.7.0/purrcode-0.7.0.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.8.0/purrcode-0.8.0.tgz
 ```
 
 The package selects the correct macOS, Linux, or Windows binary, verifies its pinned SHA-256 digest,
@@ -54,7 +53,7 @@ and exposes both `purrcode` and `purrcoded`.
 ### macOS and Linux installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.7.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.8.0/scripts/install.sh | sh
 ```
 
 This installer verifies the release archive against `SHA256SUMS` and installs into `~/.local/bin`.
@@ -78,8 +77,8 @@ purrcode init
 # 2. Enter a repository
 cd your-project
 
-# 3. Open the conversation-first terminal interface
-purrcode
+# 3. Open the graphical Studio (or use `purrcode tui`)
+purrcode ui
 ```
 
 Use `/connect` inside the interface to discover Ollama or LM Studio, or configure a remote provider
@@ -89,6 +88,20 @@ context or tool processes.
 Paste Python, JavaScript, cURL, JSON, YAML, TOML, or dotenv provider examples with
 `/connect import`. PurrCode parses them without execution, keeps extracted secrets transient, and
 requires a keychain or environment reference before saving.
+
+## What changed in v0.8
+
+- **Secure graphical Studio:** `purrcode ui` opens an authenticated, loopback-only application;
+  daemon credentials remain server-side and model generation never starts before submission.
+- **Durable engineering Workbench:** complete conversation, activity, diff, validation, and exact
+  evidence views reconnect from durable daemon state without exposing hidden model reasoning.
+- **Real terminal workspace:** native PTY/ConPTY sessions support tabs, bounded transcript replay,
+  resize, detach, stop, and generation-safe human/agent ownership transfer.
+- **Evidence-based environment doctor:** bounded repository and host inspection detects required
+  toolchains, records real version probes, and reports missing setup without claiming success.
+- **Automatic test repair:** the test orchestrator detects major build systems, records exact
+  authorized validation actions, classifies failures, routes bounded repairs, reruns affected
+  stages, and only completes after required final evidence passes.
 
 ## What changed in v0.7
 

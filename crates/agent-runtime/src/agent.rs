@@ -37,10 +37,13 @@ use purrcode_runtime_core::{
     ConversationMessage, JudgmentDecision, ProposedAction, SessionEvent, SessionId, SessionStatus,
     ValidationStatus,
 };
-use purrcode_validation_runtime::{ValidationDetector, ValidationRunner};
+use purrcode_test_orchestrator::{
+    EvidenceStatus, ValidationDetector, ValidationPlan, ValidationRunner, ValidationStage,
+};
 use purrcode_whisker::RetrievalBudget;
 use schemars::schema_for;
 use serde::de::DeserializeOwned;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -67,6 +70,7 @@ const MAX_CONSECUTIVE_POLICY_REJECTIONS: usize = 3;
 const MAX_ACTIONS_IN_PROMPT: usize = 12;
 const RETAINED_ACTIONS_AFTER_COMPACTION: usize = 6;
 const MAX_REJECTED_RESPONSE_PREVIEW_CHARS: usize = 4_096;
+const MAX_VALIDATION_REPAIR_CYCLES: usize = 3;
 
 fn safe_rejected_response_preview(output: &str, attempt: u8) -> String {
     let preview = output
@@ -869,6 +873,8 @@ impl<'a> NativeAgent<'a> {
         session_id: SessionId,
     ) -> Result<AgentOutcome, AgentError> {
         let mut consecutive_policy_rejections = 0_usize;
+        let mut validation_repair_cycles = 0_usize;
+        let mut focused_repair_stages = BTreeSet::<ValidationStage>::new();
         for _ in 0..MAX_AUTONOMOUS_ITERATIONS {
             let state = store.load(session_id)?;
             if state.proposed_actions.len() > MAX_ACTIONS_IN_PROMPT {
@@ -1045,6 +1051,30 @@ impl<'a> NativeAgent<'a> {
                     return completed_outcome(store, session_id);
                 }
                 let validation = ValidationDetector::detect(&worktree)?;
+                if !focused_repair_stages.is_empty() {
+                    let focused = ValidationPlan {
+                        commands: validation
+                            .commands
+                            .iter()
+                            .filter(|command| focused_repair_stages.contains(&command.stage))
+                            .cloned()
+                            .collect(),
+                        undetected_stages: Vec::new(),
+                        required_stages: focused_repair_stages.clone(),
+                        accepted_unavailable_stages: BTreeSet::new(),
+                    };
+                    let focused_report =
+                        ValidationRunner::run(store, session_id, &worktree, &focused).await?;
+                    if !focused_report.completion_allowed() {
+                        validation_repair_cycles += 1;
+                        focused_repair_stages = repair_stages(&focused_report);
+                        if validation_repair_cycles < MAX_VALIDATION_REPAIR_CYCLES {
+                            continue;
+                        }
+                        return pause_after_validation_budget(store, session_id, &focused_report);
+                    }
+                    focused_repair_stages.clear();
+                }
                 let report =
                     ValidationRunner::run(store, session_id, &worktree, &validation).await?;
                 if report.completion_allowed() {
@@ -1106,41 +1136,12 @@ impl<'a> NativeAgent<'a> {
                     store.append(session_id, &SessionEvent::SessionCompleted)?;
                     return completed_outcome(store, session_id);
                 }
-                store.append(
-                    session_id,
-                    &SessionEvent::SessionPaused {
-                        reason: format!(
-                            "validation did not pass ({} check(s) failed, timed out, or remained uncertain); review the evidence before resuming",
-                            report
-                                .evidence
-                                .iter()
-                                .filter(|item| {
-                                    matches!(
-                                        item.status,
-                                        purrcode_validation_runtime::EvidenceStatus::Failed
-                                            | purrcode_validation_runtime::EvidenceStatus::TimedOut
-                                            | purrcode_validation_runtime::EvidenceStatus::Uncertain
-                                    )
-                                })
-                                .count()
-                        ),
-                    },
-                )?;
-                return Ok(AgentOutcome::ValidationFailed {
-                    session_id,
-                    failed: report
-                        .evidence
-                        .iter()
-                        .filter(|item| {
-                            matches!(
-                                item.status,
-                                purrcode_validation_runtime::EvidenceStatus::Failed
-                                    | purrcode_validation_runtime::EvidenceStatus::TimedOut
-                                    | purrcode_validation_runtime::EvidenceStatus::Uncertain
-                            )
-                        })
-                        .count(),
-                });
+                validation_repair_cycles += 1;
+                focused_repair_stages = repair_stages(&report);
+                if validation_repair_cycles < MAX_VALIDATION_REPAIR_CYCLES {
+                    continue;
+                }
+                return pause_after_validation_budget(store, session_id, &report);
             }
             let proposed = normalize_action(
                 turn.action
@@ -1330,6 +1331,61 @@ impl<'a> NativeAgent<'a> {
         )?;
         Ok(AgentOutcome::IterationLimit { session_id })
     }
+}
+
+fn repair_stages(
+    report: &purrcode_test_orchestrator::ValidationReport,
+) -> BTreeSet<ValidationStage> {
+    let mut stages: BTreeSet<_> = report
+        .repair_routes()
+        .into_iter()
+        .map(|route| route.focused_stage)
+        .filter(|stage| *stage != ValidationStage::CompletionCriteria)
+        .collect();
+    for stage in &report.required_stages {
+        let satisfied = report
+            .evidence
+            .iter()
+            .any(|evidence| evidence.stage == *stage && evidence.status == EvidenceStatus::Passed);
+        if !satisfied {
+            stages.insert(*stage);
+        }
+    }
+    stages
+}
+
+fn pause_after_validation_budget(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    report: &purrcode_test_orchestrator::ValidationReport,
+) -> Result<AgentOutcome, AgentError> {
+    let failed = report
+        .evidence
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.status,
+                EvidenceStatus::Failed | EvidenceStatus::TimedOut | EvidenceStatus::Uncertain
+            ) && item.stage != ValidationStage::CompletionCriteria
+        })
+        .count()
+        .max(1);
+    let routes = report
+        .repair_routes()
+        .into_iter()
+        .map(|route| format!("{:?} → {}", route.class, route.specialist_role))
+        .collect::<Vec<_>>()
+        .join(", ");
+    store.append(
+        session_id,
+        &SessionEvent::SessionPaused {
+            reason: format!(
+                "validation repair budget exhausted after {MAX_VALIDATION_REPAIR_CYCLES} focused cycles ({failed} unresolved check(s)); routes: {}",
+                if routes.is_empty() { "diagnostic review required" } else { &routes }
+            ),
+        },
+    )?;
+    Ok(AgentOutcome::ValidationFailed { session_id, failed })
 }
 
 async fn execute_and_record(

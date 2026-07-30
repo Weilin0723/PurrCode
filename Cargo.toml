@@ -13,6 +13,7 @@ members = [
   "crates/mcp-host",
   "crates/supervisor-runtime",
   "crates/validation-runtime",
+  "crates/test-orchestrator",
   "crates/agent-runtime",
   "crates/purrcode-daemon",
   "crates/purrcode-cli",
@@ -23,11 +24,18 @@ members = [
   "crates/golden-suite",
   "crates/evaluation-runtime",
   "crates/evidence-bundle",
+  "crates/workspace-contracts",
+  "crates/terminal-runtime",
+  "crates/environment-runtime",
+  "crates/authority-contracts",
+  "crates/model-selection",
+  "crates/ui-contracts",
+  "crates/studio-shell",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Weilin0723/PurrCode"
@@ -37,7 +45,7 @@ rust-version = "1.88"
 anyhow = "1"
 async-trait = "0.1"
 async-stream = "0.3"
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 blake3 = "1"
 cap-std = "4"
@@ -52,6 +60,7 @@ globset = "0.4"
 ignore = "0.4"
 keyring = "4.1.5"
 libc = "0.2"
+portable-pty = "0.9"
 hex = "0.4"
 security-framework = "3.7"
 rusqlite = { version = "0.32", features = ["backup", "bundled", "chrono", "uuid"] }

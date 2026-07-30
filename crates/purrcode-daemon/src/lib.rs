@@ -52,6 +52,11 @@ use purrcode_supervisor_runtime::{
     IsolatedWorker, ParallelismConfig, Supervisor, WorkerOutput, WorkerSpec, WorkerStatus,
     WorkerWorkspace,
 };
+use purrcode_terminal_runtime::{
+    AttachTerminalAction, DetachTerminalAction, OwnershipGeneration, ResizeTerminalAction,
+    SendTerminalInputAction, StartTerminalAction, StopProcessAction, TerminalId, TerminalOwner,
+    TerminalRuntime, TerminalSize, WorkspaceId,
+};
 use purrcode_web_research::{
     DomainPolicy, PublicWebAction, PublicWebAuthorization, ResearchEngine, StubSearchProvider,
 };
@@ -97,6 +102,7 @@ struct AppState {
     interrupting_sessions: Arc<Mutex<BTreeMap<SessionId, Uuid>>>,
     pull_jobs: Arc<Mutex<BTreeMap<ActionId, PullJob>>>,
     live_streams: Arc<Mutex<BTreeMap<SessionId, Arc<LiveStreamHub>>>>,
+    terminals: TerminalRuntime,
 }
 
 struct AgentLease {
@@ -339,9 +345,21 @@ pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
         interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
         pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
         live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+        terminals: TerminalRuntime::default(),
     };
     let router = Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/environment/inspect", post(inspect_environment))
+        .route("/v1/terminals", get(list_terminals).post(start_terminal))
+        .route(
+            "/v1/terminals/{id}",
+            get(get_terminal).delete(stop_terminal),
+        )
+        .route("/v1/terminals/{id}/input", post(send_terminal_input))
+        .route("/v1/terminals/{id}/resize", post(resize_terminal))
+        .route("/v1/terminals/{id}/attach", post(attach_terminal))
+        .route("/v1/terminals/{id}/detach", post(detach_terminal))
+        .route("/v1/terminals/{id}/owner", post(change_terminal_owner))
         .route("/v1/sessions", get(sessions))
         .route("/v1/sessions", post(start_session))
         .route("/v1/sessions/{id}", get(session))
@@ -479,9 +497,21 @@ pub async fn bind_and_report(
         interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
         pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
         live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+        terminals: TerminalRuntime::default(),
     };
     let router = Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/environment/inspect", post(inspect_environment))
+        .route("/v1/terminals", get(list_terminals).post(start_terminal))
+        .route(
+            "/v1/terminals/{id}",
+            get(get_terminal).delete(stop_terminal),
+        )
+        .route("/v1/terminals/{id}/input", post(send_terminal_input))
+        .route("/v1/terminals/{id}/resize", post(resize_terminal))
+        .route("/v1/terminals/{id}/attach", post(attach_terminal))
+        .route("/v1/terminals/{id}/detach", post(detach_terminal))
+        .route("/v1/terminals/{id}/owner", post(change_terminal_owner))
         .route("/v1/sessions", get(sessions))
         .route("/v1/sessions", post(start_session))
         .route("/v1/sessions/{id}", get(session))
@@ -590,6 +620,193 @@ pub async fn bind_and_report(
     Ok((report, future))
 }
 
+#[derive(Deserialize)]
+struct StartTerminalRequest {
+    workspace_id: WorkspaceId,
+    action: StartTerminalAction,
+}
+
+#[derive(Deserialize)]
+struct InspectEnvironmentRequest {
+    repository: PathBuf,
+}
+
+async fn inspect_environment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<InspectEnvironmentRequest>,
+) -> Result<Json<purrcode_environment_runtime::EnvironmentDoctorReport>, ApiError> {
+    authorize(&state, &headers)?;
+    let managed_root = state
+        .database
+        .parent()
+        .unwrap_or_else(|| Path::new("/"))
+        .join("toolchains");
+    let report =
+        purrcode_environment_runtime::inspect_environment(&request.repository, &managed_root)
+            .await
+            .map_err(ApiError::environment)?;
+    Ok(Json(report))
+}
+
+#[derive(Deserialize)]
+struct TerminalInputRequest {
+    generation: OwnershipGeneration,
+    input: String,
+}
+
+#[derive(Deserialize)]
+struct TerminalResizeRequest {
+    rows: u16,
+    cols: u16,
+}
+
+#[derive(Deserialize, Default)]
+struct TerminalAttachRequest {
+    #[serde(default)]
+    replay_bytes: usize,
+}
+
+#[derive(Deserialize)]
+struct TerminalOwnerRequest {
+    owner: TerminalOwner,
+}
+
+async fn list_terminals(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminals = state.terminals.list().map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({ "terminals": terminals })))
+}
+
+async fn start_terminal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<StartTerminalRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminal = state
+        .terminals
+        .start(request.workspace_id, request.action)
+        .map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({ "terminal": terminal })))
+}
+
+async fn get_terminal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminal = state
+        .terminals
+        .inspect(parse_terminal_id(&id)?, 256 * 1024)
+        .map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({ "terminal": terminal })))
+}
+
+async fn send_terminal_input(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<TerminalInputRequest>,
+) -> Result<StatusCode, ApiError> {
+    authorize(&state, &headers)?;
+    state
+        .terminals
+        .send_input(SendTerminalInputAction {
+            terminal_id: parse_terminal_id(&id)?,
+            owner_generation: request.generation,
+            input: request.input.into_bytes(),
+        })
+        .map_err(ApiError::terminal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn resize_terminal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<TerminalResizeRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminal = state
+        .terminals
+        .resize(ResizeTerminalAction {
+            terminal_id: parse_terminal_id(&id)?,
+            size: TerminalSize {
+                rows: request.rows,
+                cols: request.cols,
+            },
+        })
+        .map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({ "terminal": terminal })))
+}
+
+async fn attach_terminal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<TerminalAttachRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminal = state
+        .terminals
+        .attach(AttachTerminalAction {
+            terminal_id: parse_terminal_id(&id)?,
+            replay_bytes: request.replay_bytes,
+        })
+        .map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({ "terminal": terminal })))
+}
+
+async fn detach_terminal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminal = state
+        .terminals
+        .detach(DetachTerminalAction {
+            terminal_id: parse_terminal_id(&id)?,
+        })
+        .map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({ "terminal": terminal })))
+}
+
+async fn change_terminal_owner(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<TerminalOwnerRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminal = state
+        .terminals
+        .transfer_ownership(parse_terminal_id(&id)?, request.owner)
+        .map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({ "terminal": terminal })))
+}
+
+async fn stop_terminal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminal = state
+        .terminals
+        .stop(StopProcessAction {
+            terminal_id: parse_terminal_id(&id)?,
+            grace: None,
+        })
+        .map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({ "terminal": terminal })))
+}
+
 async fn health(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -602,6 +819,7 @@ async fn health(
         product: "purrcode",
         version: env!("CARGO_PKG_VERSION"),
         daemon_api_version: DAEMON_API_VERSION,
+        studio_api_version: purrcode_ui_contracts::STUDIO_API_VERSION,
     }))
 }
 
@@ -1226,7 +1444,15 @@ async fn start_session(
     } else {
         AgentOperation::Start
     };
-    spawn_agent_operation(state, id, operation).await?;
+    if let Err(error) = spawn_agent_operation(state.clone(), id, operation).await {
+        let reason = error_message(&error).chars().take(512).collect();
+        state
+            .store
+            .lock()
+            .await
+            .append(id, &SessionEvent::SessionFailed { reason })?;
+        return Err(error);
+    }
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
@@ -3038,6 +3264,12 @@ fn parse_session_id(value: &str) -> Result<SessionId, ApiError> {
         .map_err(|_| ApiError::BadRequest("session ID is not a UUID".into()))
 }
 
+fn parse_terminal_id(value: &str) -> Result<TerminalId, ApiError> {
+    Uuid::parse_str(value)
+        .map(TerminalId)
+        .map_err(|_| ApiError::BadRequest("terminal ID is not a UUID".into()))
+}
+
 fn validate_bind(address: IpAddr, allow_public: bool) -> Result<(), DaemonError> {
     if !address.is_loopback() && !allow_public {
         return Err(DaemonError::PublicBindDenied(address));
@@ -3089,6 +3321,7 @@ struct Health {
     product: &'static str,
     version: &'static str,
     daemon_api_version: u32,
+    studio_api_version: u32,
 }
 
 #[derive(Serialize)]
@@ -3141,6 +3374,50 @@ enum ApiError {
     BadRequest(String),
     Conflict(String),
     Store(StoreError),
+    Terminal(String),
+    Environment(String),
+}
+
+impl ApiError {
+    fn terminal(error: purrcode_terminal_runtime::TerminalError) -> Self {
+        match error {
+            purrcode_terminal_runtime::TerminalError::NotFound { .. } => Self::NotFound,
+            purrcode_terminal_runtime::TerminalError::RelativeWorkingDirectory(_)
+            | purrcode_terminal_runtime::TerminalError::EmptyProgram
+            | purrcode_terminal_runtime::TerminalError::UnsafeEnvironment(_) => {
+                Self::BadRequest(error.to_string())
+            }
+            purrcode_terminal_runtime::TerminalError::StaleInput { .. }
+            | purrcode_terminal_runtime::TerminalError::Exited { .. }
+            | purrcode_terminal_runtime::TerminalError::AlreadyOwned { .. }
+            | purrcode_terminal_runtime::TerminalError::Timeout => {
+                Self::Conflict(error.to_string())
+            }
+            _ => Self::Terminal(error.to_string()),
+        }
+    }
+
+    fn environment(error: purrcode_environment_runtime::EnvironmentError) -> Self {
+        match error {
+            purrcode_environment_runtime::EnvironmentError::InvalidRepository(_)
+            | purrcode_environment_runtime::EnvironmentError::InvalidManagedRoot(_)
+            | purrcode_environment_runtime::EnvironmentError::UnsafeManifest(_) => {
+                Self::BadRequest(error.to_string())
+            }
+            _ => Self::Environment(error.to_string()),
+        }
+    }
+}
+
+fn error_message(error: &ApiError) -> String {
+    match error {
+        ApiError::Unauthorized => "unauthorized".into(),
+        ApiError::NotFound => "not found".into(),
+        ApiError::BadRequest(message) | ApiError::Conflict(message) => message.clone(),
+        ApiError::Store(_) => "session store error".into(),
+        ApiError::Terminal(_) => "terminal runtime error".into(),
+        ApiError::Environment(_) => "environment inspection error".into(),
+    }
 }
 
 impl From<StoreError> for ApiError {
@@ -3161,6 +3438,20 @@ impl IntoResponse for ApiError {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "session store error".into(),
+                )
+            }
+            Self::Terminal(error) => {
+                let _redacted = error;
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "terminal runtime error".into(),
+                )
+            }
+            Self::Environment(error) => {
+                let _redacted = error;
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "environment inspection error".into(),
                 )
             }
         };
@@ -6691,6 +6982,7 @@ default = "ollama/small"
             interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            terminals: TerminalRuntime::default(),
         };
         let session_id = SessionId::new();
         let original_generation = Uuid::new_v4();
@@ -6787,6 +7079,7 @@ default = "ollama/small"
             interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            terminals: TerminalRuntime::default(),
         };
         let session_id = SessionId::new();
         let generation = Uuid::new_v4();
@@ -7098,6 +7391,144 @@ default = "ollama/small"
         assert_eq!(health["product"], "purrcode");
         assert_eq!(health["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(health["daemon_api_version"], DAEMON_API_VERSION);
+        handle.abort();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn authenticated_terminal_api_drives_a_real_pty_and_takeover() {
+        let temporary = tempfile::tempdir().unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let client = reqwest::Client::new();
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let base = format!("http://{}", report.bind);
+        let response = client
+            .post(format!("{base}/v1/terminals"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "workspace_id": WorkspaceId::new(),
+                "action": {
+                    "program": "/bin/cat",
+                    "arguments": [],
+                    "working_directory": temporary.path(),
+                    "environment": {},
+                    "initial_size": {"rows": 24, "cols": 80},
+                    "owner": {"kind": "agent", "data": {"role": "Build Agent"}}
+                }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let started: serde_json::Value = response.json().await.unwrap();
+        let id = started["terminal"]["terminal_id"].as_str().unwrap();
+        let generation = started["terminal"]["generation"].as_u64().unwrap();
+
+        let takeover = client
+            .post(format!("{base}/v1/terminals/{id}/owner"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"owner": {"kind": "human"}}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(takeover.status(), StatusCode::OK);
+        let takeover: serde_json::Value = takeover.json().await.unwrap();
+        assert_eq!(takeover["terminal"]["generation"], generation + 1);
+
+        let stale = client
+            .post(format!("{base}/v1/terminals/{id}/input"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"generation": generation, "input": "must-not-land\n"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        let current_generation = generation + 1;
+        let sent = client
+            .post(format!("{base}/v1/terminals/{id}/input"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"generation": current_generation, "input": "daemon-pty-evidence\n"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(sent.status(), StatusCode::NO_CONTENT);
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            let value: serde_json::Value = client
+                .get(format!("{base}/v1/terminals/{id}"))
+                .bearer_auth(token.trim())
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let bytes: Vec<u8> =
+                serde_json::from_value(value["terminal"]["transcript_tail"].clone()).unwrap();
+            if String::from_utf8_lossy(&bytes).contains("daemon-pty-evidence") {
+                break;
+            }
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let stopped = client
+            .delete(format!("{base}/v1/terminals/{id}"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(stopped.status(), StatusCode::OK);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn authenticated_environment_inspection_reports_real_check_evidence() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::write(
+            repository.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nrust-version = \"1.88\"\n",
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let response = reqwest::Client::new()
+            .post(format!("http://{}/v1/environment/inspect", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"repository": repository}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let report: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(report["ready"], true);
+        assert!(report["checks"].as_array().unwrap().iter().any(|check| {
+            check["check"]["kind"] == "rust"
+                && check["result"] == "passed"
+                && check["exit_code"] == 0
+        }));
         handle.abort();
     }
 
@@ -7608,6 +8039,50 @@ allow_same_model = true
         );
         handle.abort();
         provider_server.abort();
+    }
+
+    #[tokio::test]
+    async fn initial_agent_configuration_failure_is_durable_and_terminal() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repo");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init"]);
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(&app_config, "not valid application configuration").unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let database = temporary.path().join("sessions.db");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: database.clone(),
+            token_file: token_file.clone(),
+            app_config,
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let response = reqwest::Client::new()
+            .post(format!("http://{}/v1/sessions", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "inspect fixture",
+                "repository": repository,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let store = SessionStore::open(&database).unwrap();
+        let ids = store.list_session_ids().unwrap();
+        assert_eq!(ids.len(), 1);
+        let state = store.load(ids[0]).unwrap();
+        assert_eq!(state.status, SessionStatus::Failed);
+        assert!(store.events(ids[0]).unwrap().iter().any(|event| {
+            matches!(event, SessionEvent::SessionFailed { reason } if !reason.is_empty() && reason.len() <= 512)
+        }));
+        handle.abort();
     }
 
     #[cfg(unix)]
