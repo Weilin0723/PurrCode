@@ -5,11 +5,20 @@ use crate::provider_setup::{ProviderSetup, SetupScreen};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
-    if is_active_pull_cancel_key(key, app.active_pull_action.is_some()) {
+    if is_active_pull_cancel_key(
+        key,
+        app.active_pull_action.is_some() && app.composer.buffer.is_empty(),
+    ) {
         app.pending_command = Some("/model pull-cancel".into());
         return true;
     }
-    if is_active_stream_cancel_key(key, app.mode == AppMode::Conversation && app.stream.active) {
+    // Single-letter shortcuts only fire on an empty composer. Without that, the
+    // `c` of a typed `/cancel` or `/connect` would be swallowed as a shortcut and
+    // the command could never be entered while a response is streaming.
+    if is_active_stream_cancel_key(
+        key,
+        app.mode == AppMode::Conversation && app.stream.active && app.composer.buffer.is_empty(),
+    ) {
         app.pending_command = Some("/cancel".into());
         return true;
     }
@@ -17,7 +26,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         AppMode::SecretReview => handle_secret_review_key(app, key),
         AppMode::ProviderSetup => handle_setup_key(app, key),
         AppMode::SkillBrowse => handle_skill_key(app, key),
-        AppMode::DiffView => handle_diff_key(app, key),
+        AppMode::Review => handle_review_key(app, key),
+        AppMode::Approval => handle_approval_key(app, key),
         AppMode::Help => handle_help_key(app, key),
         AppMode::ModelBrowse => handle_model_browser_key(app, key),
         AppMode::LeaseConflict => handle_lease_conflict_key(app, key),
@@ -71,10 +81,30 @@ fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
             app.palette_selected = 0;
         }
         KeyCode::Enter => {
+            let context = app.ui_context();
             if let Some(action) = crate::command_palette::filtered_actions(&app.palette_query)
                 .get(app.palette_selected)
             {
-                app.pending_command = Some(action.2.to_owned());
+                // An unavailable action must explain itself rather than run and
+                // fail, so the palette never presents a dead end.
+                match action.availability(&context) {
+                    crate::ui_actions::Availability::Unavailable(reason) => {
+                        app.message_bar = format!("{} is unavailable: {reason}.", action.label);
+                    }
+                    crate::ui_actions::Availability::Available => match action.primary_command() {
+                        Some(command) => app.pending_command = Some(command.to_owned()),
+                        None => {
+                            app.message_bar = format!(
+                                "{} runs from {}.",
+                                action.label,
+                                action
+                                    .primary_shortcut()
+                                    .map(|shortcut| shortcut.keys)
+                                    .unwrap_or("its own screen")
+                            );
+                        }
+                    },
+                }
                 app.palette_query.clear();
                 app.palette_selected = 0;
                 app.switch_mode(AppMode::Conversation);
@@ -114,9 +144,9 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
     }
 
     if is_submit_key(key) {
-        if app.session_read_only {
+        if app.session_read_only && !read_only_allows(&app.composer.buffer) {
             app.message_bar =
-                "History is open read-only. Restart and choose New to enter a new task.".into();
+                "History is open read-only. Press N for a new session to change anything.".into();
             return true;
         }
         if let Ok(detection) = purrcode_provider_import::detect_content(&app.composer.buffer) {
@@ -154,15 +184,17 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
 
     match key.code {
         KeyCode::Char('q') if app.composer.buffer.is_empty() => return false,
-        KeyCode::Char('a')
+        // Opening the decision surface, not approving: authority is only granted
+        // from a screen that showed the exact action.
+        KeyCode::Char('a' | 'A')
             if app.composer.buffer.is_empty() && app.conversation.pending_action.is_some() =>
         {
-            app.pending_command = Some("/approve".into())
+            app.open_approval();
         }
-        KeyCode::Char('r')
+        KeyCode::Char('r' | 'R')
             if app.composer.buffer.is_empty() && app.conversation.pending_action.is_some() =>
         {
-            app.pending_command = Some("/deny rejected from approval card".into())
+            app.open_approval();
         }
         KeyCode::Char('/') if app.composer.buffer.is_empty() => {
             app.composer.buffer.push('/');
@@ -174,6 +206,29 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.workspace.toggle_files()
+        }
+        // Ctrl+O, not Ctrl+I: terminals encode Ctrl+I as 0x09, which is Tab.
+        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.inspector_open = !app.inspector_open;
+            if !app.inspector_open {
+                app.activity_selected = None;
+            }
+        }
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Recovery is a focused surface, not an inline panel.
+            if app.ui_context().recovery_required {
+                app.switch_mode(AppMode::LeaseConflict);
+            } else {
+                app.message_bar =
+                    "This session does not require recovery. Nothing needs to be restored.".into();
+            }
+        }
+        // Focus moves explicitly, and only onto regions this frame actually drew.
+        KeyCode::Tab if app.composer.buffer.is_empty() => {
+            app.focus = next_focus(app, 1);
+        }
+        KeyCode::BackTab if app.composer.buffer.is_empty() => {
+            app.focus = next_focus(app, -1);
         }
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.pending_command = Some("/diff".into())
@@ -187,10 +242,29 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char(' ') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.conversation.toggle_selected_card()
         }
+        // Inspecting an activity step opens the inspector on that step rather
+        // than expanding it in place, keeping the rail compact.
         KeyCode::Char(' ' | 'e' | 'E')
-            if app.composer.buffer.is_empty() && app.conversation.selected_card.is_some() =>
+            if app.composer.buffer.is_empty() && !app.conversation.progress.activity.is_empty() =>
         {
-            app.conversation.toggle_selected_card()
+            let last = app.conversation.progress.activity.len().saturating_sub(1);
+            app.activity_selected = Some(app.activity_selected.map_or(last, |index| index));
+            app.inspector_open = true;
+            app.focus = crate::layout::Focus::Inspector;
+        }
+        KeyCode::Up if app.focus == crate::layout::Focus::Activity => {
+            let last = app.conversation.progress.activity.len().saturating_sub(1);
+            app.activity_selected = Some(
+                app.activity_selected
+                    .map_or(last, |index| index.saturating_sub(1)),
+            );
+        }
+        KeyCode::Down if app.focus == crate::layout::Focus::Activity => {
+            let last = app.conversation.progress.activity.len().saturating_sub(1);
+            app.activity_selected = Some(
+                app.activity_selected
+                    .map_or(0, |index| (index + 1).min(last)),
+            );
         }
         KeyCode::Char('t')
             if app.composer.buffer.is_empty() && app.conversation.selected_card.is_some() =>
@@ -266,6 +340,39 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         _ => {}
     }
     true
+}
+
+/// Whether read-only history accepts this input.
+///
+/// The invariant is that history never *starts execution* — not that history is
+/// inert. Refusing `/diff` would hide the evidence the user opened history to
+/// see, and refusing `/rollback` would strand agent-owned work. So task text is
+/// always refused, and a command is allowed exactly when the action registry says
+/// it cannot cause the agent to run. An unregistered command is refused: not
+/// recognizing something is not evidence that it is safe.
+fn read_only_allows(input: &str) -> bool {
+    let input = input.trim();
+    if !input.starts_with('/') || input.contains('\n') {
+        return false;
+    }
+    crate::ui_actions::command_starts_execution(input) == Some(false)
+}
+
+/// Move focus through the regions this frame actually drew.
+///
+/// The ring is rebuilt from the current layout decision, so Tab can never land on
+/// a region that is not on screen.
+fn next_focus(app: &App, delta: isize) -> crate::layout::Focus {
+    let inspector = crate::screens::workbench::inspector_reason(app).visible();
+    let activity = !app.conversation.progress.activity.is_empty();
+    let mut ring =
+        crate::layout::FocusRing::new(true, activity, inspector, true).restore(app.focus);
+    if delta >= 0 {
+        ring.next();
+    } else {
+        ring.previous();
+    }
+    ring.current()
 }
 
 fn sync_trace_inspector(app: &mut App) {
@@ -742,14 +849,109 @@ fn handle_skill_key(app: &mut App, key: KeyEvent) -> bool {
                 browser.selected = browser.selected.saturating_sub(1);
             }
         }
+        // A search parked on a network-approval boundary is re-run from here,
+        // with the exact query the browser already recorded — not retyped, so
+        // there is no way to approve a different search than the one shown.
+        // The screen has no composer while this mode is active, so this is the
+        // only reachable path to `/skill-search-approve`.
+        KeyCode::Char('a' | 'A') => {
+            if let Some(query) = app
+                .skill_browser
+                .as_ref()
+                .and_then(|browser| browser.pending_search_query.clone())
+            {
+                app.pending_command = Some(format!("/skill-search-approve {query}"));
+            }
+        }
         _ => {}
     }
     true
 }
 
-fn handle_diff_key(app: &mut App, _key: KeyEvent) -> bool {
-    app.diff_view = None;
-    app.switch_mode(AppMode::Conversation);
+/// Review navigation. Every key here is advertised on the review hint line.
+fn handle_review_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.switch_mode(AppMode::Conversation);
+        }
+        KeyCode::Char('f' | 'F') => app.review_show_files = !app.review_show_files,
+        KeyCode::Char('v' | 'V') => {
+            app.review_validation_expanded = !app.review_validation_expanded;
+        }
+        KeyCode::Char('j' | 'J') | KeyCode::Down => {
+            if let Some(review) = &mut app.review {
+                review.next_file();
+            }
+        }
+        KeyCode::Char('k' | 'K') | KeyCode::Up => {
+            if let Some(review) = &mut app.review {
+                review.previous_file();
+            }
+        }
+        KeyCode::Char('n' | 'N') => {
+            if let Some(review) = &mut app.review {
+                review.next_hunk();
+            }
+        }
+        KeyCode::Char('p' | 'P') => {
+            if let Some(review) = &mut app.review {
+                review.previous_hunk();
+            }
+        }
+        KeyCode::Char('t' | 'T') => {
+            app.trace_inspector_visible = true;
+            app.switch_mode(AppMode::Conversation);
+            sync_trace_inspector(app);
+        }
+        _ => {}
+    }
+    true
+}
+
+/// The focused approval surface. Only `A` and `R` submit a decision, and only
+/// when the surface is current; nothing here can authorize by accident.
+fn handle_approval_key(app: &mut App, key: KeyEvent) -> bool {
+    let can_decide = app
+        .approval
+        .as_ref()
+        .is_some_and(crate::approval::ApprovalRequest::can_decide);
+    match key.code {
+        KeyCode::Char('a' | 'A') if can_decide => {
+            app.pending_command = Some("/approve".into());
+        }
+        KeyCode::Char('r' | 'R') if can_decide => {
+            app.pending_command = Some("/deny rejected from the approval surface".into());
+        }
+        KeyCode::Char('d' | 'D') => {
+            app.pending_command = Some("/diff".into());
+        }
+        KeyCode::Char('i' | 'I') => {
+            // Adding an instruction leaves the boundary pending: guidance is not
+            // approval.
+            app.approval_dismissed = app
+                .approval
+                .as_ref()
+                .map(|request| request.action_id.clone());
+            app.switch_mode(AppMode::Conversation);
+            app.focus = crate::layout::Focus::Composer;
+            app.message_bar =
+                "The action stays pending. Type an instruction and send it with Ctrl+G.".into();
+        }
+        KeyCode::F(5) => {
+            app.refresh_approval();
+            app.message_bar = "Refreshed the pending action from durable state.".into();
+        }
+        KeyCode::Esc => {
+            // Remember the dismissal so the surface does not immediately reopen.
+            app.approval_dismissed = app
+                .approval
+                .as_ref()
+                .map(|request| request.action_id.clone());
+            app.switch_mode(AppMode::Conversation);
+            app.message_bar = "The action is still pending. Nothing has run.".into();
+        }
+        _ => {}
+    }
     true
 }
 

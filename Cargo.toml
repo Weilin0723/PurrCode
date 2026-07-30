@@ -5,6 +5,8 @@ members = [
   "crates/contextual-judgment",
   "crates/ninelives-recovery",
   "crates/claw-sandbox",
+  "crates/terminal-runtime",
+  "crates/test-orchestrator",
   "crates/provider-gateway",
   "crates/provider-import",
   "crates/repository-engine",
@@ -13,11 +15,11 @@ members = [
   "crates/mcp-host",
   "crates/supervisor-runtime",
   "crates/validation-runtime",
-  "crates/test-orchestrator",
   "crates/agent-runtime",
   "crates/purrcode-daemon",
   "crates/purrcode-cli",
   "crates/purrcode-tui",
+  "crates/purrcode-tui-e2e",
   "crates/skill-store",
   "crates/skill-registry",
   "crates/web-research",
@@ -25,7 +27,6 @@ members = [
   "crates/evaluation-runtime",
   "crates/evidence-bundle",
   "crates/workspace-contracts",
-  "crates/terminal-runtime",
   "crates/environment-runtime",
   "crates/authority-contracts",
   "crates/model-selection",
@@ -35,7 +36,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.8.0"
+version = "0.8.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Weilin0723/PurrCode"

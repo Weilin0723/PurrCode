@@ -3,105 +3,70 @@
 use crate::app::{App, AppMode, PendingModelPull};
 use crate::provider_setup::ProviderSetup;
 use crate::skill_browser::SkillBrowser;
+use crate::ui_actions::UiActionDefinition;
 use serde_json::Value;
 use std::fmt::Write as _;
 
 pub struct CommandPalette;
 
-pub const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
-    (
-        "Connect provider",
-        "Configure or import a model provider",
-        "/connect",
-    ),
-    (
-        "Import provider from script",
-        "Parse pasted configuration without execution",
-        "/connect import",
-    ),
-    (
-        "Switch model",
-        "List and select a discovered model",
-        "/models",
-    ),
-    (
-        "Loaded local models",
-        "Inspect Ollama memory without loading a model",
-        "/model loaded",
-    ),
-    (
-        "Unload local models",
-        "Release Ollama model memory and verify it",
-        "/model unload-all",
-    ),
-    (
-        "New task",
-        "Preserve history and begin a new session",
-        "/new",
-    ),
-    ("Open session", "List durable sessions", "/sessions"),
-    ("Resume", "Resume the selected session", "/resume"),
-    ("Pause", "Pause the selected session", "/pause"),
-    ("Cancel", "Cancel while preserving evidence", "/cancel"),
-    ("Review diff", "Open the full daemon-backed diff", "/diff"),
-    (
-        "Approve action",
-        "Approve the exact pending action",
-        "/approve",
-    ),
-    (
-        "Reject action",
-        "Reject the exact pending action",
-        "/deny rejected from command palette",
-    ),
-    (
-        "Recommend local model",
-        "Show observed resources and qualification evidence",
-        "/model recommend",
-    ),
-    (
-        "Qualify local model",
-        "Run real provider-backed model qualification",
-        "/model qualify",
-    ),
-    (
-        "Pull local model",
-        "Propose an Ollama pull that requires explicit approval",
-        "/model pull",
-    ),
-    (
-        "Roll back",
-        "Discard agent-owned isolated changes",
-        "/rollback",
-    ),
-    (
-        "Browse skills",
-        "Inspect discovered and installed skills",
-        "/skills",
-    ),
-    (
-        "Settings",
-        "Show current provider and policy settings",
-        "/settings",
-    ),
-    (
-        "Keyboard shortcuts",
-        "Show primary keys and commands",
-        "/help",
-    ),
+/// Every verb `CommandPalette::execute` serves, including the aliases resolved
+/// by argument normalization.
+///
+/// This constant is load-bearing in both directions. The dispatcher's fallback
+/// arm consults it, so a verb listed here without a match arm reports an
+/// internal inconsistency instead of a plain "unknown command"; and
+/// `ui_actions::coverage` / `ui_actions::orphan_commands` check it against the
+/// action registry, so neither list can drift silently.
+pub const DISPATCH_COMMANDS: &[&str] = &[
+    "approve",
+    "ask",
+    "build",
+    "cancel",
+    "capability",
+    "compact",
+    "connect",
+    "deny",
+    "diff",
+    "help",
+    "mcp",
+    "model",
+    "models",
+    "new",
+    "pause",
+    "plan",
+    "privacy",
+    "provider",
+    "providers",
+    "quit",
+    "research",
+    "research-approve",
+    "resume",
+    "review",
+    "role",
+    "rollback",
+    "session",
+    "sessions",
+    "settings",
+    "skill-block",
+    "skill-download",
+    "skill-download-approve",
+    "skill-install",
+    "skill-install-approve",
+    "skill-search",
+    "skill-search-approve",
+    "skills",
 ];
 
-pub fn filtered_actions(query: &str) -> Vec<&'static (&'static str, &'static str, &'static str)> {
-    let query = query.trim().to_ascii_lowercase();
-    PALETTE_ACTIONS
-        .iter()
-        .filter(|(name, detail, command)| {
-            query.is_empty()
-                || name.to_ascii_lowercase().contains(&query)
-                || detail.to_ascii_lowercase().contains(&query)
-                || command.contains(&query)
-        })
-        .collect()
+/// Palette entries for a query, generated from the action registry. There is no
+/// separate palette list to keep in sync.
+pub fn filtered_actions(query: &str) -> Vec<&'static UiActionDefinition> {
+    crate::ui_actions::filtered(query)
+}
+
+impl Default for CommandPalette {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CommandPalette {
@@ -585,6 +550,16 @@ impl CommandPalette {
                     Err(e) => app.message_bar = format!("Error: {e}"),
                 }
             }
+            // `/mcp search <q>` and `/capability add <text>` normalize to
+            // skill-search above. Reaching here means the argument form was
+            // wrong, so state the usage rather than falling through to
+            // "unknown command".
+            "mcp" => {
+                app.message_bar = "Usage: /mcp search <capability description>".into();
+            }
+            "capability" => {
+                app.message_bar = "Usage: /capability add <capability description>".into();
+            }
             "skills" => {
                 let token = app.token.clone();
                 let daemon_url = app.daemon_url().to_string();
@@ -640,31 +615,9 @@ impl CommandPalette {
                         .await;
                 }
             }
-            "diff" => {
-                if let Some(id) = &app.session_id {
-                    match app
-                        .request(
-                            reqwest::Method::GET,
-                            &format!("/v1/sessions/{id}/diff"),
-                            None,
-                        )
-                        .await
-                    {
-                        Ok(session) => {
-                            app.diff_view = Some(crate::diff_view::DiffView {
-                                content: session["patch"]
-                                    .as_str()
-                                    .unwrap_or("No changes.")
-                                    .to_owned(),
-                            });
-                            app.switch_mode(AppMode::DiffView);
-                        }
-                        Err(e) => app.message_bar = format!("Error: {e}"),
-                    }
-                } else {
-                    app.message_bar = "No active session.".into();
-                }
-            }
+            // Review reads the daemon's own effect evidence; it does not build a
+            // second view of what changed.
+            "diff" => app.load_review().await,
             "privacy" => {
                 if app.status_bar.privacy == "local-only" {
                     app.status_bar.set_privacy("mixed");
@@ -729,6 +682,13 @@ impl CommandPalette {
                     }
                     Err(error) => app.message_bar = format!("Research failed: {error}"),
                 }
+            }
+            "ask" => {
+                app.conversation.mode = purrcode_runtime_core::ConversationMode::Ask;
+                app.status_bar.set_mode("ask");
+                app.message_bar =
+                    "Switched to ask mode. PurrCode answers without proposing repository changes."
+                        .into();
             }
             "plan" => {
                 app.conversation.mode = purrcode_runtime_core::ConversationMode::Plan;
@@ -1012,20 +972,28 @@ impl CommandPalette {
                     app.message_bar = "No active session.".into();
                 }
             }
-            "approve" | "resume" | "rollback" | "pause" | "deny" => {
+            // Approval and rejection are the only commands that grant or refuse
+            // execution authority. They never submit an action the user has not
+            // been shown: from anywhere else they open the focused decision
+            // surface first, and only submit once it is on screen.
+            "approve" | "deny" => {
+                let approve = cmd == "approve";
+                if app.mode == AppMode::Approval {
+                    app.submit_decision(approve).await;
+                } else if app.open_approval() && !approve {
+                    // Rejection from outside the surface still requires seeing it.
+                    app.message_bar = "Review the action below, then press R to reject it.".into();
+                }
+            }
+            "resume" | "rollback" | "pause" => {
                 let Some(id) = app.session_id.clone() else {
                     app.message_bar = "No active session.".into();
                     return;
                 };
                 let (endpoint, body) = match cmd.as_str() {
-                    "approve" => ("approve", serde_json::json!({})),
                     "resume" => ("resume", serde_json::json!({})),
                     "rollback" => ("rollback", serde_json::json!({})),
-                    "pause" => ("pause", serde_json::json!({"reason": "paused from TUI"})),
-                    _ => (
-                        "reject",
-                        serde_json::json!({"reason": if args.is_empty() { "denied from TUI" } else { args }}),
-                    ),
+                    _ => ("pause", serde_json::json!({"reason": "paused from TUI"})),
                 };
                 match app
                     .request(
@@ -1036,15 +1004,16 @@ impl CommandPalette {
                     .await
                 {
                     Ok(_) => {
-                        app.message_bar = format!("Session command accepted: {cmd}");
-                        if matches!(cmd.as_str(), "approve" | "resume") {
-                            let after = app.conversation.last_durable_sequence();
-                            let model = app.status_bar.model.clone();
-                            app.conversation.start_streaming(Some(model.clone()));
-                            app.start_session_stream(after, Some(model));
-                            app.message_bar =
-                                format!("Session command accepted: {cmd} · continuing...");
-                        }
+                        app.message_bar = match endpoint {
+                            "resume" => "Session resumed.".into(),
+                            "rollback" => {
+                                "Agent-owned changes were discarded; your working tree is untouched."
+                                    .to_owned()
+                            }
+                            _ => "Session paused; all evidence is preserved.".into(),
+                        };
+                        app.refresh().await;
+                        app.refresh_approval();
                     }
                     Err(error) => app.message_bar = format!("Error: {error}"),
                 }
@@ -1087,6 +1056,15 @@ impl CommandPalette {
             "quit" => {
                 app.message_bar = "Goodbye.".into();
                 app.quit_requested = true;
+            }
+            // A verb listed in DISPATCH_COMMANDS that reaches this arm is an
+            // internal inconsistency, not a user error: the discovery surfaces
+            // advertise it but nothing serves it. Report that distinctly so the
+            // failure is visible instead of looking like a typo.
+            registered if DISPATCH_COMMANDS.contains(&registered) => {
+                app.message_bar = format!(
+                    "/{registered} is registered but has no handler in this build. Please report this; no action was taken."
+                );
             }
             _ => {
                 app.message_bar = format!("Unknown command: /{cmd}. Type /help for commands.");
@@ -1466,19 +1444,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn command_palette_searches_names_details_and_commands() {
-        assert_eq!(filtered_actions("provider").len(), 4);
-        assert_eq!(filtered_actions("/diff")[0].0, "Review diff");
-        assert_eq!(filtered_actions("exact pending").len(), 2);
+    fn command_palette_searches_labels_descriptions_and_commands() {
+        assert_eq!(filtered_actions("/diff")[0].label, "Review diff");
         assert_eq!(
-            filtered_actions("/model recommend")[0].0,
+            filtered_actions("/model recommend")[0].label,
             "Recommend local model"
         );
         assert_eq!(
-            filtered_actions("/model qualify")[0].0,
+            filtered_actions("/model qualify")[0].label,
             "Qualify local model"
         );
-        assert_eq!(filtered_actions("/model pull")[0].0, "Pull local model");
+        assert!(filtered_actions("provider")
+            .iter()
+            .all(|action| action.matches("provider")));
+        assert!(filtered_actions("exact pending")
+            .iter()
+            .any(|action| action.id.as_str() == "approval.approve"));
+    }
+
+    /// Every verb the discovery surfaces advertise must reach a real match arm.
+    /// The dispatcher's fallback reports registered-but-unhandled verbs
+    /// distinctly, which is exactly what this asserts against.
+    #[tokio::test]
+    async fn every_registered_verb_reaches_a_handler() {
+        for verb in DISPATCH_COMMANDS {
+            let mut app = crate::test_fixtures::offline_app();
+            CommandPalette::new()
+                .execute(&mut app, &format!("/{verb}"))
+                .await;
+            assert!(
+                !app.message_bar.contains("registered but has no handler"),
+                "/{verb} is advertised but has no dispatcher arm"
+            );
+            assert!(
+                !app.message_bar.contains("Unknown command"),
+                "/{verb} was rejected as unknown: {}",
+                app.message_bar
+            );
+        }
     }
 
     #[test]

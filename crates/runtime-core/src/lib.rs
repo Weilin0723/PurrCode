@@ -1,5 +1,18 @@
 //! Provider-independent domain contracts for the trusted runtime.
 
+pub mod authority;
+pub mod terminal;
+
+pub use authority::{
+    apply_human_authority, AuthenticationChannel, AuthorityMode, AuthorityOutcome, GrantCapability,
+    GrantId, HumanAuthorityGrant, HumanIdentity,
+};
+pub use terminal::{
+    OwnershipGeneration, OwnershipTransition, ResizeTerminalAction, SendTerminalInputAction,
+    StartTerminalAction, StopProcessAction, TerminalAction, TerminalDimensions, TerminalId,
+    TerminalInput, TerminalOwner, TerminalSessionRecord, TerminalStatus, TranscriptPolicy,
+};
+
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -888,6 +901,22 @@ pub enum SessionEvent {
         content_digest: String,
         excerpt: String,
     },
+    // ── Terminal actions ──────────────────────────────────
+    //
+    // Deliberately separate from `ActionProposed`/`JudgmentRecorded`: those
+    // events drive the single-slot `SessionStatus::AwaitingApproval`, which
+    // represents the primary agent loop's one outstanding boundary. A
+    // terminal (a build tab, a test tab, a human shell) is not the primary
+    // loop, and several can be pending at once, so terminal approval state
+    // lives in its own maps and never touches `status`.
+    TerminalActionProposed {
+        action_id: ActionId,
+        action: TerminalAction,
+    },
+    TerminalJudgmentRecorded {
+        action_id: ActionId,
+        decision: JudgmentDecision,
+    },
 }
 
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
@@ -932,6 +961,8 @@ pub struct SessionState {
     pub proposed_actions: BTreeMap<ActionId, ProposedAction>,
     pub judgments: BTreeMap<ActionId, JudgmentDecision>,
     pub contextual_judgments: BTreeMap<ActionId, ContextualJudgment>,
+    pub proposed_terminal_actions: BTreeMap<ActionId, TerminalAction>,
+    pub terminal_judgments: BTreeMap<ActionId, JudgmentDecision>,
 }
 
 impl SessionState {
@@ -952,6 +983,8 @@ impl SessionState {
             proposed_actions: BTreeMap::new(),
             judgments: BTreeMap::new(),
             contextual_judgments: BTreeMap::new(),
+            proposed_terminal_actions: BTreeMap::new(),
+            terminal_judgments: BTreeMap::new(),
         }
     }
 
@@ -988,6 +1021,23 @@ impl SessionState {
                     return Err(DomainError::DuplicateEvent {
                         session: self.id,
                         event: format!("{event:?}"),
+                    });
+                }
+            }
+            SessionEvent::TerminalActionProposed { action_id, .. } => {
+                if self.proposed_terminal_actions.contains_key(action_id) {
+                    return Err(DomainError::DuplicateEvent {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                    });
+                }
+            }
+            SessionEvent::TerminalJudgmentRecorded { action_id, .. } => {
+                if !self.proposed_terminal_actions.contains_key(action_id) {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "terminal judgment recorded for unknown action".into(),
                     });
                 }
             }
@@ -1086,6 +1136,16 @@ impl SessionState {
             }
             SessionEvent::ActionProposed { action_id, action } => {
                 self.proposed_actions.insert(*action_id, action.clone());
+            }
+            SessionEvent::TerminalActionProposed { action_id, action } => {
+                self.proposed_terminal_actions
+                    .insert(*action_id, action.clone());
+            }
+            SessionEvent::TerminalJudgmentRecorded {
+                action_id,
+                decision,
+            } => {
+                self.terminal_judgments.insert(*action_id, decision.clone());
             }
             SessionEvent::PlanCreated { steps } => {
                 self.plan_revision += 1;

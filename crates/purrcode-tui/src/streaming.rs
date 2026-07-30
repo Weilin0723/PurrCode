@@ -406,6 +406,12 @@ impl StreamController {
             }
             StreamEvent::TransportClosed => {
                 self.receiver = None;
+                // Flush the pending batch before reporting the close. Dropping it
+                // would discard content that already arrived — and the message
+                // below explicitly promises that partial output is preserved.
+                if let Some(batch) = self.batcher.take() {
+                    output.push(batch.into_output(false));
+                }
                 if self.active && self.verified_end.is_none() {
                     output.push(StreamOutput::TransportError(
                         "live stream closed before a verified daemon end state".into(),
@@ -814,6 +820,43 @@ fn safe_kind(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An interrupted stream must keep the text that already arrived. The
+    /// interface tells the user partial output was preserved, so it has to be.
+    #[test]
+    fn closing_a_stream_flushes_content_that_already_arrived() {
+        let mut controller = StreamController::new();
+        let sender = controller.start(Some("model".into()), Instant::now());
+        sender
+            .try_send(StreamEvent::ContentDelta {
+                delta: "partial answer".into(),
+                snapshot: false,
+                role: Some("coder".into()),
+                attempt: Some(1),
+                request_index: Some(0),
+            })
+            .unwrap();
+        sender.try_send(StreamEvent::TransportClosed).unwrap();
+        let outputs = controller.drain(Instant::now());
+        let content: Vec<&str> = outputs
+            .iter()
+            .filter_map(|output| match output {
+                StreamOutput::Content { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            content,
+            vec!["partial answer"],
+            "content received before the close was discarded: {outputs:?}"
+        );
+        assert!(
+            outputs
+                .iter()
+                .any(|output| matches!(output, StreamOutput::TransportError(_))),
+            "the interruption must still be reported"
+        );
+    }
     use serde_json::json;
 
     fn phase(phase: StreamPhase, connected_ms: Option<u64>) -> PhaseUpdate {

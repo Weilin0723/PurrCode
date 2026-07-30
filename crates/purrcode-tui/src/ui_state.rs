@@ -67,7 +67,15 @@ fn safe_draft(draft: &str) -> String {
     }
 }
 
+/// Where repository-scoped recovery state lives.
+///
+/// `PURRCODE_STATE_DIR` overrides the platform data directory. End-to-end tests
+/// rely on this to stay isolated from a developer's real state, and it lets a
+/// user relocate the file without patching the binary.
 fn state_path() -> PathBuf {
+    if let Some(directory) = std::env::var_os("PURRCODE_STATE_DIR") {
+        return PathBuf::from(directory).join("tui-state.json");
+    }
     ProjectDirs::from("dev", "PurrCode", "PurrCode")
         .map(|dirs| dirs.data_local_dir().join("tui-state.json"))
         .unwrap_or_else(|| PathBuf::from(".purrcode-tui-state.json"))

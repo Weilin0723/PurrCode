@@ -43,7 +43,10 @@ pub enum AppMode {
     SecretReview,
     ProviderSetup,
     SkillBrowse,
-    DiffView,
+    /// The focused review screen: changed files, bounded diff, validation.
+    Review,
+    /// The focused approval decision surface.
+    Approval,
     Help,
     ModelBrowse,
     LeaseConflict,
@@ -138,6 +141,26 @@ pub struct App {
     pub active_pull_action: Option<String>,
     pub active_pull_session: Option<String>,
     pub theme: Theme,
+    /// Which workbench region owns the keyboard.
+    pub focus: crate::layout::Focus,
+    /// True when the user explicitly opened the inspector. A required inspector
+    /// opens regardless of this flag.
+    pub inspector_open: bool,
+    /// Selected activity entry, whose detail the inspector shows.
+    pub activity_selected: Option<usize>,
+    /// The pending approval boundary derived from durable events.
+    pub approval: Option<crate::approval::ApprovalRequest>,
+    /// Action the user explicitly chose to leave pending. The focused surface
+    /// does not reopen itself for this action, so Esc means Esc.
+    pub approval_dismissed: Option<String>,
+    /// Daemon-backed review state.
+    pub review: Option<crate::review::ReviewState>,
+    /// At narrow widths the review screen shows either files or the diff.
+    pub review_show_files: bool,
+    /// True when the review screen shows validation evidence in full.
+    pub review_validation_expanded: bool,
+    /// Set when durable state changed while the review screen is open.
+    pub review_needs_refresh: bool,
     pub palette_query: String,
     pub palette_selected: usize,
     pub model_choices: Vec<String>,
@@ -199,6 +222,15 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         active_pull_action: None,
         active_pull_session: None,
         theme: Theme::detect(),
+        focus: crate::layout::Focus::Composer,
+        inspector_open: false,
+        activity_selected: None,
+        approval: None,
+        approval_dismissed: None,
+        review: None,
+        review_show_files: true,
+        review_validation_expanded: false,
+        review_needs_refresh: false,
         palette_query: String::new(),
         palette_selected: 0,
         model_choices: Vec::new(),
@@ -255,6 +287,10 @@ async fn event_loop(
             app.last_refresh = Instant::now();
         }
 
+        if app.review_needs_refresh {
+            app.review_needs_refresh = false;
+            app.load_review().await;
+        }
         app.drain_live_stream(Instant::now());
         if let Some(stall) = app.stream.actionable_stall(Instant::now()) {
             app.message_bar = stall.into();
@@ -703,6 +739,7 @@ impl App {
                 }
                 StreamOutput::DurableAudit { sequence, event } => {
                     self.conversation.apply_durable_audit(sequence, event);
+                    self.refresh_approval();
                 }
                 StreamOutput::Diagnostic(message) => {
                     self.message_bar = message;
@@ -757,7 +794,14 @@ impl App {
         if self.reconciliation.is_some() || self.stream.active {
             return;
         }
-        if self.mode != AppMode::Conversation && self.active_pull_action.is_none() {
+        // Reconcile in every mode that displays durable state. The approval and
+        // review surfaces in particular must notice the boundary moving beneath
+        // them; without this an open approval card could go stale silently.
+        let displays_durable_state = matches!(
+            self.mode,
+            AppMode::Conversation | AppMode::Approval | AppMode::Review
+        );
+        if !displays_durable_state && self.active_pull_action.is_none() {
             return;
         }
         let client = self.client.clone();
@@ -817,6 +861,12 @@ impl App {
             if let Some(events) = snapshot.events {
                 self.conversation.reconcile(snapshot.messages, events);
                 self.workspace.session_phase = self.conversation.phase.clone();
+                self.refresh_approval();
+                // A review screen reads the same durable evidence, so refresh its
+                // validation summary alongside the approval boundary.
+                if self.mode == AppMode::Review {
+                    self.review_needs_refresh = true;
+                }
             }
         }
         if let Some(progress) = snapshot.pull_progress {
@@ -919,6 +969,264 @@ impl App {
 
     pub fn switch_mode(&mut self, mode: AppMode) {
         self.mode = mode;
+    }
+
+    /// Human-readable detail lines for the durable event behind an activity
+    /// entry. Reuses the timeline card mapping so no raw JSON can reach the
+    /// inspector.
+    pub fn activity_detail(&self, index: usize) -> Vec<String> {
+        let Some(event_index) = self
+            .conversation
+            .progress
+            .activity
+            .get(index)
+            .and_then(|entry| entry.event_index)
+        else {
+            return Vec::new();
+        };
+        let Some(event) = self.conversation.durable_events().get(event_index) else {
+            return Vec::new();
+        };
+        let card = crate::timeline::collapsed_card_from_event(event);
+        let mut detail = vec![card.summary];
+        detail.extend(card.details);
+        detail.retain(|line| !line.trim().is_empty());
+        detail
+    }
+
+    /// Re-derive the pending approval boundary from durable events.
+    ///
+    /// Called whenever durable state changes, so the approval surface always
+    /// describes the daemon's current boundary rather than a stale snapshot.
+    pub fn refresh_approval(&mut self) {
+        let previous_digest = self.approval.as_ref().map(|request| request.digest.clone());
+        self.approval =
+            crate::approval::ApprovalRequest::from_events(self.conversation.durable_events());
+        // If a boundary was already on screen and the re-derived action carries a
+        // different digest, the surface is describing a different action than the
+        // one the user was looking at.
+        if let (Some(previous), Some(current)) = (previous_digest, self.approval.as_mut()) {
+            if previous != current.digest {
+                *current = current.clone().checked_against(Some("superseded"));
+            }
+        }
+        match &self.approval {
+            None => {
+                self.approval_dismissed = None;
+                if self.mode == AppMode::Approval {
+                    self.mode = AppMode::Conversation;
+                }
+            }
+            Some(request) => {
+                // A decision that grants execution authority is unmistakable: it
+                // takes over the frame when it appears. It does not reopen for an
+                // action the user deliberately left pending.
+                let dismissed = self.approval_dismissed.as_deref() == Some(&request.action_id);
+                if !dismissed && self.mode == AppMode::Conversation {
+                    self.mode = AppMode::Approval;
+                }
+            }
+        }
+    }
+
+    /// Show the focused approval surface, or report that nothing is pending.
+    ///
+    /// Used by `/approve` and `/deny` when the user is not already looking at the
+    /// decision: authority is never granted for an action that was not displayed.
+    pub fn open_approval(&mut self) -> bool {
+        self.refresh_approval();
+        match &self.approval {
+            Some(request) => {
+                self.approval_dismissed = None;
+                let action_id = request.action_id.clone();
+                self.mode = AppMode::Approval;
+                self.message_bar = format!(
+                    "Review action {action_id} below, then press A to approve or R to reject."
+                );
+                true
+            }
+            None => {
+                self.mode = AppMode::Approval;
+                self.message_bar =
+                    "No action is awaiting approval. Nothing was authorized and nothing will run."
+                        .into();
+                false
+            }
+        }
+    }
+
+    /// Submit an approval decision for the exact action currently displayed.
+    ///
+    /// Re-derives the boundary immediately before sending. If the boundary moved
+    /// while the surface was open, nothing is sent — the client refuses to
+    /// authorize an action it can no longer vouch for. The daemon independently
+    /// re-checks its own boundary, so this is a second gate, never the only one.
+    pub async fn submit_decision(&mut self, approve: bool) {
+        let Some(displayed) = self.approval.clone() else {
+            self.message_bar =
+                "No action is awaiting approval. Nothing was authorized and nothing will run."
+                    .into();
+            return;
+        };
+        if !displayed.can_decide() {
+            self.message_bar = displayed
+                .staleness
+                .warning()
+                .unwrap_or("This decision cannot be submitted.")
+                .into();
+            return;
+        }
+        let Some(session_id) = self.session_id.clone() else {
+            self.message_bar = "No active session.".into();
+            return;
+        };
+
+        // Re-read durable state, then compare the exact action identity.
+        self.refresh_events_now().await;
+        let current =
+            crate::approval::ApprovalRequest::from_events(self.conversation.durable_events());
+        match current {
+            Some(current)
+                if current.action_id == displayed.action_id
+                    && current.digest == displayed.digest => {}
+            Some(mut current) => {
+                current.staleness = crate::approval::Staleness::ActionChanged;
+                self.message_bar =
+                    "The pending action changed while the approval was open; nothing was submitted."
+                        .into();
+                self.approval = Some(current);
+                return;
+            }
+            None => {
+                self.message_bar =
+                    "The pending action was already decided; nothing was submitted.".into();
+                self.approval = None;
+                self.mode = AppMode::Conversation;
+                return;
+            }
+        }
+
+        let (endpoint, body) = if approve {
+            ("approve", serde_json::json!({}))
+        } else {
+            (
+                "deny",
+                serde_json::json!({"reason": "rejected from the approval surface"}),
+            )
+        };
+        match self
+            .request(
+                reqwest::Method::POST,
+                &format!("/v1/sessions/{session_id}/{endpoint}"),
+                Some(body),
+            )
+            .await
+        {
+            Ok(_) => {
+                self.message_bar = if approve {
+                    format!(
+                        "Approved exact action {} (digest {}).",
+                        displayed.action_id, displayed.digest
+                    )
+                } else {
+                    format!(
+                        "Rejected action {}; nothing was executed.",
+                        displayed.action_id
+                    )
+                };
+                self.approval = None;
+                self.mode = AppMode::Conversation;
+            }
+            Err(error) => {
+                self.message_bar = format!("The daemon refused the decision: {error}");
+            }
+        }
+    }
+
+    /// Fetch durable events once, synchronously with respect to the caller.
+    async fn refresh_events_now(&mut self) {
+        let Some(session_id) = self.session_id.clone() else {
+            return;
+        };
+        if let Ok(events) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/v1/sessions/{session_id}/events"),
+                None,
+            )
+            .await
+        {
+            if let Ok(events) = serde_json::from_value::<Vec<Value>>(events) {
+                self.conversation.reconcile(None, events);
+            }
+        }
+    }
+
+    /// Load the daemon-backed review state for the current session.
+    pub async fn load_review(&mut self) {
+        let Some(session_id) = self.session_id.clone() else {
+            self.message_bar = "Start a task before opening review.".into();
+            return;
+        };
+        match self
+            .request(
+                reqwest::Method::GET,
+                &format!("/v1/sessions/{session_id}/diff"),
+                None,
+            )
+            .await
+        {
+            Ok(value) => {
+                let patch = value["patch"].as_str().unwrap_or_default();
+                let porcelain = value["status"].as_str().unwrap_or_default();
+                self.conversation.set_recorded_effects(porcelain);
+                let review = crate::review::ReviewState::from_daemon(patch, porcelain);
+                if review.is_empty() {
+                    self.message_bar =
+                        "No repository effects were recorded for this session.".into();
+                }
+                self.review = Some(review);
+                self.mode = AppMode::Review;
+            }
+            Err(error) => {
+                // An unavailable diff is reported as unavailable, never as "no
+                // changes": the difference matters before applying anything.
+                self.review = None;
+                self.mode = AppMode::Review;
+                self.message_bar = format!("The session diff is unavailable: {error}");
+            }
+        }
+    }
+
+    /// Snapshot of everything an availability rule may inspect.
+    ///
+    /// The palette, the help screen and the contextual hint line all derive from
+    /// this single value, which is why they cannot contradict each other.
+    pub fn ui_context(&self) -> crate::ui_actions::UiContext {
+        let phase = self.workspace.session_phase.as_str();
+        crate::ui_actions::UiContext {
+            daemon_reachable: self.workspace.daemon_health == "connected",
+            provider_configured: self.has_provider,
+            session_present: self.session_id.is_some(),
+            session_active: self.session_id.is_some()
+                && !matches!(phase, "completed" | "failed" | "cancelled"),
+            session_resumable: self
+                .session_choice
+                .as_ref()
+                .map_or(self.session_id.is_some(), |choice| choice.resumable),
+            session_read_only: self.session_read_only,
+            streaming: self.stream.active,
+            pending_approval: self.conversation.pending_action.is_some(),
+            pending_model_pull: self.pending_model_pull.is_some(),
+            active_model_pull: self.active_pull_action.is_some(),
+            repository_effects: self.conversation.has_repository_effects(),
+            validation_attention: self.conversation.validation_needs_attention(),
+            recovery_required: self.mode == AppMode::LeaseConflict
+                || matches!(phase, "recovery required" | "failed" | "uncertain"),
+            local_model_provider: self.status_bar.local,
+            evidence_available: !self.conversation.timeline.is_empty(),
+            composer_has_text: !self.composer.buffer.trim().is_empty(),
+        }
     }
 
     async fn finish_provider_setup(&mut self) {

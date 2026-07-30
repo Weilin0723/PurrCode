@@ -1,31 +1,30 @@
 //! Ratatui rendering for all TUI modes.
 
-use crate::action_area::ActionArea;
 use crate::app::{App, AppMode};
-use crate::glyphs::StatusGlyph;
-use crate::status_header::render_status_header;
 use crate::theme::Theme;
-use crate::timeline::{action_summary, CardKind, TimelineCard};
 use crate::trace_inspector::TraceInspector;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
+use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
     match app.mode {
         AppMode::SecretReview => draw_secret_review(frame, app),
         AppMode::ProviderSetup => draw_setup(frame, app),
         AppMode::SkillBrowse => draw_skills(frame, app),
-        AppMode::DiffView => draw_diff(frame, app),
+        AppMode::Review => crate::screens::review::draw(frame, app),
+        AppMode::Approval => crate::screens::approval::draw(frame, app),
         AppMode::Help => draw_help(frame, app),
         AppMode::ModelBrowse => draw_model_browser(frame, app),
-        AppMode::LeaseConflict => draw_lease_conflict(frame),
-        AppMode::SessionChoice => draw_session_choice(frame, app),
-        AppMode::Conversation => draw_conversation(frame, app),
+        AppMode::LeaseConflict => {
+            crate::screens::recovery::draw(frame, app, &crate::screens::recovery::lease_conflict());
+        }
+        AppMode::SessionChoice => {
+            let surface = crate::screens::recovery::session_choice(app);
+            crate::screens::recovery::draw(frame, app, &surface);
+        }
+        AppMode::Conversation => crate::screens::workbench::draw(frame, app),
     }
     apply_canvas_background(frame, &app.theme);
     render_trace_inspector_modal(frame, app);
@@ -87,115 +86,18 @@ fn render_trace_inspector_modal(frame: &mut Frame<'_>, app: &App) {
     inspector.render(frame, frame.area(), &app.theme);
 }
 
+/// The command palette, generated from the action registry.
 fn draw_help(frame: &mut Frame<'_>, app: &App) {
+    let theme = app.theme.clone();
+    let tokens = crate::design::Tokens::new(&theme);
     let actions = crate::command_palette::filtered_actions(&app.palette_query);
-    const VISIBLE_ACTIONS: usize = 16;
-    let start = app
-        .palette_selected
-        .saturating_sub(VISIBLE_ACTIONS.saturating_sub(1))
-        .min(actions.len().saturating_sub(VISIBLE_ACTIONS));
-    let end = start.saturating_add(VISIBLE_ACTIONS).min(actions.len());
-    let mut text = format!(
-        "Search actions: {}_ · showing {}–{} of {}\n\n",
-        app.palette_query,
-        if actions.is_empty() { 0 } else { start + 1 },
-        end,
-        actions.len()
-    );
-    for (index, (name, detail, command)) in actions[start..end].iter().enumerate() {
-        let index = start + index;
-        let marker = if index == app.palette_selected {
-            ">"
-        } else {
-            " "
-        };
-        text.push_str(&format!(
-            "{marker} {:<25} {:<32} {}\n",
-            truncate_palette_field(name, 25),
-            truncate_palette_field(command, 32),
-            truncate_palette_field(detail, 35)
-        ));
-    }
-    if actions.is_empty() {
-        text.push_str("  No matching actions.\n");
-    } else if end < actions.len() {
-        text.push_str(&format!("  … {} more action(s)\n", actions.len() - end));
-    }
-    text.push_str("\nType to filter · Up/Down select · Enter run · Esc close");
-    frame.render_widget(
-        Paragraph::new(text).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .title("Command palette")
-                .borders(Borders::ALL),
-        ),
-        centered(frame.area(), 100, 24),
-    );
-}
-
-fn truncate_palette_field(value: &str, maximum_chars: usize) -> String {
-    let mut characters = value.chars();
-    let prefix = characters.by_ref().take(maximum_chars).collect::<String>();
-    if characters.next().is_none() {
-        prefix
-    } else {
-        let mut truncated = prefix
-            .chars()
-            .take(maximum_chars.saturating_sub(1))
-            .collect::<String>();
-        truncated.push('…');
-        truncated
-    }
-}
-
-fn draw_session_choice(frame: &mut Frame<'_>, app: &App) {
-    let choice = app.session_choice.as_ref();
-    let session = choice
-        .map(|choice| choice.session_id.as_str())
-        .or(app.session_id.as_deref())
-        .unwrap_or("latest session");
-    let status = choice
-        .map(|choice| choice.status.as_str())
-        .unwrap_or("unknown");
-    let resume = match choice {
-        Some(choice)
-            if matches!(
-                choice.status.as_str(),
-                "awaiting_approval" | "awaiting_review"
-            ) =>
-        {
-            "R / Enter  Restore the saved decision boundary"
-        }
-        Some(choice)
-            if choice.lease_active && matches!(choice.status.as_str(), "active" | "executing") =>
-        {
-            "R / Enter  Attach to the active session and refresh"
-        }
-        Some(choice) if !choice.resumable => {
-            "This session cannot be resumed safely; start New or open history read-only"
-        }
-        _ => "R / Enter  Resume this session now",
-    };
-    let text = format!(
-        "Existing session found\n\nPurrCode found {session} ({status}) for this repository.\nChoose how to start before entering another message.\n\n{resume}\nN          Start a new session\nO / Esc    Open history read-only\n\nNo task will run until you choose."
-    );
-    frame.render_widget(
-        Paragraph::new(text).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .title("Start PurrCode")
-                .borders(Borders::ALL),
-        ),
-        centered(frame.area(), 76, 16),
-    );
-}
-
-fn draw_lease_conflict(frame: &mut Frame<'_>) {
-    let text = "Session already active\n\nAnother PurrCode client currently owns this session's daemon lease.\nNo new action was started and your draft is safe.\n\nR  Reconnect and refresh durable state\nO  Open read-only\nN  Start a new session\nD  Technical details\nEsc  Keep draft and return";
-    frame.render_widget(
-        Paragraph::new(text)
-            .wrap(Wrap { trim: false })
-            .block(Block::default().title("Recovery").borders(Borders::ALL)),
-        centered(frame.area(), 76, 15),
-    );
+    crate::components::palette::CommandPaletteView::new(
+        &app.palette_query,
+        &actions,
+        app.palette_selected,
+        app.ui_context(),
+    )
+    .render(frame, frame.area(), &tokens);
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
@@ -230,520 +132,7 @@ fn draw_secret_review(frame: &mut Frame<'_>, app: &App) {
     );
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WorkspaceLayout {
-    Wide,
-    Compact,
-    Narrow,
-}
-
-fn workspace_layout(width: u16) -> WorkspaceLayout {
-    if width >= 120 {
-        WorkspaceLayout::Wide
-    } else if width >= 80 {
-        WorkspaceLayout::Compact
-    } else {
-        WorkspaceLayout::Narrow
-    }
-}
-
-fn layout_full(frame: &Frame<'_>, app: &App) -> [Rect; 5] {
-    layout_full_rect(frame.area(), app)
-}
-
-fn layout_full_rect(area: Rect, app: &App) -> [Rect; 5] {
-    let composer_height = (app.composer.line_count().clamp(3, 10) as u16).saturating_add(2);
-    let action_height = ActionArea {
-        visible: true,
-        message: (!app.message_bar.is_empty() || !app.conversation.evidence.is_empty())
-            .then_some(String::new()),
-        pending_approval: app.conversation.pending_action.is_some()
-            || app.pending_model_pull.is_some(),
-        streaming: app.stream.active,
-    }
-    .height();
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(5),
-            Constraint::Length(action_height),
-            Constraint::Length(composer_height),
-            Constraint::Length(1),
-        ])
-        .split(area);
-    [rows[0], rows[1], rows[2], rows[3], rows[4]]
-}
-
 // ── Conversation mode ────────────────────────────────────────────
-
-fn draw_conversation(frame: &mut Frame<'_>, app: &App) {
-    let [header, body, action_area, input_area, footer] = layout_full(frame, app);
-
-    draw_header(frame, header, app);
-    let layout = workspace_layout(frame.area().width);
-    let show_files = layout == WorkspaceLayout::Wide || app.workspace.file_panel_visible;
-    if layout == WorkspaceLayout::Narrow && show_files {
-        draw_workspace_panel(frame, body, app);
-    } else if show_files {
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(30), Constraint::Min(40)])
-            .split(body);
-        draw_workspace_panel(frame, columns[0], app);
-        draw_messages(frame, columns[1], app);
-    } else {
-        draw_messages(frame, body, app);
-    }
-    draw_action_panel(frame, action_area, app);
-    draw_composer(frame, input_area, app);
-    draw_footer(frame, footer, app);
-}
-
-fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let mode_str = match app.conversation.mode {
-        purrcode_runtime_core::ConversationMode::Plan => "Plan",
-        purrcode_runtime_core::ConversationMode::Build => "Build",
-        purrcode_runtime_core::ConversationMode::Review => "Review",
-        purrcode_runtime_core::ConversationMode::Ask => "Ask",
-    };
-
-    let privacy_indicator = if app.status_bar.privacy == "local-only" {
-        if app.theme.unicode_enabled {
-            "🔒"
-        } else {
-            "[locked]"
-        }
-    } else if app.theme.unicode_enabled {
-        "🌐"
-    } else {
-        "[network]"
-    };
-
-    let local_indicator = if app.status_bar.local {
-        "local"
-    } else {
-        "remote"
-    };
-
-    let repository = format!("{}/{}", app.workspace.repository_name, app.workspace.branch);
-    let session = app
-        .session_id
-        .as_deref()
-        .map(|id| id.get(..8).unwrap_or(id))
-        .unwrap_or("new");
-    render_status_header(
-        frame,
-        area,
-        &app.theme,
-        env!("CARGO_PKG_VERSION"),
-        &repository,
-        &app.status_bar.model,
-        &app.workspace.sandbox,
-        session,
-        &app.workspace.session_phase,
-        mode_str,
-        privacy_indicator,
-        local_indicator,
-    );
-}
-
-fn draw_messages(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let palette = &app.theme.palette;
-    let content_width = area.width.saturating_sub(4) as usize;
-    let mut items: Vec<ListItem> = if app.conversation.timeline.is_empty() {
-        app.conversation
-            .messages
-            .iter()
-            .skip(app.conversation.scroll)
-            .map(|msg| {
-                let prefix = match msg.role.as_str() {
-                    "user" => "You: ",
-                    "assistant" => "PurrCode: ",
-                    _ => "System: ",
-                };
-                let style = match msg.role.as_str() {
-                    "user" => Style::default().fg(palette.accent),
-                    "assistant" => Style::default().fg(palette.text_primary),
-                    _ => Style::default().fg(palette.text_muted),
-                };
-                ListItem::new(wrap_text(
-                    render_markdown(prefix, &msg.content, style, palette),
-                    content_width,
-                ))
-            })
-            .collect()
-    } else {
-        app.conversation
-            .timeline
-            .iter()
-            .enumerate()
-            .skip(app.conversation.scroll)
-            .map(|(index, card)| {
-                timeline_item(
-                    card,
-                    index,
-                    app.conversation.selected_card == Some(index),
-                    app.conversation.expanded_card == Some(index),
-                    content_width,
-                    &app.theme,
-                )
-            })
-            .collect()
-    };
-
-    if let Some(ref msg) = app.conversation.streaming_message {
-        let text = render_markdown(
-            "PurrCode: ",
-            &msg.content,
-            Style::default().fg(palette.text_primary),
-            palette,
-        );
-        items.push(ListItem::new(wrap_text(text, content_width)));
-    }
-
-    if items.is_empty() {
-        items.push(ListItem::new(Text::from(vec![
-            Line::from(Span::styled(
-                "PurrCode is ready.",
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from("Describe a repository task, paste code or logs, or type /connect."),
-            Line::from("PawGate judges → Claw executes → evidence verifies."),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Ctrl+G sends · Enter adds a line · Ctrl+Enter works where supported",
-                Style::default().fg(palette.text_muted),
-            )),
-        ])));
-    }
-
-    frame.render_widget(
-        List::new(items).block(Block::default().title("Timeline").borders(Borders::ALL)),
-        area,
-    );
-}
-
-fn timeline_item(
-    card: &TimelineCard,
-    index: usize,
-    selected: bool,
-    expanded: bool,
-    width: usize,
-    theme: &Theme,
-) -> ListItem<'static> {
-    let palette = &theme.palette;
-    let (glyph, color) = match card.kind {
-        CardKind::Conversation => (StatusGlyph::Assistant, palette.text_primary),
-        CardKind::Plan => (StatusGlyph::Plan, palette.secondary),
-        CardKind::Action => (StatusGlyph::Action, palette.warning),
-        CardKind::PawGate => (StatusGlyph::PawGate, palette.secondary),
-        CardKind::Claw => (StatusGlyph::Claw, palette.accent),
-        CardKind::Output => (StatusGlyph::Output, palette.text_muted),
-        CardKind::Validation => (StatusGlyph::Validation, palette.success),
-        CardKind::Checkpoint => (StatusGlyph::Checkpoint, palette.secondary),
-        CardKind::Recovery => (StatusGlyph::Recovery, palette.danger),
-        CardKind::Completion => (StatusGlyph::Completion, palette.success),
-        CardKind::Skill => (StatusGlyph::Skill, palette.accent),
-        CardKind::Context => (StatusGlyph::Context, palette.text_muted),
-    };
-    let glyph = glyph.render(theme.unicode_enabled);
-    let marker = if selected { "›" } else { " " };
-    let mut lines = vec![Line::from(vec![
-        Span::styled(format!("{marker}{glyph} "), Style::default().fg(color)),
-        Span::styled(
-            card.title.clone(),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-    ])];
-    lines.extend(
-        render_markdown(
-            "  ",
-            &card.summary,
-            Style::default().fg(palette.text_primary),
-            palette,
-        )
-        .lines,
-    );
-    if expanded {
-        for detail in &card.details {
-            lines.extend(
-                render_markdown(
-                    "    ",
-                    detail,
-                    Style::default().fg(palette.text_muted),
-                    palette,
-                )
-                .lines,
-            );
-        }
-    } else if !card.details.is_empty() {
-        lines.push(Line::from(Span::styled(
-            format!(
-                "    {} detail line(s) · click or press E to expand",
-                card.details.len()
-            ),
-            Style::default().fg(palette.text_muted),
-        )));
-    }
-    lines.push(Line::from(""));
-    let _ = index;
-    ListItem::new(wrap_styled_lines(lines, width.max(1)))
-}
-
-fn wrap_styled_lines(lines: Vec<Line<'_>>, width: usize) -> Text<'static> {
-    let mut wrapped = Vec::new();
-    for line in lines {
-        let mut current = Vec::new();
-        let mut current_width = 0usize;
-        for span in line.spans {
-            let style = span.style;
-            let mut chunk = String::new();
-            for grapheme in span.content.graphemes(true) {
-                let grapheme_width = UnicodeWidthStr::width(grapheme);
-                if current_width > 0 && current_width.saturating_add(grapheme_width) > width {
-                    if !chunk.is_empty() {
-                        current.push(Span::styled(std::mem::take(&mut chunk), style));
-                    }
-                    wrapped.push(Line::from(std::mem::take(&mut current)));
-                    current_width = 0;
-                }
-                chunk.push_str(grapheme);
-                current_width = current_width.saturating_add(grapheme_width);
-            }
-            if !chunk.is_empty() {
-                current.push(Span::styled(chunk, style));
-            }
-        }
-        wrapped.push(Line::from(current));
-    }
-    Text::from(wrapped)
-}
-
-fn wrap_text(text: Text<'_>, width: usize) -> Text<'static> {
-    wrap_styled_lines(text.lines, width.max(1))
-}
-
-fn draw_workspace_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let palette = &app.theme.palette;
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled("Repository  ", Style::default().fg(palette.text_muted)),
-            Span::raw(&app.workspace.repository_name),
-        ]),
-        Line::from(vec![
-            Span::styled("Branch      ", Style::default().fg(palette.text_muted)),
-            Span::raw(&app.workspace.branch),
-        ]),
-        Line::from(vec![
-            Span::styled("Source      ", Style::default().fg(palette.text_muted)),
-            Span::raw(&app.workspace.source_state),
-        ]),
-        Line::from(vec![
-            Span::styled("Daemon      ", Style::default().fg(palette.text_muted)),
-            Span::raw(&app.workspace.daemon_health),
-        ]),
-        Line::from(vec![
-            Span::styled("Model       ", Style::default().fg(palette.text_muted)),
-            Span::styled(
-                &app.workspace.model,
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Files",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        )),
-    ];
-    let available = area.height.saturating_sub(8) as usize;
-    for path in app.workspace.paths.iter().take(available) {
-        let kind = if path.directory { "▸" } else { " " };
-        let sensitive = if path.sensitive { " 🔒" } else { "" };
-        lines.push(Line::from(format!("{kind} {}{sensitive}", path.display)));
-    }
-    if app.workspace.paths.len() > available {
-        lines.push(Line::from(Span::styled(
-            format!("… {} more paths", app.workspace.paths.len() - available),
-            Style::default().fg(palette.text_muted),
-        )));
-    }
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(Block::default().title("Workspace").borders(Borders::ALL))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
-fn draw_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let text = if app.pending_model_pull.is_some() {
-        "P Approve exact Ollama pull  /model pull-approve  Ctrl+C cancels only after start"
-    } else if app.active_pull_action.is_some() {
-        "Ctrl+C Cancel model pull  /model pull-cancel  Progress is verified by rediscovery"
-    } else if app.conversation.pending_action.is_some() {
-        "A Approve  R Reject  Ctrl+D Full diff  /approve and /deny remain exact-action bound"
-    } else if app.workspace.file_panel_visible
-        && workspace_layout(frame.area().width) != WorkspaceLayout::Wide
-    {
-        "Ctrl+B Timeline  @file mention  Ctrl+D Diff  ? Help"
-    } else {
-        "Ctrl+G Send  Space/E Expand  Drag select · Cmd+C copy  Ctrl+P Commands  ? Help"
-    };
-    frame.render_widget(
-        Paragraph::new(text).style(Style::default().fg(app.theme.palette.text_muted)),
-        area,
-    );
-}
-
-fn render_markdown<'a>(
-    prefix: &str,
-    content: &'a str,
-    base: Style,
-    palette: &crate::theme::Palette,
-) -> Text<'a> {
-    let mut in_code = false;
-    let mut lines = Vec::new();
-    for (index, raw) in content.lines().enumerate() {
-        if raw.trim_start().starts_with("```") {
-            in_code = !in_code;
-            continue;
-        }
-        let prefix = if index == 0 { prefix } else { "  " };
-        let (text, style) = if in_code {
-            (raw, Style::default().fg(palette.success))
-        } else if raw.starts_with('#') {
-            (
-                raw.trim_start_matches('#').trim_start(),
-                base.add_modifier(Modifier::BOLD),
-            )
-        } else if raw.starts_with("- ") || raw.starts_with("* ") {
-            (raw, base.fg(palette.accent))
-        } else {
-            (raw, base)
-        };
-        lines.push(Line::from(vec![
-            Span::styled(prefix.to_owned(), base.add_modifier(Modifier::BOLD)),
-            Span::styled(text.to_owned(), style),
-        ]));
-    }
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(prefix.to_owned(), base)));
-    }
-    Text::from(lines)
-}
-
-fn draw_action_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let mut text = String::new();
-    if !app.message_bar.is_empty() {
-        text.push_str(&app.message_bar);
-        text.push('\n');
-    }
-    if app.stream.active {
-        text.push_str(&format!("● Generating with {}…", app.status_bar.model));
-    }
-    if let Some(action) = &app.conversation.pending_action {
-        text.push_str(&format!(
-            "\nPending action: {}\nA approve · R reject · Ctrl+D full diff",
-            action_summary(action)
-        ));
-    }
-    if let Some(pull) = &app.pending_model_pull {
-        let state = if pull.approved {
-            "Ollama pull approved; start can be retried"
-        } else {
-            "Ollama pull awaiting explicit approval"
-        };
-        text.push_str(&format!(
-            "\n{state}\nModel: {}\nAction: {}\nDigest: {}\nP approve/start this exact action · /model pull-approve",
-            pull.model, pull.action_id, pull.action_digest,
-        ));
-    }
-    for evidence in &app.conversation.evidence {
-        text.push('\n');
-        text.push_str(evidence);
-    }
-
-    ActionArea {
-        visible: true,
-        message: (!text.is_empty()).then_some(text),
-        pending_approval: false,
-        streaming: false,
-    }
-    .render(frame, area, &app.theme);
-}
-
-fn draw_composer(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let style = if app.composer.is_command() {
-        Style::default().fg(app.theme.palette.success)
-    } else {
-        Style::default()
-    };
-
-    let content_height = area.height.saturating_sub(2).max(1) as usize;
-    let content_width = area.width.saturating_sub(2).max(1) as usize;
-    let (cursor_line, cursor_column) = app.composer.cursor_line_column();
-    let first_line = cursor_line.saturating_sub(content_height.saturating_sub(1));
-    let first_column = cursor_column.saturating_sub(content_width.saturating_sub(1));
-    let lines: Vec<Line<'_>> = app
-        .composer
-        .buffer
-        .split('\n')
-        .skip(first_line)
-        .take(content_height)
-        .map(|line| {
-            let visible: String = line
-                .graphemes(true)
-                .skip(first_column)
-                .take(content_width)
-                .collect();
-            Line::from(Span::styled(visible, style))
-        })
-        .collect();
-    let paste_badge = if app.composer.pasted_since_submit() {
-        " · pasted"
-    } else {
-        ""
-    };
-    let title = format!(
-        "Composer · {} lines · {} chars{} · Ctrl+G send · Enter newline",
-        app.composer.line_count(),
-        app.composer.grapheme_count(),
-        paste_badge
-    );
-    frame.render_widget(
-        Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
-        area,
-    );
-
-    let current_line = app
-        .composer
-        .buffer
-        .split('\n')
-        .nth(cursor_line)
-        .unwrap_or("");
-    let visible_prefix: String = current_line
-        .graphemes(true)
-        .skip(first_column)
-        .take(cursor_column.saturating_sub(first_column))
-        .collect();
-    let x = area
-        .x
-        .saturating_add(1)
-        .saturating_add(UnicodeWidthStr::width(visible_prefix.as_str()) as u16)
-        .min(area.right().saturating_sub(2));
-    let y = area
-        .y
-        .saturating_add(1)
-        .saturating_add(cursor_line.saturating_sub(first_line) as u16)
-        .min(area.bottom().saturating_sub(2));
-    frame.set_cursor_position((x, y));
-}
 
 // ── Provider Setup mode ──────────────────────────────────────────
 
@@ -917,6 +306,12 @@ fn setup_form_text(setup: &crate::provider_setup::ProviderSetup) -> String {
 fn draw_skills(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
     let Some(ref browser) = app.skill_browser else {
+        let theme = app.theme.clone();
+        let tokens = crate::design::Tokens::new(&theme);
+        crate::components::inspector::Inspector::new(
+            crate::components::inspector::InspectorSubject::Unavailable("The skill registry"),
+        )
+        .render(frame, area, &tokens);
         return;
     };
 
@@ -949,189 +344,93 @@ fn draw_skills(frame: &mut Frame<'_>, app: &App) {
         ));
     }
 
+    let title = if browser.pending_search_action.is_some() {
+        "Skills (Esc to close, a to approve the pending search)"
+    } else {
+        "Skills (Esc to close)"
+    };
     frame.render_widget(
-        List::new(items).block(
-            Block::default()
-                .title("Skills (Esc to close, i to install)")
-                .borders(Borders::ALL),
-        ),
+        List::new(items).block(Block::default().title(title).borders(Borders::ALL)),
         area,
     );
 }
 
 // ── Diff view mode ───────────────────────────────────────────────
 
-fn draw_diff(frame: &mut Frame<'_>, app: &App) {
-    let area = frame.area();
-    let content = app
-        .diff_view
-        .as_ref()
-        .map(|d| d.content.as_str())
-        .unwrap_or("No diff available.");
-
-    frame.render_widget(
-        Paragraph::new(content)
-            .block(
-                Block::default()
-                    .title("Diff (Esc closes)")
-                    .borders(Borders::ALL),
-            )
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
+    use crate::test_fixtures::{monochrome_theme, offline_app, test_terminal};
 
-    #[test]
-    fn workspace_breakpoints_match_the_product_contract() {
-        assert_eq!(workspace_layout(160), WorkspaceLayout::Wide);
-        assert_eq!(workspace_layout(120), WorkspaceLayout::Wide);
-        assert_eq!(workspace_layout(119), WorkspaceLayout::Compact);
-        assert_eq!(workspace_layout(80), WorkspaceLayout::Compact);
-        assert_eq!(workspace_layout(79), WorkspaceLayout::Narrow);
-        assert_eq!(workspace_layout(40), WorkspaceLayout::Narrow);
-    }
-
-    #[test]
-    fn timeline_text_wraps_to_the_available_width() {
-        let text = wrap_styled_lines(
-            vec![Line::from(Span::raw(
-                "a long model response that must wrap instead of extending horizontally",
-            ))],
-            18,
-        );
-        assert!(text.lines.len() > 1);
-        assert!(text.lines.iter().all(|line| line.width() <= 18));
-    }
-
-    #[test]
-    fn lease_conflict_snapshot_has_state_impact_and_recovery_actions() {
-        let backend = TestBackend::new(120, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(draw_lease_conflict).unwrap();
-        let snapshot = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        assert!(snapshot.contains("Session already active"));
-        assert!(snapshot.contains("No new action was started and your draft is safe"));
-        assert!(snapshot.contains("Reconnect"));
-        assert!(snapshot.contains("Open read-only"));
-        assert!(snapshot.contains("Start a new session"));
-    }
-
-    #[test]
-    fn startup_session_choice_requires_resume_or_new_before_input() {
-        let backend = TestBackend::new(120, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = test_app();
-        app.session_id = Some("session-123".into());
+    fn snapshot(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = test_terminal(width, height);
+        terminal.draw(|frame| draw(frame, app)).unwrap();
         terminal
-            .draw(|frame| draw_session_choice(frame, &app))
-            .unwrap();
-        let snapshot = terminal
             .backend()
             .buffer()
             .content
             .iter()
             .map(|cell| cell.symbol())
-            .collect::<String>();
-        for expected in [
-            "Existing session found",
-            "session-123",
-            "Resume this session now",
-            "Start a new session",
-            "No task will run until you choose",
-        ] {
-            assert!(snapshot.contains(expected), "missing {expected:?}");
+            .collect()
+    }
+
+    #[test]
+    fn every_mode_renders_at_every_supported_size() {
+        let modes = [
+            AppMode::Conversation,
+            AppMode::Help,
+            AppMode::ModelBrowse,
+            AppMode::Review,
+            AppMode::Approval,
+            AppMode::LeaseConflict,
+            AppMode::SessionChoice,
+            AppMode::SkillBrowse,
+        ];
+        for mode in modes {
+            for (width, height) in [(60, 24), (80, 24), (120, 30), (160, 40)] {
+                let mut app = offline_app();
+                app.mode = mode;
+                // Rendering must not panic in any mode at any supported size.
+                let rendered = snapshot(&app, width, height);
+                assert!(
+                    !rendered.trim().is_empty(),
+                    "{mode:?} rendered an empty frame at {width}x{height}"
+                );
+            }
         }
     }
 
     #[test]
-    fn help_snapshot_exposes_primary_keyboard_actions_without_secrets() {
-        let backend = TestBackend::new(120, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let app = test_app();
-        terminal.draw(|frame| draw_help(frame, &app)).unwrap();
-        let snapshot = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        for expected in ["Search actions", "/connect", "/approve", "Type to filter"] {
-            assert!(
-                snapshot.contains(expected),
-                "missing {expected}: {snapshot}"
-            );
-        }
-        assert!(!snapshot.contains("sk-"));
-    }
-
-    #[test]
-    fn complete_ui_uses_palette_canvas_with_readable_primary_text() {
-        let backend = TestBackend::new(120, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let app = test_app();
+    fn the_whole_ui_uses_the_palette_canvas_with_legible_text() {
+        let app = offline_app();
+        let mut terminal = test_terminal(120, 30);
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-
         let canvas = app.theme.palette.canvas;
-        let text_primary = app.theme.palette.text_primary;
         for cell in &terminal.backend().buffer().content {
-            assert_eq!(
-                cell.bg, canvas,
-                "every cell must use the palette canvas color"
-            );
-            // Cells without an explicit foreground get the palette's primary
-            // text color, so the interface stays legible regardless of the
-            // terminal's profile.
+            assert_eq!(cell.bg, canvas, "every cell must use the palette canvas");
             assert_ne!(cell.fg, Color::Reset);
-            assert_ne!(cell.fg, Color::Black);
-            assert_eq!(
-                cell.fg, text_primary,
-                "cells with no explicit foreground must use the palette text_primary"
-            );
         }
     }
 
     #[test]
-    fn plain_text_fallback_uses_palette_canvas_with_high_contrast_text() {
-        let backend = TestBackend::new(120, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = test_app();
-        app.theme.colors_enabled = false;
+    fn the_no_colour_fallback_keeps_one_high_contrast_foreground() {
+        let mut app = offline_app();
+        app.theme = monochrome_theme();
+        let mut terminal = test_terminal(120, 30);
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-
-        let canvas = app.theme.palette.canvas;
-        let text_primary = app.theme.palette.text_primary;
+        let expected = app.theme.palette.text_primary;
         for cell in &terminal.backend().buffer().content {
-            assert_eq!(
-                cell.bg, canvas,
-                "no-color fallback must still use the palette canvas"
-            );
-            assert_eq!(
-                cell.fg, text_primary,
-                "no-color fallback must use the palette text_primary for high contrast"
-            );
+            assert_eq!(cell.bg, app.theme.palette.canvas);
+            assert_eq!(cell.fg, expected);
         }
     }
 
     #[test]
-    fn complete_ui_snapshots_are_stable_at_supported_widths() {
+    fn rendering_is_deterministic_at_every_supported_width() {
         for width in [60, 80, 120, 160] {
             let render = || {
-                let backend = TestBackend::new(width, 24);
-                let mut terminal = Terminal::new(backend).unwrap();
-                let app = test_app();
+                let app = offline_app();
+                let mut terminal = test_terminal(width, 24);
                 terminal.draw(|frame| draw(frame, &app)).unwrap();
                 terminal
                     .backend()
@@ -1141,94 +440,53 @@ mod tests {
                     .map(|cell| format!("{}|{:?}|{:?}", cell.symbol(), cell.fg, cell.bg))
                     .collect::<Vec<_>>()
             };
-            let first = render();
-            let second = render();
-            assert_eq!(first, second, "full UI snapshot changed at width {width}");
-            assert!(first.iter().any(|cell| cell.contains("P")));
+            assert_eq!(render(), render(), "frame changed at width {width}");
         }
     }
 
     #[test]
-    fn pending_pull_card_exposes_exact_digest_and_explicit_approval_key() {
-        let backend = TestBackend::new(120, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = test_app();
-        app.mode = AppMode::Conversation;
-        app.pending_model_pull = Some(crate::app::PendingModelPull {
-            action_id: "action-123".into(),
-            action_digest: "sha256:abc123".into(),
-            session_id: "pull-session".into(),
-            model: "coder:7b".into(),
-            approved: false,
-        });
-        terminal
-            .draw(|frame| draw_action_panel(frame, frame.area(), &app))
-            .unwrap();
-        let snapshot = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
-        assert!(snapshot.contains("awaiting explicit approval"));
-        assert!(snapshot.contains("coder:7b"));
-        assert!(snapshot.contains("action-123"));
-        assert!(snapshot.contains("sha256:abc123"));
-        assert!(snapshot.contains("P approve/start this exact action"));
+    fn the_palette_screen_is_generated_from_the_registry() {
+        let mut app = offline_app();
+        app.mode = AppMode::Help;
+        app.workspace.daemon_health = "connected".into();
+        let rendered = snapshot(&app, 120, 40);
+        assert!(rendered.contains("Commands"));
+        assert!(rendered.contains("TASK"), "categories must be grouped");
+        assert!(rendered.contains("SESSION"), "categories must be grouped");
+        assert!(
+            rendered.contains("unavailable"),
+            "unavailable actions must explain themselves"
+        );
     }
 
-    fn test_app() -> App {
-        App {
-            config: crate::app::TuiConfig {
-                daemon_url: "http://127.0.0.1:7377".into(),
-                token_file: "/tmp/token".into(),
-                repository: "/tmp".into(),
-            },
-            client: reqwest::Client::new(),
-            token: String::new(),
-            mode: AppMode::Help,
-            conversation: crate::conversation::Conversation::new(),
-            composer: crate::composer::Composer::new(),
-            secret_review: None,
-            status_bar: crate::status_bar::StatusBar::new(),
-            workspace: crate::workspace::WorkspaceContext::inspect(std::path::Path::new("/tmp")),
-            provider_setup: None,
-            skill_browser: None,
-            diff_view: None,
-            stream: crate::streaming::StreamController::new(),
-            reconciliation: None,
-            last_refresh: std::time::Instant::now(),
-            message_bar: String::new(),
-            session_id: None,
-            session_choice: None,
-            session_read_only: false,
-            has_provider: false,
-            pending_command: None,
-            pending_user_message: false,
-            running_command: false,
-            quit_requested: false,
-            downloaded_skill: None,
-            pending_skill_install_action: None,
-            pending_research: None,
-            pending_skill_download: None,
-            pending_model_pull: None,
-            active_pull_action: None,
-            active_pull_session: None,
-            theme: crate::theme::Theme {
-                palette: crate::theme::Palette::dark(),
-                colors_enabled: true,
-                unicode_enabled: true,
-            },
-            palette_query: String::new(),
-            palette_selected: 0,
-            model_choices: Vec::new(),
-            model_selected: 0,
-            trace_inspector_visible: false,
-            trace_event_index: 0,
-            trace_event_type: String::new(),
-            trace_event_detail: Vec::new(),
-            trace_total_events: 0,
+    /// A secret must never survive into anything PurrCode emits: conversation
+    /// history, activity, the inspector, or the restored draft. The composer
+    /// legitimately echoes what the user is typing right now, which is why this
+    /// exercises the paths that outlive the keystroke instead.
+    #[test]
+    fn no_emitted_surface_renders_a_secret_like_value() {
+        const SECRET: &str = "sk-test-abcdefghijklmnopqrstuvwxyz012345";
+        let mut app = offline_app();
+        app.conversation.add_user_message(
+            &purrcode_provider_import::redact_source(&format!("OPENAI_API_KEY={SECRET}"))
+                .expect("redaction must succeed")
+                .display
+                .to_string(),
+        );
+        app.conversation.reconcile(
+            None,
+            vec![serde_json::json!({
+                "event": "provider_configured",
+                "data": {"credential_reference": "keychain:default"}
+            })],
+        );
+        for mode in [AppMode::Conversation, AppMode::Help, AppMode::Approval] {
+            app.mode = mode;
+            let rendered = snapshot(&app, 160, 40);
+            assert!(
+                !rendered.contains(SECRET),
+                "{mode:?} rendered a secret-like value"
+            );
         }
     }
 }

@@ -117,6 +117,7 @@ fn safe_event_name(value: &str) -> String {
         .collect()
 }
 
+#[allow(dead_code)] // Retained as the shared one-line action description.
 pub fn action_summary(action: &Value) -> String {
     summarize_action(action)
 }

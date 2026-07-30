@@ -4,6 +4,71 @@ use ratatui::Terminal;
 
 use crate::theme::{Palette, Theme};
 
+/// An application state wired to a daemon URL that nothing is listening on.
+///
+/// Component and dispatcher tests use this so they exercise real code paths
+/// without a live daemon: requests fail fast with a connection error, which is
+/// itself a state the interface must present understandably.
+#[cfg(test)]
+pub(crate) fn offline_app() -> crate::app::App {
+    crate::app::App {
+        config: crate::app::TuiConfig {
+            daemon_url: "http://127.0.0.1:1".into(),
+            token_file: std::path::PathBuf::from("/nonexistent/token"),
+            repository: std::path::PathBuf::from("/tmp"),
+        },
+        client: reqwest::Client::new(),
+        token: String::new(),
+        mode: crate::app::AppMode::Conversation,
+        conversation: crate::conversation::Conversation::new(),
+        composer: crate::composer::Composer::new(),
+        secret_review: None,
+        status_bar: crate::status_bar::StatusBar::new(),
+        workspace: crate::workspace::WorkspaceContext::inspect(std::path::Path::new("/tmp")),
+        provider_setup: None,
+        skill_browser: None,
+        diff_view: None,
+        stream: crate::streaming::StreamController::new(),
+        reconciliation: None,
+        last_refresh: std::time::Instant::now(),
+        message_bar: String::new(),
+        session_id: None,
+        session_choice: None,
+        session_read_only: false,
+        has_provider: false,
+        trace_inspector_visible: false,
+        trace_event_index: 0,
+        trace_event_type: String::new(),
+        trace_event_detail: Vec::new(),
+        trace_total_events: 0,
+        pending_command: None,
+        pending_user_message: false,
+        running_command: false,
+        quit_requested: false,
+        downloaded_skill: None,
+        pending_skill_install_action: None,
+        pending_research: None,
+        pending_skill_download: None,
+        pending_model_pull: None,
+        active_pull_action: None,
+        active_pull_session: None,
+        theme: test_theme(),
+        focus: crate::layout::Focus::Composer,
+        inspector_open: false,
+        activity_selected: None,
+        approval: None,
+        approval_dismissed: None,
+        review: None,
+        review_show_files: true,
+        review_validation_expanded: false,
+        review_needs_refresh: false,
+        palette_query: String::new(),
+        palette_selected: 0,
+        model_choices: Vec::new(),
+        model_selected: 0,
+    }
+}
+
 pub fn test_terminal(width: u16, height: u16) -> Terminal<TestBackend> {
     let backend = TestBackend::new(width, height);
     Terminal::new(backend).expect("test terminal creation must succeed")

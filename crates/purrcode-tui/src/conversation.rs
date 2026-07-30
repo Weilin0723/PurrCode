@@ -1,5 +1,6 @@
 //! Conversation state, message types, and event polling.
 
+use crate::activity::{self, WorkbenchProgress};
 use crate::timeline::{
     cards_from_events, collapsed_card_from_event, pending_action_from_events, TimelineCard,
 };
@@ -31,6 +32,12 @@ pub struct Conversation {
     pub timeline: Vec<TimelineCard>,
     pub selected_card: Option<usize>,
     pub expanded_card: Option<usize>,
+    /// Understandable progress derived from the durable events. This is the only
+    /// thing the activity rail, inspector and validation summary read.
+    pub progress: WorkbenchProgress,
+    /// The durable events the derivation ran over, retained so the trace
+    /// inspector and the review screen never need a second fetch.
+    durable_events: Vec<Value>,
     last_durable_sequence: u64,
 }
 
@@ -54,8 +61,68 @@ impl Conversation {
             timeline: Vec::new(),
             selected_card: None,
             expanded_card: None,
+            progress: WorkbenchProgress::default(),
+            durable_events: Vec::new(),
             last_durable_sequence: 0,
         }
+    }
+
+    /// Durable events backing the current derivation.
+    pub fn durable_events(&self) -> &[Value] {
+        &self.durable_events
+    }
+
+    /// True when the session recorded repository effects worth reviewing.
+    /// Derived from durable evidence only, never from a local guess.
+    pub fn has_repository_effects(&self) -> bool {
+        !self.progress.effects.is_empty()
+            || !self.progress.effects.proposed_paths.is_empty()
+            || self
+                .progress
+                .activity
+                .iter()
+                .any(|entry| entry.label.starts_with("Edited "))
+    }
+
+    /// True when validation concluded in a state the user must look at.
+    pub fn validation_needs_attention(&self) -> bool {
+        self.progress.validation.state.needs_attention()
+    }
+
+    /// Record the changed-file evidence the daemon reported for this session.
+    /// The porcelain text comes from the repository engine, so this adds no
+    /// second source of truth for what changed.
+    pub fn set_recorded_effects(&mut self, porcelain: &str) {
+        self.progress.effects.files = activity::effects_from_porcelain(porcelain);
+    }
+
+    /// Adopt the daemon's message list without discarding local messages it has
+    /// not recorded yet.
+    ///
+    /// A plain replacement loses two things the user cares about: the message
+    /// they just submitted, and partial assistant output preserved after a
+    /// cancellation or interrupted stream. Both live only locally until the
+    /// daemon writes them, so reconciliation must merge rather than overwrite.
+    fn merge_messages(&mut self, durable: Vec<Message>) {
+        let recorded = |message: &Message, durable: &[Message]| {
+            durable.iter().any(|existing| {
+                existing.role == message.role && existing.content == message.content
+            })
+        };
+        let unrecorded: Vec<Message> = self
+            .messages
+            .iter()
+            .filter(|message| !recorded(message, &durable))
+            .cloned()
+            .collect();
+        self.messages = durable;
+        self.messages.extend(unrecorded);
+    }
+
+    fn rederive_progress(&mut self) {
+        let recorded = std::mem::take(&mut self.progress.effects.files);
+        self.progress = activity::derive(&self.durable_events);
+        self.progress.effects.files = recorded;
     }
 
     pub fn add_user_message(&mut self, content: &str) {
@@ -120,6 +187,8 @@ impl Conversation {
             return;
         }
         self.last_durable_sequence = sequence;
+        self.durable_events.push(event.clone());
+        self.rederive_progress();
         let name = event
             .get("event")
             .and_then(Value::as_str)
@@ -285,7 +354,7 @@ impl Conversation {
 
     pub fn reconcile(&mut self, messages: Option<Vec<Message>>, events: Vec<Value>) {
         if let Some(messages) = messages {
-            self.messages = messages;
+            self.merge_messages(messages);
         }
         self.phase = events
             .iter()
@@ -304,6 +373,8 @@ impl Conversation {
             .collect();
         self.timeline = cards_from_events(&events);
         self.last_durable_sequence = events.len() as u64;
+        self.durable_events = events;
+        self.rederive_progress();
         if self.expanded_card.is_none() {
             if let Some(index) = self
                 .timeline
@@ -394,7 +465,8 @@ fn runtime_phase(event: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::Conversation;
+    use super::{Conversation, Message};
+    use chrono::Utc;
     use serde_json::json;
 
     #[test]
@@ -486,6 +558,77 @@ mod tests {
         let content = &conversation.streaming_message.as_ref().unwrap().content;
         assert!(content.contains("1. Split the daemon router"));
         assert!(!content.contains("enough information"));
+    }
+
+    #[test]
+    fn reconciliation_never_discards_locally_preserved_output() {
+        let mut conversation = Conversation::new();
+        conversation.add_user_message("do the thing");
+        conversation.start_streaming(Some("model".into()));
+        conversation.append_streaming("a partial answer");
+        conversation.cancel_streaming();
+        assert_eq!(conversation.messages.len(), 2);
+
+        // The daemon has not recorded either message yet.
+        conversation.reconcile(Some(Vec::new()), Vec::new());
+        let contents: Vec<&str> = conversation
+            .messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect();
+        assert_eq!(
+            contents,
+            vec!["do the thing", "a partial answer"],
+            "reconciliation wiped output that exists only locally"
+        );
+    }
+
+    #[test]
+    fn reconciliation_does_not_duplicate_messages_the_daemon_has_recorded() {
+        let mut conversation = Conversation::new();
+        conversation.add_user_message("do the thing");
+        let durable = vec![Message {
+            id: "durable-1".into(),
+            role: "user".into(),
+            content: "do the thing".into(),
+            timestamp: Utc::now(),
+            model: None,
+        }];
+        conversation.reconcile(Some(durable), Vec::new());
+        assert_eq!(conversation.messages.len(), 1);
+        assert_eq!(conversation.messages[0].id, "durable-1");
+    }
+
+    #[test]
+    fn reconciliation_keeps_the_daemon_ordering_with_local_messages_last() {
+        let mut conversation = Conversation::new();
+        conversation.add_user_message("newest local");
+        let durable = vec![
+            Message {
+                id: "d1".into(),
+                role: "user".into(),
+                content: "older durable".into(),
+                timestamp: Utc::now(),
+                model: None,
+            },
+            Message {
+                id: "d2".into(),
+                role: "assistant".into(),
+                content: "durable reply".into(),
+                timestamp: Utc::now(),
+                model: None,
+            },
+        ];
+        conversation.reconcile(Some(durable), Vec::new());
+        let contents: Vec<&str> = conversation
+            .messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect();
+        assert_eq!(
+            contents,
+            vec!["older durable", "durable reply", "newest local"]
+        );
     }
 
     #[test]

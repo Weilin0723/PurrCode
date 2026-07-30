@@ -1,0 +1,29 @@
+[package]
+name = "purrcode-tui-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The harness is a library used by the integration tests in `tests/`. It is not
+# part of the shipped product, but everything it drives is: it launches the real
+# `purrcode` binary in a real pseudo-terminal.
+[lib]
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+futures.workspace = true
+portable-pty = "0.9"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
+uuid.workspace = true
+vt100 = "0.15"
+purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-tui = { path = "../purrcode-tui" }
+
+[dev-dependencies]
+purrcode-tui = { path = "../purrcode-tui" }

@@ -389,6 +389,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::SkillUpdated { .. } => "skill_updated",
         SessionEvent::SkillRemoved { .. } => "skill_removed",
         SessionEvent::ResearchSearchPerformed { .. } => "research_search_performed",
+        SessionEvent::TerminalActionProposed { .. } => "terminal_action_proposed",
+        SessionEvent::TerminalJudgmentRecorded { .. } => "terminal_judgment_recorded",
     }
 }
 

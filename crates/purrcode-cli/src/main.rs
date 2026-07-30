@@ -39,6 +39,17 @@ use sysinfo::System;
 use tracing_subscriber::EnvFilter;
 use zeroize::Zeroize;
 
+/// Clip a report column to `width`, marking the clip so a truncated value is
+/// never mistaken for a complete one.
+fn truncate_column(value: &str, width: usize) -> String {
+    if value.chars().count() <= width {
+        return value.to_owned();
+    }
+    let mut clipped: String = value.chars().take(width.saturating_sub(1)).collect();
+    clipped.push('~');
+    clipped
+}
+
 fn redacted_identifier(value: &str) -> String {
     format!("anon-{}", hex::encode(Sha256::digest(value.as_bytes())))
 }
@@ -259,6 +270,39 @@ enum Command {
     Bundle {
         #[command(subcommand)]
         command: BundleCommand,
+    },
+    /// Open the terminal workbench against an already-running daemon.
+    ///
+    /// Unlike the bare `purrcode` invocation this never starts a daemon, which
+    /// makes it the entry point for attaching to a daemon you manage yourself.
+    Workbench {
+        /// Repository to work in. Defaults to the current directory.
+        #[arg(long)]
+        repository: Option<PathBuf>,
+        /// File holding the daemon bearer token.
+        #[arg(long)]
+        token_file: Option<PathBuf>,
+    },
+    /// Inspect the user-facing action registry and its acceptance coverage.
+    UiActions {
+        #[command(subcommand)]
+        command: UiActionsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum UiActionsCommand {
+    /// List every registered user-facing action with its entry points.
+    List {
+        /// Only actions in this category, e.g. `approval`.
+        #[arg(long)]
+        category: Option<String>,
+    },
+    /// Report acceptance coverage and fail when any action is incomplete.
+    Coverage {
+        /// Exit successfully even when coverage is incomplete.
+        #[arg(long)]
+        allow_incomplete: bool,
     },
 }
 
@@ -1848,6 +1892,125 @@ async fn main() -> Result<()> {
                         );
                     }
                     Err(e) => bail!("replay failed: {e}"),
+                }
+            }
+        },
+        Command::Workbench {
+            repository,
+            token_file,
+        } => {
+            let repository = match repository {
+                Some(path) => path
+                    .canonicalize()
+                    .with_context(|| format!("resolve {}", path.display()))?,
+                None => std::env::current_dir()?.canonicalize()?,
+            };
+            let token_file = match token_file {
+                Some(path) => path,
+                None => daemon_token.clone(),
+            };
+            if !token_file.is_file() {
+                bail!(
+                    "daemon token {} is missing; start a daemon with `purrcode serve` first",
+                    token_file.display()
+                );
+            }
+            purrcode_tui::run(TuiConfig {
+                daemon_url: daemon_url.clone(),
+                token_file,
+                repository,
+            })
+            .await?;
+            return Ok(());
+        }
+        Command::UiActions { command } => match command {
+            UiActionsCommand::List { category } => {
+                let wanted = category.map(|value| value.to_ascii_lowercase());
+                let mut listed = 0usize;
+                for action in purrcode_tui::REGISTRY {
+                    let label = action.category.label().to_ascii_lowercase();
+                    if wanted.as_ref().is_some_and(|wanted| &label != wanted) {
+                        continue;
+                    }
+                    listed += 1;
+                    println!("{} [{}]", action.id, action.category);
+                    println!("  {}", action.label);
+                    println!("  {}", action.description);
+                    println!("  entry points: {}", action.entry_points().join(", "));
+                    println!(
+                        "  availability: {} · risk: {} · handler: {}:{}",
+                        action.availability.label(),
+                        action.risk.label(),
+                        action.handler.kind(),
+                        action.handler.target()
+                    );
+                    println!(
+                        "  scenarios: {}",
+                        action
+                            .acceptance_scenarios
+                            .iter()
+                            .map(|id| id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                if listed == 0 {
+                    bail!("no registered actions matched");
+                }
+                println!("\n{listed} action(s)");
+            }
+            UiActionsCommand::Coverage { allow_incomplete } => {
+                let rows = purrcode_tui::coverage(purrcode_tui::command_palette::DISPATCH_COMMANDS);
+                println!(
+                    "{:<28} {:<10} {:<38} {:<22} {:<5} {:<5} {:<5} {:<5} Status",
+                    "Action", "Category", "Entry points", "Availability", "PTY", "Real", "Fail",
+                    "Recov",
+                );
+                for row in &rows {
+                    let mark = |value: Option<&str>| if value.is_some() { "yes" } else { "-" };
+                    println!(
+                        "{:<28} {:<10} {:<38} {:<22} {:<5} {:<5} {:<5} {:<5} {}",
+                        row.action,
+                        row.category,
+                        truncate_column(&row.entry_points.join(", "), 38),
+                        truncate_column(&row.availability, 22),
+                        mark(row.pty_test),
+                        mark(row.real_terminal_case),
+                        mark(row.failure_test),
+                        mark(row.recovery_test),
+                        row.status.label()
+                    );
+                    for gap in &row.gaps {
+                        println!("    gap: {gap}");
+                    }
+                }
+
+                let orphans =
+                    purrcode_tui::orphan_commands(purrcode_tui::command_palette::DISPATCH_COMMANDS);
+                for orphan in &orphans {
+                    println!("orphan command: /{orphan} has no registered user-facing entry");
+                }
+
+                let incomplete = rows
+                    .iter()
+                    .filter(|row| row.status == purrcode_tui::CoverageStatus::Incomplete)
+                    .count();
+                let real_terminal = rows
+                    .iter()
+                    .filter(|row| row.real_terminal_case.is_some())
+                    .count();
+                println!(
+                    "\n{} action(s) · {} incomplete · {} orphan command(s) · {} on the real-terminal checklist",
+                    rows.len(),
+                    incomplete,
+                    orphans.len(),
+                    real_terminal
+                );
+                if (incomplete > 0 || !orphans.is_empty()) && !allow_incomplete {
+                    bail!(
+                        "user-facing action coverage is incomplete: {incomplete} incomplete action(s), {} orphan command(s)",
+                        orphans.len()
+                    );
                 }
             }
         },
@@ -3700,6 +3863,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SkillUpdated { .. } => "skill_updated",
         SkillRemoved { .. } => "skill_removed",
         ResearchSearchPerformed { .. } => "research_search_performed",
+        TerminalActionProposed { .. } => "terminal_action_proposed",
+        TerminalJudgmentRecorded { .. } => "terminal_judgment_recorded",
     }
 }
 
