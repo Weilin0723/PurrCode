@@ -1227,7 +1227,15 @@ async fn start_session(
     } else {
         AgentOperation::Start
     };
-    spawn_agent_operation(state, id, operation).await?;
+    if let Err(error) = spawn_agent_operation(state.clone(), id, operation).await {
+        let reason = error_message(&error).chars().take(512).collect();
+        state
+            .store
+            .lock()
+            .await
+            .append(id, &SessionEvent::SessionFailed { reason })?;
+        return Err(error);
+    }
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
@@ -3143,6 +3151,15 @@ enum ApiError {
     BadRequest(String),
     Conflict(String),
     Store(StoreError),
+}
+
+fn error_message(error: &ApiError) -> String {
+    match error {
+        ApiError::Unauthorized => "unauthorized".into(),
+        ApiError::NotFound => "not found".into(),
+        ApiError::BadRequest(message) | ApiError::Conflict(message) => message.clone(),
+        ApiError::Store(_) => "session store error".into(),
+    }
 }
 
 impl From<StoreError> for ApiError {
@@ -7610,6 +7627,50 @@ allow_same_model = true
         );
         handle.abort();
         provider_server.abort();
+    }
+
+    #[tokio::test]
+    async fn initial_agent_configuration_failure_is_durable_and_terminal() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repo");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init"]);
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(&app_config, "not valid application configuration").unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let database = temporary.path().join("sessions.db");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: database.clone(),
+            token_file: token_file.clone(),
+            app_config,
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let response = reqwest::Client::new()
+            .post(format!("http://{}/v1/sessions", report.bind))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "inspect fixture",
+                "repository": repository,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let store = SessionStore::open(&database).unwrap();
+        let ids = store.list_session_ids().unwrap();
+        assert_eq!(ids.len(), 1);
+        let state = store.load(ids[0]).unwrap();
+        assert_eq!(state.status, SessionStatus::Failed);
+        assert!(store.events(ids[0]).unwrap().iter().any(|event| {
+            matches!(event, SessionEvent::SessionFailed { reason } if !reason.is_empty() && reason.len() <= 512)
+        }));
+        handle.abort();
     }
 
     #[cfg(unix)]

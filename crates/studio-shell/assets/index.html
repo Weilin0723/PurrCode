@@ -51,6 +51,37 @@
         <div class="section-heading"><div><span class="eyebrow">Durable activity</span><h2>Recent runs</h2></div><span id="run-count">0 runs</span></div>
         <section id="runs" class="runs" aria-live="polite"></section>
       </section>
+      <section id="workbench-screen" class="screen hidden">
+        <div class="page-heading compact-heading">
+          <div><span class="eyebrow">Agent workbench</span><h1 id="workbench-objective">Select a durable run</h1></div>
+          <div class="heading-actions"><span id="workbench-status" class="status">—</span><button id="refresh-workbench" class="secondary">Refresh</button></div>
+        </div>
+        <div class="workbench-grid">
+          <section class="workbench-panel conversation-panel" aria-labelledby="conversation-title">
+            <div class="panel-heading"><div><span class="eyebrow">Intent and response</span><h2 id="conversation-title">Conversation</h2></div><div class="panel-meta"><span id="stream-status">idle</span><span id="message-count">0</span></div></div>
+            <div id="conversation" class="conversation" aria-live="polite"></div>
+            <div class="follow-up"><textarea id="follow-up" rows="2" placeholder="Add a follow-up to an active run"></textarea><button id="send-follow-up">Send</button></div>
+          </section>
+          <section class="workbench-panel activity-panel" aria-labelledby="activity-title">
+            <div class="panel-heading"><div><span class="eyebrow">Durable runtime</span><h2 id="activity-title">Activity</h2></div><span id="event-count">0</span></div>
+            <div id="activity" class="activity" aria-live="polite"></div>
+          </section>
+          <section class="workbench-panel inspector-panel" aria-labelledby="inspector-title">
+            <div class="panel-heading"><div><span class="eyebrow">Selected evidence</span><h2 id="inspector-title">Inspector</h2></div></div>
+            <div id="inspector-summary" class="inspector-summary">Select an activity event to inspect its durable payload.</div>
+            <pre id="inspector"></pre>
+          </section>
+        </div>
+      </section>
+      <section id="diff-screen" class="screen hidden">
+        <div class="page-heading compact-heading"><div><span class="eyebrow">Isolated worktree</span><h1>Diff review</h1></div><button id="refresh-diff" class="secondary">Refresh</button></div>
+        <div id="changed-files" class="changed-files"></div>
+        <pre id="diff-content" class="diff-content">Select a run from Home first.</pre>
+      </section>
+      <section id="validation-screen" class="screen hidden">
+        <div class="page-heading compact-heading"><div><span class="eyebrow">Evidence gate</span><h1>Validation</h1></div><button id="refresh-validation" class="secondary">Refresh</button></div>
+        <div id="validation-events" class="validation-events">Select a run from Home first.</div>
+      </section>
       <section id="placeholder-screen" class="screen hidden">
         <span class="eyebrow">PurrCode Studio</span><h1 id="placeholder-title">Workbench</h1>
         <p id="placeholder-copy">This surface is connected to the same authenticated daemon and durable runtime.</p>

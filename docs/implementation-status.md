@@ -1,6 +1,30 @@
 # Implementation status
 
-Updated: 2026-07-30 (v0.8 PR2 — authenticated Studio shell)
+Updated: 2026-07-30 (v0.8 PR3 — Studio Workbench)
+
+## v0.8 PR3 — Workbench (complete)
+
+- Studio now renders a real three-pane Workbench: durable conversation and complete assistant
+  output, semantic runtime activity, and a separately selected evidence inspector. Raw event JSON
+  is never used as the activity presentation; it is shown only on explicit inspector selection.
+- Run cards open durable sessions, and the Workbench loads session metadata, conversation messages,
+  and complete events from the authenticated daemon. Follow-up messages use the existing daemon
+  route and therefore retain secret detection, session leases, PawGate, and Claw boundaries.
+- The browser attaches to the daemon SSE stream through the credential-confining shell proxy.
+  Bounded partial assistant output remains visible while generating, durable audit events trigger
+  refresh, EventSource reconnect is explicit in the UI, and the daemon bearer token never enters
+  JavaScript.
+- Diff Review uses the real isolated-worktree patch API and reports a missing worktree truthfully.
+  Validation filters only recorded validation/outcome/completion events; absence is displayed as
+  pending evidence, never success.
+- A failed initial agent configuration is now appended durably as `SessionFailed` before the API
+  returns its error. The UI refreshes the durable run list after such a failure instead of leaving
+  an apparently active orphan session.
+- Real-browser acceptance created a disposable durable run, opened Conversation/Activity/Inspector,
+  selected and rendered an exact event payload, exercised Diff Review and Validation unavailable
+  states, and proved the three panels collapse to one 700 px column without page overflow. Five
+  Studio tests cover HTTP/authentication/SSE proxying and the embedded Workbench contract; the new
+  daemon regression test proves initial configuration failure becomes terminal durable state.
 
 ## v0.8 PR2 — Studio shell (complete)
 

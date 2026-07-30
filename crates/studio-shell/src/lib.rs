@@ -302,6 +302,13 @@ async fn proxy(
             request = request.header(name, value);
         }
     }
+    if headers
+        .get(ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.contains("text/event-stream"))
+    {
+        request = request.timeout(std::time::Duration::from_secs(60 * 60));
+    }
     if !body.is_empty() {
         request = request.body(body);
     }
@@ -436,6 +443,7 @@ mod tests {
     use super::*;
     use axum::extract::State as TestState;
     use axum::http::header::AUTHORIZATION as TEST_AUTHORIZATION;
+    use axum::response::sse::{Event as TestEvent, Sse as TestSse};
     use axum::routing::get as test_get;
     use axum::{Json, Router as TestRouter};
     use serde_json::json;
@@ -483,11 +491,28 @@ mod tests {
         (StatusCode::ACCEPTED, Json(json!({"id": "run-1"}))).into_response()
     }
 
+    async fn fake_stream(headers: HeaderMap) -> Response {
+        if headers
+            .get(TEST_AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            != Some("Bearer daemon-secret-that-is-long-enough")
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        TestSse::new(futures::stream::iter([Ok::<_, std::convert::Infallible>(
+            TestEvent::default()
+                .event("durable_audit")
+                .data("{\"kind\":\"durable_audit\"}"),
+        )]))
+        .into_response()
+    }
+
     async fn start_pair() -> (StudioReport, tokio::task::JoinHandle<()>, Arc<Mutex<u32>>) {
         let counter = Arc::new(Mutex::new(0));
         let daemon = TestRouter::new()
             .route("/v1/health", test_get(fake_health))
             .route("/v1/sessions", test_get(fake_sessions).post(fake_start))
+            .route("/v1/sessions/run-1/events/stream", test_get(fake_stream))
             .with_state(counter.clone());
         let daemon_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let daemon_bind = daemon_listener.local_addr().unwrap();
@@ -605,6 +630,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(accepted.status(), reqwest::StatusCode::ACCEPTED);
+
+        let streamed = client
+            .get(format!(
+                "http://{}/api/v1/sessions/run-1/events/stream",
+                report.bind
+            ))
+            .header(reqwest::header::COOKIE, &cookie)
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(streamed.status(), reqwest::StatusCode::OK);
+        assert!(streamed.text().await.unwrap().contains("durable_audit"));
         task.abort();
     }
 
@@ -633,5 +671,25 @@ mod tests {
         assert!(!valid_proxy_path("v1//sessions"));
         assert!(!valid_proxy_path("internal/metrics"));
         assert!(!valid_proxy_path("v1/%2e%2e/health"));
+    }
+
+    #[test]
+    fn embedded_workbench_separates_conversation_activity_and_inspector() {
+        for heading in [
+            "Conversation",
+            "Activity",
+            "Inspector",
+            "Diff review",
+            "Validation",
+        ] {
+            assert!(INDEX_HTML.contains(heading), "missing {heading} surface");
+        }
+        assert!(!INDEX_HTML.contains("<script>"));
+        assert!(!INDEX_HTML.contains("<style>"));
+        assert!(APP_JS.contains("/messages"));
+        assert!(APP_JS.contains("/events"));
+        assert!(APP_JS.contains("/diff"));
+        assert!(APP_CSS.contains("grid-template-columns"));
+        assert!(APP_CSS.contains("@media (max-width: 780px)"));
     }
 }
