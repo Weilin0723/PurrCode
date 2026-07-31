@@ -87,21 +87,12 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App, tokens: &Tokens<'_>
         repository: &app.workspace.repository_name,
         branch: &app.workspace.branch,
         model: &app.status_bar.model,
-        mode: mode_label(app),
-        permission: "Ask",
+        mode: app.status_bar.task_mode.label(),
+        permission: app.status_bar.permission.label(),
         phase: &app.workspace.session_phase,
         local_only: app.status_bar.privacy == "local-only",
     }
     .render(frame, area, tokens);
-}
-
-pub fn mode_label(app: &App) -> &'static str {
-    match app.conversation.mode {
-        purrcode_runtime_core::ConversationMode::Plan => "Plan",
-        purrcode_runtime_core::ConversationMode::Build => "Build",
-        purrcode_runtime_core::ConversationMode::Review => "Review",
-        purrcode_runtime_core::ConversationMode::Ask => "Ask",
-    }
 }
 
 /// The conversation: user and assistant blocks plus short system notices. No
@@ -237,7 +228,7 @@ fn draw_composer(frame: &mut Frame<'_>, area: Rect, app: &App, tokens: &Tokens<'
     let (cursor_line, cursor_column) = app.composer.cursor_line_column();
     let view = ComposerView {
         unicode: tokens.unicode(),
-        mode: mode_label(app),
+        mode: app.status_bar.task_mode.label(),
         buffer: &app.composer.buffer,
         cursor_line,
         cursor_column,

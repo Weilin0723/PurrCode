@@ -39,9 +39,9 @@ use purrcode_provider_gateway::{
 };
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
-    ActionConstraints, ActionId, ApprovalAuthority, Authorization, ConversationMessage,
-    DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction, SessionEvent,
-    SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
+    ActionConstraints, ActionId, ApprovalAuthority, AuthorityMode, Authorization,
+    ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
+    SessionEvent, SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
 };
 use purrcode_skill_registry::{
     ExternalSearchAuthorization, GitHubRegistryAdapter, Qualifier as RegistryQualifier,
@@ -57,6 +57,7 @@ use purrcode_terminal_runtime::{
     SendTerminalInputAction, StartTerminalAction, StopProcessAction, TerminalId, TerminalOwner,
     TerminalRuntime, TerminalSize, WorkspaceId,
 };
+use purrcode_ui_contracts::{ActivityItem, ActivityKind, ActivityStatus, ValidationOutcome};
 use purrcode_web_research::{
     DomainPolicy, PublicWebAction, PublicWebAuthorization, ResearchEngine, StubSearchProvider,
 };
@@ -378,6 +379,9 @@ pub async fn bind_and_report(
             get(messages).post(append_message),
         )
         .route("/v1/sessions/{id}/events/stream", get(event_stream))
+        .route("/v1/sessions/{id}/summary", get(session_summary))
+        .route("/v1/sessions/{id}/activity", get(session_activity))
+        .route("/v1/sessions/{id}/validation", get(session_validation))
         .route("/v1/sessions/{id}/hunks", get(review_hunks))
         .route("/v1/sessions/{id}/diff", get(session_diff))
         .route("/v1/sessions/{id}/hunks/apply", post(apply_review_hunk))
@@ -822,6 +826,7 @@ async fn launch_automation(
             &SessionEvent::SessionCreated {
                 objective: automation.objective.clone(),
                 repository: automation.repository.clone(),
+                authority_mode: AuthorityMode::Governed,
             },
         )?;
     }
@@ -915,6 +920,7 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 &SessionEvent::SessionCreated {
                     objective: spec.objective.clone(),
                     repository: workspace.path.clone(),
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -1153,6 +1159,7 @@ async fn run_supervisor(
             &SessionEvent::SessionCreated {
                 objective: request.objective,
                 repository: repository.clone(),
+                authority_mode: AuthorityMode::Governed,
             },
         )?;
         store.append(
@@ -1284,6 +1291,30 @@ struct StartSessionRequest {
     repository: PathBuf,
     #[serde(default)]
     plan_only: bool,
+    /// The permission mode an authenticated human chose (PRD §12), in the
+    /// authority contract's vocabulary: `governed`, `elevated`, `unrestricted`.
+    /// Recorded on the session so the decision is durable and auditable rather
+    /// than living only in whichever client happened to make the request.
+    #[serde(default)]
+    authority_mode: Option<String>,
+}
+
+impl StartSessionRequest {
+    /// Reject a mode the contract does not define instead of storing it. A
+    /// permission value nobody can interpret is worse than none.
+    fn authority_mode(&self) -> Result<AuthorityMode, ApiError> {
+        match self.authority_mode.as_deref() {
+            None | Some("governed") => Ok(AuthorityMode::Governed),
+            Some("elevated") => Ok(AuthorityMode::Elevated {
+                capabilities: Vec::new(),
+                allowed_programs: Vec::new(),
+            }),
+            Some("unrestricted") => Ok(AuthorityMode::Unrestricted),
+            Some(other) => Err(ApiError::BadRequest(format!(
+                "unknown authority mode `{other}`; expected governed, elevated or unrestricted"
+            ))),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -1306,6 +1337,7 @@ async fn start_session(
         .repository
         .canonicalize()
         .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
+    let authority_mode = request.authority_mode()?;
     let id = SessionId::new();
     let objective = request.objective;
     let mut store = state.store.lock().await;
@@ -1314,6 +1346,7 @@ async fn start_session(
         &SessionEvent::SessionCreated {
             objective: objective.clone(),
             repository,
+            authority_mode,
         },
     )?;
     store.append(
@@ -2916,6 +2949,227 @@ async fn events(
     Ok(Json(events))
 }
 
+// ── Presentation APIs (PRD §31) ────────────────────────────────
+//
+// Clients used to read the durable event log and each invent their own labels
+// for it, so the TUI and the Studio could describe the same run differently.
+// These endpoints make the daemon the one place that turns runtime events into
+// what a person reads.
+
+/// Derive the user-facing activity list from durable events.
+fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<ActivityItem> {
+    use purrcode_runtime_core::SessionEvent as Event;
+    let mut items: Vec<ActivityItem> = Vec::new();
+    let mut inspected = 0usize;
+    let mut edited = 0usize;
+
+    for (index, event) in events.iter().enumerate() {
+        let id = index.to_string();
+        match event {
+            Event::PlanCreated { steps } | Event::PlanRevised { steps, .. } => {
+                items.push(ActivityItem {
+                    id,
+                    kind: ActivityKind::Planning,
+                    label: format!("Prepared a {}-step plan", steps.len()),
+                    status: ActivityStatus::Done,
+                    summary: steps.first().cloned(),
+                    detail_available: !steps.is_empty(),
+                })
+            }
+            Event::ActionProposed { action, .. } => {
+                // Reads and writes are counted rather than listed: fifty lines
+                // of "inspected file" is not progress a person can read.
+                match action {
+                    ProposedAction::RepositoryRead(_) => inspected += 1,
+                    ProposedAction::WriteFile(_) | ProposedAction::DeleteFile(_) => edited += 1,
+                    _ => items.push(ActivityItem {
+                        id,
+                        kind: ActivityKind::Command,
+                        label: "Ran a command".to_owned(),
+                        status: ActivityStatus::Done,
+                        summary: None,
+                        detail_available: true,
+                    }),
+                }
+            }
+            Event::OutcomeReviewRequired { .. } | Event::SupervisorReviewRequired { .. } => items
+                .push(ActivityItem {
+                    id,
+                    kind: ActivityKind::Approval,
+                    label: "Waiting for your approval".to_owned(),
+                    status: ActivityStatus::Blocked,
+                    summary: None,
+                    detail_available: true,
+                }),
+            Event::ValidationRecorded {
+                status, evidence, ..
+            } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Validation,
+                label: format!("Validation {}", validation_outcome(status).label()),
+                status: if validation_outcome(status).is_success() {
+                    ActivityStatus::Done
+                } else {
+                    ActivityStatus::Failed
+                },
+                summary: Some(evidence.chars().take(160).collect()),
+                detail_available: !evidence.is_empty(),
+            }),
+            Event::SessionCompleted => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Completion,
+                label: "Finished".to_owned(),
+                status: ActivityStatus::Done,
+                summary: None,
+                detail_available: false,
+            }),
+            Event::SessionFailed { reason } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Completion,
+                label: "Stopped without finishing".to_owned(),
+                status: ActivityStatus::Failed,
+                summary: Some(reason.chars().take(160).collect()),
+                detail_available: true,
+            }),
+            _ => {}
+        }
+    }
+
+    let mut derived = Vec::new();
+    if inspected > 0 {
+        derived.push(ActivityItem {
+            id: "inspection".to_owned(),
+            kind: ActivityKind::Inspection,
+            label: format!("Inspected {inspected} file(s)"),
+            status: ActivityStatus::Done,
+            summary: None,
+            detail_available: true,
+        });
+    }
+    if edited > 0 {
+        derived.push(ActivityItem {
+            id: "edits".to_owned(),
+            kind: ActivityKind::Edit,
+            label: format!("Changed {edited} file(s)"),
+            status: ActivityStatus::Done,
+            summary: None,
+            detail_available: true,
+        });
+    }
+    derived.extend(items);
+    derived
+}
+
+/// Map the runtime's validation status onto the presentation contract.
+///
+/// The runtime distinguishes more states than a person needs, but the mapping
+/// never collapses a non-success into success: `NotDetected` and
+/// `SkippedByConfiguration` become `Unavailable`/`Skipped`, not `Passed`.
+fn validation_outcome(status: &ValidationStatus) -> ValidationOutcome {
+    match status {
+        ValidationStatus::Passed => ValidationOutcome::Passed,
+        ValidationStatus::Failed => ValidationOutcome::Failed,
+        ValidationStatus::TimedOut => ValidationOutcome::TimedOut,
+        ValidationStatus::SkippedByConfiguration => ValidationOutcome::Skipped,
+        ValidationStatus::Unavailable | ValidationStatus::NotDetected => {
+            ValidationOutcome::Unavailable
+        }
+        ValidationStatus::Uncertain => ValidationOutcome::InfrastructureError,
+    }
+}
+
+fn validation_from_events(
+    events: &[purrcode_runtime_core::SessionEvent],
+) -> purrcode_ui_contracts::ValidationSummary {
+    use purrcode_runtime_core::SessionEvent as Event;
+    let stages = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::ValidationRecorded {
+                action_id,
+                status,
+                evidence,
+            } => Some(purrcode_ui_contracts::ValidationStageView {
+                stage: action_id.0.to_string(),
+                outcome: validation_outcome(status),
+                detail: (!evidence.is_empty())
+                    .then(|| evidence.chars().take(400).collect::<String>()),
+            }),
+            _ => None,
+        })
+        .collect();
+    purrcode_ui_contracts::ValidationSummary::new(stages)
+}
+
+async fn session_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Vec<ActivityItem>>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let events = state.store.lock().await.events(id)?;
+    if events.is_empty() {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(activity_from_events(&events)))
+}
+
+async fn session_validation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<purrcode_ui_contracts::ValidationSummary>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let events = state.store.lock().await.events(id)?;
+    if events.is_empty() {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(validation_from_events(&events)))
+}
+
+async fn session_summary(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<purrcode_ui_contracts::SessionSummary>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let (session, events) = {
+        let store = state.store.lock().await;
+        (store.load(id)?, store.events(id)?)
+    };
+    let repository = session.repository.clone().unwrap_or_default();
+    // The repository is presented by name and branch, never by path (PRD §14).
+    let snapshot = RepositoryEngine::inspect(&repository).await.ok();
+    let validation = validation_from_events(&events);
+    let activity = activity_from_events(&events);
+    Ok(Json(purrcode_ui_contracts::SessionSummary {
+        id: session.id.0.to_string(),
+        objective: session.objective.clone().unwrap_or_default(),
+        status: format!("{:?}", session.status).to_lowercase(),
+        repository: snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.name.clone())
+            .unwrap_or_else(|| {
+                repository
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            }),
+        branch: snapshot.as_ref().map(|snapshot| snapshot.branch.clone()),
+        changed_file_count: activity
+            .iter()
+            .filter(|item| item.kind == ActivityKind::Edit)
+            .count(),
+        validation: (!validation.stages.is_empty()).then_some(validation),
+        needs_attention: activity
+            .iter()
+            .any(|item| item.status == ActivityStatus::Blocked),
+    }))
+}
+
 #[derive(Serialize)]
 struct ReviewHunksView {
     patch_digest: String,
@@ -4356,6 +4610,7 @@ async fn propose_local_model_pull(
             &SessionEvent::SessionCreated {
                 objective: format!("Pull Ollama model {}", request.model),
                 repository: repository.clone(),
+                authority_mode: AuthorityMode::Governed,
             },
         )?;
         (session_id, repository)
@@ -6424,6 +6679,106 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
 
+    fn validation_event(action: &str, status: ValidationStatus, evidence: &str) -> SessionEvent {
+        SessionEvent::ValidationRecorded {
+            action_id: ActionId(Uuid::new_v4()),
+            status,
+            evidence: format!("{action}: {evidence}"),
+        }
+    }
+
+    #[test]
+    fn an_unavailable_stage_is_never_presented_as_passing() {
+        // PRD §21.3 and §36: "unavailable validation appears as success" is a
+        // release-blocking failure, so the mapping is asserted directly.
+        let events = vec![
+            validation_event("unit", ValidationStatus::Passed, "42 tests"),
+            validation_event("integration", ValidationStatus::Unavailable, "no docker"),
+            validation_event("lint", ValidationStatus::NotDetected, "no linter"),
+            validation_event("smoke", ValidationStatus::SkippedByConfiguration, "off"),
+        ];
+        let summary = validation_from_events(&events);
+        assert_eq!(summary.stages.len(), 4);
+        assert!(
+            !summary.complete,
+            "a run with unavailable stages must not report complete validation"
+        );
+        let outcomes: Vec<_> = summary.stages.iter().map(|s| s.outcome).collect();
+        assert_eq!(outcomes[0], ValidationOutcome::Passed);
+        assert_eq!(outcomes[1], ValidationOutcome::Unavailable);
+        assert_eq!(outcomes[2], ValidationOutcome::Unavailable);
+        assert_eq!(outcomes[3], ValidationOutcome::Skipped);
+        assert!(summary.headline().contains("did not pass"));
+    }
+
+    #[test]
+    fn an_uncertain_validation_is_infrastructure_not_failure() {
+        // A probe that could not complete is not the same as a test that failed,
+        // and repairing the wrong one wastes the whole repair budget.
+        let summary = validation_from_events(&[validation_event(
+            "unit",
+            ValidationStatus::Uncertain,
+            "runner vanished",
+        )]);
+        assert_eq!(
+            summary.stages[0].outcome,
+            ValidationOutcome::InfrastructureError
+        );
+        assert!(!summary.complete);
+    }
+
+    #[test]
+    fn activity_counts_reads_and_edits_instead_of_listing_every_one() {
+        let read = || SessionEvent::ActionProposed {
+            action_id: ActionId(Uuid::new_v4()),
+            action: ProposedAction::RepositoryRead(
+                purrcode_runtime_core::RepositoryReadAction::GitStatus,
+            ),
+        };
+        let events = vec![read(), read(), read()];
+        let activity = activity_from_events(&events);
+        // Three reads become one readable line, not three.
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].label, "Inspected 3 file(s)");
+        assert_eq!(activity[0].kind, ActivityKind::Inspection);
+        assert_eq!(activity[0].status, ActivityStatus::Done);
+    }
+
+    #[test]
+    fn an_approval_boundary_is_blocked_not_failed() {
+        let events = vec![SessionEvent::OutcomeReviewRequired {
+            reason: "writes outside the plan".into(),
+        }];
+        let activity = activity_from_events(&events);
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].status, ActivityStatus::Blocked);
+        assert_eq!(activity[0].status.word(), "needs you");
+    }
+
+    #[test]
+    fn a_failed_validation_shows_as_failed_activity() {
+        let events = vec![validation_event(
+            "unit",
+            ValidationStatus::Failed,
+            "2 tests failed",
+        )];
+        let activity = activity_from_events(&events);
+        assert_eq!(activity[0].status, ActivityStatus::Failed);
+        assert!(activity[0].label.contains("failed"));
+        assert!(activity[0].detail_available);
+    }
+
+    #[test]
+    fn a_session_with_no_events_has_no_activity_and_no_validation() {
+        assert!(activity_from_events(&[]).is_empty());
+        let summary = validation_from_events(&[]);
+        assert!(summary.stages.is_empty());
+        assert!(
+            !summary.complete,
+            "no validation must never read as complete validation"
+        );
+    }
+
     #[test]
     fn provider_probe_prefers_the_configured_default_over_alphabetical_capabilities() {
         let temporary = tempfile::tempdir().unwrap();
@@ -6591,6 +6946,7 @@ default = "ollama/small"
                 &SessionEvent::SessionCreated {
                     objective: "govern exact external action".into(),
                     repository: repository.path().to_path_buf(),
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();
@@ -6707,6 +7063,7 @@ default = "ollama/small"
                 &SessionEvent::SessionCreated {
                     objective: "MCP fixture".into(),
                     repository: repository.path().to_path_buf(),
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();
@@ -8010,6 +8367,7 @@ allow_same_model = true
                 &SessionEvent::SessionCreated {
                     objective: "install safe skill".into(),
                     repository,
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();
@@ -8157,6 +8515,7 @@ allow_same_model = true
                 &SessionEvent::SessionCreated {
                     objective: "find a terraform skill".into(),
                     repository,
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();
@@ -8262,6 +8621,7 @@ allow_same_model = true
                 &SessionEvent::SessionCreated {
                     objective: "inspect terraform schema".into(),
                     repository,
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();

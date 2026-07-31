@@ -601,6 +601,7 @@ mod tests {
                     &SessionEvent::SessionCreated {
                         objective: "recover".into(),
                         repository: PathBuf::from("/repo"),
+                        authority_mode: Default::default(),
                     },
                 )
                 .unwrap();
@@ -632,6 +633,7 @@ mod tests {
                 &SessionEvent::SessionCreated {
                     objective: "backup".into(),
                     repository: PathBuf::from("/repo"),
+                    authority_mode: Default::default(),
                 },
             )
             .unwrap();
@@ -657,6 +659,7 @@ mod tests {
                 &SessionEvent::SessionCreated {
                     objective: "recover provider".into(),
                     repository: PathBuf::from("/repo"),
+                    authority_mode: Default::default(),
                 },
             )
             .unwrap();

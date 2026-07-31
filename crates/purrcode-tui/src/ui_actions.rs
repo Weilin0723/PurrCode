@@ -679,8 +679,8 @@ pub const REGISTRY: &[UiActionDefinition] = &[
         category: UiActionCategory::Session,
         label: "Open session",
         description: "List durable sessions for this repository",
-        commands: &["/sessions"],
-        shortcuts: &[],
+        commands: &["/sessions", "/history"],
+        shortcuts: &[Shortcut::primary("Ctrl+H", WORKBENCH)],
         availability: AvailabilityRule::DaemonReachable,
         risk: UiRiskClass::Safe,
         starts_execution: false,
@@ -866,7 +866,7 @@ pub const REGISTRY: &[UiActionDefinition] = &[
         label: "Switch model",
         description: "Choose from the configured and reachable models",
         commands: &["/models"],
-        shortcuts: &[],
+        shortcuts: &[Shortcut::primary("Ctrl+M", WORKBENCH)],
         availability: AvailabilityRule::All(&[
             AvailabilityRule::DaemonReachable,
             AvailabilityRule::ProviderConfigured,
@@ -1326,6 +1326,38 @@ pub const REGISTRY: &[UiActionDefinition] = &[
         handler: UiActionHandler::Command("skill-search"),
         acceptance_scenarios: scenarios!["skills.mcp_approval", "skills.mcp_failure"],
     },
+    // ── Modes ──────────────────────────────────────────────────
+    UiActionDefinition {
+        id: UiActionId("task.change_mode"),
+        category: UiActionCategory::Task,
+        label: "Change mode",
+        description: "Switch between Ask, Plan, Build and Review",
+        commands: &["/mode"],
+        shortcuts: &[Shortcut::primary("Ctrl+K", WORKBENCH)],
+        availability: AvailabilityRule::Always,
+        risk: UiRiskClass::Safe,
+        starts_execution: false,
+        handler: UiActionHandler::Command("mode"),
+        acceptance_scenarios: scenarios!["task.change_mode"],
+    },
+    UiActionDefinition {
+        id: UiActionId("settings.permission_mode"),
+        category: UiActionCategory::Settings,
+        label: "Change permission mode",
+        description: "Switch between Ask, Auto and Full Access",
+        commands: &["/permission"],
+        shortcuts: &[],
+        // An authenticated human's authority decision is never gated on the
+        // daemon being reachable: it must be expressible before the next run.
+        availability: AvailabilityRule::Always,
+        risk: UiRiskClass::Security,
+        starts_execution: false,
+        handler: UiActionHandler::Command("permission"),
+        acceptance_scenarios: scenarios![
+            "settings.permission_mode",
+            "settings.permission_rejected",
+        ],
+    },
     // ── Terminal ───────────────────────────────────────────────
     UiActionDefinition {
         id: UiActionId("terminal.open"),
@@ -1459,6 +1491,30 @@ pub const REGISTRY: &[UiActionDefinition] = &[
 /// a gate that fails when a referenced test name is absent from its sources, so
 /// this table cannot claim coverage that does not exist.
 pub const SCENARIOS: &[AcceptanceScenario] = &[
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("task.change_mode"),
+        summary: "The task mode changes and the header follows",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/modes.rs::task_mode_changes_and_the_header_follows"),
+        real_terminal_case: None,
+        critical: true,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("settings.permission_rejected"),
+        summary: "An unrecognised permission value is refused, not silently ignored",
+        kind: ScenarioKind::Failure,
+        pty_test: Some("tests/modes.rs::an_unknown_permission_mode_is_refused"),
+        real_terminal_case: None,
+        critical: true,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("settings.permission_mode"),
+        summary: "Ask, Auto and Full Access are selectable and shown",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/modes.rs::permission_mode_is_selectable_and_visible"),
+        real_terminal_case: None,
+        critical: true,
+    },
     AcceptanceScenario {
         id: AcceptanceScenarioId("terminal.open"),
         summary: "The terminal surface shows real PTY output with tabs",

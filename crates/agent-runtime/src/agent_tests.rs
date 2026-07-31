@@ -1145,6 +1145,7 @@ async fn plan_only_session_is_durable_and_never_mutates_source_repository() {
             &SessionEvent::SessionCreated {
                 objective: "plan a safe change".into(),
                 repository: repository.path().canonicalize().unwrap(),
+                authority_mode: Default::default(),
             },
         )
         .unwrap();

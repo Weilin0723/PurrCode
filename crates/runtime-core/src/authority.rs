@@ -71,10 +71,11 @@ pub enum GrantCapability {
     NetworkAccess,
 }
 
-#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum AuthorityMode {
     /// Normal policy plus exact-action approval. The default, always.
+    #[default]
     Governed,
     /// The listed capabilities and programs skip per-action approval;
     /// everything else falls back to Governed.

@@ -2632,15 +2632,9 @@ dependencies = [
 name = "purrcode-ui-contracts"
 version = "0.9.0"
 dependencies = [
- "chrono",
- "purrcode-authority-contracts",
- "purrcode-terminal-runtime",
- "purrcode-workspace-contracts",
  "schemars",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
- "uuid",
 ]
 
 [[package]]

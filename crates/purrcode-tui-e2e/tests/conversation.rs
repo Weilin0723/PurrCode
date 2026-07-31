@@ -152,7 +152,7 @@ fn plan_mode_modifies_nothing() {
     with_artifacts("conversation-plan-mode", &mut harness, |harness| {
         harness.wait_for_text("Ready for a task")?;
         harness.run_command("/plan")?;
-        harness.wait_for_text("Switched to plan mode")?;
+        harness.wait_for_text("Plan mode")?;
         submit(harness, "Plan the refactor")?;
         harness.wait_for_text("Plan created")?;
         let screen = harness.screen();
@@ -178,7 +178,7 @@ fn build_mode_requires_approval() {
     with_artifacts("conversation-build-mode", &mut harness, |harness| {
         harness.wait_for_text("Ready for a task")?;
         harness.run_command("/build")?;
-        harness.wait_for_text("Switched to build mode")?;
+        harness.wait_for_text("Build mode")?;
         submit(harness, "Add a function")?;
         let screen =
             harness.wait_for_all(&["Approval required", "src/lib.rs", "A Approve exact action"])?;
@@ -193,7 +193,7 @@ fn review_mode_reports_recorded_work() {
     with_artifacts("conversation-review-mode", &mut harness, |harness| {
         harness.wait_for_text("Ready for a task")?;
         harness.run_command("/review")?;
-        let screen = harness.wait_for_text("Switched to review mode")?;
+        let screen = harness.wait_for_text("Review mode")?;
         assertions::assert_visible(&screen, &["Review"]);
         Ok(())
     });

@@ -606,6 +606,7 @@ mod tests {
                 &SessionEvent::SessionCreated {
                     objective: "pull fixture".into(),
                     repository: repository.into(),
+                    authority_mode: Default::default(),
                 },
             )
             .unwrap();

@@ -430,6 +430,7 @@ mod tests {
                 &SessionEvent::SessionCreated {
                     objective: "test objective".into(),
                     repository: repo.clone(),
+                    authority_mode: Default::default(),
                 },
             )
             .unwrap();
@@ -637,6 +638,7 @@ mod tests {
                 &SessionEvent::SessionCreated {
                     objective: "no fabrication".into(),
                     repository: PathBuf::from("/unique/repo"),
+                    authority_mode: Default::default(),
                 },
             )
             .unwrap();

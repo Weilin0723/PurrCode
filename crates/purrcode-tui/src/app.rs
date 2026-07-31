@@ -972,7 +972,11 @@ impl App {
         let body = serde_json::json!({
             "objective": objective,
             "repository": self.config.repository,
-            "plan_only": explicit_plan_only_intent(&objective),
+            // A read-only task mode is a hard constraint, not a hint, so it wins
+            // over whatever the objective's wording suggests.
+            "plan_only": self.status_bar.task_mode.plan_only()
+                || explicit_plan_only_intent(&objective),
+            "authority_mode": self.status_bar.permission.authority_mode(),
         });
         match self
             .request(reqwest::Method::POST, "/v1/sessions", Some(body))
@@ -1405,6 +1409,52 @@ impl App {
             }
             Err(error) => self.message_bar = format!("Terminal ownership did not change: {error}"),
         }
+    }
+
+    /// Change the task mode (PRD §11). Ask and Plan never change files, which
+    /// the session payload carries so the daemon enforces it rather than
+    /// trusting the client.
+    pub fn set_task_mode(&mut self, mode: crate::status_bar::TaskMode) {
+        use crate::status_bar::TaskMode;
+        self.status_bar.task_mode = mode;
+        self.conversation.mode = match mode {
+            TaskMode::Ask => purrcode_runtime_core::ConversationMode::Ask,
+            TaskMode::Plan => purrcode_runtime_core::ConversationMode::Plan,
+            TaskMode::Build => purrcode_runtime_core::ConversationMode::Build,
+            TaskMode::Review => purrcode_runtime_core::ConversationMode::Review,
+        };
+        self.message_bar = match mode {
+            TaskMode::Ask => {
+                "Ask mode. PurrCode answers without proposing repository changes.".into()
+            }
+            TaskMode::Plan => "Plan mode. PurrCode plans without changing files.".into(),
+            TaskMode::Build => "Build mode. PurrCode edits, runs, tests and repairs.".into(),
+            TaskMode::Review => "Review mode. PurrCode reviews the current diff.".into(),
+        };
+    }
+
+    /// Change the permission mode (PRD §12).
+    ///
+    /// This is an authenticated human's decision, so it is stated plainly and
+    /// takes effect for the next request. Full Access grants only what the
+    /// process, workspace and configured identities already hold — saying so
+    /// here matters, because the name invites a larger reading.
+    pub fn set_permission_mode(&mut self, mode: crate::status_bar::PermissionMode) {
+        use crate::status_bar::PermissionMode;
+        self.status_bar.permission = mode;
+        self.message_bar = match mode {
+            PermissionMode::Ask => {
+                "Ask. PurrCode asks before writes, commands, installs and network access.".into()
+            }
+            PermissionMode::Auto => {
+                "Auto. Repository work runs automatically; destructive or unexpected effects still ask."
+                    .into()
+            }
+            PermissionMode::FullAccess => {
+                "Full Access. PurrCode may use every permission this process already holds; it grants no new ones."
+                    .into()
+            }
+        };
     }
 
     /// Open Studio on the session this workbench already has (PRD §24.2).

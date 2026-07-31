@@ -1365,6 +1365,7 @@ mod tests {
                 &purrcode_runtime_core::SessionEvent::SessionCreated {
                     objective: "qualify fixture".into(),
                     repository: skill.clone(),
+                    authority_mode: Default::default(),
                 },
             )
             .unwrap();

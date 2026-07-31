@@ -900,6 +900,7 @@ async fn main() -> Result<()> {
                 &SessionEvent::SessionCreated {
                     objective: "user-requested guarded command".into(),
                     repository: repository.clone(),
+                    authority_mode: Default::default(),
                 },
             )?;
             store.append(
@@ -1432,6 +1433,7 @@ async fn main() -> Result<()> {
                         &SessionEvent::SessionCreated {
                             objective,
                             repository,
+                            authority_mode: Default::default(),
                         },
                     )?;
                     store.append(
@@ -1597,6 +1599,7 @@ async fn main() -> Result<()> {
                 &SessionEvent::SessionCreated {
                     objective: format!("MCP {server_name}/{tool_name}"),
                     repository,
+                    authority_mode: Default::default(),
                 },
             )?;
             store.append(
@@ -2798,6 +2801,7 @@ fn run_judgment_benchmark_case(
         &SessionEvent::SessionCreated {
             objective: task.objective.clone(),
             repository: repository.to_path_buf(),
+            authority_mode: Default::default(),
         },
     )?;
     evidence.append(

@@ -3,6 +3,7 @@
 use crate::app::{App, AppMode, PendingModelPull};
 use crate::provider_setup::ProviderSetup;
 use crate::skill_browser::SkillBrowser;
+use crate::status_bar::{PermissionMode, TaskMode};
 use crate::ui_actions::UiActionDefinition;
 use serde_json::Value;
 use std::fmt::Write as _;
@@ -28,6 +29,7 @@ pub const DISPATCH_COMMANDS: &[&str] = &[
     "deny",
     "diff",
     "help",
+    "history",
     "mcp",
     "model",
     "models",
@@ -46,6 +48,8 @@ pub const DISPATCH_COMMANDS: &[&str] = &[
     "rollback",
     "session",
     "sessions",
+    "mode",
+    "permission",
     "settings",
     "studio",
     "terminal",
@@ -691,28 +695,32 @@ impl CommandPalette {
                     Err(error) => app.message_bar = format!("Research failed: {error}"),
                 }
             }
-            "ask" => {
-                app.conversation.mode = purrcode_runtime_core::ConversationMode::Ask;
-                app.status_bar.set_mode("ask");
-                app.message_bar =
-                    "Switched to ask mode. PurrCode answers without proposing repository changes."
-                        .into();
-            }
-            "plan" => {
-                app.conversation.mode = purrcode_runtime_core::ConversationMode::Plan;
-                app.status_bar.set_mode("plan");
-                app.message_bar = "Switched to plan mode.".into();
-            }
-            "build" => {
-                app.conversation.mode = purrcode_runtime_core::ConversationMode::Build;
-                app.status_bar.set_mode("build");
-                app.message_bar = "Switched to build mode.".into();
-            }
-            "review" => {
-                app.conversation.mode = purrcode_runtime_core::ConversationMode::Review;
-                app.status_bar.set_mode("review");
-                app.message_bar = "Switched to review mode.".into();
-            }
+            "ask" => app.set_task_mode(TaskMode::Ask),
+            "plan" => app.set_task_mode(TaskMode::Plan),
+            "build" => app.set_task_mode(TaskMode::Build),
+            "review" => app.set_task_mode(TaskMode::Review),
+            // `/mode` with no argument cycles; with one it sets that mode.
+            "mode" => match TaskMode::parse(args) {
+                Some(mode) => app.set_task_mode(mode),
+                None if args.trim().is_empty() => {
+                    app.set_task_mode(app.status_bar.task_mode.next())
+                }
+                None => {
+                    app.message_bar =
+                        format!("`{args}` is not a task mode. Choose Ask, Plan, Build or Review.")
+                }
+            },
+            "permission" => match PermissionMode::parse(args) {
+                Some(mode) => app.set_permission_mode(mode),
+                None if args.trim().is_empty() => {
+                    app.set_permission_mode(app.status_bar.permission.next())
+                }
+                None => {
+                    app.message_bar = format!(
+                        "`{args}` is not a permission mode. Choose Ask, Auto or Full Access."
+                    )
+                }
+            },
             "new" => {
                 app.session_id = None;
                 app.conversation = crate::conversation::Conversation::new();
@@ -746,7 +754,7 @@ impl CommandPalette {
                     app.message_bar = "No active session.".into();
                 }
             }
-            "sessions" => match app
+            "sessions" | "history" => match app
                 .request(reqwest::Method::GET, "/v1/sessions", None)
                 .await
             {

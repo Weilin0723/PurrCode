@@ -74,6 +74,7 @@ fn event_append_failure_is_rejected_not_silently_accepted() {
         .reduce_event(&SessionEvent::SessionCreated {
             objective: "append-failure".into(),
             repository: PathBuf::from("/repo"),
+            authority_mode: Default::default(),
         })
         .unwrap();
     let action_id = ActionId::new();
@@ -138,6 +139,7 @@ fn restart_while_awaiting_approval_preserves_pending_judgment() {
         SessionEvent::SessionCreated {
             objective: "needs approval".into(),
             repository: PathBuf::from("/repo"),
+            authority_mode: Default::default(),
         },
         SessionEvent::ActionProposed {
             action_id,
@@ -198,6 +200,7 @@ fn restart_after_authorization_persistence_does_not_silently_execute() {
         SessionEvent::SessionCreated {
             objective: "authorized then crashed".into(),
             repository: PathBuf::from("/repo"),
+            authority_mode: Default::default(),
         },
         SessionEvent::ActionProposed {
             action_id,
@@ -260,6 +263,7 @@ fn missing_execution_finished_leaves_session_executing_not_completed() {
         .reduce_event(&SessionEvent::SessionCreated {
             objective: "effect collection interrupted".into(),
             repository: PathBuf::from("/repo"),
+            authority_mode: Default::default(),
         })
         .unwrap();
     state
@@ -324,6 +328,7 @@ fn cancellation_during_context_indexing_preserves_context_and_cancelled_status()
         .reduce_event(&SessionEvent::SessionCreated {
             objective: "context indexing interrupted".into(),
             repository: PathBuf::from("/repo"),
+            authority_mode: Default::default(),
         })
         .unwrap();
     state
@@ -379,6 +384,7 @@ fn cancellation_during_context_indexing_preserves_context_and_cancelled_status()
         SessionEvent::SessionCreated {
             objective: "context indexing interrupted".into(),
             repository: PathBuf::from("/repo"),
+            authority_mode: Default::default(),
         },
         SessionEvent::WorktreeCreated {
             path: PathBuf::from("/repo/.purrcode/worktrees/session"),
@@ -436,6 +442,7 @@ fn interrupted_bundle_export_fails_verification_and_reports_partial_state() {
             &SessionEvent::SessionCreated {
                 objective: "interrupted bundle export".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             },
         )
         .unwrap();

@@ -568,6 +568,7 @@ impl<'a> NativeAgent<'a> {
             &SessionEvent::SessionCreated {
                 objective: objective.into(),
                 repository: repository.clone(),
+                authority_mode: Default::default(),
             },
         )?;
         self.start_initialized(store, session_id).await

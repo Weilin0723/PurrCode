@@ -265,6 +265,25 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.pending_command = Some("/diff".into())
         }
+        // PRD §16 shortcuts. Each routes through the same command the palette
+        // runs, so a shortcut can never do something the palette cannot.
+        KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/terminal".into())
+        }
+        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/models".into())
+        }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/mode".into())
+        }
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/history".into())
+        }
+        // Ctrl+Shift+S. A terminal that cannot report Shift sends Ctrl+S, so
+        // both reach Studio rather than one silently doing nothing.
+        KeyCode::Char('s' | 'S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/studio".into())
+        }
         KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.conversation.select_card(-1)
         }

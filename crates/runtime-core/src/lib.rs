@@ -681,6 +681,12 @@ pub enum SessionEvent {
     SessionCreated {
         objective: String,
         repository: PathBuf,
+        /// The permission mode an authenticated human chose for this session
+        /// (PRD §12). Durable because an authority decision that only lives in
+        /// the client that made it cannot be audited afterwards. Defaults to
+        /// `Governed` so sessions recorded before v0.9 still load.
+        #[serde(default)]
+        authority_mode: AuthorityMode,
     },
     ConversationMessageAdded {
         message: ConversationMessage,
@@ -1124,6 +1130,7 @@ impl SessionState {
             SessionEvent::SessionCreated {
                 objective,
                 repository,
+                ..
             } => {
                 self.objective = Some(objective.clone());
                 self.repository = Some(repository.clone());
@@ -1618,6 +1625,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "scan".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         state
@@ -1742,6 +1750,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "test".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         state
@@ -1778,6 +1787,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "count".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         assert_eq!(state.event_count, 1);
@@ -1806,6 +1816,7 @@ mod tests {
             SessionEvent::SessionCreated {
                 objective: "reconstruct".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             },
             SessionEvent::ActionProposed {
                 action_id: ActionId::new(),
@@ -1834,6 +1845,7 @@ mod tests {
             SessionEvent::SessionCreated {
                 objective: "reconstruct".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             },
             SessionEvent::SessionCompleted,
             SessionEvent::ExecutionStarted {
@@ -1876,6 +1888,7 @@ mod tests {
             SessionEvent::SessionCreated {
                 objective: "idempotent".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             },
             SessionEvent::WorktreeCreated {
                 path: PathBuf::from("/repo/.purrcode/worktrees/test"),
@@ -1900,6 +1913,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "test".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         state
@@ -1935,6 +1949,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "test".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         state
