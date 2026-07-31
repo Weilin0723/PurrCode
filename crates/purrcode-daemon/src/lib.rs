@@ -3070,10 +3070,75 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
     let mut items: Vec<ActivityItem> = Vec::new();
     let mut inspected = 0usize;
     let mut edited = 0usize;
+    // A model request that has started but not finished is what the session is
+    // doing *right now*. Without it a working session reports an empty activity
+    // list, which reads as idle — the first real run of this endpoint spent a
+    // minute in exactly that state.
+    let mut thinking: Option<usize> = None;
 
     for (index, event) in events.iter().enumerate() {
         let id = index.to_string();
         match event {
+            Event::WorktreeCreated { .. } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Inspection,
+                label: "Prepared an isolated worktree".to_owned(),
+                status: ActivityStatus::Done,
+                summary: None,
+                detail_available: false,
+            }),
+            Event::ContextIndexed { files, symbols, .. } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Inspection,
+                label: format!("Indexed {files} file(s), {symbols} symbol(s)"),
+                status: ActivityStatus::Done,
+                summary: None,
+                detail_available: false,
+            }),
+            Event::CheckpointCreated { label, .. } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Recovery,
+                label: format!("Created a restore point ({label})"),
+                status: ActivityStatus::Done,
+                summary: None,
+                detail_available: true,
+            }),
+            Event::ModelRequestStarted { model, .. } => {
+                thinking = Some(items.len());
+                items.push(ActivityItem {
+                    id,
+                    kind: ActivityKind::Planning,
+                    label: format!("Thinking with {model}"),
+                    status: ActivityStatus::Running,
+                    summary: None,
+                    detail_available: false,
+                });
+            }
+            // Pair the request with its completion rather than adding a second
+            // line: one step that finished, not two that happened.
+            Event::ModelRequestFinished { .. } => {
+                if let Some(position) = thinking.take() {
+                    items[position].status = ActivityStatus::Done;
+                    items[position].label =
+                        items[position].label.replacen("Thinking", "Thought", 1);
+                }
+            }
+            Event::SessionPaused { reason } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Approval,
+                label: "Paused".to_owned(),
+                status: ActivityStatus::Blocked,
+                summary: Some(reason.chars().take(160).collect()),
+                detail_available: true,
+            }),
+            Event::RecoveryRequired { reason } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Recovery,
+                label: "Needs recovery before continuing".to_owned(),
+                status: ActivityStatus::Blocked,
+                summary: Some(reason.chars().take(160).collect()),
+                detail_available: true,
+            }),
             Event::PlanCreated { steps } | Event::PlanRevised { steps, .. } => {
                 items.push(ActivityItem {
                     id,
@@ -3140,6 +3205,24 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 detail_available: true,
             }),
             _ => {}
+        }
+    }
+
+    // A session that has reached a terminal state has nothing in flight. Leaving
+    // a Running item after it would show a spinner that never stops — the same
+    // class of untruth as reporting unavailable validation as passed.
+    if let Some(position) = thinking {
+        let ended = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::SessionCompleted
+                    | Event::SessionFailed { .. }
+                    | Event::SessionCancelled { .. }
+            )
+        });
+        if ended {
+            items[position].status = ActivityStatus::Failed;
+            items[position].label = items[position].label.replacen("Thinking", "Interrupted", 1);
         }
     }
 
@@ -6957,6 +7040,90 @@ mod tests {
         assert_eq!(activity[0].status, ActivityStatus::Failed);
         assert!(activity[0].label.contains("failed"));
         assert!(activity[0].detail_available);
+    }
+
+    #[test]
+    fn a_session_that_is_working_never_reports_an_empty_activity_list() {
+        // Caught by the first real run against a local model: seven durable
+        // events produced zero activity items, so a session that was actively
+        // waiting on the model looked idle for a full minute.
+        let events = vec![
+            SessionEvent::WorktreeCreated {
+                path: PathBuf::from("/w"),
+                base_head: "abc".into(),
+                source_was_dirty: false,
+            },
+            SessionEvent::CheckpointCreated {
+                label: "session-start".into(),
+                head: "abc".into(),
+                patch_digest: "d".into(),
+            },
+            SessionEvent::ContextIndexed {
+                files: 12,
+                symbols: 40,
+                sensitive_files: 0,
+            },
+            SessionEvent::ModelRequestStarted {
+                role: "coding_worker".into(),
+                provider: "ollama".into(),
+                model: "qwen2.5-coder:7b".into(),
+            },
+        ];
+        let activity = activity_from_events(&events);
+        assert_eq!(activity.len(), 4);
+        assert!(activity.iter().any(|item| item.label.contains("worktree")));
+        assert!(activity
+            .iter()
+            .any(|item| item.label == "Indexed 12 file(s), 40 symbol(s)"));
+        // The in-flight request is the one thing the user is waiting on.
+        let thinking = activity.last().unwrap();
+        assert_eq!(thinking.status, ActivityStatus::Running);
+        assert!(thinking.label.contains("qwen2.5-coder:7b"));
+    }
+
+    #[test]
+    fn a_session_that_ended_has_nothing_still_running() {
+        // Observed on a real run: the provider timed out, the session failed,
+        // and the activity list still showed "Thinking…" as running — a spinner
+        // that never stops.
+        let events = vec![
+            SessionEvent::ModelRequestStarted {
+                role: "coding_worker".into(),
+                provider: "ollama".into(),
+                model: "m".into(),
+            },
+            SessionEvent::SessionFailed {
+                reason: "provider request timed out".into(),
+            },
+        ];
+        let activity = activity_from_events(&events);
+        assert!(
+            !activity
+                .iter()
+                .any(|item| item.status == ActivityStatus::Running),
+            "an ended session must not report work in flight: {activity:?}"
+        );
+        assert!(activity
+            .iter()
+            .any(|item| item.label.contains("Interrupted")));
+    }
+
+    #[test]
+    fn a_finished_model_request_closes_its_own_line_rather_than_adding_one() {
+        let started = SessionEvent::ModelRequestStarted {
+            role: "coding_worker".into(),
+            provider: "ollama".into(),
+            model: "m".into(),
+        };
+        let finished = SessionEvent::ModelRequestFinished {
+            role: "coding_worker".into(),
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+        };
+        let activity = activity_from_events(&[started, finished]);
+        assert_eq!(activity.len(), 1, "one step that finished, not two events");
+        assert_eq!(activity[0].status, ActivityStatus::Done);
+        assert!(activity[0].label.starts_with("Thought"));
     }
 
     #[test]

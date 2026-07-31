@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -439,6 +440,10 @@ pub fn validate_working_directory(path: &std::path::Path) -> Result<(), Terminal
 const DEFAULT_TRANSCRIPT_BYTES: usize = 256 * 1024;
 const MAX_TRANSCRIPT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_REPLAY_BYTES: usize = 1024 * 1024;
+/// How long a one-shot command waits for the PTY reader to finish after the
+/// child exits. Bounded so a reader that never sees end-of-file cannot hang the
+/// caller; exceeded only if the backend does not close the pipe.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct Transcript {
     bytes: VecDeque<u8>,
@@ -504,6 +509,8 @@ struct TerminalSession {
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     transcript: Arc<Mutex<Transcript>>,
+    /// Set once the reader thread has read the PTY to its end.
+    drained: Arc<AtomicBool>,
     exit_code: Option<i32>,
     attached_clients: usize,
 }
@@ -573,6 +580,15 @@ impl TerminalRuntime {
             .ok_or(TerminalError::NotFound {
                 id: terminal.terminal_id,
             })?;
+        // The child has exited, but bytes it already wrote may still be in the
+        // pipe. Give the reader a bounded moment to finish so the captured
+        // output is the whole output — this is the evidence the action is
+        // judged on. Dropping the master first makes the pending read return.
+        drop(session.master);
+        let deadline = Instant::now() + DRAIN_TIMEOUT;
+        while !session.drained.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
         let output = session
             .transcript
             .lock()
@@ -629,7 +645,8 @@ impl TerminalRuntime {
             produced: 0,
             last_seen_at: Utc::now(),
         }));
-        spawn_reader(reader, Arc::clone(&transcript));
+        let drained = Arc::new(AtomicBool::new(false));
+        spawn_reader(reader, Arc::clone(&transcript), Arc::clone(&drained));
         let terminal_id = new_terminal_id();
         let owner = action.owner.unwrap_or(TerminalOwner::Human);
         let snapshot = TerminalSnapshot {
@@ -655,6 +672,7 @@ impl TerminalRuntime {
                     writer,
                     child,
                     transcript,
+                    drained,
                     exit_code: None,
                     attached_clients: 0,
                 },
@@ -877,7 +895,18 @@ fn refresh_exit(session: &mut TerminalSession) -> Result<(), TerminalError> {
     Ok(())
 }
 
-fn spawn_reader(mut reader: Box<dyn Read + Send>, transcript: Arc<Mutex<Transcript>>) {
+/// Drain the PTY into `transcript` until it closes, then set `drained`.
+///
+/// The flag matters: a process can exit while bytes it already wrote are still
+/// in the pipe. Reading the transcript the instant the child exits therefore
+/// returns output that is short by whatever the reader had not yet appended —
+/// and that output is the evidence an action is judged on, not just something a
+/// test looks at.
+fn spawn_reader(
+    mut reader: Box<dyn Read + Send>,
+    transcript: Arc<Mutex<Transcript>>,
+    drained: Arc<AtomicBool>,
+) {
     thread::spawn(move || {
         let mut chunk = [0_u8; 8192];
         loop {
@@ -889,6 +918,7 @@ fn spawn_reader(mut reader: Box<dyn Read + Send>, transcript: Arc<Mutex<Transcri
                 },
             }
         }
+        drained.store(true, Ordering::Release);
     });
 }
 
@@ -1330,5 +1360,45 @@ mod tests {
         assert!(!outcome.timed_out);
         assert!(String::from_utf8_lossy(&outcome.stdout).contains("terminal-command-evidence"));
         assert!(outcome.stderr.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_that_exits_immediately_after_writing_still_yields_all_of_it() {
+        // A process can exit while the bytes it wrote are still in the pipe, so
+        // reading the transcript the instant the child dies returns output short
+        // by whatever the reader had not yet appended. That output is an
+        // action's evidence, so truncating it silently weakens every judgment
+        // made from it.
+        //
+        // This asserts the property — a command's whole output is captured —
+        // rather than reproducing the race, which needs a loaded machine and is
+        // not reliably triggerable here. It is a volume check that would catch a
+        // reader wired up so that it never drains at all; the narrow timing
+        // window is closed by construction in `execute`, not by this test.
+        let directory = tempfile::tempdir().unwrap();
+        let line = "0123456789abcdef".repeat(64);
+        let expected = 400;
+        let script = format!("for i in $(seq 1 {expected}); do printf '%s\\n' '{line}'; done");
+        let outcome = TerminalRuntime::default()
+            .execute(
+                WorkspaceId::new(),
+                ExecuteCommandAction {
+                    program: PathBuf::from("/bin/sh"),
+                    arguments: vec!["-c".into(), script],
+                    working_directory: directory.path().to_path_buf(),
+                    environment: BTreeMap::new(),
+                    timeout: Some(Duration::from_secs(10).into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(outcome.exit_code, Some(0));
+        let observed = String::from_utf8_lossy(&outcome.stdout)
+            .matches(line.as_str())
+            .count();
+        assert_eq!(
+            observed, expected,
+            "captured {observed} of {expected} lines; output was truncated before the reader drained"
+        );
     }
 }

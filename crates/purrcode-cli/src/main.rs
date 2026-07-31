@@ -3536,8 +3536,17 @@ async fn initialize_product(
         .unwrap_or_else(|| coder_model.clone());
     let judge = format!("{provider_name}/{judge_model}");
     let allow_same_model = coder == judge;
+    // Canonical role names only. Writing `coder` and `router` here left a fresh
+    // config disagreeing with what `AppConfig::assign_model_role` writes, so the
+    // first model change through the UI silently renamed them.
     let mut roles = BTreeMap::new();
-    for role in ["router", "summarizer", "planner", "coder", "reviewer"] {
+    for role in [
+        "utility",
+        "summarizer",
+        "planner",
+        "coding_worker",
+        "reviewer",
+    ] {
         roles.insert(role.into(), coder.clone());
     }
     roles.insert("judge".into(), judge.clone());
