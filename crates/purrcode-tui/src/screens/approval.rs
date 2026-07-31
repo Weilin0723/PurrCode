@@ -31,6 +31,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         branch: &app.workspace.branch,
         model: &app.status_bar.model,
         mode: super::workbench::mode_label(app),
+        permission: "Ask",
         phase: "awaiting approval",
         local_only: app.status_bar.privacy == "local-only",
     }

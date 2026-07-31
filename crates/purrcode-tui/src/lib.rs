@@ -19,7 +19,6 @@ pub mod review;
 pub mod screens;
 mod skill_browser;
 mod status_bar;
-pub mod status_header;
 mod streaming;
 pub mod test_fixtures;
 mod theme;

@@ -88,6 +88,7 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App, tokens: &Tokens<'_>
         branch: &app.workspace.branch,
         model: &app.status_bar.model,
         mode: mode_label(app),
+        permission: "Ask",
         phase: &app.workspace.session_phase,
         local_only: app.status_bar.privacy == "local-only",
     }

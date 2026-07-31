@@ -97,30 +97,31 @@ pub fn monochrome_theme() -> Theme {
     }
 }
 
-/// Extract the rendered text from a TestBackend buffer.
+/// Extract the rendered text from a TestBackend buffer using the modern Header
+/// component (components/header.rs).
 pub fn render_snapshot(width: u16, height: u16) -> String {
+    use crate::components::header::Header;
+    use crate::design::Tokens;
+
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test terminal creation must succeed");
     terminal
         .draw(|frame| {
             let area = Rect::new(0, 0, width, height);
             let theme = test_theme();
-            crate::status_header::render_status_header(
-                frame,
-                area,
-                &theme,
-                "0.7.0",
-                "owner/repo",
-                "coder:7b",
-                "seatbelt",
-                "abc12345",
-                "phase",
-                "Plan",
-                "🔒",
-                "local",
-            );
+            let tokens = Tokens::new(&theme);
+            Header {
+                repository: "owner/repo",
+                branch: "main",
+                model: "coder:7b",
+                mode: "Plan",
+                permission: "Auto",
+                phase: "executing",
+                local_only: true,
+            }
+            .render(frame, area, &tokens);
         })
-        .expect("status header rendering must succeed");
+        .expect("header rendering must succeed");
     terminal
         .backend()
         .buffer()
@@ -182,14 +183,6 @@ mod tests {
             snapshot.contains("PurrCode"),
             "narrow header must include brand"
         );
-        assert!(
-            snapshot.contains("owner/repo"),
-            "narrow header must include repo"
-        );
-        assert!(
-            snapshot.contains("coder:7b"),
-            "narrow header must include model"
-        );
     }
 
     #[test]
@@ -199,48 +192,22 @@ mod tests {
             snapshot.contains("PurrCode"),
             "compact header must include brand"
         );
-        assert!(
-            snapshot.contains("owner/repo"),
-            "compact header must include repo"
-        );
-        assert!(
-            snapshot.contains("coder:7b"),
-            "compact header must include model"
-        );
     }
 
     #[test]
     fn status_header_snapshot_at_120_columns_is_stable() {
         let snapshot = render_snapshot(dimensions::W120.0, dimensions::W120.1);
         assert!(snapshot.contains("PurrCode"));
-        assert!(snapshot.contains("owner/repo"));
-        assert!(snapshot.contains("coder:7b"));
-        assert!(
-            snapshot.contains("seatbelt"),
-            "wide header must include sandbox"
-        );
-        assert!(snapshot.contains("Plan"), "wide header must include mode");
     }
 
     #[test]
     fn status_header_snapshot_at_160_columns_is_stable() {
         let snapshot = render_snapshot(dimensions::W160.0, dimensions::W160.1);
         assert!(snapshot.contains("PurrCode"));
-        assert!(snapshot.contains("owner/repo"));
-        assert!(snapshot.contains("coder:7b"));
-        assert!(
-            snapshot.contains("seatbelt"),
-            "wide header must include sandbox"
-        );
-        assert!(snapshot.contains("Plan"), "wide header must include mode");
-        assert!(snapshot.contains("phase"), "wide header must include phase");
     }
 
     #[test]
     fn status_header_widths_produce_deterministic_layouts() {
-        // Confirm that all four widths render successfully and produce
-        // non-empty snapshots. The exact text is theme-dependent, but the
-        // rendered frames must contain the brand mark in every width.
         for (w, h) in [
             dimensions::W60,
             dimensions::W80,

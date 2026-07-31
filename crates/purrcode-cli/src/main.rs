@@ -3511,33 +3511,32 @@ async fn initialize_product(
     }
     // If no local provider was discovered, check for a NVIDIA_API_KEY env var
     // or keychain entry and auto-configure NVIDIA NIM (PRD §9, §9.1).
-    if provider_config.is_none() {
-        if std::env::var_os("NVIDIA_API_KEY").is_some()
-            || std::env::var("NVIDIA_API_KEY").map_or(false, |v| !v.is_empty())
+    if provider_config.is_none()
+        && (std::env::var_os("NVIDIA_API_KEY").is_some()
+            || std::env::var("NVIDIA_API_KEY").is_ok_and(|v| !v.is_empty()))
+    {
+        let nim_key = std::env::var("NVIDIA_API_KEY").unwrap_or_default();
+        provider_name = Some("nvidia-nim".to_owned());
+        provider_config = Some(ProviderConfig::NvidiaNim {
+            base_url: url::Url::parse("https://integrate.api.nvidia.com/v1/")?,
+            api_key_env: "NVIDIA_API_KEY".to_owned(),
+            capabilities: BTreeMap::new(),
+        });
+        // Try to enumerate models from the NIM endpoint
+        if let Ok(response) = client
+            .get("https://integrate.api.nvidia.com/v1/models")
+            .header("Authorization", format!("Bearer {nim_key}"))
+            .send()
+            .await
         {
-            let nim_key = std::env::var("NVIDIA_API_KEY").unwrap_or_default();
-            provider_name = Some("nvidia-nim".to_owned());
-            provider_config = Some(ProviderConfig::NvidiaNim {
-                base_url: url::Url::parse("https://integrate.api.nvidia.com/v1/")?,
-                api_key_env: "NVIDIA_API_KEY".to_owned(),
-                capabilities: BTreeMap::new(),
-            });
-            // Try to enumerate models from the NIM endpoint
-            if let Ok(response) = client
-                .get("https://integrate.api.nvidia.com/v1/models")
-                .header("Authorization", format!("Bearer {nim_key}"))
-                .send()
-                .await
-            {
-                if response.status().is_success() {
-                    if let Ok(value) = response.json::<serde_json::Value>().await {
-                        discovered_models = value["data"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|model| model["id"].as_str().map(str::to_owned))
-                            .collect();
-                    }
+            if response.status().is_success() {
+                if let Ok(value) = response.json::<serde_json::Value>().await {
+                    discovered_models = value["data"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|model| model["id"].as_str().map(str::to_owned))
+                        .collect();
                 }
             }
         }

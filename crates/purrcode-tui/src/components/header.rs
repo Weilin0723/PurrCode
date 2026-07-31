@@ -24,6 +24,8 @@ pub struct Header<'data> {
     pub branch: &'data str,
     pub model: &'data str,
     pub mode: &'data str,
+    /// Permission mode: Ask, Auto, or Full Access (PRD §12, §14).
+    pub permission: &'data str,
     pub phase: &'data str,
     /// True when inference stays on this machine.
     pub local_only: bool,
@@ -80,9 +82,14 @@ impl<'data> Header<'data> {
                 priority: 4,
             },
             Field {
-                text: self.phase.to_owned(),
+                text: self.permission.to_owned(),
                 role: Role::Muted,
                 priority: 5,
+            },
+            Field {
+                text: self.phase.to_owned(),
+                role: Role::Muted,
+                priority: 6,
             },
         ]
     }
@@ -186,6 +193,7 @@ mod tests {
             branch: "main",
             model: "ollama/coder:7b",
             mode: "Build",
+            permission: "Auto",
             phase: "executing",
             local_only: true,
         }
@@ -312,6 +320,7 @@ mod tests {
             branch: "main",
             model: "",
             mode: "",
+            permission: "",
             phase: "",
             local_only: true,
         };
