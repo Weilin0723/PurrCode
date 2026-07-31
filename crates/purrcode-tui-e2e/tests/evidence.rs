@@ -472,8 +472,10 @@ fn mcp_failure_is_explained() {
         // what this test actually proves — is that a failed search never
         // fabricates candidates and never leaves the rest of the session
         // unusable.
-        let screen = harness.wait_for_text("No matching skills were returned.")?;
-        assertions::assert_absent(&screen, &["database-browser", "deploy automation"]);
+        let screen = harness.wait_for_all_and_absent(
+            &["No matching skills were returned."],
+            &["database-browser", "deploy automation"],
+        )?;
         assertions::assert_no_overflow(&screen);
 
         harness.key(Key::Escape)?;
