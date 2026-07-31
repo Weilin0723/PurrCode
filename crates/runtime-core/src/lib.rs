@@ -675,6 +675,20 @@ pub enum ApprovalAuthority {
     SignedPolicy { policy_id: String },
 }
 
+/// How a pause that is waiting on a plan review ends (PRD §11).
+///
+/// A client has to tell this pause apart from a pause in the middle of the
+/// work: one is asking to be read and will take feedback, the other is
+/// reporting a problem to fix. The agent writes these reasons and the clients
+/// match on them, so the wording lives here instead of being spelled out in
+/// three places and drifting.
+pub const PLAN_REVIEW_PAUSE: &str = "plan is ready for review";
+
+/// True when a [`SessionEvent::SessionPaused`] reason is a plan awaiting review.
+pub fn is_plan_review_pause(reason: &str) -> bool {
+    reason.ends_with(PLAN_REVIEW_PAUSE)
+}
+
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub enum SessionEvent {

@@ -722,6 +722,10 @@ execution beyond carefully audited command forms.
   build/unit-test evidence.
 - The TUI and daemon support pause/resume, manual checkpoint, isolated rollback, explicit
   compaction, model switch, bounded terminal evidence, and durable plan-only sessions.
+- A plan-only session pauses on its plan and stays open to a conversation: a follow-up message is
+  read as feedback, the daemon rewrites the plan as a new numbered revision and pauses again, and
+  the exchange repeats until the reviewer resumes to build it. Nothing is written to disk in any
+  round. Both clients say which of the two a reply will do before it is sent.
 - Provider secrets can be entered through a hidden TUI field and stored in macOS Keychain, Windows
   Credential Manager, or Linux Secret Service. Configuration stores references only and secret
   input is zeroized after transfer.

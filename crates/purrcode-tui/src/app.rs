@@ -128,6 +128,10 @@ pub struct App {
     /// this session or starts a new one.
     pub session_choice: Option<SessionChoice>,
     pub session_read_only: bool,
+    /// True while the next submission is feedback on a plan under review rather
+    /// than a new instruction, so the surface can say which of the two it is
+    /// about to do (PRD §11, §15.1).
+    pub revising_plan: bool,
     pub has_provider: bool,
     /// Trace inspector modal state. The modal is rendered as an overlay by
     /// `render::render_trace_inspector_modal` once these fields are populated.
@@ -216,6 +220,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         session_id: None,
         session_choice: None,
         session_read_only: false,
+        revising_plan: false,
         has_provider: false,
         trace_inspector_visible: false,
         trace_event_index: 0,
@@ -385,7 +390,11 @@ async fn event_loop(
                     .start_streaming(Some(selected_model.clone()));
 
                 app.start_session_stream(stream_after, Some(selected_model));
-                app.message_bar = "Preparing context...".into();
+                app.message_bar = if app.revising_plan {
+                    "Revising the plan; it will pause for review again...".into()
+                } else {
+                    "Preparing context...".to_owned()
+                };
             }
         }
 
@@ -948,19 +957,31 @@ impl App {
     pub async fn ensure_session(&mut self) -> Option<String> {
         let objective = self.conversation.latest_user_message();
         if let Some(session_id) = self.session_id.clone() {
-            let reusable = self
+            let session = self
                 .request(
                     reqwest::Method::GET,
                     &format!("/v1/sessions/{session_id}"),
                     None,
                 )
                 .await
-                .ok()
-                .and_then(|session| session["status_code"].as_str().map(str::to_owned))
-                .is_some_and(|status| status == "active");
+                .ok();
+            // A session paused on a plan is still the session this message is
+            // about: what the user typed is feedback on that plan (PRD §11).
+            // Starting a new session instead threw the plan away and made them
+            // describe the whole task again to change one step.
+            let revising = session
+                .as_ref()
+                .is_some_and(|session| session["awaiting_plan_review"].as_bool() == Some(true));
+            let reusable = revising
+                || session
+                    .as_ref()
+                    .and_then(|session| session["status_code"].as_str())
+                    .is_some_and(|status| status == "active");
             if reusable {
+                self.revising_plan = revising;
                 return Some(session_id);
             }
+            self.revising_plan = false;
             self.session_id = None;
             self.conversation = Conversation::new();
             self.conversation.add_user_message(&objective);

@@ -35,6 +35,7 @@ pub(crate) fn offline_app() -> crate::app::App {
         session_id: None,
         session_choice: None,
         session_read_only: false,
+        revising_plan: false,
         has_provider: false,
         trace_inspector_visible: false,
         trace_event_index: 0,

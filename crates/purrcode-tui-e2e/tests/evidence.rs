@@ -94,7 +94,7 @@ fn durable_events_can_be_inspected() {
 
         harness.key(Key::Left)?;
         let screen = harness.wait_for_text("Event 2 / 3")?;
-        assertions::assert_readable(&screen, "Type: Plan revision 1");
+        assertions::assert_readable(&screen, "Type: Plan");
         assertions::assert_readable(&screen, "2 step(s)");
 
         harness.key(Key::Left)?;

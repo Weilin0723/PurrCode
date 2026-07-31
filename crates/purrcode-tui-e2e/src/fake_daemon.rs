@@ -166,6 +166,10 @@ pub struct ScriptedSession {
     pub messages: Vec<Value>,
     /// Present when the session sits on an approval boundary.
     pub awaiting_action: Option<String>,
+    /// Set when the session is paused on a plan that still takes feedback.
+    /// The real daemon derives this; here a `session_paused` audit carrying the
+    /// plan-review reason sets it, exactly as the runtime does.
+    pub awaiting_plan_review: bool,
 }
 
 impl ScriptedSession {
@@ -683,6 +687,7 @@ fn session_view(id: &str, session: &ScriptedSession) -> Value {
         "status_code": session.status_code,
         "event_count": session.events.len(),
         "lease_active": session.lease_active,
+        "awaiting_plan_review": session.awaiting_plan_review,
         "repository": null,
         "worktree": null,
         "selected_model": null,
@@ -738,6 +743,16 @@ async fn event_stream(
                         match event["event"].as_str() {
                             Some("session_completed") => {
                                 session.status_code = "completed".to_owned()
+                            }
+                            Some("session_paused") => {
+                                session.status_code = "paused".to_owned();
+                                session.awaiting_plan_review =
+                                    purrcode_runtime_core::is_plan_review_pause(
+                                        event
+                                            .pointer("/data/reason")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or_default(),
+                                    );
                             }
                             Some("session_failed") => session.status_code = "failed".to_owned(),
                             Some("session_cancelled") => {

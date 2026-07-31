@@ -7,6 +7,7 @@ const state = {
   terminals: [], selectedTerminal: null, terminalSocket: null, terminalSocketId: null,
   drawerOpen: false, drawerTab: "changes", emulator: null, replayedTerminal: null,
   models: [], providers: [], activeModel: null, activity: [], plan: [],
+  planRevision: 0, awaitingPlanReview: false,
   taskMode: "build", permission: "ask"
 };
 
@@ -71,22 +72,41 @@ function renderPlan() {
   const steps = state.plan
     .map((step) => `<li>${escapeHtml(planStepText(step))}</li>`)
     .join("");
-  // A plan-only run pauses saying it is ready for review. Reviewing it should
-  // lead somewhere: the runtime already continues from the plan on resume, so
-  // the plan carries the one action that acts on it. Without this the only way
-  // forward was to start a new session and describe the work again.
-  const paused = (state.selectedSession?.status_code || "") === "paused";
-  const action = paused
+  // Reviewing a plan has to lead somewhere, and to more than one place. The
+  // button accepts the plan as written; the composer changes it. Offering only
+  // the button made review a yes/no vote on a plan the reviewer could not edit,
+  // and the only way to change one step was to start over and re-describe the
+  // whole task.
+  const action = state.awaitingPlanReview
     ? `<div class="plan-actions">
          <button id="build-plan" class="primary">Build this plan</button>
-         <span class="plan-hint">Continues this session with the plan in context. Nothing has been changed yet.</span>
+         <span class="plan-hint">Or say what to change below — the plan is rewritten and paused again. Nothing has been changed yet.</span>
        </div>`
     : "";
+  const revision = state.planRevision > 1 ? ` · revision ${state.planRevision}` : "";
   return `<article class="message plan">
-    <div class="message-role"><span>Plan</span><span class="model">${state.plan.length} steps</span></div>
+    <div class="message-role"><span>Plan</span><span class="model">${state.plan.length} steps${revision}</span></div>
     <ol class="plan-steps">${steps}</ol>
     ${action}
   </article>`;
+}
+
+/// Point the composer at what sending will actually do.
+///
+/// The same box starts a session, continues one, and revises a plan. A person
+/// about to press Send is entitled to know which.
+function renderComposerIntent() {
+  const composer = $("#composer");
+  if (!state.selectedRun) {
+    composer.placeholder = "Ask PurrCode to inspect, change, test, or explain…";
+    $("#send").textContent = "Send";
+    return;
+  }
+  const revising = state.awaitingPlanReview;
+  composer.placeholder = revising
+    ? "Say what to change about the plan — add, drop or reorder steps…"
+    : "Reply, or add to what PurrCode is doing…";
+  $("#send").textContent = revising ? "Revise plan" : "Send";
 }
 
 async function buildPlan() {
@@ -129,7 +149,11 @@ const ACTIVITY_ICON = {
 };
 
 async function refreshActivity() {
-  if (!state.selectedRun) { state.activity = []; state.plan = []; renderActivity(); return; }
+  if (!state.selectedRun) {
+    state.activity = []; state.plan = [];
+    state.planRevision = 0; state.awaitingPlanReview = false;
+    renderComposerIntent(); renderActivity(); return;
+  }
   try {
     const [activity, summary] = await Promise.all([
       request(`/api/v1/sessions/${state.selectedRun}/activity`),
@@ -137,6 +161,12 @@ async function refreshActivity() {
     ]);
     state.activity = activity || [];
     state.plan = summary?.plan || [];
+    state.planRevision = summary?.plan_revision || 0;
+    // Whether a plan is open for revision is the daemon's answer, not a guess
+    // from status and step count. Two clients guessing separately is how the
+    // same session ends up described two ways.
+    state.awaitingPlanReview = Boolean(summary?.awaiting_plan_review);
+    renderComposerIntent();
     renderConversation();
   } catch {
     // Leave the last known activity in place: blanking it would claim the
@@ -259,17 +289,22 @@ async function startSession() {
   } catch (error) { toast(error.message); }
 }
 
+/// Send what is in the composer to the selected session.
+///
+/// While a plan is under review this is how it gets changed: the daemon reads
+/// the message as feedback, rewrites the plan and pauses again. It used to be
+/// refused outright with "use Build this plan to continue it", which left the
+/// reviewer no way to disagree with a plan except to abandon the session.
 async function sendFollowUp() {
   if (!state.selectedRun) { toast("Select or start a session first."); return; }
-  if ((state.selectedSession?.status_code || "") === "paused" && state.plan.length) {
-    toast("This run is paused on its plan. Use Build this plan to continue it.");
-    return;
-  }
   const content = $("#composer").value.trim();
   if (!content) return;
+  const revising = state.awaitingPlanReview;
   try {
     await request(`/api/v1/sessions/${state.selectedRun}/messages`, { method: "POST", body: JSON.stringify({ content }) });
-    $("#composer").value = ""; await refreshSession();
+    $("#composer").value = "";
+    if (revising) toast("Revising the plan — it will pause for review again.");
+    await refreshSession();
   } catch (error) { toast(error.message); }
 }
 

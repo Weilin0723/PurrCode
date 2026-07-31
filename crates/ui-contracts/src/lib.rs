@@ -275,6 +275,19 @@ pub struct SessionSummary {
     /// (PRD §11), so a client that cannot show it has nothing to review.
     #[serde(default)]
     pub plan: Vec<String>,
+    /// How many times the plan has been written. Revision 1 is the first plan;
+    /// anything higher is the visible result of someone asking for a change.
+    #[serde(default)]
+    pub plan_revision: u64,
+    /// True when the session is paused on a plan that nobody has acted on yet.
+    ///
+    /// Reviewing a plan is a conversation, not a verdict (PRD §11): in this
+    /// state a follow-up message is feedback to fold into the plan, not a new
+    /// instruction to carry out. Clients must not each re-derive this from
+    /// status plus step count — a client that got it wrong would either start
+    /// building work the person was still editing, or refuse their feedback.
+    #[serde(default)]
+    pub awaiting_plan_review: bool,
     #[serde(default)]
     pub validation: Option<ValidationSummary>,
     /// True when this session needs a person before it can continue.

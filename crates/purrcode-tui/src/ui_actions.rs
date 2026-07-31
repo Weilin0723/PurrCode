@@ -587,7 +587,7 @@ pub const REGISTRY: &[UiActionDefinition] = &[
         risk: UiRiskClass::Safe,
         starts_execution: false,
         handler: UiActionHandler::Command("plan"),
-        acceptance_scenarios: scenarios!["task.mode_plan"],
+        acceptance_scenarios: scenarios!["task.mode_plan", "task.plan_revision"],
     },
     UiActionDefinition {
         id: UiActionId("task.mode_build"),
@@ -1817,6 +1817,14 @@ pub const SCENARIOS: &[AcceptanceScenario] = &[
         summary: "Plan mode produces a plan without modifying files",
         kind: ScenarioKind::Smoke,
         pty_test: Some("tests/conversation.rs::plan_mode_modifies_nothing"),
+        real_terminal_case: None,
+        critical: false,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("task.plan_revision"),
+        summary: "A plan under review is revised by replying to it",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/conversation.rs::a_plan_under_review_is_revised_by_replying_to_it"),
         real_terminal_case: None,
         critical: false,
     },

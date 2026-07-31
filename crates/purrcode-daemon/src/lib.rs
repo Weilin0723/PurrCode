@@ -1273,13 +1273,14 @@ async fn sessions(
         let session = store.load(id)?;
         views.push(SessionView {
             id: id.0.to_string(),
-            objective: session.objective,
             status: format!("{:?}", session.status),
             status_code: status_code(&session.status),
-            repository: session.repository,
-            worktree: session.worktree,
             event_count: session.event_count,
             lease_active: active_leases.contains(&id),
+            awaiting_plan_review: awaiting_plan_review(&session),
+            objective: session.objective,
+            repository: session.repository,
+            worktree: session.worktree,
             selected_model: session.selected_model,
         });
     }
@@ -1414,9 +1415,11 @@ async fn append_message(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     let session = state.store.lock().await.load(id)?;
-    if session.status != SessionStatus::Active {
+    let paused = session.status == SessionStatus::Paused;
+    if session.status != SessionStatus::Active && !paused {
         return Err(ApiError::Conflict(
-            "only an active session can accept a follow-up message; start a new session".into(),
+            "only an active or paused session can accept a follow-up message; start a new session"
+                .into(),
         ));
     }
     if request.content.trim().is_empty() {
@@ -1426,7 +1429,19 @@ async fn append_message(
     }
     reject_secret_content(&request.content)?;
     let content = request.content.trim_end_matches([' ', '\t']);
-    state.store.lock().await.append(
+    // A session paused on an untouched plan reads a follow-up as feedback on
+    // that plan (PRD §11); anything else reads it as a new instruction and
+    // continues the work. Getting this backwards is what makes plan review
+    // one-way: the reviewer can accept the plan but cannot change it.
+    let operation = if awaiting_plan_review(&session) {
+        AgentOperation::RevisePlan {
+            feedback: content.to_owned(),
+        }
+    } else {
+        AgentOperation::Resume
+    };
+    let mut store = state.store.lock().await;
+    store.append(
         id,
         &SessionEvent::ConversationMessageAdded {
             message: ConversationMessage {
@@ -1440,14 +1455,67 @@ async fn append_message(
             },
         },
     )?;
-    spawn_agent_operation(state, id, AgentOperation::Resume).await?;
+    if paused {
+        store.append(id, &SessionEvent::SessionResumed)?;
+    }
+    drop(store);
+    let status = if matches!(operation, AgentOperation::RevisePlan { .. }) {
+        "revising the plan"
+    } else {
+        "message accepted"
+    };
+    resume_or_restore_pause(&state, id, paused, operation).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
             id: id.0.to_string(),
-            status: "message accepted",
+            status,
         }),
     ))
+}
+
+/// Start `operation`, and put a resumed session back to sleep if it will not start.
+///
+/// Resuming is durable but spawning can still be refused — a lease is held, a
+/// cancellation is settling. Returning the error while the session stays marked
+/// active would present a session with nothing driving it as a running one, and
+/// the state it was actually in would be lost.
+async fn resume_or_restore_pause(
+    state: &AppState,
+    id: SessionId,
+    was_paused: bool,
+    operation: AgentOperation,
+) -> Result<(), ApiError> {
+    let Err(error) = spawn_agent_operation(state.clone(), id, operation).await else {
+        return Ok(());
+    };
+    if was_paused {
+        let mut store = state.store.lock().await;
+        let reason = store
+            .events(id)
+            .ok()
+            .and_then(|events| {
+                events.into_iter().rev().find_map(|event| match event {
+                    SessionEvent::SessionPaused { reason } => Some(reason),
+                    _ => None,
+                })
+            })
+            .unwrap_or_else(|| "paused".to_owned());
+        store.append(id, &SessionEvent::SessionPaused { reason })?;
+    }
+    Err(error)
+}
+
+/// True when a session is paused on a plan nobody has acted on yet.
+///
+/// A plan-only run pauses with a plan and no proposed actions, and stays in
+/// that shape across revisions. Once the plan has been built from, actions
+/// exist, and a later pause is a pause in the work rather than a plan waiting
+/// to be read.
+fn awaiting_plan_review(session: &purrcode_runtime_core::SessionState) -> bool {
+    session.status == SessionStatus::Paused
+        && !session.plan_steps.is_empty()
+        && session.proposed_actions.is_empty()
 }
 
 fn reject_secret_content(content: &str) -> Result<(), ApiError> {
@@ -1470,14 +1538,15 @@ async fn resume_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     ensure_session_exists(&state, id).await?;
-    if state.store.lock().await.load(id)?.status == SessionStatus::Paused {
+    let paused = state.store.lock().await.load(id)?.status == SessionStatus::Paused;
+    if paused {
         state
             .store
             .lock()
             .await
             .append(id, &SessionEvent::SessionResumed)?;
     }
-    spawn_agent_operation(state, id, AgentOperation::Resume).await?;
+    resume_or_restore_pause(&state, id, paused, AgentOperation::Resume).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
@@ -2227,12 +2296,19 @@ async fn cancel_session(
     result
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum AgentOperation {
     Start,
     Plan,
     Resume,
     Approve,
+    /// Rewrite the plan under review using the reviewer's own words, which
+    /// travel with the operation rather than being re-read from the tail of the
+    /// conversation — the agent must revise against the feedback it was given,
+    /// not against whatever message happened to arrive last.
+    RevisePlan {
+        feedback: String,
+    },
 }
 
 async fn spawn_agent_operation(
@@ -2597,6 +2673,10 @@ async fn run_agent_operation(
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Resume => agent.resume(&mut store, id).await.map(|_| ()),
+        AgentOperation::RevisePlan { feedback } => agent
+            .revise_plan(&mut store, id, &feedback)
+            .await
+            .map(|_| ()),
         AgentOperation::Approve => {
             agent
                 .approve(&mut store, id)
@@ -2925,13 +3005,14 @@ async fn session(
     }
     Ok(Json(SessionView {
         id: id.0.to_string(),
-        objective: session.objective,
         status: format!("{:?}", session.status),
         status_code: status_code(&session.status),
-        repository: session.repository,
-        worktree: session.worktree,
         event_count: session.event_count,
         lease_active,
+        awaiting_plan_review: awaiting_plan_review(&session),
+        objective: session.objective,
+        repository: session.repository,
+        worktree: session.worktree,
         selected_model: session.selected_model,
     }))
 }
@@ -3387,6 +3468,8 @@ async fn session_summary(
                 _ => None,
             })
             .unwrap_or_default(),
+        plan_revision: session.plan_revision,
+        awaiting_plan_review: awaiting_plan_review(&session),
         validation: (!validation.stages.is_empty()).then_some(validation),
         needs_attention: activity
             .iter()
@@ -3705,6 +3788,10 @@ struct SessionView {
     event_count: u64,
     lease_active: bool,
     selected_model: Option<String>,
+    /// True when the session is paused on a plan nobody has acted on yet, and
+    /// so still accepts feedback that rewrites it. `paused` alone does not say
+    /// this: a run paused midway through the work is also paused.
+    awaiting_plan_review: bool,
 }
 
 fn status_code(status: &SessionStatus) -> &'static str {
@@ -7091,6 +7178,90 @@ mod tests {
         // The latest revision supersedes the earlier plan rather than adding to it.
         assert_eq!(plan.len(), 3);
         assert_eq!(plan[2], "Wire the retriever");
+    }
+
+    /// Reduce events into the state the routing decision reads.
+    fn state_after(events: &[SessionEvent]) -> purrcode_runtime_core::SessionState {
+        let mut state = purrcode_runtime_core::SessionState::empty(SessionId::new());
+        for event in events {
+            state.reduce_event(event).expect("valid event");
+        }
+        state
+    }
+
+    #[test]
+    fn a_follow_up_during_plan_review_is_feedback_not_a_new_instruction() {
+        // The reviewer's only options were to accept the plan or abandon the
+        // session: a follow-up on a paused session was refused outright. What
+        // they type while reading a plan is feedback on that plan (PRD §11),
+        // and it has to route to a revision rather than to the work.
+        let planned = state_after(&[
+            SessionEvent::PlanCreated {
+                steps: vec!["Add the parser".into()],
+            },
+            SessionEvent::SessionPaused {
+                reason: purrcode_runtime_core::PLAN_REVIEW_PAUSE.into(),
+            },
+        ]);
+        assert!(awaiting_plan_review(&planned));
+
+        // Still true after a revision, so the exchange can go back and forth.
+        let mut revised = planned.clone();
+        for event in [
+            SessionEvent::SessionResumed,
+            SessionEvent::PlanRevised {
+                revision: 2,
+                reason: "add a migration step".into(),
+                steps: vec!["Add the parser".into(), "Add the migration".into()],
+            },
+            SessionEvent::SessionPaused {
+                reason: format!("revised {}", purrcode_runtime_core::PLAN_REVIEW_PAUSE),
+            },
+        ] {
+            revised.reduce_event(&event).expect("valid event");
+        }
+        assert!(awaiting_plan_review(&revised));
+        assert_eq!(revised.plan_revision, 2);
+        assert_eq!(revised.plan_steps.len(), 2);
+    }
+
+    #[test]
+    fn a_pause_in_the_middle_of_the_work_is_not_a_plan_review() {
+        // Once the plan has been built from, a pause is a pause in the work.
+        // Reading a follow-up there as plan feedback would throw away real
+        // progress to rewrite a plan nobody asked about.
+        let mut state = state_after(&[
+            SessionEvent::PlanCreated {
+                steps: vec!["Add the parser".into()],
+            },
+            SessionEvent::WorktreeCreated {
+                path: PathBuf::from("/w"),
+                base_head: "abc".into(),
+                source_was_dirty: false,
+            },
+        ]);
+        for event in [
+            SessionEvent::ActionProposed {
+                action_id: ActionId::new(),
+                action: ProposedAction::WriteFile(WriteFileAction {
+                    path: PathBuf::from("src/parser.rs"),
+                    content: "pub fn parse() {}\n".into(),
+                    expected_digest: None,
+                }),
+            },
+            SessionEvent::SessionPaused {
+                reason: "validation could not run".into(),
+            },
+        ] {
+            state.reduce_event(&event).expect("valid event");
+        }
+        assert!(!awaiting_plan_review(&state));
+
+        // And an active session is never in plan review, plan or no plan.
+        let active = state_after(&[SessionEvent::PlanCreated {
+            steps: vec!["Add the parser".into()],
+        }]);
+        assert!(!awaiting_plan_review(&active));
     }
 
     #[test]

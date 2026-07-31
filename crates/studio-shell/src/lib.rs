@@ -948,19 +948,35 @@ mod tests {
 
     #[test]
     fn a_reviewed_plan_can_be_turned_into_work_in_one_action() {
-        // A plan-only run pauses saying it is "ready for review", and the
-        // composer refuses follow-ups on a paused session. Without an action on
-        // the plan itself the only way forward was to start a new session and
-        // describe the work again — the runtime has continued from the plan on
-        // resume all along, but no client offered it.
+        // A plan-only run pauses saying it is "ready for review". Without an
+        // action on the plan itself the only way forward was to start a new
+        // session and describe the work again — the runtime has continued from
+        // the plan on resume all along, but no client offered it.
         assert!(APP_JS.contains("Build this plan"));
         assert!(APP_JS.contains("/resume"));
         // It says what it will do and that nothing has happened yet.
         assert!(APP_JS.contains("Nothing has been changed yet"));
-        // A refused follow-up points at that action instead of dead-ending.
-        assert!(APP_JS.contains("Use Build this plan to continue it"));
         // Bound by delegation: the plan block is re-rendered on every refresh.
         assert!(APP_JS.contains(r#"event.target.id === "build-plan""#));
+    }
+
+    #[test]
+    fn a_plan_under_review_can_be_argued_with() {
+        // PRD §11: the plan is the deliverable, so review has to be able to
+        // change it. The composer used to refuse with "use Build this plan to
+        // continue it", which made review a yes/no vote — a reviewer who
+        // disagreed with one step had to abandon the session and start over.
+        assert!(
+            !APP_JS.contains("Use Build this plan to continue it"),
+            "a follow-up during plan review is feedback, not an error"
+        );
+        // Whether the plan is open for revision is the daemon's answer.
+        assert!(APP_JS.contains("summary?.awaiting_plan_review"));
+        assert!(APP_JS.contains("state.awaitingPlanReview"));
+        // The composer says which of its three jobs pressing Send will do.
+        assert!(APP_JS.contains(r##"$("#send").textContent = revising ? "Revise plan""##));
+        // Revisions are numbered, so feedback visibly took effect.
+        assert!(APP_JS.contains("state.planRevision > 1"));
     }
 
     #[test]
