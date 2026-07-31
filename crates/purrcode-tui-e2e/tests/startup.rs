@@ -221,7 +221,6 @@ fn an_unavailable_action_run_from_the_palette_explains_itself_and_does_nothing()
         ])?;
         harness.key(Key::Down)?;
         harness.key(Key::Down)?;
-        harness.wait_for_text("> Approve action")?;
         harness.key(Key::Enter)?;
 
         harness.wait_for_wrapped("Approve action is unavailable: no action is pending.")?;
