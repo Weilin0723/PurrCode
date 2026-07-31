@@ -30,7 +30,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         repository: &app.workspace.repository_name,
         branch: &app.workspace.branch,
         model: &app.status_bar.model,
-        mode: super::workbench::mode_label(app),
+        mode: app.status_bar.task_mode.label(),
+        permission: "Ask",
         phase: "awaiting approval",
         local_only: app.status_bar.privacy == "local-only",
     }

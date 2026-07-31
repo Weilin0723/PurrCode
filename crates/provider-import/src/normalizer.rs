@@ -52,6 +52,11 @@ pub fn normalize_candidate(
             base_url,
             capabilities,
         },
+        ProviderKind::NvidiaNim => ProviderConfig::NvidiaNim {
+            base_url,
+            api_key_env: auth_env.unwrap_or_else(|| "NVIDIA_API_KEY".into()),
+            capabilities,
+        },
         ProviderKind::LmStudio | ProviderKind::OpenAiCompatible | ProviderKind::Unknown => {
             ProviderConfig::OpenaiCompatible {
                 base_url,
@@ -106,13 +111,10 @@ mod tests {
         let normalized = normalize_candidate(&candidate, Some("NVIDIA_API_KEY")).unwrap();
         assert_eq!(normalized.model_id.as_deref(), Some("z-ai/glm-5.2"));
         match normalized.provider {
-            ProviderConfig::OpenaiCompatible {
-                api_key_env, local, ..
-            } => {
-                assert_eq!(api_key_env.as_deref(), Some("NVIDIA_API_KEY"));
-                assert!(!local);
+            ProviderConfig::NvidiaNim { api_key_env, .. } => {
+                assert_eq!(api_key_env, "NVIDIA_API_KEY");
             }
-            _ => panic!("expected compatible provider"),
+            _ => panic!("expected NVIDIA NIM provider"),
         }
     }
 
@@ -128,10 +130,10 @@ mod tests {
             .unwrap();
         let normalized = normalize_resolved_import(&parsed).unwrap();
         match normalized.provider {
-            ProviderConfig::OpenaiCompatible { api_key_env, .. } => {
-                assert_eq!(api_key_env.as_deref(), Some("keychain:nvidia-import"));
+            ProviderConfig::NvidiaNim { api_key_env, .. } => {
+                assert_eq!(api_key_env, "keychain:nvidia-import");
             }
-            _ => panic!("expected compatible provider"),
+            _ => panic!("expected NVIDIA NIM provider"),
         }
     }
 }

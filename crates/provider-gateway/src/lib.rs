@@ -627,6 +627,19 @@ impl AppConfig {
                 headers: BTreeMap::new(),
                 capabilities,
             },
+            "nim" | "nvidia-nim" | "nvidia" => {
+                let api_key_env = credential_reference.ok_or_else(|| {
+                    ProviderError::Configuration(
+                        "NVIDIA NIM authentication must resolve to a keychain or environment reference"
+                            .into(),
+                    )
+                })?;
+                ProviderConfig::NvidiaNim {
+                    base_url,
+                    api_key_env,
+                    capabilities,
+                }
+            }
             "openai" => {
                 let api_key_env = credential_reference.ok_or_else(|| {
                     ProviderError::Configuration(
@@ -761,6 +774,9 @@ impl AppConfig {
             if let ProviderConfig::Ollama { base_url, .. } = provider {
                 *base_url = normalize_ollama_base_url(base_url.clone());
             }
+            if let ProviderConfig::NvidiaNim { base_url, .. } = provider {
+                *base_url = normalize_nim_base_url(base_url.clone());
+            }
         }
     }
 
@@ -813,6 +829,9 @@ impl AppConfig {
                     "local providers do not require an API key".into(),
                 ));
             }
+            ProviderConfig::NvidiaNim { api_key_env, .. } => {
+                *api_key_env = reference;
+            }
             ProviderConfig::AzureOpenai { credential, .. } => {
                 *credential = AzureCredential::KeychainKey {
                     name: credential_name.to_owned(),
@@ -845,6 +864,10 @@ impl AppConfig {
                 capabilities: models,
                 ..
             }
+            | ProviderConfig::NvidiaNim {
+                capabilities: models,
+                ..
+            }
             | ProviderConfig::AzureOpenai {
                 capabilities: models,
                 ..
@@ -855,24 +878,42 @@ impl AppConfig {
         Ok(())
     }
 
+    /// Canonical name for a runtime role.
+    ///
+    /// `purrcode init` writes `coder` and `router` into the role map, so
+    /// rejecting those here made the daemon refuse names its own initializer
+    /// had just written. They are aliases, normalised to one key rather than
+    /// stored twice — two spellings of one role is how a role map ends up
+    /// disagreeing with itself.
+    pub fn canonical_model_role(role: &str) -> Option<&'static str> {
+        match role {
+            "coding_worker" | "coder" => Some("coding_worker"),
+            "judge" => Some("judge"),
+            "planner" => Some("planner"),
+            "reviewer" => Some("reviewer"),
+            "summarizer" => Some("summarizer"),
+            "utility" | "router" => Some("utility"),
+            "embedding" => Some("embedding"),
+            _ => None,
+        }
+    }
+
     pub fn assign_model_role(&mut self, role: &str, model: &ModelId) -> Result<(), ProviderError> {
-        if !matches!(
-            role,
-            "coding_worker"
-                | "judge"
-                | "planner"
-                | "reviewer"
-                | "summarizer"
-                | "utility"
-                | "embedding"
-        ) {
+        let Some(canonical) = Self::canonical_model_role(role) else {
             return Err(ProviderError::Configuration(format!(
                 "unsupported model role `{role}`"
             )));
-        }
+        };
         self.register_model(model)?;
+        // Drop any alias spelling of this role. A config written by an older
+        // `purrcode init` holds both `coder` and `coding_worker`; leaving the
+        // superseded key behind means the file records two different answers to
+        // one question.
+        self.models
+            .roles
+            .retain(|existing, _| Self::canonical_model_role(existing) != Some(canonical));
         self.models.roles.insert(
-            role.to_owned(),
+            canonical.to_owned(),
             format!("{}/{}", model.provider, model.model),
         );
         Ok(())
@@ -952,6 +993,19 @@ pub enum ProviderConfig {
         #[serde(default)]
         capabilities: BTreeMap<String, ModelCapabilities>,
     },
+    /// NVIDIA NIM / build.nvidia.com OpenAI-compatible endpoint. First-class
+    /// variant so onboarding, the model picker, and the CLI doctor can show
+    /// "NVIDIA NIM" instead of the generic "OpenAI-compatible" label. Uses the
+    /// OpenAI chat-completions wire format with a Bearer key from the keychain
+    /// or the `NVIDIA_API_KEY` environment reference (PRD §9, §9.3).
+    NvidiaNim {
+        #[serde(default = "nim_base_url")]
+        base_url: Url,
+        #[serde(default = "nim_key_env")]
+        api_key_env: String,
+        #[serde(default)]
+        capabilities: BTreeMap<String, ModelCapabilities>,
+    },
     EnterpriseGateway {
         base_url: Url,
         api_key_env: Option<String>,
@@ -986,6 +1040,7 @@ impl ProviderConfig {
                 base_url, local, ..
             } => (base_url, *local),
             Self::Ollama { base_url, .. } => (base_url, true),
+            Self::NvidiaNim { base_url, .. } => (base_url, false),
             Self::EnterpriseGateway { base_url, .. } => (base_url, false),
             Self::AzureOpenai { endpoint, .. } => (endpoint, false),
         };
@@ -1007,6 +1062,7 @@ impl ProviderConfig {
             Self::Openai { .. } => false,
             Self::OpenaiCompatible { local, .. } => *local,
             Self::Ollama { .. } => true,
+            Self::NvidiaNim { .. } => false,
             Self::EnterpriseGateway { .. } => false,
             Self::AzureOpenai { .. } => false,
         }
@@ -1017,6 +1073,21 @@ impl ProviderConfig {
             Self::Openai { capabilities, .. }
             | Self::OpenaiCompatible { capabilities, .. }
             | Self::Ollama { capabilities, .. }
+            | Self::NvidiaNim { capabilities, .. }
+            | Self::EnterpriseGateway { capabilities, .. }
+            | Self::AzureOpenai { capabilities, .. } => capabilities,
+        }
+    }
+
+    /// Mutable view of the same map. Every provider variant carries one, so
+    /// callers that record discovered models must not re-match on the variant —
+    /// a match that forgets an arm turns a supported provider into a hard error.
+    pub fn configured_models_mut(&mut self) -> &mut BTreeMap<String, ModelCapabilities> {
+        match self {
+            Self::Openai { capabilities, .. }
+            | Self::OpenaiCompatible { capabilities, .. }
+            | Self::Ollama { capabilities, .. }
+            | Self::NvidiaNim { capabilities, .. }
             | Self::EnterpriseGateway { capabilities, .. }
             | Self::AzureOpenai { capabilities, .. } => capabilities,
         }
@@ -1049,6 +1120,32 @@ fn normalize_ollama_base_url(mut url: Url) -> Url {
 }
 fn openai_key_env() -> String {
     "OPENAI_API_KEY".into()
+}
+/// Ensures the NVIDIA NIM base URL has a trailing slash and a `/v1/` path
+/// prefix so callers that join relative paths (e.g. `chat/completions`) work
+/// with or without the conventional suffix.
+fn normalize_nim_base_url(mut url: Url) -> Url {
+    let trimmed = url.path().trim_end_matches('/');
+    // Accept both bare `…/v1` and `…/v1/`. If neither is present, append `/v1/`.
+    if !trimmed.ends_with("/v1") {
+        let normalized = if trimmed.is_empty() {
+            "/v1/".to_owned()
+        } else {
+            format!("{trimmed}/v1/")
+        };
+        url.set_path(&normalized);
+    } else {
+        url.set_path(&format!("{trimmed}/"));
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    url
+}
+fn nim_base_url() -> Url {
+    Url::parse("https://integrate.api.nvidia.com/v1/").expect("static NVIDIA NIM URL is valid")
+}
+fn nim_key_env() -> String {
+    "NVIDIA_API_KEY".into()
 }
 
 async fn run_credential_command(command: &[String]) -> Result<String, ProviderError> {
@@ -1239,6 +1336,25 @@ impl HttpProvider {
                 None,
                 capabilities,
                 ProviderApiMode::OllamaNative,
+                None,
+                None,
+            ),
+            ProviderConfig::NvidiaNim {
+                base_url,
+                api_key_env,
+                capabilities,
+            } => (
+                base_url,
+                Some(api_key_env),
+                None,
+                false,
+                BTreeMap::new(),
+                BTreeMap::new(),
+                None,
+                None,
+                None,
+                capabilities,
+                ProviderApiMode::OpenaiCompatible,
                 None,
                 None,
             ),
@@ -1923,6 +2039,73 @@ impl ProviderError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn init_written_role_names_are_accepted_and_normalised() {
+        // `purrcode init` writes `coder` and `router`; refusing them here made
+        // the daemon reject names its own initializer had just written.
+        assert_eq!(
+            AppConfig::canonical_model_role("coder"),
+            Some("coding_worker")
+        );
+        assert_eq!(AppConfig::canonical_model_role("router"), Some("utility"));
+        assert_eq!(
+            AppConfig::canonical_model_role("coding_worker"),
+            Some("coding_worker")
+        );
+        assert_eq!(AppConfig::canonical_model_role("nonsense"), None);
+    }
+
+    #[test]
+    fn an_alias_and_its_canonical_name_share_one_role_entry() {
+        let mut config: AppConfig = toml::from_str("schema_version = 1").unwrap();
+        config.providers.insert(
+            "ollama".into(),
+            ProviderConfig::Ollama {
+                base_url: url::Url::parse("http://127.0.0.1:11434/").unwrap(),
+                capabilities: BTreeMap::new(),
+            },
+        );
+        let first = ModelId::parse("ollama/a:1b").unwrap();
+        let second = ModelId::parse("ollama/b:1b").unwrap();
+        config.assign_model_role("coder", &first).unwrap();
+        config.assign_model_role("coding_worker", &second).unwrap();
+        // Two spellings of one role must not become two entries that disagree.
+        assert_eq!(config.models.roles.len(), 1);
+        assert_eq!(
+            config.models.roles.get("coding_worker").map(String::as_str),
+            Some("ollama/b:1b")
+        );
+        assert!(!config.models.roles.contains_key("coder"));
+    }
+
+    #[test]
+    fn assigning_a_role_clears_the_alias_a_legacy_config_left_behind() {
+        let mut config: AppConfig = toml::from_str(
+            r#"
+schema_version = 1
+[providers.ollama]
+type = "ollama"
+base_url = "http://127.0.0.1:11434/"
+[models.roles]
+coder = "ollama/old:1b"
+router = "ollama/old:1b"
+"#,
+        )
+        .unwrap();
+        let fresh = ModelId::parse("ollama/new:1b").unwrap();
+        config.assign_model_role("coding_worker", &fresh).unwrap();
+        assert!(!config.models.roles.contains_key("coder"));
+        assert_eq!(
+            config.models.roles.get("coding_worker").map(String::as_str),
+            Some("ollama/new:1b")
+        );
+        // An unrelated alias is left alone.
+        assert_eq!(
+            config.models.roles.get("router").map(String::as_str),
+            Some("ollama/old:1b")
+        );
+    }
+
     use super::*;
     use futures::StreamExt as _;
     use std::sync::atomic::{AtomicUsize, Ordering};

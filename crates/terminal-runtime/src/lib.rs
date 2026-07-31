@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -439,10 +440,17 @@ pub fn validate_working_directory(path: &std::path::Path) -> Result<(), Terminal
 const DEFAULT_TRANSCRIPT_BYTES: usize = 256 * 1024;
 const MAX_TRANSCRIPT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_REPLAY_BYTES: usize = 1024 * 1024;
+/// How long a one-shot command waits for the PTY reader to finish after the
+/// child exits. Bounded so a reader that never sees end-of-file cannot hang the
+/// caller; exceeded only if the backend does not close the pipe.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct Transcript {
     bytes: VecDeque<u8>,
     maximum: usize,
+    /// Total bytes ever written, including bytes the ring buffer discarded.
+    /// Monotonic, so it is a stable cursor for incremental readers.
+    produced: u64,
     last_seen_at: DateTime<Utc>,
 }
 
@@ -450,6 +458,7 @@ impl Transcript {
     fn append(&mut self, chunk: &[u8]) {
         let skip = chunk.len().saturating_sub(self.maximum);
         self.bytes.extend(chunk[skip..].iter().copied());
+        self.produced = self.produced.saturating_add(chunk.len() as u64);
         while self.bytes.len() > self.maximum {
             self.bytes.pop_front();
         }
@@ -464,6 +473,32 @@ impl Transcript {
             .copied()
             .collect()
     }
+
+    /// Bytes produced after `since`, plus the offset the caller should ask for
+    /// next. `truncated` is true when the ring buffer already discarded part of
+    /// the requested range, so a client can tell "here is what came next" from
+    /// "output was lost, resynchronise".
+    fn since(&self, since: u64) -> TerminalChunk {
+        let retained_from = self.produced.saturating_sub(self.bytes.len() as u64);
+        let start = since.max(retained_from);
+        let skip = (start - retained_from) as usize;
+        TerminalChunk {
+            bytes: self.bytes.iter().skip(skip).copied().collect(),
+            next_offset: self.produced,
+            truncated: since < retained_from,
+        }
+    }
+}
+
+/// An incremental slice of terminal output (PRD §24.7). Clients append these
+/// rather than re-reading the whole transcript on a timer.
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct TerminalChunk {
+    pub bytes: Vec<u8>,
+    /// Offset to pass as `since` on the next read.
+    pub next_offset: u64,
+    /// True when output between the requested offset and `bytes` was discarded.
+    pub truncated: bool,
 }
 
 struct TerminalSession {
@@ -474,6 +509,8 @@ struct TerminalSession {
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     transcript: Arc<Mutex<Transcript>>,
+    /// Set once the reader thread has read the PTY to its end.
+    drained: Arc<AtomicBool>,
     exit_code: Option<i32>,
     attached_clients: usize,
 }
@@ -543,6 +580,15 @@ impl TerminalRuntime {
             .ok_or(TerminalError::NotFound {
                 id: terminal.terminal_id,
             })?;
+        // The child has exited, but bytes it already wrote may still be in the
+        // pipe. Give the reader a bounded moment to finish so the captured
+        // output is the whole output — this is the evidence the action is
+        // judged on. Dropping the master first makes the pending read return.
+        drop(session.master);
+        let deadline = Instant::now() + DRAIN_TIMEOUT;
+        while !session.drained.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
         let output = session
             .transcript
             .lock()
@@ -596,9 +642,11 @@ impl TerminalRuntime {
         let transcript = Arc::new(Mutex::new(Transcript {
             bytes: VecDeque::new(),
             maximum,
+            produced: 0,
             last_seen_at: Utc::now(),
         }));
-        spawn_reader(reader, Arc::clone(&transcript));
+        let drained = Arc::new(AtomicBool::new(false));
+        spawn_reader(reader, Arc::clone(&transcript), Arc::clone(&drained));
         let terminal_id = new_terminal_id();
         let owner = action.owner.unwrap_or(TerminalOwner::Human);
         let snapshot = TerminalSnapshot {
@@ -624,6 +672,7 @@ impl TerminalRuntime {
                     writer,
                     child,
                     transcript,
+                    drained,
                     exit_code: None,
                     attached_clients: 0,
                 },
@@ -705,6 +754,26 @@ impl TerminalRuntime {
             .map_err(|_| TerminalError::LockPoisoned)?;
         let session = get_session(&mut sessions, terminal_id)?;
         snapshot(terminal_id, session, replay_bytes)
+    }
+
+    /// Output produced after `since`. This is the read path a live client uses:
+    /// it transfers only new bytes, so a busy build does not re-send its whole
+    /// transcript on every tick.
+    pub fn read_since(
+        &self,
+        terminal_id: TerminalId,
+        since: u64,
+    ) -> Result<TerminalChunk, TerminalError> {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let session = get_session(&mut sessions, terminal_id)?;
+        let transcript = session
+            .transcript
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        Ok(transcript.since(since))
     }
 
     pub fn transfer_ownership(
@@ -826,18 +895,45 @@ fn refresh_exit(session: &mut TerminalSession) -> Result<(), TerminalError> {
     Ok(())
 }
 
-fn spawn_reader(mut reader: Box<dyn Read + Send>, transcript: Arc<Mutex<Transcript>>) {
+/// Drain the PTY into `transcript` until it closes, then set `drained`.
+///
+/// The flag matters: a process can exit while bytes it already wrote are still
+/// in the pipe. Reading the transcript the instant the child exits therefore
+/// returns output that is short by whatever the reader had not yet appended —
+/// and that output is the evidence an action is judged on, not just something a
+/// test looks at.
+fn spawn_reader(
+    mut reader: Box<dyn Read + Send>,
+    transcript: Arc<Mutex<Transcript>>,
+    drained: Arc<AtomicBool>,
+) {
     thread::spawn(move || {
         let mut chunk = [0_u8; 8192];
         loop {
             match reader.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break,
                 Ok(read) => match transcript.lock() {
                     Ok(mut transcript) => transcript.append(&chunk[..read]),
                     Err(_) => break,
                 },
+                // A signal or a momentarily empty PTY is not the end of the
+                // stream. Treating every error as terminal killed the reader on
+                // the first EINTR and silently discarded the rest of the
+                // process's output — including, sometimes, all of it.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                // Anything else — the PTY closed, the far end went away — ends
+                // the stream for real.
+                Err(_) => break,
             }
         }
+        drained.store(true, Ordering::Release);
     });
 }
 
@@ -1045,6 +1141,58 @@ mod tests {
         assert_eq!(back, d);
     }
 
+    fn transcript(maximum: usize) -> Transcript {
+        Transcript {
+            bytes: VecDeque::new(),
+            maximum,
+            produced: 0,
+            last_seen_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn incremental_reads_return_only_new_bytes() {
+        let mut t = transcript(1024);
+        t.append(b"hello ");
+        let first = t.since(0);
+        assert_eq!(first.bytes, b"hello ");
+        assert_eq!(first.next_offset, 6);
+        assert!(!first.truncated);
+
+        t.append(b"world");
+        let second = t.since(first.next_offset);
+        assert_eq!(second.bytes, b"world");
+        assert_eq!(second.next_offset, 11);
+        assert!(!second.truncated);
+
+        // Reading at the head yields nothing, not a repeat of the transcript.
+        assert!(t.since(second.next_offset).bytes.is_empty());
+    }
+
+    #[test]
+    fn a_reader_that_fell_behind_the_ring_buffer_is_told_output_was_lost() {
+        let mut t = transcript(4);
+        t.append(b"abcdefgh");
+        // Only the last four bytes survive; offset 0 can no longer be served.
+        let chunk = t.since(0);
+        assert_eq!(chunk.bytes, b"efgh");
+        assert_eq!(chunk.next_offset, 8);
+        assert!(
+            chunk.truncated,
+            "a client must be able to tell lost output from continuous output"
+        );
+        assert!(!t.since(4).truncated);
+    }
+
+    #[test]
+    fn produced_counts_bytes_the_ring_buffer_discarded() {
+        let mut t = transcript(2);
+        t.append(b"abcdef");
+        assert_eq!(t.produced, 6);
+        assert_eq!(t.bytes.len(), 2);
+        assert_eq!(t.since(6).next_offset, 6);
+    }
+
     #[test]
     fn secluded_empty_program_error() {
         let e = TerminalError::EmptyProgram;
@@ -1227,5 +1375,104 @@ mod tests {
         assert!(!outcome.timed_out);
         assert!(String::from_utf8_lossy(&outcome.stdout).contains("terminal-command-evidence"));
         assert!(outcome.stderr.is_empty());
+    }
+
+    #[test]
+    fn a_transient_read_error_does_not_discard_the_rest_of_the_output() {
+        /// A reader that fails the way a real PTY does under load: an EINTR
+        /// between two chunks. Before the fix the first error ended the stream
+        /// and everything after it was lost, which is how a command could exit
+        /// zero with no captured output at all.
+        struct Interrupted {
+            chunks: Vec<&'static str>,
+            index: usize,
+            interrupted: bool,
+        }
+        impl Read for Interrupted {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.index == 1 && !self.interrupted {
+                    self.interrupted = true;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "signal",
+                    ));
+                }
+                match self.chunks.get(self.index) {
+                    Some(chunk) => {
+                        self.index += 1;
+                        buffer[..chunk.len()].copy_from_slice(chunk.as_bytes());
+                        Ok(chunk.len())
+                    }
+                    None => Ok(0),
+                }
+            }
+        }
+
+        let transcript = Arc::new(Mutex::new(Transcript {
+            bytes: VecDeque::new(),
+            maximum: 1024,
+            produced: 0,
+            last_seen_at: Utc::now(),
+        }));
+        let drained = Arc::new(AtomicBool::new(false));
+        spawn_reader(
+            Box::new(Interrupted {
+                chunks: vec!["before-", "after"],
+                index: 0,
+                interrupted: false,
+            }),
+            Arc::clone(&transcript),
+            Arc::clone(&drained),
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !drained.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(drained.load(Ordering::Acquire), "reader never finished");
+        let captured = String::from_utf8(transcript.lock().unwrap().tail(1024)).unwrap();
+        assert_eq!(
+            captured, "before-after",
+            "output after a transient error was discarded"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_that_exits_immediately_after_writing_still_yields_all_of_it() {
+        // A process can exit while the bytes it wrote are still in the pipe, so
+        // reading the transcript the instant the child dies returns output short
+        // by whatever the reader had not yet appended. That output is an
+        // action's evidence, so truncating it silently weakens every judgment
+        // made from it.
+        //
+        // This asserts the property — a command's whole output is captured —
+        // rather than reproducing the race, which needs a loaded machine and is
+        // not reliably triggerable here. It is a volume check that would catch a
+        // reader wired up so that it never drains at all; the narrow timing
+        // window is closed by construction in `execute`, not by this test.
+        let directory = tempfile::tempdir().unwrap();
+        let line = "0123456789abcdef".repeat(64);
+        let expected = 400;
+        let script = format!("for i in $(seq 1 {expected}); do printf '%s\\n' '{line}'; done");
+        let outcome = TerminalRuntime::default()
+            .execute(
+                WorkspaceId::new(),
+                ExecuteCommandAction {
+                    program: PathBuf::from("/bin/sh"),
+                    arguments: vec!["-c".into(), script],
+                    working_directory: directory.path().to_path_buf(),
+                    environment: BTreeMap::new(),
+                    timeout: Some(Duration::from_secs(10).into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(outcome.exit_code, Some(0));
+        let observed = String::from_utf8_lossy(&outcome.stdout)
+            .matches(line.as_str())
+            .count();
+        assert_eq!(
+            observed, expected,
+            "captured {observed} of {expected} lines; output was truncated before the reader drained"
+        );
     }
 }

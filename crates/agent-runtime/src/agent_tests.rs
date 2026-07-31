@@ -1145,6 +1145,7 @@ async fn plan_only_session_is_durable_and_never_mutates_source_repository() {
             &SessionEvent::SessionCreated {
                 objective: "plan a safe change".into(),
                 repository: repository.path().canonicalize().unwrap(),
+                authority_mode: Default::default(),
             },
         )
         .unwrap();
@@ -1167,4 +1168,130 @@ async fn plan_only_session_is_durable_and_never_mutates_source_repository() {
         .unwrap();
     assert!(status.status.success());
     assert!(status.stdout.is_empty());
+}
+
+#[tokio::test]
+async fn a_plan_can_be_revised_until_the_reviewer_is_satisfied() {
+    // PRD §11: a plan-only run pauses asking to be reviewed. Review that can
+    // only answer yes is not review, so feedback has to produce a new revision
+    // — and it must still change nothing on disk, however many rounds it takes.
+    let provider = MockProvider {
+        responses: Mutex::new(vec![
+            // Popped from the end: the revision answers second.
+            serde_json::json!({
+                "steps": ["inspect the implementation", "add the migration", "run tests"],
+                "assumptions": [],
+                "risks": []
+            }),
+            serde_json::json!({
+                "steps": ["inspect the implementation", "run tests"],
+                "assumptions": [],
+                "risks": []
+            }),
+        ]),
+    };
+    let agent = NativeAgent::new(
+        &provider,
+        ModelId::parse("local/test").unwrap(),
+        Policy::default(),
+    );
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let session_id = SessionId::new();
+    store
+        .append(
+            session_id,
+            &SessionEvent::SessionCreated {
+                objective: "plan a safe change".into(),
+                repository: repository.path().canonicalize().unwrap(),
+                authority_mode: Default::default(),
+            },
+        )
+        .unwrap();
+    agent
+        .plan_initialized(&mut store, session_id)
+        .await
+        .unwrap();
+    assert_eq!(store.load(session_id).unwrap().plan_steps.len(), 2);
+
+    // The daemon records the reviewer's words and resumes before revising, so
+    // their feedback is in the transcript rather than only in a prompt.
+    for event in [
+        SessionEvent::ConversationMessageAdded {
+            message: purrcode_runtime_core::ConversationMessage {
+                id: "m1".into(),
+                role: "user".into(),
+                content: "add a migration step".into(),
+                timestamp: chrono::Utc::now(),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                model: None,
+            },
+        },
+        SessionEvent::SessionResumed,
+    ] {
+        store.append(session_id, &event).unwrap();
+    }
+    let revised = agent
+        .revise_plan(&mut store, session_id, "add a migration step")
+        .await
+        .unwrap();
+
+    assert_eq!(revised.steps.len(), 3);
+    let state = store.load(session_id).unwrap();
+    assert_eq!(state.plan_revision, 2);
+    assert_eq!(state.plan_steps, revised.steps);
+    // It pauses again rather than starting the work, so the next round of
+    // feedback has somewhere to land.
+    assert_eq!(state.status, SessionStatus::Paused);
+    let reason = store
+        .events(session_id)
+        .unwrap()
+        .into_iter()
+        .rev()
+        .find_map(|event| match event {
+            SessionEvent::SessionPaused { reason } => Some(reason),
+            _ => None,
+        })
+        .unwrap();
+    assert!(purrcode_runtime_core::is_plan_review_pause(&reason));
+
+    let status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repository.path())
+        .output()
+        .unwrap();
+    assert!(status.stdout.is_empty(), "a revision must change nothing");
+}
+
+#[tokio::test]
+async fn a_session_with_no_plan_cannot_be_revised() {
+    // Routing a follow-up to a revision when there is no plan would silently
+    // replace real work with a planning turn.
+    let provider = MockProvider {
+        responses: Mutex::new(Vec::new()),
+    };
+    let agent = NativeAgent::new(
+        &provider,
+        ModelId::parse("local/test").unwrap(),
+        Policy::default(),
+    );
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let session_id = SessionId::new();
+    store
+        .append(
+            session_id,
+            &SessionEvent::SessionCreated {
+                objective: "do the work".into(),
+                repository: repository.path().canonicalize().unwrap(),
+                authority_mode: Default::default(),
+            },
+        )
+        .unwrap();
+    let error = agent
+        .revise_plan(&mut store, session_id, "change it")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("no plan to revise"));
 }

@@ -39,9 +39,9 @@ use purrcode_provider_gateway::{
 };
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
-    ActionConstraints, ActionId, ApprovalAuthority, Authorization, ConversationMessage,
-    DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction, SessionEvent,
-    SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
+    ActionConstraints, ActionId, ApprovalAuthority, AuthorityMode, Authorization,
+    ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
+    SessionEvent, SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
 };
 use purrcode_skill_registry::{
     ExternalSearchAuthorization, GitHubRegistryAdapter, Qualifier as RegistryQualifier,
@@ -57,6 +57,7 @@ use purrcode_terminal_runtime::{
     SendTerminalInputAction, StartTerminalAction, StopProcessAction, TerminalId, TerminalOwner,
     TerminalRuntime, TerminalSize, WorkspaceId,
 };
+use purrcode_ui_contracts::{ActivityItem, ActivityKind, ActivityStatus, ValidationOutcome};
 use purrcode_web_research::{
     DomainPolicy, PublicWebAction, PublicWebAuthorization, ResearchEngine, StubSearchProvider,
 };
@@ -321,150 +322,6 @@ pub struct StartupReport {
     pub token_file: PathBuf,
 }
 
-pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
-    validate_bind(config.bind.ip(), config.allow_public_bind)?;
-    let token = load_or_create_token(&config.token_file)?;
-    let mut store = SessionStore::open(&config.database)?;
-    let recovered = store
-        .recover_uncertain_sessions()?
-        .into_iter()
-        .map(|session| session.0.to_string())
-        .collect::<Vec<_>>();
-    let local_inference_limit = ResourceSnapshot::detect(0).maximum_local_inference_requests;
-    let state = AppState {
-        store: Arc::new(Mutex::new(store)),
-        bearer_token: token.into(),
-        database: config.database.clone(),
-        app_config: config.app_config.clone(),
-        leases: Arc::new(Mutex::new(BTreeMap::new())),
-        lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
-        lifecycle_gate: Arc::new(Mutex::new(())),
-        active_models: Arc::new(Mutex::new(BTreeMap::new())),
-        local_inference_slots: Arc::new(Semaphore::new(local_inference_limit)),
-        local_inference_limit,
-        interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
-        pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
-        live_streams: Arc::new(Mutex::new(BTreeMap::new())),
-        terminals: TerminalRuntime::default(),
-    };
-    let router = Router::new()
-        .route("/v1/health", get(health))
-        .route("/v1/environment/inspect", post(inspect_environment))
-        .route("/v1/terminals", get(list_terminals).post(start_terminal))
-        .route(
-            "/v1/terminals/{id}",
-            get(get_terminal).delete(stop_terminal),
-        )
-        .route("/v1/terminals/{id}/input", post(send_terminal_input))
-        .route("/v1/terminals/{id}/resize", post(resize_terminal))
-        .route("/v1/terminals/{id}/attach", post(attach_terminal))
-        .route("/v1/terminals/{id}/detach", post(detach_terminal))
-        .route("/v1/terminals/{id}/owner", post(change_terminal_owner))
-        .route("/v1/sessions", get(sessions))
-        .route("/v1/sessions", post(start_session))
-        .route("/v1/sessions/{id}", get(session))
-        .route("/v1/sessions/{id}/events", get(events))
-        .route(
-            "/v1/sessions/{id}/messages",
-            get(messages).post(append_message),
-        )
-        .route("/v1/sessions/{id}/events/stream", get(event_stream))
-        .route("/v1/sessions/{id}/hunks", get(review_hunks))
-        .route("/v1/sessions/{id}/diff", get(session_diff))
-        .route("/v1/sessions/{id}/hunks/apply", post(apply_review_hunk))
-        .route("/v1/sessions/{id}/hunks/reject", post(reject_review_hunk))
-        .route("/v1/sessions/{id}/resume", post(resume_session))
-        .route("/v1/sessions/{id}/approve", post(approve_session))
-        .route("/v1/sessions/{id}/reject", post(reject_session))
-        .route("/v1/sessions/{id}/pause", post(pause_session))
-        .route("/v1/sessions/{id}/checkpoint", post(checkpoint_session))
-        .route("/v1/sessions/{id}/rollback", post(rollback_session))
-        .route("/v1/sessions/{id}/compact", post(compact_session))
-        .route("/v1/sessions/{id}/model", post(select_session_model))
-        .route("/v1/sessions/{id}/replace-action", post(replace_action))
-        .route("/v1/sessions/{id}/mcp", post(invoke_mcp))
-        .route("/v1/sessions/{id}/cancel", post(cancel_session))
-        .route("/v1/automations", get(automations))
-        .route("/v1/automations", post(create_automation))
-        .route("/v1/automations/{id}/enable", post(enable_automation))
-        .route("/v1/automations/{id}/disable", post(disable_automation))
-        .route("/v1/automations/{id}/run", post(run_automation))
-        .route("/v1/supervisor", post(run_supervisor))
-        .route("/v1/providers", get(list_providers))
-        .route("/v1/providers", post(configure_provider))
-        .route("/v1/providers/{name}", get(get_provider))
-        .route("/v1/providers/{name}", delete(remove_provider))
-        .route("/v1/providers/test", post(test_provider))
-        .route("/v1/providers/discover", post(discover_provider_models))
-        .route("/v1/credentials", post(store_credential))
-        .route("/v1/models", get(list_models))
-        .route("/v1/models/roles", post(assign_model_role))
-        .route("/v1/local-models", get(local_models))
-        .route(
-            "/v1/local-models/recommendations",
-            get(local_model_recommendations),
-        )
-        .route("/v1/local-models/qualify", post(qualify_local_model))
-        .route("/v1/local-models/unload", post(unload_local_model))
-        .route(
-            "/v1/local-models/pull/propose",
-            post(propose_local_model_pull),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}/approve",
-            post(approve_local_model_pull),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}/start",
-            post(start_local_model_pull),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}",
-            get(local_model_pull_status),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}/events",
-            get(local_model_pull_events),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}/cancel",
-            post(cancel_local_model_pull),
-        )
-        .route(
-            "/v1/local-models/settings",
-            get(local_model_settings).post(update_local_model_settings),
-        )
-        .route("/v1/repository/inspect", post(inspect_repository))
-        .route("/v1/skills", get(list_skills))
-        .route("/v1/skills/search", post(search_skills))
-        .route("/v1/skills/download", post(download_skill))
-        .route("/v1/skills/install", post(install_skill))
-        .route("/v1/skills/install/propose", post(propose_skill_install))
-        .route(
-            "/v1/skills/install/{action_id}/approve",
-            post(approve_skill_install),
-        )
-        .route("/v1/skills/{id}", get(get_skill))
-        .route("/v1/skills/{id}", delete(remove_skill))
-        .route("/v1/research/fetch", post(fetch_research_page))
-        .route("/v1/skills/publishers/block", post(block_skill_publisher))
-        .with_state(state.clone());
-    let listener = TcpListener::bind(config.bind).await?;
-    let actual_bind = listener.local_addr()?;
-    let report = StartupReport {
-        bind: actual_bind,
-        recovered_uncertain_sessions: recovered,
-        token_file: config.token_file,
-    };
-    let scheduler = tokio::spawn(automation_scheduler(state.clone()));
-    let result = axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await;
-    scheduler.abort();
-    result?;
-    Ok(report)
-}
-
 pub async fn bind_and_report(
     config: DaemonConfig,
 ) -> Result<
@@ -501,12 +358,14 @@ pub async fn bind_and_report(
     };
     let router = Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/ui/status", get(ui_status))
         .route("/v1/environment/inspect", post(inspect_environment))
         .route("/v1/terminals", get(list_terminals).post(start_terminal))
         .route(
             "/v1/terminals/{id}",
             get(get_terminal).delete(stop_terminal),
         )
+        .route("/v1/terminals/{id}/output", get(read_terminal_output))
         .route("/v1/terminals/{id}/input", post(send_terminal_input))
         .route("/v1/terminals/{id}/resize", post(resize_terminal))
         .route("/v1/terminals/{id}/attach", post(attach_terminal))
@@ -521,6 +380,9 @@ pub async fn bind_and_report(
             get(messages).post(append_message),
         )
         .route("/v1/sessions/{id}/events/stream", get(event_stream))
+        .route("/v1/sessions/{id}/summary", get(session_summary))
+        .route("/v1/sessions/{id}/activity", get(session_activity))
+        .route("/v1/sessions/{id}/validation", get(session_validation))
         .route("/v1/sessions/{id}/hunks", get(review_hunks))
         .route("/v1/sessions/{id}/diff", get(session_diff))
         .route("/v1/sessions/{id}/hunks/apply", post(apply_review_hunk))
@@ -705,6 +567,41 @@ async fn get_terminal(
         .inspect(parse_terminal_id(&id)?, 256 * 1024)
         .map_err(ApiError::terminal)?;
     Ok(Json(serde_json::json!({ "terminal": terminal })))
+}
+
+#[derive(Deserialize)]
+struct TerminalOutputQuery {
+    /// Byte offset the client already holds. Absent means "from the beginning
+    /// of what is still retained".
+    #[serde(default)]
+    since: u64,
+}
+
+/// Incremental terminal output (PRD §24.7). Returns only the bytes produced
+/// after `since`, so a live client appends instead of re-reading the whole
+/// transcript on a timer.
+async fn read_terminal_output(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<TerminalOutputQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminal_id = parse_terminal_id(&id)?;
+    let chunk = state
+        .terminals
+        .read_since(terminal_id, query.since)
+        .map_err(ApiError::terminal)?;
+    let terminal = state
+        .terminals
+        .inspect(terminal_id, 0)
+        .map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({
+        "chunk": chunk,
+        "alive": terminal.alive,
+        "owner": terminal.owner,
+        "generation": terminal.generation,
+    })))
 }
 
 async fn send_terminal_input(
@@ -930,6 +827,7 @@ async fn launch_automation(
             &SessionEvent::SessionCreated {
                 objective: automation.objective.clone(),
                 repository: automation.repository.clone(),
+                authority_mode: AuthorityMode::Governed,
             },
         )?;
     }
@@ -1023,6 +921,7 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 &SessionEvent::SessionCreated {
                     objective: spec.objective.clone(),
                     repository: workspace.path.clone(),
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -1261,6 +1160,7 @@ async fn run_supervisor(
             &SessionEvent::SessionCreated {
                 objective: request.objective,
                 repository: repository.clone(),
+                authority_mode: AuthorityMode::Governed,
             },
         )?;
         store.append(
@@ -1373,13 +1273,14 @@ async fn sessions(
         let session = store.load(id)?;
         views.push(SessionView {
             id: id.0.to_string(),
-            objective: session.objective,
             status: format!("{:?}", session.status),
             status_code: status_code(&session.status),
-            repository: session.repository,
-            worktree: session.worktree,
             event_count: session.event_count,
             lease_active: active_leases.contains(&id),
+            awaiting_plan_review: awaiting_plan_review(&session),
+            objective: session.objective,
+            repository: session.repository,
+            worktree: session.worktree,
             selected_model: session.selected_model,
         });
     }
@@ -1392,6 +1293,30 @@ struct StartSessionRequest {
     repository: PathBuf,
     #[serde(default)]
     plan_only: bool,
+    /// The permission mode an authenticated human chose (PRD §12), in the
+    /// authority contract's vocabulary: `governed`, `elevated`, `unrestricted`.
+    /// Recorded on the session so the decision is durable and auditable rather
+    /// than living only in whichever client happened to make the request.
+    #[serde(default)]
+    authority_mode: Option<String>,
+}
+
+impl StartSessionRequest {
+    /// Reject a mode the contract does not define instead of storing it. A
+    /// permission value nobody can interpret is worse than none.
+    fn authority_mode(&self) -> Result<AuthorityMode, ApiError> {
+        match self.authority_mode.as_deref() {
+            None | Some("governed") => Ok(AuthorityMode::Governed),
+            Some("elevated") => Ok(AuthorityMode::Elevated {
+                capabilities: Vec::new(),
+                allowed_programs: Vec::new(),
+            }),
+            Some("unrestricted") => Ok(AuthorityMode::Unrestricted),
+            Some(other) => Err(ApiError::BadRequest(format!(
+                "unknown authority mode `{other}`; expected governed, elevated or unrestricted"
+            ))),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -1414,6 +1339,7 @@ async fn start_session(
         .repository
         .canonicalize()
         .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
+    let authority_mode = request.authority_mode()?;
     let id = SessionId::new();
     let objective = request.objective;
     let mut store = state.store.lock().await;
@@ -1422,6 +1348,7 @@ async fn start_session(
         &SessionEvent::SessionCreated {
             objective: objective.clone(),
             repository,
+            authority_mode,
         },
     )?;
     store.append(
@@ -1488,9 +1415,11 @@ async fn append_message(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     let session = state.store.lock().await.load(id)?;
-    if session.status != SessionStatus::Active {
+    let paused = session.status == SessionStatus::Paused;
+    if session.status != SessionStatus::Active && !paused {
         return Err(ApiError::Conflict(
-            "only an active session can accept a follow-up message; start a new session".into(),
+            "only an active or paused session can accept a follow-up message; start a new session"
+                .into(),
         ));
     }
     if request.content.trim().is_empty() {
@@ -1500,7 +1429,19 @@ async fn append_message(
     }
     reject_secret_content(&request.content)?;
     let content = request.content.trim_end_matches([' ', '\t']);
-    state.store.lock().await.append(
+    // A session paused on an untouched plan reads a follow-up as feedback on
+    // that plan (PRD §11); anything else reads it as a new instruction and
+    // continues the work. Getting this backwards is what makes plan review
+    // one-way: the reviewer can accept the plan but cannot change it.
+    let operation = if awaiting_plan_review(&session) {
+        AgentOperation::RevisePlan {
+            feedback: content.to_owned(),
+        }
+    } else {
+        AgentOperation::Resume
+    };
+    let mut store = state.store.lock().await;
+    store.append(
         id,
         &SessionEvent::ConversationMessageAdded {
             message: ConversationMessage {
@@ -1514,14 +1455,67 @@ async fn append_message(
             },
         },
     )?;
-    spawn_agent_operation(state, id, AgentOperation::Resume).await?;
+    if paused {
+        store.append(id, &SessionEvent::SessionResumed)?;
+    }
+    drop(store);
+    let status = if matches!(operation, AgentOperation::RevisePlan { .. }) {
+        "revising the plan"
+    } else {
+        "message accepted"
+    };
+    resume_or_restore_pause(&state, id, paused, operation).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
             id: id.0.to_string(),
-            status: "message accepted",
+            status,
         }),
     ))
+}
+
+/// Start `operation`, and put a resumed session back to sleep if it will not start.
+///
+/// Resuming is durable but spawning can still be refused — a lease is held, a
+/// cancellation is settling. Returning the error while the session stays marked
+/// active would present a session with nothing driving it as a running one, and
+/// the state it was actually in would be lost.
+async fn resume_or_restore_pause(
+    state: &AppState,
+    id: SessionId,
+    was_paused: bool,
+    operation: AgentOperation,
+) -> Result<(), ApiError> {
+    let Err(error) = spawn_agent_operation(state.clone(), id, operation).await else {
+        return Ok(());
+    };
+    if was_paused {
+        let mut store = state.store.lock().await;
+        let reason = store
+            .events(id)
+            .ok()
+            .and_then(|events| {
+                events.into_iter().rev().find_map(|event| match event {
+                    SessionEvent::SessionPaused { reason } => Some(reason),
+                    _ => None,
+                })
+            })
+            .unwrap_or_else(|| "paused".to_owned());
+        store.append(id, &SessionEvent::SessionPaused { reason })?;
+    }
+    Err(error)
+}
+
+/// True when a session is paused on a plan nobody has acted on yet.
+///
+/// A plan-only run pauses with a plan and no proposed actions, and stays in
+/// that shape across revisions. Once the plan has been built from, actions
+/// exist, and a later pause is a pause in the work rather than a plan waiting
+/// to be read.
+fn awaiting_plan_review(session: &purrcode_runtime_core::SessionState) -> bool {
+    session.status == SessionStatus::Paused
+        && !session.plan_steps.is_empty()
+        && session.proposed_actions.is_empty()
 }
 
 fn reject_secret_content(content: &str) -> Result<(), ApiError> {
@@ -1544,14 +1538,15 @@ async fn resume_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     ensure_session_exists(&state, id).await?;
-    if state.store.lock().await.load(id)?.status == SessionStatus::Paused {
+    let paused = state.store.lock().await.load(id)?.status == SessionStatus::Paused;
+    if paused {
         state
             .store
             .lock()
             .await
             .append(id, &SessionEvent::SessionResumed)?;
     }
-    spawn_agent_operation(state, id, AgentOperation::Resume).await?;
+    resume_or_restore_pause(&state, id, paused, AgentOperation::Resume).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
@@ -2301,12 +2296,19 @@ async fn cancel_session(
     result
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum AgentOperation {
     Start,
     Plan,
     Resume,
     Approve,
+    /// Rewrite the plan under review using the reviewer's own words, which
+    /// travel with the operation rather than being re-read from the tail of the
+    /// conversation — the agent must revise against the feedback it was given,
+    /// not against whatever message happened to arrive last.
+    RevisePlan {
+        feedback: String,
+    },
 }
 
 async fn spawn_agent_operation(
@@ -2671,6 +2673,10 @@ async fn run_agent_operation(
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Resume => agent.resume(&mut store, id).await.map(|_| ()),
+        AgentOperation::RevisePlan { feedback } => agent
+            .revise_plan(&mut store, id, &feedback)
+            .await
+            .map(|_| ()),
         AgentOperation::Approve => {
             agent
                 .approve(&mut store, id)
@@ -2999,13 +3005,14 @@ async fn session(
     }
     Ok(Json(SessionView {
         id: id.0.to_string(),
-        objective: session.objective,
         status: format!("{:?}", session.status),
         status_code: status_code(&session.status),
-        repository: session.repository,
-        worktree: session.worktree,
         event_count: session.event_count,
         lease_active,
+        awaiting_plan_review: awaiting_plan_review(&session),
+        objective: session.objective,
+        repository: session.repository,
+        worktree: session.worktree,
         selected_model: session.selected_model,
     }))
 }
@@ -3022,6 +3029,452 @@ async fn events(
         return Err(ApiError::NotFound);
     }
     Ok(Json(events))
+}
+
+#[derive(Deserialize)]
+struct UiStatusQuery {
+    repository: PathBuf,
+    #[serde(default)]
+    session: Option<String>,
+    #[serde(default)]
+    task_mode: Option<String>,
+    #[serde(default)]
+    permission_mode: Option<String>,
+}
+
+/// Everything a client puts in its header (PRD §31.1).
+///
+/// PRD §31.2 also names `GET /v1/ui/actions`. It is deliberately not served:
+/// the action registry lives in `purrcode-tui::ui_actions`, so exposing it here
+/// would either invert the dependency graph — the daemon pulling in a terminal
+/// UI crate and its ratatui/crossterm tree — or fork it into a second list that
+/// the `ui-actions coverage` gate could not police. `purrcode ui-actions list`
+/// already renders it, and no client consumes an HTTP copy today.
+///
+/// Assembling this client-side is how the TUI and the Studio ended up showing
+/// different things about one session. The repository is presented by name and
+/// branch; §14 forbids the path, the SHA and the session id by default, so they
+/// are simply not in the response.
+async fn ui_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<UiStatusQuery>,
+) -> Result<Json<purrcode_ui_contracts::UiStatus>, ApiError> {
+    authorize(&state, &headers)?;
+    let snapshot = RepositoryEngine::inspect(&query.repository)
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("repository inspection failed: {error}")))?;
+    let config = AppConfig::load(&state.app_config).ok();
+    let default_model = config.as_ref().and_then(|c| c.models.default.clone());
+    let provider = default_model
+        .as_deref()
+        .and_then(|model| model.split_once('/'))
+        .map(|(provider, _)| provider.to_owned());
+
+    let mut surfaces = vec![purrcode_ui_contracts::Surface::Conversation];
+    if snapshot.dirty {
+        surfaces.push(purrcode_ui_contracts::Surface::Changes);
+    }
+    if state
+        .terminals
+        .list()
+        .map(|terminals| !terminals.is_empty())
+        .unwrap_or(false)
+    {
+        surfaces.push(purrcode_ui_contracts::Surface::Terminal);
+    }
+
+    let mut phase = "ready".to_owned();
+    if let Some(session) = query
+        .session
+        .as_deref()
+        .and_then(|id| parse_session_id(id).ok())
+    {
+        let (state_snapshot, events) = {
+            let store = state.store.lock().await;
+            (
+                store.load(session).ok(),
+                store.events(session).unwrap_or_default(),
+            )
+        };
+        if let Some(session_state) = state_snapshot {
+            phase = format!("{:?}", session_state.status).to_lowercase();
+        }
+        let validation = validation_from_events(&events);
+        if !validation.stages.is_empty() {
+            surfaces.push(purrcode_ui_contracts::Surface::Tests);
+        }
+        if activity_from_events(&events)
+            .iter()
+            .any(|item| item.detail_available)
+        {
+            surfaces.push(purrcode_ui_contracts::Surface::Evidence);
+        }
+    }
+    surfaces.push(purrcode_ui_contracts::Surface::Settings);
+    surfaces.dedup();
+
+    Ok(Json(purrcode_ui_contracts::UiStatus {
+        repository: snapshot.name,
+        branch: snapshot.branch,
+        model: default_model
+            .as_deref()
+            .and_then(|model| model.split_once('/'))
+            .map(|(_, model)| model.to_owned()),
+        provider,
+        task_mode: query.task_mode.unwrap_or_else(|| "Build".into()),
+        permission_mode: query.permission_mode.unwrap_or_else(|| "Ask".into()),
+        phase,
+        local_only: config
+            .as_ref()
+            .map(|c| {
+                matches!(
+                    c.privacy.mode,
+                    purrcode_provider_gateway::PrivacyMode::LocalOnly
+                )
+            })
+            .unwrap_or(true),
+        available_surfaces: surfaces,
+    }))
+}
+
+// ── Presentation APIs (PRD §31) ────────────────────────────────
+//
+// Clients used to read the durable event log and each invent their own labels
+// for it, so the TUI and the Studio could describe the same run differently.
+// These endpoints make the daemon the one place that turns runtime events into
+// what a person reads.
+
+/// Derive the user-facing activity list from durable events.
+fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<ActivityItem> {
+    use purrcode_runtime_core::SessionEvent as Event;
+    let mut items: Vec<ActivityItem> = Vec::new();
+    let mut inspected = 0usize;
+    let mut edited = 0usize;
+    // A model request that has started but not finished is what the session is
+    // doing *right now*. Without it a working session reports an empty activity
+    // list, which reads as idle — the first real run of this endpoint spent a
+    // minute in exactly that state.
+    let mut thinking: Option<usize> = None;
+
+    for (index, event) in events.iter().enumerate() {
+        let id = index.to_string();
+        match event {
+            Event::WorktreeCreated { .. } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Inspection,
+                label: "Prepared an isolated worktree".to_owned(),
+                status: ActivityStatus::Done,
+                summary: None,
+                detail_available: false,
+            }),
+            Event::ContextIndexed { files, symbols, .. } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Inspection,
+                label: format!("Indexed {files} file(s), {symbols} symbol(s)"),
+                status: ActivityStatus::Done,
+                summary: None,
+                detail_available: false,
+            }),
+            Event::CheckpointCreated { label, .. } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Recovery,
+                label: format!("Created a restore point ({label})"),
+                status: ActivityStatus::Done,
+                summary: None,
+                detail_available: true,
+            }),
+            Event::ModelRequestStarted { model, .. } => {
+                thinking = Some(items.len());
+                items.push(ActivityItem {
+                    id,
+                    kind: ActivityKind::Planning,
+                    label: format!("Thinking with {model}"),
+                    status: ActivityStatus::Running,
+                    summary: None,
+                    detail_available: false,
+                });
+            }
+            // Pair the request with its completion rather than adding a second
+            // line: one step that finished, not two that happened.
+            Event::ModelRequestFinished { .. } => {
+                if let Some(position) = thinking.take() {
+                    items[position].status = ActivityStatus::Done;
+                    items[position].label =
+                        items[position].label.replacen("Thinking", "Thought", 1);
+                }
+            }
+            Event::SessionPaused { reason } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Approval,
+                label: "Paused".to_owned(),
+                status: ActivityStatus::Blocked,
+                summary: Some(reason.chars().take(160).collect()),
+                detail_available: true,
+            }),
+            Event::RecoveryRequired { reason } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Recovery,
+                label: "Needs recovery before continuing".to_owned(),
+                status: ActivityStatus::Blocked,
+                summary: Some(reason.chars().take(160).collect()),
+                detail_available: true,
+            }),
+            Event::PlanCreated { steps } | Event::PlanRevised { steps, .. } => {
+                items.push(ActivityItem {
+                    id,
+                    kind: ActivityKind::Planning,
+                    label: format!("Prepared a {}-step plan", steps.len()),
+                    status: ActivityStatus::Done,
+                    summary: steps.first().cloned(),
+                    detail_available: !steps.is_empty(),
+                })
+            }
+            Event::ActionProposed { action, .. } => {
+                // Reads and writes are counted rather than listed: fifty lines
+                // of "inspected file" is not progress a person can read.
+                match action {
+                    ProposedAction::RepositoryRead(_) => inspected += 1,
+                    ProposedAction::WriteFile(_) | ProposedAction::DeleteFile(_) => edited += 1,
+                    _ => items.push(ActivityItem {
+                        id,
+                        kind: ActivityKind::Command,
+                        label: "Ran a command".to_owned(),
+                        status: ActivityStatus::Done,
+                        summary: None,
+                        detail_available: true,
+                    }),
+                }
+            }
+            Event::OutcomeReviewRequired { .. } | Event::SupervisorReviewRequired { .. } => items
+                .push(ActivityItem {
+                    id,
+                    kind: ActivityKind::Approval,
+                    label: "Waiting for your approval".to_owned(),
+                    status: ActivityStatus::Blocked,
+                    summary: None,
+                    detail_available: true,
+                }),
+            Event::ValidationRecorded {
+                status, evidence, ..
+            } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Validation,
+                label: format!("Validation {}", validation_outcome(status).label()),
+                status: if validation_outcome(status).is_success() {
+                    ActivityStatus::Done
+                } else {
+                    ActivityStatus::Failed
+                },
+                summary: Some(evidence.chars().take(160).collect()),
+                detail_available: !evidence.is_empty(),
+            }),
+            Event::SessionCompleted => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Completion,
+                label: "Finished".to_owned(),
+                status: ActivityStatus::Done,
+                summary: None,
+                detail_available: false,
+            }),
+            Event::SessionFailed { reason } => items.push(ActivityItem {
+                id,
+                kind: ActivityKind::Completion,
+                label: "Stopped without finishing".to_owned(),
+                status: ActivityStatus::Failed,
+                summary: Some(reason.chars().take(160).collect()),
+                detail_available: true,
+            }),
+            _ => {}
+        }
+    }
+
+    // A session that has reached a terminal state has nothing in flight. Leaving
+    // a Running item after it would show a spinner that never stops — the same
+    // class of untruth as reporting unavailable validation as passed.
+    if let Some(position) = thinking {
+        let ended = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::SessionCompleted
+                    | Event::SessionFailed { .. }
+                    | Event::SessionCancelled { .. }
+            )
+        });
+        if ended {
+            items[position].status = ActivityStatus::Failed;
+            items[position].label = items[position].label.replacen("Thinking", "Interrupted", 1);
+        }
+    }
+
+    let mut derived = Vec::new();
+    if inspected > 0 {
+        derived.push(ActivityItem {
+            id: "inspection".to_owned(),
+            kind: ActivityKind::Inspection,
+            label: format!("Inspected {inspected} file(s)"),
+            status: ActivityStatus::Done,
+            summary: None,
+            detail_available: true,
+        });
+    }
+    if edited > 0 {
+        derived.push(ActivityItem {
+            id: "edits".to_owned(),
+            kind: ActivityKind::Edit,
+            label: format!("Changed {edited} file(s)"),
+            status: ActivityStatus::Done,
+            summary: None,
+            detail_available: true,
+        });
+    }
+    derived.extend(items);
+    derived
+}
+
+/// Map the runtime's validation status onto the presentation contract.
+///
+/// The runtime distinguishes more states than a person needs, but the mapping
+/// never collapses a non-success into success: `NotDetected` and
+/// `SkippedByConfiguration` become `Unavailable`/`Skipped`, not `Passed`.
+fn validation_outcome(status: &ValidationStatus) -> ValidationOutcome {
+    match status {
+        ValidationStatus::Passed => ValidationOutcome::Passed,
+        ValidationStatus::Failed => ValidationOutcome::Failed,
+        ValidationStatus::TimedOut => ValidationOutcome::TimedOut,
+        ValidationStatus::SkippedByConfiguration => ValidationOutcome::Skipped,
+        ValidationStatus::Unavailable | ValidationStatus::NotDetected => {
+            ValidationOutcome::Unavailable
+        }
+        ValidationStatus::Uncertain => ValidationOutcome::InfrastructureError,
+    }
+}
+
+fn validation_from_events(
+    events: &[purrcode_runtime_core::SessionEvent],
+) -> purrcode_ui_contracts::ValidationSummary {
+    use purrcode_runtime_core::SessionEvent as Event;
+    // A cancelled session's validation was interrupted, not skipped by choice
+    // and not failed on its merits. Recording which it was is the difference
+    // between "you stopped this" and "this does not work".
+    let mut cancelled_at = None;
+    for (index, event) in events.iter().enumerate() {
+        if matches!(event, Event::SessionCancelled { .. }) {
+            cancelled_at = Some(index);
+        }
+    }
+    let stages = events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| match event {
+            Event::ValidationRecorded {
+                action_id,
+                status,
+                evidence,
+            } => {
+                let outcome = match (validation_outcome(status), cancelled_at) {
+                    // Only a stage that had not concluded when the cancel landed
+                    // is cancelled; a stage that already failed still failed.
+                    (ValidationOutcome::Unavailable, Some(at)) if index > at => {
+                        ValidationOutcome::Cancelled
+                    }
+                    (outcome, _) => outcome,
+                };
+                Some(purrcode_ui_contracts::ValidationStageView {
+                    stage: action_id.0.to_string(),
+                    outcome,
+                    detail: (!evidence.is_empty())
+                        .then(|| evidence.chars().take(400).collect::<String>()),
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    purrcode_ui_contracts::ValidationSummary::new(stages)
+}
+
+async fn session_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Vec<ActivityItem>>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let events = state.store.lock().await.events(id)?;
+    if events.is_empty() {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(activity_from_events(&events)))
+}
+
+async fn session_validation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<purrcode_ui_contracts::ValidationSummary>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let events = state.store.lock().await.events(id)?;
+    if events.is_empty() {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(validation_from_events(&events)))
+}
+
+async fn session_summary(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<purrcode_ui_contracts::SessionSummary>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let (session, events) = {
+        let store = state.store.lock().await;
+        (store.load(id)?, store.events(id)?)
+    };
+    let repository = session.repository.clone().unwrap_or_default();
+    // The repository is presented by name and branch, never by path (PRD §14).
+    let snapshot = RepositoryEngine::inspect(&repository).await.ok();
+    let validation = validation_from_events(&events);
+    let activity = activity_from_events(&events);
+    Ok(Json(purrcode_ui_contracts::SessionSummary {
+        id: session.id.0.to_string(),
+        objective: session.objective.clone().unwrap_or_default(),
+        status: format!("{:?}", session.status).to_lowercase(),
+        repository: snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.name.clone())
+            .unwrap_or_else(|| {
+                repository
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            }),
+        branch: snapshot.as_ref().map(|snapshot| snapshot.branch.clone()),
+        changed_file_count: activity
+            .iter()
+            .filter(|item| item.kind == ActivityKind::Edit)
+            .count(),
+        // The latest revision wins: a revised plan supersedes the one before it
+        // rather than adding to it.
+        plan: events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                purrcode_runtime_core::SessionEvent::PlanCreated { steps }
+                | purrcode_runtime_core::SessionEvent::PlanRevised { steps, .. } => {
+                    Some(steps.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default(),
+        plan_revision: session.plan_revision,
+        awaiting_plan_review: awaiting_plan_review(&session),
+        validation: (!validation.stages.is_empty()).then_some(validation),
+        needs_attention: activity
+            .iter()
+            .any(|item| item.status == ActivityStatus::Blocked),
+    }))
 }
 
 #[derive(Serialize)]
@@ -3335,6 +3788,10 @@ struct SessionView {
     event_count: u64,
     lease_active: bool,
     selected_model: Option<String>,
+    /// True when the session is paused on a plan nobody has acted on yet, and
+    /// so still accepts feedback that rewrites it. `paused` alone does not say
+    /// this: a run paused midway through the work is also paused.
+    awaiting_plan_review: bool,
 }
 
 fn status_code(status: &SessionStatus) -> &'static str {
@@ -4464,6 +4921,7 @@ async fn propose_local_model_pull(
             &SessionEvent::SessionCreated {
                 objective: format!("Pull Ollama model {}", request.model),
                 repository: repository.clone(),
+                authority_mode: AuthorityMode::Governed,
             },
         )?;
         (session_id, repository)
@@ -4859,7 +5317,10 @@ async fn inspect_repository(
         .map_err(|error| ApiError::BadRequest(format!("repository inspection failed: {error}")))?;
     Ok(Json(serde_json::json!({
         "root": snapshot.root,
+        "name": snapshot.name,
         "head": snapshot.head,
+        "head_short": snapshot.head.get(..12).unwrap_or(&snapshot.head),
+        "branch": snapshot.branch,
         "dirty": snapshot.dirty,
     })))
 }
@@ -4885,7 +5346,7 @@ async fn assign_model_role(
     config
         .assign_model_role(&body.role, &model)
         .and_then(|()| {
-            if matches!(body.role.as_str(), "coding_worker" | "coder") {
+            if AppConfig::canonical_model_role(&body.role) == Some("coding_worker") {
                 config.models.default = Some(body.model.clone());
             }
             config.save(&state.app_config)
@@ -4894,7 +5355,7 @@ async fn assign_model_role(
     Ok(Json(serde_json::json!({
         "role": body.role,
         "model": body.model,
-        "default_updated": matches!(body.role.as_str(), "coding_worker" | "coder")
+        "default_updated": AppConfig::canonical_model_role(&body.role) == Some("coding_worker")
     })))
 }
 
@@ -6529,6 +6990,375 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
 
+    fn validation_event(action: &str, status: ValidationStatus, evidence: &str) -> SessionEvent {
+        SessionEvent::ValidationRecorded {
+            action_id: ActionId(Uuid::new_v4()),
+            status,
+            evidence: format!("{action}: {evidence}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ui_status_presents_a_repository_by_name_and_never_by_path() {
+        let repository = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(repository.path())
+            .status()
+            .unwrap();
+        std::fs::write(repository.path().join("a.rs"), "fn main() {}").unwrap();
+        for args in [
+            vec!["config", "user.email", "t@t"],
+            vec!["config", "user.name", "t"],
+            vec!["add", "-A"],
+            vec!["commit", "-qm", "init"],
+        ] {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(repository.path())
+                .status()
+                .unwrap();
+        }
+
+        let snapshot = RepositoryEngine::inspect(repository.path()).await.unwrap();
+        let status = purrcode_ui_contracts::UiStatus {
+            repository: snapshot.name.clone(),
+            branch: snapshot.branch.clone(),
+            model: Some("qwen3-coder:30b".into()),
+            provider: Some("ollama".into()),
+            task_mode: "Build".into(),
+            permission_mode: "Auto".into(),
+            phase: "ready".into(),
+            local_only: true,
+            available_surfaces: vec![purrcode_ui_contracts::Surface::Conversation],
+        };
+        assert_eq!(status.branch, "main");
+        assert!(!status.repository.contains('/'));
+        let encoded = serde_json::to_string(&status).unwrap();
+        // PRD §14: no path, no SHA, no session id, no event count by default.
+        for forbidden in [snapshot.head.as_str(), "/tmp", "session_id", "event_count"] {
+            assert!(
+                !encoded.contains(forbidden),
+                "{forbidden} leaked into the header: {encoded}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unavailable_stage_is_never_presented_as_passing() {
+        // PRD §21.3 and §36: "unavailable validation appears as success" is a
+        // release-blocking failure, so the mapping is asserted directly.
+        let events = vec![
+            validation_event("unit", ValidationStatus::Passed, "42 tests"),
+            validation_event("integration", ValidationStatus::Unavailable, "no docker"),
+            validation_event("lint", ValidationStatus::NotDetected, "no linter"),
+            validation_event("smoke", ValidationStatus::SkippedByConfiguration, "off"),
+        ];
+        let summary = validation_from_events(&events);
+        assert_eq!(summary.stages.len(), 4);
+        assert!(
+            !summary.complete,
+            "a run with unavailable stages must not report complete validation"
+        );
+        let outcomes: Vec<_> = summary.stages.iter().map(|s| s.outcome).collect();
+        assert_eq!(outcomes[0], ValidationOutcome::Passed);
+        assert_eq!(outcomes[1], ValidationOutcome::Unavailable);
+        assert_eq!(outcomes[2], ValidationOutcome::Unavailable);
+        assert_eq!(outcomes[3], ValidationOutcome::Skipped);
+        assert!(summary.headline().contains("did not pass"));
+    }
+
+    #[test]
+    fn validation_interrupted_by_a_cancel_is_cancelled_not_skipped() {
+        let events = vec![
+            validation_event("unit", ValidationStatus::Failed, "1 test failed"),
+            SessionEvent::SessionCancelled {
+                reason: "user stopped the run".into(),
+            },
+            validation_event("integration", ValidationStatus::Unavailable, "not run"),
+        ];
+        let summary = validation_from_events(&events);
+        // A stage that had already failed still failed; the interrupted one is
+        // reported as cancelled rather than as unavailable.
+        assert_eq!(summary.stages[0].outcome, ValidationOutcome::Failed);
+        assert_eq!(summary.stages[1].outcome, ValidationOutcome::Cancelled);
+        assert!(!summary.complete);
+    }
+
+    #[test]
+    fn an_uncertain_validation_is_infrastructure_not_failure() {
+        // A probe that could not complete is not the same as a test that failed,
+        // and repairing the wrong one wastes the whole repair budget.
+        let summary = validation_from_events(&[validation_event(
+            "unit",
+            ValidationStatus::Uncertain,
+            "runner vanished",
+        )]);
+        assert_eq!(
+            summary.stages[0].outcome,
+            ValidationOutcome::InfrastructureError
+        );
+        assert!(!summary.complete);
+    }
+
+    #[test]
+    fn activity_counts_reads_and_edits_instead_of_listing_every_one() {
+        let read = || SessionEvent::ActionProposed {
+            action_id: ActionId(Uuid::new_v4()),
+            action: ProposedAction::RepositoryRead(
+                purrcode_runtime_core::RepositoryReadAction::GitStatus,
+            ),
+        };
+        let events = vec![read(), read(), read()];
+        let activity = activity_from_events(&events);
+        // Three reads become one readable line, not three.
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].label, "Inspected 3 file(s)");
+        assert_eq!(activity[0].kind, ActivityKind::Inspection);
+        assert_eq!(activity[0].status, ActivityStatus::Done);
+    }
+
+    #[test]
+    fn an_approval_boundary_is_blocked_not_failed() {
+        let events = vec![SessionEvent::OutcomeReviewRequired {
+            reason: "writes outside the plan".into(),
+        }];
+        let activity = activity_from_events(&events);
+        assert_eq!(activity.len(), 1);
+        assert_eq!(activity[0].status, ActivityStatus::Blocked);
+        assert_eq!(activity[0].status.word(), "needs you");
+    }
+
+    #[test]
+    fn a_failed_validation_shows_as_failed_activity() {
+        let events = vec![validation_event(
+            "unit",
+            ValidationStatus::Failed,
+            "2 tests failed",
+        )];
+        let activity = activity_from_events(&events);
+        assert_eq!(activity[0].status, ActivityStatus::Failed);
+        assert!(activity[0].label.contains("failed"));
+        assert!(activity[0].detail_available);
+    }
+
+    #[test]
+    fn a_plan_only_run_exposes_the_plan_it_asks_you_to_review() {
+        // Observed in a real Plan-mode run: the session paused saying
+        // "plan-only session is ready for review" while the ten steps it
+        // produced reached the client only as one truncated activity summary.
+        // A run cannot ask for review of something it does not show.
+        let events = [
+            SessionEvent::PlanCreated {
+                steps: vec![
+                    "Establish project structure".into(),
+                    "Add the parser".into(),
+                ],
+            },
+            SessionEvent::PlanRevised {
+                revision: 2,
+                reason: "narrowed scope".into(),
+                steps: vec![
+                    "Establish project structure".into(),
+                    "Add the parser".into(),
+                    "Wire the retriever".into(),
+                ],
+            },
+        ];
+        let plan = events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                SessionEvent::PlanCreated { steps } | SessionEvent::PlanRevised { steps, .. } => {
+                    Some(steps.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        // The latest revision supersedes the earlier plan rather than adding to it.
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[2], "Wire the retriever");
+    }
+
+    /// Reduce events into the state the routing decision reads.
+    fn state_after(events: &[SessionEvent]) -> purrcode_runtime_core::SessionState {
+        let mut state = purrcode_runtime_core::SessionState::empty(SessionId::new());
+        for event in events {
+            state.reduce_event(event).expect("valid event");
+        }
+        state
+    }
+
+    #[test]
+    fn a_follow_up_during_plan_review_is_feedback_not_a_new_instruction() {
+        // The reviewer's only options were to accept the plan or abandon the
+        // session: a follow-up on a paused session was refused outright. What
+        // they type while reading a plan is feedback on that plan (PRD §11),
+        // and it has to route to a revision rather than to the work.
+        let planned = state_after(&[
+            SessionEvent::PlanCreated {
+                steps: vec!["Add the parser".into()],
+            },
+            SessionEvent::SessionPaused {
+                reason: purrcode_runtime_core::PLAN_REVIEW_PAUSE.into(),
+            },
+        ]);
+        assert!(awaiting_plan_review(&planned));
+
+        // Still true after a revision, so the exchange can go back and forth.
+        let mut revised = planned.clone();
+        for event in [
+            SessionEvent::SessionResumed,
+            SessionEvent::PlanRevised {
+                revision: 2,
+                reason: "add a migration step".into(),
+                steps: vec!["Add the parser".into(), "Add the migration".into()],
+            },
+            SessionEvent::SessionPaused {
+                reason: format!("revised {}", purrcode_runtime_core::PLAN_REVIEW_PAUSE),
+            },
+        ] {
+            revised.reduce_event(&event).expect("valid event");
+        }
+        assert!(awaiting_plan_review(&revised));
+        assert_eq!(revised.plan_revision, 2);
+        assert_eq!(revised.plan_steps.len(), 2);
+    }
+
+    #[test]
+    fn a_pause_in_the_middle_of_the_work_is_not_a_plan_review() {
+        // Once the plan has been built from, a pause is a pause in the work.
+        // Reading a follow-up there as plan feedback would throw away real
+        // progress to rewrite a plan nobody asked about.
+        let mut state = state_after(&[
+            SessionEvent::PlanCreated {
+                steps: vec!["Add the parser".into()],
+            },
+            SessionEvent::WorktreeCreated {
+                path: PathBuf::from("/w"),
+                base_head: "abc".into(),
+                source_was_dirty: false,
+            },
+        ]);
+        for event in [
+            SessionEvent::ActionProposed {
+                action_id: ActionId::new(),
+                action: ProposedAction::WriteFile(WriteFileAction {
+                    path: PathBuf::from("src/parser.rs"),
+                    content: "pub fn parse() {}\n".into(),
+                    expected_digest: None,
+                }),
+            },
+            SessionEvent::SessionPaused {
+                reason: "validation could not run".into(),
+            },
+        ] {
+            state.reduce_event(&event).expect("valid event");
+        }
+        assert!(!awaiting_plan_review(&state));
+
+        // And an active session is never in plan review, plan or no plan.
+        let active = state_after(&[SessionEvent::PlanCreated {
+            steps: vec!["Add the parser".into()],
+        }]);
+        assert!(!awaiting_plan_review(&active));
+    }
+
+    #[test]
+    fn a_session_that_is_working_never_reports_an_empty_activity_list() {
+        // Caught by the first real run against a local model: seven durable
+        // events produced zero activity items, so a session that was actively
+        // waiting on the model looked idle for a full minute.
+        let events = vec![
+            SessionEvent::WorktreeCreated {
+                path: PathBuf::from("/w"),
+                base_head: "abc".into(),
+                source_was_dirty: false,
+            },
+            SessionEvent::CheckpointCreated {
+                label: "session-start".into(),
+                head: "abc".into(),
+                patch_digest: "d".into(),
+            },
+            SessionEvent::ContextIndexed {
+                files: 12,
+                symbols: 40,
+                sensitive_files: 0,
+            },
+            SessionEvent::ModelRequestStarted {
+                role: "coding_worker".into(),
+                provider: "ollama".into(),
+                model: "qwen2.5-coder:7b".into(),
+            },
+        ];
+        let activity = activity_from_events(&events);
+        assert_eq!(activity.len(), 4);
+        assert!(activity.iter().any(|item| item.label.contains("worktree")));
+        assert!(activity
+            .iter()
+            .any(|item| item.label == "Indexed 12 file(s), 40 symbol(s)"));
+        // The in-flight request is the one thing the user is waiting on.
+        let thinking = activity.last().unwrap();
+        assert_eq!(thinking.status, ActivityStatus::Running);
+        assert!(thinking.label.contains("qwen2.5-coder:7b"));
+    }
+
+    #[test]
+    fn a_session_that_ended_has_nothing_still_running() {
+        // Observed on a real run: the provider timed out, the session failed,
+        // and the activity list still showed "Thinking…" as running — a spinner
+        // that never stops.
+        let events = vec![
+            SessionEvent::ModelRequestStarted {
+                role: "coding_worker".into(),
+                provider: "ollama".into(),
+                model: "m".into(),
+            },
+            SessionEvent::SessionFailed {
+                reason: "provider request timed out".into(),
+            },
+        ];
+        let activity = activity_from_events(&events);
+        assert!(
+            !activity
+                .iter()
+                .any(|item| item.status == ActivityStatus::Running),
+            "an ended session must not report work in flight: {activity:?}"
+        );
+        assert!(activity
+            .iter()
+            .any(|item| item.label.contains("Interrupted")));
+    }
+
+    #[test]
+    fn a_finished_model_request_closes_its_own_line_rather_than_adding_one() {
+        let started = SessionEvent::ModelRequestStarted {
+            role: "coding_worker".into(),
+            provider: "ollama".into(),
+            model: "m".into(),
+        };
+        let finished = SessionEvent::ModelRequestFinished {
+            role: "coding_worker".into(),
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+        };
+        let activity = activity_from_events(&[started, finished]);
+        assert_eq!(activity.len(), 1, "one step that finished, not two events");
+        assert_eq!(activity[0].status, ActivityStatus::Done);
+        assert!(activity[0].label.starts_with("Thought"));
+    }
+
+    #[test]
+    fn a_session_with_no_events_has_no_activity_and_no_validation() {
+        assert!(activity_from_events(&[]).is_empty());
+        let summary = validation_from_events(&[]);
+        assert!(summary.stages.is_empty());
+        assert!(
+            !summary.complete,
+            "no validation must never read as complete validation"
+        );
+    }
+
     #[test]
     fn provider_probe_prefers_the_configured_default_over_alphabetical_capabilities() {
         let temporary = tempfile::tempdir().unwrap();
@@ -6696,6 +7526,7 @@ default = "ollama/small"
                 &SessionEvent::SessionCreated {
                     objective: "govern exact external action".into(),
                     repository: repository.path().to_path_buf(),
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();
@@ -6812,6 +7643,7 @@ default = "ollama/small"
                 &SessionEvent::SessionCreated {
                     objective: "MCP fixture".into(),
                     repository: repository.path().to_path_buf(),
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();
@@ -8115,6 +8947,7 @@ allow_same_model = true
                 &SessionEvent::SessionCreated {
                     objective: "install safe skill".into(),
                     repository,
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();
@@ -8262,6 +9095,7 @@ allow_same_model = true
                 &SessionEvent::SessionCreated {
                     objective: "find a terraform skill".into(),
                     repository,
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();
@@ -8367,6 +9201,7 @@ allow_same_model = true
                 &SessionEvent::SessionCreated {
                     objective: "inspect terraform schema".into(),
                     repository,
+                    authority_mode: AuthorityMode::Governed,
                 },
             )
             .unwrap();

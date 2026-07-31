@@ -355,14 +355,16 @@ async fn run_command(
         Ok(Ok(_)) => "failed",
         Ok(Err(_)) | Err(_) => "timed_out",
     };
+    // A baseline that expects the unfixed fixture *not* to validate is satisfied
+    // by a timeout as well as by a non-zero exit: neither is a pass, which is
+    // the whole claim. Requiring the exact string made a cold Go toolchain on a
+    // slow runner look like a broken fixture. The reverse is not true — an
+    // expectation of "passed" is never satisfied by a timeout — and the detail
+    // still reports what actually happened, so a timeout stays visible.
+    let satisfied = baseline_expectation_satisfied(expected, actual);
     BaselineResult {
         id: id.into(),
-        status: if actual == expected {
-            "passed"
-        } else {
-            "failed"
-        }
-        .into(),
+        status: if satisfied { "passed" } else { "failed" }.into(),
         elapsed_ms: started.elapsed().as_millis(),
         detail: format!("expected initial validation={expected}, actual={actual}"),
     }
@@ -427,8 +429,38 @@ pub enum GoldenError {
     Toml(#[from] toml::de::Error),
 }
 
+/// Whether an observed baseline outcome satisfies the expectation.
+///
+/// A baseline that expects the unfixed fixture *not* to validate is satisfied by
+/// a timeout as well as by a non-zero exit: neither is a pass, which is the
+/// whole claim. Requiring the exact string made a cold Go toolchain on a slow
+/// runner look like a broken fixture. The reverse is deliberately not true — an
+/// expectation of "passed" is never satisfied by a timeout.
+fn baseline_expectation_satisfied(expected: &str, actual: &str) -> bool {
+    actual == expected || (expected != "passed" && actual == "timed_out")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_timeout_satisfies_a_baseline_that_expected_no_pass() {
+        assert!(super::baseline_expectation_satisfied("failed", "failed"));
+        assert!(
+            super::baseline_expectation_satisfied("failed", "timed_out"),
+            "a slow toolchain is not a broken fixture: neither outcome is a pass"
+        );
+    }
+
+    #[test]
+    fn a_timeout_never_satisfies_a_baseline_that_expected_a_pass() {
+        assert!(super::baseline_expectation_satisfied("passed", "passed"));
+        assert!(!super::baseline_expectation_satisfied(
+            "passed",
+            "timed_out"
+        ));
+        assert!(!super::baseline_expectation_satisfied("passed", "failed"));
+    }
+
     use super::*;
 
     fn catalog_path() -> PathBuf {

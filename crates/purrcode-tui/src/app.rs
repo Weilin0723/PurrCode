@@ -30,6 +30,11 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use zeroize::Zeroize;
 
+/// Default PTY window. The daemon resizes the real PTY when the surface is
+/// drawn, but a terminal must have a usable size before its first frame.
+const TERMINAL_ROWS: usize = 30;
+const TERMINAL_COLS: usize = 100;
+
 #[derive(Clone, Debug)]
 pub struct TuiConfig {
     pub daemon_url: String,
@@ -53,6 +58,8 @@ pub enum AppMode {
     /// An existing durable session was found at startup. Require an explicit
     /// resume-or-new choice before accepting conversation input.
     SessionChoice,
+    /// The workbench terminal surface: real PTY output, tabs, human takeover.
+    Terminal,
 }
 
 #[derive(Clone, Debug)]
@@ -121,6 +128,10 @@ pub struct App {
     /// this session or starts a new one.
     pub session_choice: Option<SessionChoice>,
     pub session_read_only: bool,
+    /// True while the next submission is feedback on a plan under review rather
+    /// than a new instruction, so the surface can say which of the two it is
+    /// about to do (PRD §11, §15.1).
+    pub revising_plan: bool,
     pub has_provider: bool,
     /// Trace inspector modal state. The modal is rendered as an overlay by
     /// `render::render_trace_inspector_modal` once these fields are populated.
@@ -165,6 +176,11 @@ pub struct App {
     pub palette_selected: usize,
     pub model_choices: Vec<String>,
     pub model_selected: usize,
+    /// Terminal tabs the workbench is showing. Empty until the user opens one.
+    pub terminal: crate::terminal::TerminalPane,
+    /// Keystrokes captured by the terminal surface, forwarded on the next tick
+    /// so the synchronous key handler stays free of I/O.
+    pub pending_terminal_input: Option<Vec<u8>>,
 }
 
 pub(crate) struct ReconciliationSnapshot {
@@ -204,6 +220,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         session_id: None,
         session_choice: None,
         session_read_only: false,
+        revising_plan: false,
         has_provider: false,
         trace_inspector_visible: false,
         trace_event_index: 0,
@@ -235,6 +252,8 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         palette_selected: 0,
         model_choices: Vec::new(),
         model_selected: 0,
+        terminal: crate::terminal::TerminalPane::default(),
+        pending_terminal_input: None,
     };
     app.session_id = recovery.restore(&mut app.composer);
 
@@ -290,6 +309,15 @@ async fn event_loop(
         if app.review_needs_refresh {
             app.review_needs_refresh = false;
             app.load_review().await;
+        }
+        // Terminal I/O rides the same tick. Keys captured by the synchronous
+        // handler are forwarded here, then new output is applied, so a
+        // keystroke and its echo land in the same frame.
+        if let Some(bytes) = app.pending_terminal_input.take() {
+            app.send_terminal_input(bytes).await;
+        }
+        if app.mode == AppMode::Terminal {
+            app.refresh_terminal().await;
         }
         app.drain_live_stream(Instant::now());
         if let Some(stall) = app.stream.actionable_stall(Instant::now()) {
@@ -362,7 +390,11 @@ async fn event_loop(
                     .start_streaming(Some(selected_model.clone()));
 
                 app.start_session_stream(stream_after, Some(selected_model));
-                app.message_bar = "Preparing context...".into();
+                app.message_bar = if app.revising_plan {
+                    "Revising the plan; it will pause for review again...".into()
+                } else {
+                    "Preparing context...".to_owned()
+                };
             }
         }
 
@@ -628,7 +660,6 @@ impl App {
                 if !self.has_provider {
                     self.message_bar =
                         "No provider configured. Type /connect to set one up.".into();
-                    self.workspace.model = "none".into();
                 } else if let Ok(models) =
                     self.request(reqwest::Method::GET, "/v1/models", None).await
                 {
@@ -642,7 +673,6 @@ impl App {
                         .and_then(|model| model["id"].as_str())
                     {
                         self.status_bar.set_model(selected);
-                        self.workspace.model = selected.to_owned();
                         self.status_bar.local = models
                             .as_array()
                             .and_then(|models| models.iter().find(|model| model["id"] == selected))
@@ -669,7 +699,6 @@ impl App {
             Err(_) => {
                 self.workspace.daemon_health = "unreachable".into();
                 self.has_provider = false;
-                self.workspace.model = "unavailable".into();
                 self.message_bar = "Daemon unreachable. Type /connect to set up.".into();
             }
         }
@@ -928,19 +957,31 @@ impl App {
     pub async fn ensure_session(&mut self) -> Option<String> {
         let objective = self.conversation.latest_user_message();
         if let Some(session_id) = self.session_id.clone() {
-            let reusable = self
+            let session = self
                 .request(
                     reqwest::Method::GET,
                     &format!("/v1/sessions/{session_id}"),
                     None,
                 )
                 .await
-                .ok()
-                .and_then(|session| session["status_code"].as_str().map(str::to_owned))
-                .is_some_and(|status| status == "active");
+                .ok();
+            // A session paused on a plan is still the session this message is
+            // about: what the user typed is feedback on that plan (PRD §11).
+            // Starting a new session instead threw the plan away and made them
+            // describe the whole task again to change one step.
+            let revising = session
+                .as_ref()
+                .is_some_and(|session| session["awaiting_plan_review"].as_bool() == Some(true));
+            let reusable = revising
+                || session
+                    .as_ref()
+                    .and_then(|session| session["status_code"].as_str())
+                    .is_some_and(|status| status == "active");
             if reusable {
+                self.revising_plan = revising;
                 return Some(session_id);
             }
+            self.revising_plan = false;
             self.session_id = None;
             self.conversation = Conversation::new();
             self.conversation.add_user_message(&objective);
@@ -949,7 +990,11 @@ impl App {
         let body = serde_json::json!({
             "objective": objective,
             "repository": self.config.repository,
-            "plan_only": explicit_plan_only_intent(&objective),
+            // A read-only task mode is a hard constraint, not a hint, so it wins
+            // over whatever the objective's wording suggests.
+            "plan_only": self.status_bar.task_mode.plan_only()
+                || explicit_plan_only_intent(&objective),
+            "authority_mode": self.status_bar.permission.authority_mode(),
         });
         match self
             .request(reqwest::Method::POST, "/v1/sessions", Some(body))
@@ -1198,6 +1243,268 @@ impl App {
         }
     }
 
+    // ── Terminal (PRD §19) ──────────────────────────────────────
+    //
+    // The daemon owns every PTY. The workbench asks for terminals, streams the
+    // bytes produced since its last read, and sends keystrokes back; it never
+    // spawns a process itself.
+
+    /// Open the terminal surface, starting a terminal when none exists.
+    pub async fn open_terminal(&mut self) {
+        if self.terminal.tabs.is_empty() {
+            self.load_terminals().await;
+        }
+        if self.terminal.tabs.is_empty() {
+            self.start_terminal().await;
+        }
+        if self.terminal.tabs.is_empty() {
+            return;
+        }
+        self.mode = AppMode::Terminal;
+        self.refresh_terminal().await;
+    }
+
+    /// Adopt the terminals the daemon already has, so a terminal the agent
+    /// opened for a build is the same one the user sees.
+    async fn load_terminals(&mut self) {
+        let Ok(value) = self
+            .request(reqwest::Method::GET, "/v1/terminals", None)
+            .await
+        else {
+            self.message_bar = "The daemon did not report its terminals.".into();
+            return;
+        };
+        for entry in value["terminals"].as_array().into_iter().flatten() {
+            let Some(id) = entry["terminal_id"].as_str() else {
+                continue;
+            };
+            if self.terminal.find(id).is_some() {
+                continue;
+            }
+            let mut tab = crate::terminal::TerminalTab::new(
+                id.to_owned(),
+                crate::terminal::TabKind::Agent,
+                TERMINAL_ROWS,
+                TERMINAL_COLS,
+            );
+            tab.alive = entry["alive"].as_bool().unwrap_or(true);
+            tab.generation = entry["generation"].as_u64().unwrap_or_default();
+            self.terminal.tabs.push(tab);
+        }
+    }
+
+    async fn start_terminal(&mut self) {
+        let body = serde_json::json!({
+            "workspace_id": uuid::Uuid::new_v4().to_string(),
+            "action": {
+                "working_directory": self.config.repository,
+                "environment": {},
+                "arguments": [],
+                "initial_size": { "rows": TERMINAL_ROWS, "cols": TERMINAL_COLS },
+                "owner": { "kind": "human" },
+            }
+        });
+        match self
+            .request(reqwest::Method::POST, "/v1/terminals", Some(body))
+            .await
+        {
+            Ok(value) => {
+                let Some(id) = value["terminal"]["terminal_id"].as_str() else {
+                    self.message_bar =
+                        "The daemon accepted the terminal but returned no id.".into();
+                    return;
+                };
+                self.terminal.tabs.push(crate::terminal::TerminalTab::new(
+                    id.to_owned(),
+                    crate::terminal::TabKind::Shell,
+                    TERMINAL_ROWS,
+                    TERMINAL_COLS,
+                ));
+                self.terminal.selected = self.terminal.tabs.len() - 1;
+            }
+            Err(error) => self.message_bar = format!("A terminal could not be started: {error}"),
+        }
+    }
+
+    /// Apply the bytes produced since the last read. Incremental, so a busy
+    /// build does not re-transfer its whole transcript on every tick.
+    pub async fn refresh_terminal(&mut self) {
+        let Some(tab) = self.terminal.active() else {
+            return;
+        };
+        let (id, since) = (tab.terminal_id.clone(), tab.offset);
+        let Ok(value) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/v1/terminals/{id}/output?since={since}"),
+                None,
+            )
+            .await
+        else {
+            return;
+        };
+        let alive = value["alive"].as_bool().unwrap_or(true);
+        let generation = value["generation"].as_u64().unwrap_or_default();
+        let truncated = value["chunk"]["truncated"].as_bool().unwrap_or(false);
+        let next = value["chunk"]["next_offset"].as_u64().unwrap_or(since);
+        let bytes: Vec<u8> = value["chunk"]["bytes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|byte| byte.as_u64().map(|byte| byte as u8))
+            .collect();
+        let Some(tab) = self.terminal.active_mut() else {
+            return;
+        };
+        tab.alive = alive;
+        tab.generation = generation;
+        tab.offset = next;
+        if truncated && !tab.lost_output {
+            tab.lost_output = true;
+            tab.screen
+                .write(b"\r\n[output truncated - earlier bytes were discarded]\r\n");
+        }
+        if !bytes.is_empty() {
+            tab.screen.write(&bytes);
+        }
+    }
+
+    /// Send a keystroke to the active terminal's process.
+    pub async fn send_terminal_input(&mut self, bytes: Vec<u8>) {
+        let Some(tab) = self.terminal.active() else {
+            return;
+        };
+        let (id, generation) = (tab.terminal_id.clone(), tab.generation);
+        let body = serde_json::json!({
+            "generation": generation,
+            "input": String::from_utf8_lossy(&bytes),
+        });
+        if let Err(error) = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/v1/terminals/{id}/input"),
+                Some(body),
+            )
+            .await
+        {
+            // A rejected keystroke is usually a stale ownership generation
+            // after a takeover, which the user has to know about: silently
+            // dropping input would look like a dead terminal.
+            self.message_bar = format!("The terminal rejected that input: {error}");
+        }
+    }
+
+    /// Take control of the active terminal, or hand it back to the agent
+    /// (PRD §19.4). The process keeps running either way.
+    pub async fn set_terminal_owner(&mut self, human: bool) {
+        let Some(tab) = self.terminal.active() else {
+            return;
+        };
+        let id = tab.terminal_id.clone();
+        let owner = if human {
+            serde_json::json!({ "kind": "human" })
+        } else {
+            serde_json::json!({ "kind": "agent", "data": { "role": "Coding Agent" } })
+        };
+        match self
+            .request(
+                reqwest::Method::POST,
+                &format!("/v1/terminals/{id}/owner"),
+                Some(serde_json::json!({ "owner": owner })),
+            )
+            .await
+        {
+            Ok(value) => {
+                let generation = value["terminal"]["generation"].as_u64().unwrap_or_default();
+                if let Some(tab) = self.terminal.active_mut() {
+                    tab.generation = generation;
+                }
+                self.message_bar = if human {
+                    "You control this terminal. The process kept running.".into()
+                } else {
+                    "The agent controls this terminal again.".into()
+                };
+            }
+            Err(error) => self.message_bar = format!("Terminal ownership did not change: {error}"),
+        }
+    }
+
+    /// Change the task mode (PRD §11). Ask and Plan never change files, which
+    /// the session payload carries so the daemon enforces it rather than
+    /// trusting the client.
+    pub fn set_task_mode(&mut self, mode: crate::status_bar::TaskMode) {
+        use crate::status_bar::TaskMode;
+        self.status_bar.task_mode = mode;
+        self.conversation.mode = match mode {
+            TaskMode::Ask => purrcode_runtime_core::ConversationMode::Ask,
+            TaskMode::Plan => purrcode_runtime_core::ConversationMode::Plan,
+            TaskMode::Build => purrcode_runtime_core::ConversationMode::Build,
+            TaskMode::Review => purrcode_runtime_core::ConversationMode::Review,
+        };
+        self.message_bar = match mode {
+            TaskMode::Ask => {
+                "Ask mode. PurrCode answers without proposing repository changes.".into()
+            }
+            TaskMode::Plan => "Plan mode. PurrCode plans without changing files.".into(),
+            TaskMode::Build => "Build mode. PurrCode edits, runs, tests and repairs.".into(),
+            TaskMode::Review => "Review mode. PurrCode reviews the current diff.".into(),
+        };
+    }
+
+    /// Change the permission mode (PRD §12).
+    ///
+    /// This is an authenticated human's decision, so it is stated plainly and
+    /// takes effect for the next request. Full Access grants only what the
+    /// process, workspace and configured identities already hold — saying so
+    /// here matters, because the name invites a larger reading.
+    pub fn set_permission_mode(&mut self, mode: crate::status_bar::PermissionMode) {
+        use crate::status_bar::PermissionMode;
+        self.status_bar.permission = mode;
+        self.message_bar = match mode {
+            PermissionMode::Ask => {
+                "Ask. PurrCode asks before writes, commands, installs and network access.".into()
+            }
+            PermissionMode::Auto => {
+                "Auto. Repository work runs automatically; destructive or unexpected effects still ask."
+                    .into()
+            }
+            PermissionMode::FullAccess => {
+                "Full Access. PurrCode may use every permission this process already holds; it grants no new ones."
+                    .into()
+            }
+        };
+    }
+
+    /// Open Studio on the session this workbench already has (PRD §24.2).
+    ///
+    /// Studio is a client of the same daemon, so this launches the graphical
+    /// shell pointed at the same repository and lets it attach to the running
+    /// session. It deliberately does not start a second session, and the
+    /// workbench keeps streaming while Studio comes up.
+    pub async fn open_studio(&mut self) {
+        let Ok(executable) = std::env::current_exe() else {
+            self.message_bar = "Studio could not be located next to this binary.".into();
+            return;
+        };
+        let mut command = tokio::process::Command::new(executable);
+        command
+            .arg("studio")
+            .arg("--remote")
+            .arg(&self.config.daemon_url)
+            .arg("--repository")
+            .arg(&self.config.repository)
+            // The workbench owns the terminal; Studio must not write to it.
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        match command.spawn() {
+            Ok(_) => {
+                self.message_bar =
+                    "Studio is opening on this session. The workbench stays live.".into();
+            }
+            Err(error) => self.message_bar = format!("Studio did not start: {error}"),
+        }
+    }
+
     /// Snapshot of everything an availability rule may inspect.
     ///
     /// The palette, the help screen and the contextual hint line all derive from
@@ -1242,7 +1549,8 @@ impl App {
             crate::provider_setup::ProviderType::Ollama => "ollama",
             crate::provider_setup::ProviderType::LmStudio => "lm-studio",
             crate::provider_setup::ProviderType::Openai => "openai",
-            crate::provider_setup::ProviderType::OpenaiCompatible => "openai-compatible",
+            crate::provider_setup::ProviderType::OpenaiCompatible
+            | crate::provider_setup::ProviderType::NvidiaNim => "nvidia-nim",
             crate::provider_setup::ProviderType::EnterpriseGateway => {
                 setup.error =
                     Some("Enterprise gateway setup requires configuration-file policy".into());

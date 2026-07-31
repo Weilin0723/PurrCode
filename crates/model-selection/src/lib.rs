@@ -10,6 +10,12 @@
 //! identified here by opaque provider/model strings so the live runtime plugs in
 //! the real `ModelId`; the ranking logic and role assignment are pure.
 
+pub mod candidate;
+
+pub use candidate::{
+    rank, select_coder, select_judge, ModelCandidate, ModelPurpose, SelectionBudget, SizePreference,
+};
+
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -300,18 +306,56 @@ pub const MANDATORY_ROLES: &[ModelRole] = &[
     ModelRole::Judge,
 ];
 
+/// Rank one deployment against `policy.preference_order`. Lower sorts better.
+///
+/// Each preference contributes one comparison component, in the order the
+/// policy lists them, so reordering the policy actually reorders the result.
+/// The `DeploymentId` is the final component: it breaks remaining ties into a
+/// total order, which is what keeps the cached selection stable across
+/// re-qualification, but it is now the *last* word rather than the only one.
+fn preference_key(
+    deployment: &ModelDeployment,
+    policy: &ModelSelectionPolicy,
+) -> (Vec<i64>, DeploymentId) {
+    let criteria = deployment.qualification.as_ref().map(|q| &q.criteria);
+    let components = policy
+        .preference_order
+        .iter()
+        .map(|preference| match preference {
+            SelectionPreference::Qualified => i64::from(!matches!(
+                deployment.qualification.as_ref().map(|q| q.status),
+                Some(QualificationStatus::Qualified)
+            )),
+            SelectionPreference::ToolCompatible => {
+                i64::from(!criteria.is_some_and(|c| c.tool_call_compatible))
+            }
+            // Negated: higher accuracy must sort earlier.
+            SelectionPreference::CodingQuality => {
+                -i64::from(criteria.and_then(|c| c.coding_accuracy).unwrap_or(0))
+            }
+            SelectionPreference::Latency => {
+                deployment.qualification.as_ref().map_or(i64::MAX, |q| {
+                    q.measurement_latency.to_duration().as_millis() as i64
+                })
+            }
+            // Absent cost metadata is not a disqualifier (PRD §7.3), only a
+            // tie-break against a deployment whose cost is known.
+            SelectionPreference::Cost => i64::from(!criteria.is_some_and(|c| c.cost_observed)),
+        })
+        .collect();
+    (components, deployment.deployment_id)
+}
+
 /// Select role assignments automatically from a set of probed deployments,
 /// per the PRD §7.4 preference order. Pure: no I/O. Returns an error only when
 /// the policy is unsatisfiable (PRD §7.5 "Ask only when necessary").
 ///
-/// Strategy: filter to `Qualified` deployments, then for each mandatory role
-/// pick the first declared-to-serve-it deployment (deterministic by
-/// `DeploymentId` ordering so the cache is stable).
+/// Strategy: filter to `Qualified` deployments that declare the role, then take
+/// the best one under [`preference_key`].
 pub fn select_models(
     deployments: &[ModelDeployment],
     policy: &ModelSelectionPolicy,
 ) -> Result<ModelSelectionResult, ModelSelectionError> {
-    let _ = policy;
     if deployments.is_empty() {
         return Err(ModelSelectionError::NoDeploymentAccessible);
     }
@@ -337,7 +381,7 @@ pub fn select_models(
                         Some(QualificationStatus::Qualified)
                     )
             })
-            .min_by_key(|d| d.deployment_id);
+            .min_by_key(|d| preference_key(d, policy));
 
         match chosen {
             Some(d) => {
@@ -364,7 +408,7 @@ pub fn select_models(
                         Some(QualificationStatus::Qualified)
                     )
             })
-            .min_by_key(|d| d.deployment_id);
+            .min_by_key(|d| preference_key(d, policy));
         if let Some(d) = chosen {
             assignments.insert(role, d.deployment_id);
             rationale_parts.push(format!("{} assigned to {}/{}", role, d.provider, d.model));
@@ -528,6 +572,56 @@ mod tests {
         assert!(!selection_is_stale(selected, selected, &policy));
         let later = selected + chrono::Duration::hours(169);
         assert!(selection_is_stale(selected, later, &policy));
+    }
+
+    #[test]
+    fn preference_order_decides_between_two_qualified_deployments() {
+        // Both qualify and both call tools. One is more accurate, the other is
+        // faster, so the policy's ordering is the only thing that can choose.
+        let mut accurate = deploy(
+            "p",
+            "accurate",
+            &[
+                ModelRole::CodingWorker,
+                ModelRole::Planner,
+                ModelRole::Judge,
+            ],
+            QualificationStatus::Qualified,
+        );
+        let mut fast = accurate.clone();
+        fast.deployment_id = DeploymentId::new();
+        fast.model = "fast".into();
+        if let Some(report) = accurate.qualification.as_mut() {
+            report.criteria.coding_accuracy = Some(95);
+            report.measurement_latency = DurationSerde::from_duration(Duration::from_secs(4));
+        }
+        if let Some(report) = fast.qualification.as_mut() {
+            report.criteria.coding_accuracy = Some(60);
+            report.measurement_latency = DurationSerde::from_duration(Duration::from_millis(50));
+        }
+        let deployments = vec![accurate.clone(), fast.clone()];
+
+        let quality_first = ModelSelectionPolicy::default();
+        let chosen = select_models(&deployments, &quality_first)
+            .unwrap()
+            .assignments[&ModelRole::CodingWorker];
+        assert_eq!(chosen, accurate.deployment_id);
+
+        let latency_first = ModelSelectionPolicy {
+            preference_order: vec![
+                SelectionPreference::Qualified,
+                SelectionPreference::Latency,
+                SelectionPreference::CodingQuality,
+            ],
+            ..ModelSelectionPolicy::default()
+        };
+        let chosen = select_models(&deployments, &latency_first)
+            .unwrap()
+            .assignments[&ModelRole::CodingWorker];
+        assert_eq!(
+            chosen, fast.deployment_id,
+            "reordering the policy must reorder the selection"
+        );
     }
 
     #[test]

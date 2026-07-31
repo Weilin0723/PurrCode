@@ -6,7 +6,6 @@ members = [
   "crates/ninelives-recovery",
   "crates/claw-sandbox",
   "crates/terminal-runtime",
-  "crates/test-orchestrator",
   "crates/provider-gateway",
   "crates/provider-import",
   "crates/repository-engine",
@@ -36,7 +35,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.8.1"
+version = "0.9.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Weilin0723/PurrCode"

@@ -14,9 +14,13 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. Every 
 bound to a durable authorization, checked again immediately before execution, and followed by
 recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
-PurrCode v0.8.0 adds a secure graphical Studio, durable Workbench, real PTY terminal workspace,
-evidence-based environment doctor, and automatic progressive build/test repair. The existing
-PawGate, Claw, isolated-worktree, and durable-evidence boundaries remain authoritative.
+PurrCode v0.9.0 makes the terminal Workbench the product: bare `purrcode` opens it on every
+platform, Studio becomes a one-action graphical view of the same session, and both clients emulate
+the terminal instead of stripping it. Task modes (Ask / Plan / Build / Review) and permission modes
+(Ask / Auto / Full Access) are selectable without editing TOML, NVIDIA NIM joins the first-class
+providers, and the daemon serves one set of presentation contracts so no client invents its own
+reading of the run. The existing PawGate, Claw, isolated-worktree, and durable-evidence boundaries
+remain authoritative.
 
 ## Why PurrCode
 
@@ -44,7 +48,7 @@ npm install --global @minaovo/purrcode
 Node.js 18 or newer can also install the signed-release launcher directly from GitHub:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.8.1/purrcode-0.8.1.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.9.0/purrcode-0.9.0.tgz
 ```
 
 The package selects the correct macOS, Linux, or Windows binary, verifies its pinned SHA-256 digest,
@@ -53,7 +57,7 @@ and exposes both `purrcode` and `purrcoded`.
 ### macOS and Linux installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.8.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.9.0/scripts/install.sh | sh
 ```
 
 This installer verifies the release archive against `SHA256SUMS` and installs into `~/.local/bin`.
@@ -70,6 +74,9 @@ cargo install --locked --path crates/purrcode-daemon
 
 ## Start in three steps
 
+PurrCode defaults to the terminal Workbench. Open a repository, choose a model, describe the
+outcome, and let it inspect, code, test, repair, and finish.
+
 ```bash
 # 1. Discover local providers and create secure defaults
 purrcode init
@@ -77,17 +84,91 @@ purrcode init
 # 2. Enter a repository
 cd your-project
 
-# 3. Open the graphical Studio (or use `purrcode tui`)
-purrcode ui
+# 3. Open the terminal Workbench (the default experience)
+purrcode
 ```
 
-Use `/connect` inside the interface to discover Ollama or LM Studio, or configure a remote provider
-without editing TOML. Credentials use the operating-system secret store and are not passed to model
-context or tool processes.
+The same daemon, session, conversation, model, and permission state is shared by every client:
+
+- `purrcode` — the terminal Workbench (primary, default on every platform).
+- `purrcode studio` — the optional graphical Studio, a one-click view of the same session.
+- `purrcode ui` — backward-compatible alias of `purrcode studio`.
+- `purrcode run` / `purrcode ci` / `purrcode plan` — headless autonomous execution.
+
+Open Studio without leaving the Workbench with `Ctrl+Shift+S` or `/studio`. Studio attaches to the
+active session; it never starts a second one.
+
+Use `/connect` inside either interface to discover Ollama or LM Studio, or to configure a remote
+provider without editing TOML. Credentials use the operating-system secret store and are never
+passed to model context or tool processes.
 
 Paste Python, JavaScript, cURL, JSON, YAML, TOML, or dotenv provider examples with
 `/connect import`. PurrCode parses them without execution, keeps extracted secrets transient, and
 requires a keychain or environment reference before saving.
+
+## What changed in v0.9
+
+PurrCode v0.9 corrects the product-direction drift from v0.8: the terminal Workbench is the default
+interactive experience on every platform, and Studio is an optional graphical view of the same
+session rather than the default launch target.
+
+- **TUI first by default:** bare `purrcode` opens the terminal Workbench — never an unexpected
+  browser. `display_available()` no longer rewrites the default interface.
+- **Studio in one action:** `purrcode studio` (and the backward-compatible `purrcode ui`) opens the
+  graphical view; inside the Workbench, `Ctrl+Shift+S` or `/studio` opens it without leaving the
+  session.
+- **One session across clients:** TUI, Studio, and the headless CLI share one daemon, one session,
+  one model, and one permission mode. Studio attaches to the active session instead of starting a
+  second one.
+- **First-run onboarding inside the TUI:** when no usable provider exists, the Workbench opens the
+  provider/model onboarding overlay instead of exiting with `run purrcode init`.
+- **No unfinished enterprise UI:** placeholder Studio navigation (Agent Factory, Deployments,
+  unfinished Workspaces, unfinished Agent Runs, global Evidence) is gone, and the Studio shell is
+  session-first: sessions, one conversation, a composer, and a drawer that opens when it has
+  something to say. Internal workspace paths and full commit SHAs are replaced by repository name
+  and branch.
+- **A real terminal in both clients:** the Workbench gained a terminal surface (`Ctrl+T`), with
+  tabs named by purpose, human takeover and return, and keystrokes that reach the process — only
+  `Esc`, `Tab` and `Ctrl+W` are claimed by the interface. Escape sequences are interpreted, so a
+  cleared screen, a progress bar and a coloured test summary render as themselves instead of as
+  literal text. Studio streams only the bytes produced since its last frame rather than re-sending
+  the whole transcript 12 times a second.
+- **Modes you can actually select:** `Ctrl+K` / `/mode` switches Ask, Plan, Build and Review;
+  `/permission` switches Ask, Auto and Full Access. Both are shown in the header and travel with
+  the session, so a read-only mode is a constraint the daemon enforces rather than a hint. Full
+  Access grants nothing the process does not already hold, and says so.
+- **NVIDIA NIM as a first-class provider:** `NVIDIA_API_KEY` is detected during onboarding, models
+  are enumerated from the NIM endpoint, and the picker and doctor name it.
+- **Model selection from evidence:** names are read as tokens rather than substrings, so
+  `granite-embedding` is excluded and `granite-code` is preferred; proven tool calling outranks any
+  name signal; size is judged against the host's memory budget instead of "bigger is better"; and
+  the ordering is total, so the same catalogue always picks the same model.
+- **One presentation vocabulary:** `GET /v1/sessions/{id}/activity`, `/validation` and `/summary`
+  mean clients no longer each invent a reading of the durable event log. `Unavailable`, `Skipped`
+  and `Cancelled` stay distinct from `Passed`, so validation that did not run can never be shown as
+  success.
+- **Plan review is a conversation:** a Plan-mode run pauses on its plan and stays open to a reply.
+  Say what to change and the plan is rewritten as a numbered revision and paused again, as many
+  rounds as you need — nothing is written to disk in any of them. `Build this plan` (or `/resume`)
+  turns the plan you settled on into the work, in the same session. Review that could only answer
+  yes was not review: changing one step used to mean starting over and describing the task again.
+- **Repository context even when the task names no file:** the task index selects by filename, so an
+  objective that shares no word with any file — most objectives — indexed nothing and the planner
+  planned against nothing. A selection that matches nothing now widens to the repository's source
+  files under the same budget. A task that does name its file stays scoped to it.
+
+### Keyboard
+
+| Key | Action |
+| --- | --- |
+| `Ctrl+P` | Command palette |
+| `Ctrl+M` | Model picker |
+| `Ctrl+K` | Task mode |
+| `Ctrl+D` | Diff |
+| `Ctrl+T` | Terminal |
+| `Ctrl+H` | History |
+| `Ctrl+Shift+S` | Open Studio |
+| `Esc` | Close overlay or cancel |
 
 ## What changed in v0.8
 
@@ -192,16 +273,19 @@ Model proposal
 
 ## Interfaces
 
-- Conversation-first Ratatui terminal and headless CLI
+- Conversation-first Ratatui terminal Workbench (the default) and headless CLI
+- Session-first graphical Studio over the same daemon and session
 - Authenticated loopback daemon with server-sent events
 - VS Code extension
 - TypeScript and Python clients
 - MCP and persistent skill host
-- Ollama, LM Studio, OpenAI-compatible, and enterprise providers
+- Ollama, LM Studio, OpenAI, OpenAI-compatible, NVIDIA NIM, Azure OpenAI, and enterprise gateways
 
 ## Common commands
 
 ```bash
+purrcode                 # the terminal Workbench
+purrcode studio          # the same session, graphically
 purrcode plan "Add pagination to the orders API"
 purrcode run "Implement pagination and update tests"
 purrcode sessions

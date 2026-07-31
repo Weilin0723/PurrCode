@@ -1,88 +1,216 @@
+import { Terminal, measure } from "/term.js";
+
 const state = {
-  config: null,
-  repository: null,
-  sessions: [],
-  selectedRun: null,
-  selectedSession: null,
-  messages: [],
-  events: [],
-  screen: "home",
-  liveText: "",
-  liveSource: null,
-  streamRun: null,
-  streamRefresh: null,
-  terminals: [],
-  selectedTerminal: null,
-  terminalSocket: null,
-  terminalSocketId: null
+  config: null, repository: null, sessions: [], selectedRun: null,
+  messages: [], events: [], liveText: "", liveSource: null,
+  streamRun: null, streamRefresh: null,
+  terminals: [], selectedTerminal: null, terminalSocket: null, terminalSocketId: null,
+  drawerOpen: false, drawerTab: "changes", emulator: null, replayedTerminal: null,
+  models: [], providers: [], activeModel: null, activity: [], plan: [],
+  planRevision: 0, awaitingPlanReview: false,
+  taskMode: "build", permission: "ask"
 };
 
+const $ = (sel) => document.querySelector(sel);
+
 async function request(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    credentials: "same-origin"
-  });
+  const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) }, credentials: "same-origin" });
   const text = await response.text();
   let value = null;
-  if (text) {
-    try { value = JSON.parse(text); } catch { value = text; }
-  }
-  if (!response.ok) {
-    const detail = typeof value === "string" ? value : value?.error || `HTTP ${response.status}`;
-    throw new Error(detail);
-  }
+  if (text) { try { value = JSON.parse(text); } catch { value = text; } }
+  if (!response.ok) { throw new Error(typeof value === "string" ? value : value?.error || `HTTP ${response.status}`); }
   return value;
 }
 
 function escapeHtml(value) {
-  const node = document.createElement("span");
-  node.textContent = value ?? "";
-  return node.innerHTML;
+  const node = document.createElement("span"); node.textContent = value ?? ""; return node.innerHTML;
 }
 
 function toast(message) {
-  const element = document.querySelector("#toast");
-  element.textContent = message;
-  element.classList.add("visible");
-  window.clearTimeout(toast.timer);
-  toast.timer = window.setTimeout(() => element.classList.remove("visible"), 3600);
+  const el = $("#toast"); el.textContent = message; el.classList.add("visible");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove("visible"), 3600);
 }
 
-function setScreen(screen) {
-  state.screen = screen;
-  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.screen === screen));
-  const mapped = ["home", "workbench", "diff", "validation", "terminals", "settings"];
-  for (const name of mapped) {
-    document.querySelector(`#${name}-screen`).classList.toggle("hidden", name !== screen);
-  }
-  const placeholder = !mapped.includes(screen);
-  document.querySelector("#placeholder-screen").classList.toggle("hidden", !placeholder);
-  if (placeholder) {
-    const [title, copy] = screenCopy[screen];
-    document.querySelector("#placeholder-title").textContent = title;
-    document.querySelector("#placeholder-copy").textContent = copy;
-  }
+// ── Session list ──
+function renderSessionList() {
+  const c = $("#session-list");
+  if (!state.sessions.length) { c.innerHTML = '<div class="empty">No sessions yet.</div>'; return; }
+  c.innerHTML = state.sessions.slice().reverse().map((s) => `
+    <button class="session-item ${s.id === state.selectedRun ? "active" : ""}" data-session-id="${escapeHtml(s.id)}">
+      <div class="session-title">${escapeHtml(s.objective || "Untitled")}</div>
+      <div class="session-meta">${escapeHtml(s.repository || "—")} · ${escapeHtml(s.status_code || s.status || "—")}</div>
+    </button>`).join("");
+  document.querySelectorAll(".session-item").forEach((btn) => btn.addEventListener("click", () => openSession(btn.dataset.sessionId)));
 }
 
-function renderSessions() {
-  const container = document.querySelector("#runs");
-  document.querySelector("#run-count").textContent = `${state.sessions.length} run${state.sessions.length === 1 ? "" : "s"}`;
-  if (!state.sessions.length) {
-    container.innerHTML = '<div class="empty">No durable runs yet. Submit one objective to begin.</div>';
+// ── Conversation ──
+function renderConversation() {
+  const c = $("#conversation");
+  $("#session-status").textContent = state.selectedRun ? (state.selectedSession?.status_code || state.selectedSession?.status || "—") : "—";
+  if (!state.messages.length && !state.liveText) {
+    c.innerHTML = '<div class="empty">No conversation yet. Submit an objective to start.</div>'; return;
+  }
+  const durable = state.messages.map((m) => `
+    <article class="message">
+      <div class="message-role"><span>${escapeHtml(m.role)}</span><span class="model">${escapeHtml(m.model || "")}</span></div>
+      <p class="message-content">${escapeHtml(m.content)}</p>
+    </article>`).join("");
+  const live = state.liveText ? `
+    <article class="message live"><div class="message-role"><span>assistant · streaming</span></div>
+    <p class="message-content">${escapeHtml(state.liveText)}</p></article>` : "";
+  c.innerHTML = durable + renderPlan() + live; c.scrollTop = c.scrollHeight;
+}
+
+/// The plan, in full.
+///
+/// In Plan mode the plan is the deliverable (PRD §11), and the run pauses
+/// saying it is "ready for review". It was reaching the client only as the
+/// first step, truncated into an activity summary — a session that announces
+/// something to review and then shows nothing to review.
+function renderPlan() {
+  if (!state.plan.length) return "";
+  const steps = state.plan
+    .map((step) => `<li>${escapeHtml(planStepText(step))}</li>`)
+    .join("");
+  // Reviewing a plan has to lead somewhere, and to more than one place. The
+  // button accepts the plan as written; the composer changes it. Offering only
+  // the button made review a yes/no vote on a plan the reviewer could not edit,
+  // and the only way to change one step was to start over and re-describe the
+  // whole task.
+  const action = state.awaitingPlanReview
+    ? `<div class="plan-actions">
+         <button id="build-plan" class="primary">Build this plan</button>
+         <span class="plan-hint">Or say what to change below — the plan is rewritten and paused again. Nothing has been changed yet.</span>
+       </div>`
+    : "";
+  const revision = state.planRevision > 1 ? ` · revision ${state.planRevision}` : "";
+  return `<article class="message plan">
+    <div class="message-role"><span>Plan</span><span class="model">${state.plan.length} steps${revision}</span></div>
+    <ol class="plan-steps">${steps}</ol>
+    ${action}
+  </article>`;
+}
+
+/// Point the composer at what sending will actually do.
+///
+/// The same box starts a session, continues one, and revises a plan. A person
+/// about to press Send is entitled to know which.
+function renderComposerIntent() {
+  const composer = $("#composer");
+  if (!state.selectedRun) {
+    composer.placeholder = "Ask PurrCode to inspect, change, test, or explain…";
+    $("#send").textContent = "Send";
     return;
   }
-  container.innerHTML = state.sessions.slice().reverse().map((run) => `
-    <article class="run">
-      <div><h3>${escapeHtml(run.objective || "Untitled run")}</h3><p>${escapeHtml(run.repository || "Repository pending")} · ${Number(run.event_count || 0)} events</p></div>
-      <div class="run-actions"><span class="status">${escapeHtml(run.status_code || run.status)}</span><button class="open-run" data-run-id="${escapeHtml(run.id)}">Open</button></div>
-    </article>`).join("");
-  document.querySelectorAll(".open-run").forEach((button) => button.addEventListener("click", () => openWorkbench(button.dataset.runId)));
+  const revising = state.awaitingPlanReview;
+  composer.placeholder = revising
+    ? "Say what to change about the plan — add, drop or reorder steps…"
+    : "Reply, or add to what PurrCode is doing…";
+  $("#send").textContent = revising ? "Revise plan" : "Send";
 }
 
-async function refreshDashboard() {
-  const refreshButton = document.querySelector("#refresh");
-  refreshButton.disabled = true;
+async function buildPlan() {
+  if (!state.selectedRun) return;
+  const button = $("#build-plan");
+  if (button) { button.disabled = true; button.textContent = "Starting…"; }
+  try {
+    await request(`/api/v1/sessions/${state.selectedRun}/resume`, { method: "POST" });
+    toast("Building from the plan.");
+    await refreshSession();
+  } catch (error) {
+    toast(`Could not start: ${error.message}`);
+    if (button) { button.disabled = false; button.textContent = "Build this plan"; }
+  }
+}
+
+/// A plan step without its own leading number.
+///
+/// Models usually number their steps, and the list numbers them again, so a
+/// step arrives reading "1. 1. Define core data models". Only a leading
+/// enumerator is removed — a step that genuinely starts with a figure, like
+/// "2024 exports must keep working", is left alone because the separator is
+/// required.
+function planStepText(step) {
+  return String(step).replace(/^\s*\d{1,3}\s*[.)]\s+/, "").trim();
+}
+
+// ── Activity (compact) ──
+//
+// PRD §15.1 and §31.4: the daemon decides what a person reads. Title-casing raw
+// event names here produced "Submodules Prepared" and "Model Request Started" —
+// internal vocabulary leaking into the main surface, and a second, divergent
+// reading of the same run from the one the Workbench shows.
+const ACTIVITY_ICON = {
+  done: '<span class="activity-check">✓</span>',
+  running: '<span class="activity-running">●</span>',
+  blocked: '<span class="activity-attention">!</span>',
+  failed: '<span class="activity-failed">✗</span>',
+  pending: '<span class="activity-pending">○</span>'
+};
+
+async function refreshActivity() {
+  if (!state.selectedRun) {
+    state.activity = []; state.plan = [];
+    state.planRevision = 0; state.awaitingPlanReview = false;
+    renderComposerIntent(); renderActivity(); return;
+  }
+  try {
+    const [activity, summary] = await Promise.all([
+      request(`/api/v1/sessions/${state.selectedRun}/activity`),
+      request(`/api/v1/sessions/${state.selectedRun}/summary`)
+    ]);
+    state.activity = activity || [];
+    state.plan = summary?.plan || [];
+    state.planRevision = summary?.plan_revision || 0;
+    // Whether a plan is open for revision is the daemon's answer, not a guess
+    // from status and step count. Two clients guessing separately is how the
+    // same session ends up described two ways.
+    state.awaitingPlanReview = Boolean(summary?.awaiting_plan_review);
+    renderComposerIntent();
+    renderConversation();
+  } catch {
+    // Leave the last known activity in place: blanking it would claim the
+    // session had done nothing, which is a different statement from "we could
+    // not read it just now".
+  }
+  renderActivity();
+}
+
+function renderActivity() {
+  const c = $("#activity-compact");
+  if (!state.activity.length) { c.innerHTML = ""; return; }
+  c.innerHTML = state.activity.slice(-8).map((item) => {
+    const icon = ACTIVITY_ICON[item.status] || ACTIVITY_ICON.pending;
+    const summary = item.summary ? `<span class="activity-summary">${escapeHtml(item.summary)}</span>` : "";
+    // The status word rides along with the glyph so it never depends on colour
+    // or on a symbol alone.
+    return `<div class="activity-item">${icon} ${escapeHtml(item.label)} <span class="activity-state">${escapeHtml(item.status)}</span>${summary}</div>`;
+  }).join("");
+}
+
+// ── Streaming ──
+function connectRunStream(runId) {
+  if (state.streamRun === runId && state.liveSource) return;
+  if (state.liveSource) state.liveSource.close();
+  state.streamRun = runId; state.liveText = "";
+  const source = new EventSource(`/api/v1/sessions/${runId}/events/stream?after=${state.events.length}`);
+  state.liveSource = source;
+  source.addEventListener("content_delta", (msg) => {
+    try { const e = JSON.parse(msg.data); state.liveText = (state.liveText + (e.delta || "")).slice(-262144); renderConversation(); }
+    catch { /* stream warning */ }
+  });
+  source.addEventListener("phase", (msg) => {
+    try { const e = JSON.parse(msg.data); if (["completed", "failed", "cancelled"].includes(e.phase)) scheduleStreamRefresh(); }
+    catch { /* */ }
+  });
+  source.addEventListener("durable_audit", scheduleStreamRefresh);
+  source.onerror = () => { /* reconnect; durable output remains */ };
+}
+
+function scheduleStreamRefresh() { clearTimeout(state.streamRefresh); state.streamRefresh = setTimeout(refreshSession, 120); }
+
+// ── Data refresh ──
+async function refreshAll() {
   try {
     state.config = await request("/studio/config");
     const [health, repository, sessions] = await Promise.all([
@@ -90,451 +218,432 @@ async function refreshDashboard() {
       request("/api/v1/repository/inspect", { method: "POST", body: JSON.stringify({ repository: state.config.repository }) }),
       request("/api/v1/sessions")
     ]);
-    state.repository = repository;
-    state.sessions = sessions;
-    document.querySelector("#health-dot").classList.add("ready");
-    document.querySelector("#health-label").textContent = health.status === "ok" ? "Daemon connected" : "Daemon degraded";
-    document.querySelector("#workspace-title").textContent = repository.root;
-    document.querySelector("#branch").textContent = repository.head || "No commit";
-    document.querySelector("#dirty").textContent = repository.dirty ? "Working tree changed" : "Working tree clean";
-    document.querySelector("#repository-path").textContent = repository.root;
-    document.querySelector("#version").textContent = `Daemon API ${state.config.daemon_api_version} · Studio API ${state.config.studio_api_version}`;
-    renderSessions();
+    state.repository = repository; state.sessions = sessions;
+    $("#health-dot").classList.add("ready");
+    $("#health-label").textContent = health.status === "ok" ? "Connected" : "Degraded";
+    const repoName = repository.name || repository.root || "—";
+    const branch = repository.branch || (repository.head || "").slice(0, 12) || "—";
+    $("#repo-info").textContent = `${repoName}/${branch}`;
+    $("#repository-path")?.replaceChildren();
+    $("#version").textContent = `API ${state.config.daemon_api_version}`;
+    $("#footer-info").textContent = `${repoName}/${branch}`;
+    renderSessionList();
   } catch (error) {
-    document.querySelector("#health-dot").classList.remove("ready");
-    document.querySelector("#health-label").textContent = "Connection interrupted";
-    toast(error.message);
-  } finally {
-    refreshButton.disabled = false;
+    $("#health-dot").classList.remove("ready");
+    $("#health-label").textContent = "Disconnected"; toast(error.message);
   }
 }
 
-async function startRun() {
-  const button = document.querySelector("#start-run");
-  const objective = document.querySelector("#objective").value.trim();
-  if (!objective) { toast("Enter an engineering objective first."); return; }
-  button.disabled = true;
-  try {
-    const accepted = await request("/api/v1/sessions", {
-      method: "POST",
-      body: JSON.stringify({ objective, repository: state.config.repository, plan_only: false })
-    });
-    document.querySelector("#objective").value = "";
-    toast(`Run ${accepted.id.slice(0, 8)} accepted. Work continues if this window closes.`);
-    await refreshDashboard();
-    await openWorkbench(accepted.id);
-  } catch (error) {
-    toast(error.message);
-    await refreshDashboard();
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function eventTitle(event) {
-  return String(event?.event || "unknown_event").split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
-}
-
-function bounded(value, maximum = 110) {
-  const rendered = typeof value === "string" ? value : JSON.stringify(value ?? "");
-  return rendered.length > maximum ? `${rendered.slice(0, maximum - 1)}…` : rendered;
-}
-
-function eventSummary(event) {
-  const data = event?.data || {};
-  const candidates = [data.reason, data.model, data.role, data.label, data.evidence, data.strategy, data.activity, data.action_id];
-  const selected = candidates.find((value) => value !== undefined && value !== null && String(value).length);
-  if (selected !== undefined) return bounded(selected);
-  const keys = Object.keys(data);
-  return keys.length ? keys.slice(0, 3).join(" · ") : "Durable lifecycle boundary";
-}
-
-function renderConversation() {
-  const container = document.querySelector("#conversation");
-  document.querySelector("#message-count").textContent = String(state.messages.length);
-  if (!state.messages.length && !state.liveText) {
-    container.innerHTML = '<div class="empty">No conversation messages recorded.</div>';
-    return;
-  }
-  const durable = state.messages.map((message) => `
-    <article class="message">
-      <div class="message-role"><span>${escapeHtml(message.role)}</span><span>${escapeHtml(message.model || "")}</span></div>
-      <p class="message-content">${escapeHtml(message.content)}</p>
-    </article>`).join("");
-  const live = state.liveText ? `
-    <article class="message live">
-      <div class="message-role"><span>assistant · live</span><span>streaming</span></div>
-      <p class="message-content">${escapeHtml(state.liveText)}</p>
-    </article>` : "";
-  container.innerHTML = durable + live;
-  container.scrollTop = container.scrollHeight;
-}
-
-function scheduleStreamRefresh() {
-  window.clearTimeout(state.streamRefresh);
-  state.streamRefresh = window.setTimeout(refreshWorkbench, 120);
-}
-
-function connectRunStream(runId) {
-  if (state.streamRun === runId && state.liveSource) return;
-  if (state.liveSource) state.liveSource.close();
-  state.streamRun = runId;
-  state.liveText = "";
-  const source = new EventSource(`/api/v1/sessions/${runId}/events/stream?after=${state.events.length}`);
-  state.liveSource = source;
-  source.addEventListener("open", () => { document.querySelector("#stream-status").textContent = "live"; });
-  source.addEventListener("content_delta", (message) => {
-    try {
-      const event = JSON.parse(message.data);
-      state.liveText = (state.liveText + (event.delta || "")).slice(-262144);
-      renderConversation();
-    } catch { document.querySelector("#stream-status").textContent = "stream warning"; }
-  });
-  source.addEventListener("phase", (message) => {
-    try {
-      const event = JSON.parse(message.data);
-      document.querySelector("#stream-status").textContent = event.phase || "live";
-      if (["completed", "failed", "cancelled"].includes(event.phase)) scheduleStreamRefresh();
-    } catch { document.querySelector("#stream-status").textContent = "stream warning"; }
-  });
-  source.addEventListener("durable_audit", scheduleStreamRefresh);
-  source.addEventListener("diagnostic", () => { document.querySelector("#stream-status").textContent = "reconnecting"; });
-  source.onerror = () => { document.querySelector("#stream-status").textContent = "reconnecting"; };
-}
-
-function renderActivity() {
-  const container = document.querySelector("#activity");
-  document.querySelector("#event-count").textContent = String(state.events.length);
-  if (!state.events.length) {
-    container.innerHTML = '<div class="empty">No durable events recorded.</div>';
-    return;
-  }
-  container.innerHTML = state.events.map((event, index) => `
-    <button class="event-button" data-event-index="${index}">
-      <span class="event-title">${escapeHtml(eventTitle(event))}</span>
-      <span class="event-summary">${escapeHtml(eventSummary(event))}</span>
-    </button>`).join("");
-  document.querySelectorAll(".event-button").forEach((button) => button.addEventListener("click", () => inspectEvent(Number(button.dataset.eventIndex), button)));
-}
-
-function inspectEvent(index, button) {
-  const event = state.events[index];
-  if (!event) return;
-  document.querySelectorAll(".event-button").forEach((item) => item.classList.toggle("active", item === button));
-  document.querySelector("#inspector-title").textContent = eventTitle(event);
-  document.querySelector("#inspector-summary").textContent = eventSummary(event);
-  document.querySelector("#inspector").textContent = JSON.stringify(event.data || {}, null, 2);
-}
-
-async function refreshWorkbench() {
-  if (!state.selectedRun) {
-    toast("Select a run from Home first.");
-    return;
-  }
-  const button = document.querySelector("#refresh-workbench");
-  button.disabled = true;
+async function refreshSession() {
+  if (!state.selectedRun) return;
   try {
     const [session, messages, events] = await Promise.all([
       request(`/api/v1/sessions/${state.selectedRun}`),
       request(`/api/v1/sessions/${state.selectedRun}/messages`),
       request(`/api/v1/sessions/${state.selectedRun}/events`)
     ]);
-    state.selectedSession = session;
-    state.messages = messages;
-    state.events = events;
-    document.querySelector("#workbench-objective").textContent = session.objective || "Untitled run";
-    document.querySelector("#workbench-status").textContent = session.status_code || session.status;
-    renderConversation();
-    renderActivity();
-    connectRunStream(state.selectedRun);
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    button.disabled = false;
-  }
+    state.selectedSession = session; state.messages = messages; state.events = events;
+    $("#session-objective").textContent = session.objective || "Untitled session";
+    // The header follows the session, so opening one shows that session's model.
+    renderModel();
+    renderConversation(); await refreshActivity(); connectRunStream(state.selectedRun);
+  } catch (error) { toast(error.message); }
 }
 
-async function openWorkbench(runId) {
-  state.selectedRun = runId;
-  setScreen("workbench");
-  await refreshWorkbench();
+async function openSession(runId) {
+  state.selectedRun = runId; renderSessionList(); await refreshSession();
 }
 
+// ── Task and permission modes (PRD §11, §12) ──
+//
+// These are selectors, not labels. Studio previously displayed "Build" and
+// "Ask" as static text, which read as a setting the user could not reach.
+const PERMISSION_LABELS = { ask: "Ask", auto: "Auto", full_access: "Full Access" };
+const AUTHORITY_MODES = { ask: "governed", auto: "elevated", full_access: "unrestricted" };
+// Ask and Plan must not change files. The session payload carries that, so the
+// daemon enforces it rather than inferring intent from the objective's wording.
+const READ_ONLY_MODES = ["ask", "plan"];
+
+function readModes() {
+  state.taskMode = $("#composer-mode").value;
+  state.permission = $("#composer-permission").value;
+  $("#mode-info").textContent = `${$("#composer-mode").selectedOptions[0].text} · ${PERMISSION_LABELS[state.permission]}`;
+}
+
+function sessionPayload(objective) {
+  return JSON.stringify({
+    objective,
+    repository: state.config.repository,
+    plan_only: READ_ONLY_MODES.includes(state.taskMode),
+    authority_mode: AUTHORITY_MODES[state.permission]
+  });
+}
+
+async function startSession() {
+  const objective = $("#composer").value.trim();
+  if (!objective) { toast("Enter an objective first."); return; }
+  try {
+    const accepted = await request("/api/v1/sessions", { method: "POST", body: sessionPayload(objective) });
+    $("#composer").value = ""; toast(`Session ${accepted.id.slice(0, 8)} started.`);
+    await refreshAll(); await openSession(accepted.id);
+  } catch (error) { toast(error.message); }
+}
+
+/// Send what is in the composer to the selected session.
+///
+/// While a plan is under review this is how it gets changed: the daemon reads
+/// the message as feedback, rewrites the plan and pauses again. It used to be
+/// refused outright with "use Build this plan to continue it", which left the
+/// reviewer no way to disagree with a plan except to abandon the session.
 async function sendFollowUp() {
-  if (!state.selectedRun) { toast("Select a run first."); return; }
-  const field = document.querySelector("#follow-up");
-  const content = field.value.trim();
-  if (!content) { toast("Enter a follow-up message first."); return; }
-  const button = document.querySelector("#send-follow-up");
-  button.disabled = true;
+  if (!state.selectedRun) { toast("Select or start a session first."); return; }
+  const content = $("#composer").value.trim();
+  if (!content) return;
+  const revising = state.awaitingPlanReview;
   try {
     await request(`/api/v1/sessions/${state.selectedRun}/messages`, { method: "POST", body: JSON.stringify({ content }) });
-    field.value = "";
-    await refreshWorkbench();
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    button.disabled = false;
+    $("#composer").value = "";
+    if (revising) toast("Revising the plan — it will pause for review again.");
+    await refreshSession();
+  } catch (error) { toast(error.message); }
+}
+
+// ── Models, providers, settings ──
+//
+// PRD §10.1: the active model is visible at all times, and §36 fails the
+// release if the primary UI cannot select one. The header, the composer meta
+// and the settings modal all read `state.activeModel`, so they cannot disagree.
+async function refreshModels() {
+  try {
+    const [models, providers] = await Promise.all([
+      request("/api/v1/models"),
+      request("/api/v1/providers")
+    ]);
+    state.models = models || [];
+    state.providers = providers || [];
+    state.activeModel = state.models.find((m) => m.default) || state.models[0] || null;
+    renderModel();
+  } catch {
+    // A model list we could not read is reported as unknown, never as absent:
+    // "no models" and "could not ask" are different problems.
+    $("#model-info").textContent = "model unavailable";
+    $("#composer-model").textContent = "unavailable";
   }
 }
 
+function renderModel() {
+  // A selected session has its own model, which can differ from the repository
+  // default. Showing the default while a session runs on something else is a
+  // header that reports the wrong fact.
+  const sessionModel = state.selectedSession?.selected_model;
+  const entry = sessionModel
+    ? state.models.find((m) => m.id === sessionModel)
+    : state.activeModel;
+  const label = entry ? entry.model : sessionModel ? modelName(sessionModel) : "no model";
+  const provider = entry ? entry.provider : "";
+  $("#model-info").textContent = label;
+  $("#composer-model").textContent = label;
+  $("#active-model").textContent = state.activeModel ? state.activeModel.model : "no model";
+  $("#active-model-provider").textContent = state.activeModel?.provider || "no provider configured";
+}
+
+/// The model part of a provider-qualified id, matching the Workbench header.
+function modelName(id) {
+  const cut = id.indexOf("/");
+  return cut < 0 ? id : id.slice(cut + 1);
+}
+
+function openSettings() {
+  $("#settings-modal").classList.remove("hidden");
+  renderModel();
+  renderModelChoices();
+  $("#provider-list").innerHTML = state.providers.length
+    ? state.providers.map((p) => `<div class="provider-row">${escapeHtml(p.name)}</div>`).join("")
+    : '<div class="empty">No providers configured.</div>';
+  // The modal reflects live state rather than its own copy, so it can never
+  // show a setting the composer has already moved past.
+  $("#settings-permission").value = state.permission;
+  $("#settings-default-mode").value = state.taskMode;
+  $("#permission-note").textContent = PERMISSION_NOTES[state.permission];
+  $("#settings-repository").textContent = state.repository?.name || "—";
+  $("#settings-branch").textContent = state.repository?.branch || "—";
+  $("#settings-terminal-count").textContent = String(state.terminals.length);
+  $("#settings-daemon-api").textContent = state.config?.daemon_api_version ?? "—";
+  $("#settings-studio-api").textContent = state.config?.studio_api_version ?? "—";
+}
+
+const PERMISSION_NOTES = {
+  ask: "PurrCode asks before writes, commands, dependency installs and network access.",
+  auto: "Repository reads, writes and recognised build/test commands run automatically. Destructive or unexpected effects still ask.",
+  full_access: "PurrCode may use every permission this process, workspace and configured identity already hold. It grants no new ones — not root, not cloud, not filesystem access the process lacks."
+};
+
+function closeSettings() { $("#settings-modal").classList.add("hidden"); }
+
+/// Theme choice is remembered locally; it is presentation only and never
+/// reaches the daemon.
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme === "system" ? "" : theme;
+  try { localStorage.setItem("purrcode-theme", theme); } catch { /* private mode */ }
+}
+
+function renderModelChoices() {
+  const list = $("#model-choices");
+  if (!state.models.length) {
+    list.innerHTML = '<div class="empty">No models are configured. Add a provider first.</div>';
+    return;
+  }
+  list.innerHTML = state.models.map((m) => `
+    <button class="model-choice${m.id === state.activeModel?.id ? " active" : ""}" data-model="${escapeHtml(m.id)}">
+      <span>${escapeHtml(m.model)}</span>
+      <span class="model-meta">${escapeHtml(m.provider)} · ${m.local ? "local" : "remote"}</span>
+    </button>`).join("");
+  list.querySelectorAll(".model-choice").forEach((button) =>
+    button.addEventListener("click", () => selectModel(button.dataset.model)));
+}
+
+async function selectModel(id) {
+  // Two scopes, reported separately. Announcing one success for both is how a
+  // user ends up believing the open session switched when it did not — the
+  // symptom being a header that shows the new model while the run keeps using
+  // the old one.
+  let repositoryOk = false;
+  try {
+    await request("/api/v1/models/roles", { method: "POST", body: JSON.stringify({ role: "coding_worker", model: id }) });
+    repositoryOk = true;
+  } catch (error) {
+    toast(`Repository default unchanged: ${error.message}`);
+  }
+  let sessionResult = null;
+  if (state.selectedRun) {
+    try {
+      await request(`/api/v1/sessions/${state.selectedRun}/model`, { method: "POST", body: JSON.stringify({ model: id }) });
+      sessionResult = "ok";
+    } catch (error) {
+      sessionResult = error.message;
+    }
+  }
+  await refreshModels();
+  await refreshSession();
+  renderModelChoices();
+  if (sessionResult === "ok") toast(`${id} for this session and new work`);
+  else if (sessionResult) toast(`This session kept its model: ${sessionResult}`);
+  else if (repositoryOk) toast(`${id} for new work in this repository`);
+}
+
+// ── Context drawer ──
+function openDrawer(tab = "changes") {
+  state.drawerOpen = true; state.drawerTab = tab;
+  $("#context-drawer").classList.remove("hidden");
+  document.querySelectorAll(".drawer-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+  document.querySelectorAll(".drawer-panel").forEach((p) => p.classList.toggle("hidden", p.id !== `drawer-${tab}`));
+  if (tab === "changes") refreshDiff();
+  if (tab === "terminal") refreshTerminals();
+  if (tab === "tests") refreshTests();
+  if (tab === "evidence") refreshEvidence();
+}
+
+function closeDrawer() { state.drawerOpen = false; $("#context-drawer").classList.add("hidden"); }
+
 async function refreshDiff() {
-  if (!state.selectedRun) { toast("Select a run from Home first."); return; }
+  if (!state.selectedRun) return;
   try {
     const diff = await request(`/api/v1/sessions/${state.selectedRun}/diff`);
     const files = diff.changed_files || [];
-    document.querySelector("#changed-files").innerHTML = files.length
-      ? files.map((path) => `<span class="changed-file">${escapeHtml(path)}</span>`).join("")
-      : '<span class="empty">No changed files.</span>';
-    document.querySelector("#diff-content").textContent = diff.patch || "No patch recorded.";
-  } catch (error) {
-    document.querySelector("#changed-files").innerHTML = "";
-    document.querySelector("#diff-content").textContent = `Diff unavailable: ${error.message}`;
-  }
+    $("#changed-files").innerHTML = files.length ? files.map((p) => `<span class="changed-file">${escapeHtml(p)}</span>`).join("") : '<span class="empty">No changed files.</span>';
+    $("#diff-content").textContent = diff.patch || "No patch recorded.";
+  } catch (error) { $("#diff-content").textContent = `Diff unavailable: ${error.message}`; }
 }
 
-function validationEvents() {
-  return state.events.filter((event) => [
-    "validation_recorded",
-    "outcome_judgment_recorded",
-    "outcome_review_required",
-    "outcome_review_approved",
-    "session_completed",
-    "session_failed"
-  ].includes(event.event));
-}
-
-async function refreshValidation() {
-  if (!state.selectedRun) { toast("Select a run from Home first."); return; }
-  if (!state.events.length) await refreshWorkbench();
-  const events = validationEvents();
-  const container = document.querySelector("#validation-events");
-  if (!events.length) {
-    container.innerHTML = '<div class="empty">Validation has not produced durable evidence yet.</div>';
-    return;
-  }
-  container.innerHTML = events.map((event) => `
-    <article class="validation-item"><div><h3>${escapeHtml(eventTitle(event))}</h3><p>${escapeHtml(eventSummary(event))}</p></div><span class="status">recorded</span></article>`).join("");
-}
-
-function terminalOwnerLabel(owner) {
-  if (!owner) return "unknown owner";
-  if (owner.kind === "agent") return `agent · ${owner.data?.role || "worker"}`;
-  return owner.kind;
-}
-
-function terminalText(bytes) {
+async function refreshTests() {
+  const c = $("#test-summary");
+  if (!state.selectedRun) { c.innerHTML = '<div class="empty">Test results will appear here when validation runs.</div>'; return; }
   try {
-    return new TextDecoder()
-      .decode(new Uint8Array(bytes || []))
-      .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-      .replace(/\x1b(?:[@-_]|\[[0-?]*[ -/]*[@-~])/g, "")
-      .replace(/\r/g, "");
-  }
-  catch { return "Terminal transcript could not be decoded."; }
+    const summary = await request(`/api/v1/sessions/${state.selectedRun}/validation`);
+    const stages = summary?.stages || [];
+    if (!stages.length) { c.innerHTML = '<div class="empty">No validation has run.</div>'; return; }
+    // Unavailable, skipped, cancelled and timed-out are never drawn as a pass
+    // (PRD §21.3): the glyph and the word both come from the outcome.
+    c.innerHTML = stages.map((s) => {
+      const passed = s.outcome === "passed";
+      const icon = passed ? ACTIVITY_ICON.done : ACTIVITY_ICON.failed;
+      return `<div class="activity-item">${icon} ${escapeHtml(s.stage)} <span class="activity-state">${escapeHtml(s.outcome.replace(/_/g, " "))}</span></div>`;
+    }).join("");
+  } catch (error) { c.innerHTML = `<div class="empty">Validation unavailable: ${escapeHtml(error.message)}</div>`; }
 }
 
-function renderTerminalList() {
-  const list = document.querySelector("#terminal-list");
-  if (!state.terminals.length) {
-    list.innerHTML = '<div class="empty">No terminals.</div>';
-    return;
-  }
-  list.innerHTML = state.terminals.map((terminal) => `
-    <button class="terminal-item ${terminal.terminal_id === state.selectedTerminal?.terminal_id ? "active" : ""}" data-terminal-id="${escapeHtml(terminal.terminal_id)}">
-      <strong>${escapeHtml(terminal.terminal_id.slice(0, 8))}</strong>
-      <span>${terminal.alive ? "running" : "exited"} · ${escapeHtml(terminalOwnerLabel(terminal.owner))}</span>
-    </button>`).join("");
-  document.querySelectorAll(".terminal-item").forEach((button) => button.addEventListener("click", () => selectTerminal(button.dataset.terminalId)));
+function refreshEvidence() {
+  const c = $("#evidence-list");
+  const items = state.activity.filter((item) => item.detail_available);
+  if (!items.length) { c.innerHTML = '<div class="empty">Evidence records will appear here when actions complete.</div>'; return; }
+  c.innerHTML = items.slice(-10).map((item) =>
+    `<div class="activity-item">${escapeHtml(item.label)}${item.summary ? `<span class="activity-summary">${escapeHtml(item.summary)}</span>` : ""}</div>`).join("");
+}
+
+// ── Terminals ──
+//
+// Output is a real emulated screen, not a stripped log: the socket delivers
+// only bytes produced since the last frame and the emulator applies them.
+function terminalOwnerLabel(owner) { if (!owner) return "—"; return owner.kind === "agent" ? `agent · ${owner.data?.role || "worker"}` : owner.kind; }
+
+function ensureEmulator() {
+  if (state.emulator) return state.emulator;
+  const host = $("#terminal-output");
+  const size = measure(host);
+  state.emulator = new Terminal(host, {
+    rows: size.rows,
+    cols: size.cols,
+    onInput: (bytes) => sendTerminalBytes(bytes),
+    onResize: (rows, cols) => resizeTerminal(rows, cols)
+  });
+  window.addEventListener("resize", () => {
+    if (!state.emulator || $("#terminal-output").hidden) return;
+    const next = measure($("#terminal-output"));
+    state.emulator.resize(next.rows, next.cols);
+  });
+  return state.emulator;
 }
 
 function renderSelectedTerminal() {
-  const terminal = state.selectedTerminal;
-  document.querySelector("#terminal-title").textContent = terminal ? `Terminal ${terminal.terminal_id.slice(0, 8)}` : "No terminal selected";
-  document.querySelector("#terminal-owner").textContent = terminal ? `${terminal.alive ? "running" : "exited"} · ${terminalOwnerLabel(terminal.owner)} · generation ${terminal.generation}` : "—";
-  const output = document.querySelector("#terminal-output");
-  output.textContent = terminal ? terminalText(terminal.transcript_tail) : "Start or select a terminal. Output remains available after detach and reconnect.";
-  output.scrollTop = output.scrollHeight;
-  const disabled = !terminal || !terminal.alive;
-  document.querySelector("#terminal-input").disabled = disabled;
-  document.querySelector("#terminal-input-form button").disabled = disabled;
+  const term = state.selectedTerminal;
+  $("#terminal-title").textContent = term ? `Terminal ${term.terminal_id.slice(0, 8)}` : "No terminal";
+  $("#terminal-owner").textContent = term ? `${term.alive ? "running" : "exited"} · ${terminalOwnerLabel(term.owner)}` : "—";
+  const output = $("#terminal-output");
+  output.hidden = !term;
+  $("#terminal-empty").hidden = Boolean(term);
+  $("#terminal-owner-actions").hidden = !term?.alive;
+  if (!term) return;
+  const emulator = ensureEmulator();
+  // Replay is applied once per terminal; live bytes arrive over the socket.
+  if (state.replayedTerminal !== term.terminal_id) {
+    emulator.reset();
+    emulator.write(decodeBytes(term.transcript_tail));
+    state.replayedTerminal = term.terminal_id;
+  }
+}
+
+function decodeBytes(bytes) {
+  try { return new TextDecoder().decode(new Uint8Array(bytes || [])); }
+  catch { return ""; }
 }
 
 function connectTerminalSocket(id) {
-  if (state.terminalSocketId === id && state.terminalSocket && state.terminalSocket.readyState < 2) return;
+  if (state.terminalSocketId === id && state.terminalSocket?.readyState < 2) return;
   if (state.terminalSocket) state.terminalSocket.close();
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${protocol}//${window.location.host}/studio/terminals/${id}/stream`);
-  state.terminalSocket = socket;
-  state.terminalSocketId = id;
-  socket.onmessage = (message) => {
-    try {
-      const value = JSON.parse(message.data);
-      if (value.terminal?.terminal_id !== id) return;
-      state.selectedTerminal = value.terminal;
-      const index = state.terminals.findIndex((item) => item.terminal_id === id);
-      if (index >= 0) state.terminals[index] = value.terminal;
-      renderSelectedTerminal();
-    } catch { toast("Terminal stream returned invalid data."); }
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${proto}//${location.host}/studio/terminals/${id}/stream`);
+  state.terminalSocket = socket; state.terminalSocketId = id;
+  socket.onmessage = (msg) => {
+    let frame;
+    try { frame = JSON.parse(msg.data); } catch { return; }
+    const emulator = ensureEmulator();
+    // `truncated` means the ring buffer dropped output we never saw. Say so
+    // rather than splicing unrelated bytes into the screen.
+    if (frame.chunk?.truncated) emulator.write("\r\n[output truncated — earlier bytes were discarded]\r\n");
+    if (frame.chunk?.bytes?.length) emulator.write(decodeBytes(frame.chunk.bytes));
+    if (state.selectedTerminal) {
+      state.selectedTerminal.alive = frame.alive ?? state.selectedTerminal.alive;
+      state.selectedTerminal.generation = frame.generation ?? state.selectedTerminal.generation;
+      if (frame.owner) state.selectedTerminal.owner = frame.owner;
+      $("#terminal-owner").textContent = `${state.selectedTerminal.alive ? "running" : "exited"} · ${terminalOwnerLabel(state.selectedTerminal.owner)}`;
+    }
   };
-  socket.onerror = () => toast("Terminal stream is reconnecting; durable output remains available.");
+  // Reconnect rather than silently going dead: the process keeps running.
+  socket.onclose = () => { if (state.terminalSocketId === id) setTimeout(() => connectTerminalSocket(id), 1000); };
+  socket.onerror = () => toast("Terminal reconnecting; output remains available.");
+}
+
+function sendTerminalBytes(bytes) {
+  const term = state.selectedTerminal;
+  if (!term) return;
+  const payload = JSON.stringify({ generation: term.generation, input: bytes });
+  if (state.terminalSocket?.readyState === WebSocket.OPEN && state.terminalSocketId === term.terminal_id) state.terminalSocket.send(payload);
+  else request(`/api/v1/terminals/${term.terminal_id}/input`, { method: "POST", body: payload }).catch((e) => toast(e.message));
+}
+
+async function resizeTerminal(rows, cols) {
+  const term = state.selectedTerminal;
+  if (!term) return;
+  try { await request(`/api/v1/terminals/${term.terminal_id}/resize`, { method: "POST", body: JSON.stringify({ size: { rows, cols } }) }); }
+  catch { /* a refused resize must not break the live stream */ }
 }
 
 async function refreshTerminals() {
   try {
-    const result = await request("/api/v1/terminals");
-    state.terminals = result.terminals || [];
+    const result = await request("/api/v1/terminals"); state.terminals = result.terminals || [];
     if (state.selectedTerminal) {
-      const current = state.terminals.find((item) => item.terminal_id === state.selectedTerminal.terminal_id);
-      if (current) {
-        const detail = await request(`/api/v1/terminals/${current.terminal_id}`);
-        state.selectedTerminal = detail.terminal;
-      }
+      const current = state.terminals.find((t) => t.terminal_id === state.selectedTerminal.terminal_id);
+      if (current) { const detail = await request(`/api/v1/terminals/${current.terminal_id}`); state.selectedTerminal = detail.terminal; }
     }
-    renderTerminalList();
     renderSelectedTerminal();
   } catch (error) { toast(error.message); }
 }
 
 async function startTerminal() {
   try {
-    let workspaceId = window.sessionStorage.getItem("purrcode-workspace-id");
-    if (!workspaceId) {
-      workspaceId = crypto.randomUUID();
-      window.sessionStorage.setItem("purrcode-workspace-id", workspaceId);
-    }
-    const result = await request("/api/v1/terminals", {
-      method: "POST",
-      body: JSON.stringify({
-        workspace_id: workspaceId,
-        action: { working_directory: state.config.repository, environment: {}, arguments: [], initial_size: { rows: 30, cols: 100 }, owner: { kind: "human" } }
-      })
-    });
+    let wsId = sessionStorage.getItem("purrcode-wsid"); if (!wsId) { wsId = crypto.randomUUID(); sessionStorage.setItem("purrcode-wsid", wsId); }
+    const result = await request("/api/v1/terminals", { method: "POST", body: JSON.stringify({ workspace_id: wsId, action: { working_directory: state.config.repository, environment: {}, arguments: [], initial_size: { rows: 30, cols: 100 }, owner: { kind: "human" } } }) });
     state.selectedTerminal = result.terminal;
     await request(`/api/v1/terminals/${result.terminal.terminal_id}/attach`, { method: "POST", body: JSON.stringify({ replay_bytes: 262144 }) });
-    await refreshTerminals();
-    connectTerminalSocket(result.terminal.terminal_id);
-    document.querySelector("#terminal-input").focus();
+    await refreshTerminals(); connectTerminalSocket(result.terminal.terminal_id); $("#terminal-output").focus();
   } catch (error) { toast(error.message); }
-}
-
-async function selectTerminal(id) {
-  try {
-    if (state.selectedTerminal && state.selectedTerminal.terminal_id !== id) {
-      await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}/detach`, { method: "POST" });
-    }
-    const result = await request(`/api/v1/terminals/${id}/attach`, { method: "POST", body: JSON.stringify({ replay_bytes: 262144 }) });
-    state.selectedTerminal = result.terminal;
-    connectTerminalSocket(id);
-    renderTerminalList();
-    renderSelectedTerminal();
-  } catch (error) { toast(error.message); }
-}
-
-async function sendTerminalInput(event) {
-  event.preventDefault();
-  const terminal = state.selectedTerminal;
-  const field = document.querySelector("#terminal-input");
-  if (!terminal || !field.value) return;
-  try {
-    const payload = JSON.stringify({ generation: terminal.generation, input: `${field.value}\n` });
-    if (state.terminalSocket?.readyState === WebSocket.OPEN && state.terminalSocketId === terminal.terminal_id) {
-      state.terminalSocket.send(payload);
-    } else {
-      await request(`/api/v1/terminals/${terminal.terminal_id}/input`, { method: "POST", body: payload });
-    }
-    field.value = "";
-    window.setTimeout(refreshTerminals, 50);
-  } catch (error) { toast(error.message); await refreshTerminals(); }
 }
 
 async function setTerminalOwner(owner) {
   if (!state.selectedTerminal) return;
-  try {
-    const result = await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}/owner`, {
-      method: "POST", body: JSON.stringify({ owner })
-    });
-    state.selectedTerminal = result.terminal;
-    renderSelectedTerminal();
-  } catch (error) { toast(error.message); }
+  try { const r = await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}/owner`, { method: "POST", body: JSON.stringify({ owner }) }); state.selectedTerminal = r.terminal; renderSelectedTerminal(); }
+  catch (error) { toast(error.message); }
 }
 
-async function stopSelectedTerminal() {
+async function stopTerminal() {
   if (!state.selectedTerminal) return;
-  try {
-    const result = await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}`, { method: "DELETE" });
-    state.selectedTerminal = result.terminal;
-    await refreshTerminals();
-  } catch (error) { toast(error.message); }
+  try { await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}`, { method: "DELETE" }); await refreshTerminals(); }
+  catch (error) { toast(error.message); }
 }
 
-async function inspectEnvironment() {
-  const button = document.querySelector("#inspect-environment");
-  const container = document.querySelector("#environment-summary");
-  button.disabled = true;
-  container.innerHTML = '<div class="empty">Inspecting manifests and verifying detected tools…</div>';
-  try {
-    const report = await request("/api/v1/environment/inspect", {
-      method: "POST", body: JSON.stringify({ repository: state.config.repository })
-    });
-    const tools = report.plan.detected_tools || [];
-    const missing = report.plan.missing_tools || [];
-    const checks = new Map((report.checks || []).map((check) => [check.check.kind, check]));
-    container.innerHTML = `
-      <div class="environment-host">
-        <span>${escapeHtml(report.host.os_family)} · ${escapeHtml(report.host.arch)}</span>
-        <span>${escapeHtml(report.host.distribution || "distribution unknown")}</span>
-        <span>${report.ready ? "ready" : "repair required"}</span>
-      </div>
-      ${tools.map((tool) => {
-        const check = checks.get(tool.kind);
-        return `<article class="environment-tool"><div><h3>${escapeHtml(tool.kind)}</h3><p>${escapeHtml(tool.path)} · ${escapeHtml(tool.version || "version unavailable")}</p></div><span class="status">${escapeHtml(check?.result || "unchecked")}</span></article>`;
-      }).join("")}
-      ${missing.map((tool) => `<article class="environment-tool"><div><h3>${escapeHtml(tool.kind)}</h3><p>${escapeHtml(tool.reason)} · ${escapeHtml(tool.min_version || "compatible version")}</p></div><span class="status">missing</span></article>`).join("")}
-      ${!tools.length && !missing.length ? '<div class="empty">No supported project manifests were detected.</div>' : ""}`;
-  } catch (error) {
-    container.innerHTML = `<div class="empty">Inspection failed: ${escapeHtml(error.message)}</div>`;
-  } finally { button.disabled = false; }
-}
-
-const screenCopy = {
-  workspaces: ["Workspaces", "Open local and remote repositories without creating a second execution path."],
-  runs: ["Agent runs", "Follow durable plans, specialist activity, approvals, and outcomes."],
-  terminals: ["Terminals", "Real PTY terminals and ownership controls are delivered by the terminal runtime."],
-  factory: ["Agent Factory", "Compile production goals into versioned, reusable agent blueprints."],
-  deployments: ["Deployments", "Inspect local and Azure runtime deployments and rollback state."],
-  evidence: ["Evidence", "Audit exact actions, authorization, execution, validation, and recovery."],
-  settings: ["Settings", "Manage providers, identity selectors, environments, and authority grants."]
-};
-
-document.querySelector("#refresh").addEventListener("click", refreshDashboard);
-document.querySelector("#start-run").addEventListener("click", startRun);
-document.querySelector("#refresh-workbench").addEventListener("click", refreshWorkbench);
-document.querySelector("#send-follow-up").addEventListener("click", sendFollowUp);
-document.querySelector("#refresh-diff").addEventListener("click", refreshDiff);
-document.querySelector("#refresh-validation").addEventListener("click", refreshValidation);
-document.querySelector("#refresh-terminals").addEventListener("click", refreshTerminals);
-document.querySelector("#new-terminal").addEventListener("click", startTerminal);
-document.querySelector("#terminal-input-form").addEventListener("submit", sendTerminalInput);
-document.querySelector("#terminal-input").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey) sendTerminalInput(event);
+// ── Event wiring ──
+$("#settings-permission").addEventListener("change", (e) => {
+  $("#composer-permission").value = e.target.value;
+  readModes();
+try { const t = localStorage.getItem("purrcode-theme"); if (t) { $("#settings-theme").value = t; applyTheme(t); } } catch { /* private mode */ }
+  $("#permission-note").textContent = PERMISSION_NOTES[state.permission];
 });
-document.querySelector("#take-terminal").addEventListener("click", () => setTerminalOwner({ kind: "human" }));
-document.querySelector("#return-terminal").addEventListener("click", () => setTerminalOwner({ kind: "agent", data: { role: "Coding Agent" } }));
-document.querySelector("#stop-terminal").addEventListener("click", stopSelectedTerminal);
-document.querySelector("#inspect-environment").addEventListener("click", inspectEnvironment);
-document.querySelectorAll(".nav-item").forEach((button) => button.addEventListener("click", async () => {
-  const screen = button.dataset.screen;
-  setScreen(screen);
-  if (screen === "workbench" && state.selectedRun) await refreshWorkbench();
-  if (screen === "diff") await refreshDiff();
-  if (screen === "validation") await refreshValidation();
-  if (screen === "terminals") await refreshTerminals();
-}));
+$("#settings-default-mode").addEventListener("change", (e) => {
+  $("#composer-mode").value = e.target.value;
+  readModes();
+});
+$("#settings-theme").addEventListener("change", (e) => applyTheme(e.target.value));
+$("#settings-open-terminal").addEventListener("click", () => { closeSettings(); openDrawer("terminal"); startTerminal(); });
+$("#composer-mode").addEventListener("change", readModes);
+$("#composer-permission").addEventListener("change", readModes);
+$("#composer-model").addEventListener("click", openSettings);
+// Delegated: the plan block is re-rendered on every refresh, so a handler
+// bound to the button itself would be lost.
+$("#conversation").addEventListener("click", (event) => {
+  if (event.target.id === "build-plan") buildPlan();
+});
+$("#settings-open").addEventListener("click", openSettings);
+$("#settings-close").addEventListener("click", closeSettings);
+$("#change-model").addEventListener("click", openSettings);
+$("#new-session").addEventListener("click", startSession);
+$("#send").addEventListener("click", () => { if (state.selectedRun) sendFollowUp(); else startSession(); });
+$("#composer").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (state.selectedRun) sendFollowUp(); else startSession(); } });
+$("#drawer-close").addEventListener("click", closeDrawer);
+document.querySelectorAll(".drawer-tab").forEach((tab) => tab.addEventListener("click", () => openDrawer(tab.dataset.tab)));
+$("#take-terminal").addEventListener("click", () => setTerminalOwner({ kind: "human" }));
+$("#return-terminal").addEventListener("click", () => setTerminalOwner({ kind: "agent", data: { role: "Coding Agent" } }));
+$("#stop-terminal").addEventListener("click", stopTerminal);
+$("#new-terminal").addEventListener("click", startTerminal);
+$("#open-terminal-empty")?.addEventListener("click", startTerminal);
 
-refreshDashboard();
-window.setInterval(async () => {
-  await refreshDashboard();
-  if (state.screen === "workbench" && state.selectedRun) await refreshWorkbench();
-  if (state.screen === "terminals") await refreshTerminals();
-}, 5000);
+// Keyboard: Esc closes drawer
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("#settings-modal").classList.contains("hidden")) closeSettings();
+  else if (state.drawerOpen) closeDrawer();
+});
+
+refreshAll();
+refreshModels();
+readModes();
+setInterval(async () => { await refreshAll(); if (state.selectedRun) await refreshSession(); }, 5000);

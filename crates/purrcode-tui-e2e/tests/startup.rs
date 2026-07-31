@@ -57,11 +57,15 @@ fn first_launch_shows_workbench_and_next_action() {
 fn the_header_orients_without_internal_metadata() {
     let mut harness = Harness::start(configured()).expect("start workbench");
     with_artifacts("startup-header", &mut harness, |harness| {
-        let screen = harness.wait_for_all(&["PurrCode", "local/fake:1b"])?;
+        let screen = harness.wait_for_all(&["PurrCode", "fake:1b"])?;
         assertions::assert_visible(&screen, &["main", "Build"]);
-        // Sandbox backend, daemon version and worktree path belong to the status
-        // drawer, not the header.
-        assertions::assert_absent(&screen, &["seatbelt", "worktree", "daemon.token"]);
+        // The provider prefix, sandbox backend, daemon version and worktree path
+        // belong to `/status`, not to the line the user reads on every frame
+        // (PRD §10.1, §14).
+        assertions::assert_absent(
+            &screen,
+            &["local/fake:1b", "seatbelt", "worktree", "daemon.token"],
+        );
         Ok(())
     });
 }
@@ -193,9 +197,13 @@ fn unavailable_palette_entries_explain_why() {
         harness.type_text("approve")?;
 
         // Visible, but honest about not being runnable — never a silent dead end.
-        let screen = harness.wait_for_text("Approve action")?;
-        assertions::assert_readable(&screen, "unavailable");
-        assertions::assert_readable(&screen, "no action is pending");
+        harness.wait_for_all(&[
+            "Search approve",
+            "6 action(s) matching",
+            "Approve action",
+            "unavailable",
+            "no action is pending",
+        ])?;
         Ok(())
     });
 }
@@ -208,11 +216,18 @@ fn an_unavailable_action_run_from_the_palette_explains_itself_and_does_nothing()
         harness.key(Key::Ctrl('p'))?;
         harness.wait_for_text("Commands")?;
         harness.type_text("approve")?;
-        harness.wait_for_text("Approve action")?;
+        harness.wait_for_all(&[
+            "Search approve",
+            "6 action(s) matching",
+            "Approve action",
+            "unavailable",
+            "no action is pending",
+        ])?;
+        harness.key(Key::Down)?;
+        harness.key(Key::Down)?;
         harness.key(Key::Enter)?;
 
-        let screen = harness.wait_for_text("unavailable")?;
-        assertions::assert_readable(&screen, "no action is pending");
+        harness.wait_for_wrapped("Approve action is unavailable: no action is pending.")?;
         // Crucially: no approval reached the daemon.
         assert!(
             !harness.daemon().saw("POST", "/approve"),

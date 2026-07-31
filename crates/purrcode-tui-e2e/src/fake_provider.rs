@@ -34,8 +34,27 @@ pub fn startup(objective: &str, repository: &str) -> Vec<Value> {
 }
 
 /// A plan with the given steps.
+///
+/// `PlanCreated` carries no revision — the first plan is simply the plan. The
+/// fixture used to add `revision: 1`, which meant every client was tested
+/// against a field the runtime never emits.
 pub fn plan(steps: &[&str]) -> Value {
-    json!({"event": "plan_created", "data": {"steps": steps, "revision": 1}})
+    json!({"event": "plan_created", "data": {"steps": steps}})
+}
+
+/// A plan rewritten after a reviewer asked for a change (PRD §11).
+pub fn plan_revised(revision: u64, reason: &str, steps: &[&str]) -> Value {
+    json!({"event": "plan_revised", "data": {"revision": revision, "reason": reason, "steps": steps}})
+}
+
+/// The pause a plan-only run records when its plan is waiting to be read.
+pub fn plan_ready_for_review(revised: bool) -> Value {
+    let reason = if revised {
+        format!("revised {}", purrcode_runtime_core::PLAN_REVIEW_PAUSE)
+    } else {
+        purrcode_runtime_core::PLAN_REVIEW_PAUSE.to_owned()
+    };
+    json!({"event": "session_paused", "data": {"reason": reason}})
 }
 
 /// An assistant message.

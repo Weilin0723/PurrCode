@@ -675,12 +675,32 @@ pub enum ApprovalAuthority {
     SignedPolicy { policy_id: String },
 }
 
+/// How a pause that is waiting on a plan review ends (PRD §11).
+///
+/// A client has to tell this pause apart from a pause in the middle of the
+/// work: one is asking to be read and will take feedback, the other is
+/// reporting a problem to fix. The agent writes these reasons and the clients
+/// match on them, so the wording lives here instead of being spelled out in
+/// three places and drifting.
+pub const PLAN_REVIEW_PAUSE: &str = "plan is ready for review";
+
+/// True when a [`SessionEvent::SessionPaused`] reason is a plan awaiting review.
+pub fn is_plan_review_pause(reason: &str) -> bool {
+    reason.ends_with(PLAN_REVIEW_PAUSE)
+}
+
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub enum SessionEvent {
     SessionCreated {
         objective: String,
         repository: PathBuf,
+        /// The permission mode an authenticated human chose for this session
+        /// (PRD §12). Durable because an authority decision that only lives in
+        /// the client that made it cannot be audited afterwards. Defaults to
+        /// `Governed` so sessions recorded before v0.9 still load.
+        #[serde(default)]
+        authority_mode: AuthorityMode,
     },
     ConversationMessageAdded {
         message: ConversationMessage,
@@ -1124,6 +1144,7 @@ impl SessionState {
             SessionEvent::SessionCreated {
                 objective,
                 repository,
+                ..
             } => {
                 self.objective = Some(objective.clone());
                 self.repository = Some(repository.clone());
@@ -1618,6 +1639,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "scan".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         state
@@ -1742,6 +1764,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "test".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         state
@@ -1778,6 +1801,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "count".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         assert_eq!(state.event_count, 1);
@@ -1806,6 +1830,7 @@ mod tests {
             SessionEvent::SessionCreated {
                 objective: "reconstruct".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             },
             SessionEvent::ActionProposed {
                 action_id: ActionId::new(),
@@ -1834,6 +1859,7 @@ mod tests {
             SessionEvent::SessionCreated {
                 objective: "reconstruct".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             },
             SessionEvent::SessionCompleted,
             SessionEvent::ExecutionStarted {
@@ -1876,6 +1902,7 @@ mod tests {
             SessionEvent::SessionCreated {
                 objective: "idempotent".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             },
             SessionEvent::WorktreeCreated {
                 path: PathBuf::from("/repo/.purrcode/worktrees/test"),
@@ -1900,6 +1927,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "test".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         state
@@ -1935,6 +1963,7 @@ mod tests {
             .reduce_event(&SessionEvent::SessionCreated {
                 objective: "test".into(),
                 repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
             })
             .unwrap();
         state

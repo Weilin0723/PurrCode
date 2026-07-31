@@ -117,11 +117,6 @@ fn safe_event_name(value: &str) -> String {
         .collect()
 }
 
-#[allow(dead_code)] // Retained as the shared one-line action description.
-pub fn action_summary(action: &Value) -> String {
-    summarize_action(action)
-}
-
 fn card_from_event(value: &Value) -> Option<TimelineCard> {
     let event = value.get("event")?.as_str()?;
     let data = value.get("data").unwrap_or(&Value::Null);
@@ -267,6 +262,18 @@ fn card_from_event(value: &Value) -> Option<TimelineCard> {
         "session_failed" => TimelineCard::new(CardKind::Recovery, "Session failed", text("reason")),
         "session_cancelled" => {
             TimelineCard::new(CardKind::Recovery, "Session cancelled", text("reason"))
+        }
+        // A pause on a plan is an invitation, not a fault. Presenting it as
+        // "outcome review required" — and telling the reader to start a new
+        // session — sent people away from the one place their feedback could
+        // still change the plan.
+        "session_paused" if purrcode_runtime_core::is_plan_review_pause(text("reason")) => {
+            TimelineCard::new(CardKind::Plan, "Plan ready for review", text("reason")).details(
+                vec![
+                    "Type what you would change and send it: the plan is rewritten and paused again. Nothing has been changed on disk.".into(),
+                    "Send /resume when the plan is right, and PurrCode builds it.".into(),
+                ],
+            )
         }
         "session_paused" => TimelineCard::new(
             CardKind::Recovery,
@@ -486,6 +493,34 @@ mod tests {
         assert_eq!(cards[0].title, "Outcome review required");
         assert!(cards[0].summary.contains("3 checks failed"));
         assert!(!cards[0].details.is_empty());
+    }
+
+    #[test]
+    fn a_plan_pause_invites_feedback_instead_of_reporting_a_fault() {
+        // The same card served both pauses, so a plan that was simply waiting
+        // to be read was headlined "Outcome review required" and told the
+        // reader to start a new session — sending them away from the one place
+        // their feedback could still change the plan.
+        let cards = cards_from_events(&[json!({
+            "event": "session_paused",
+            "data": { "reason": purrcode_runtime_core::PLAN_REVIEW_PAUSE }
+        })]);
+        assert_eq!(cards[0].kind, CardKind::Plan);
+        assert_eq!(cards[0].title, "Plan ready for review");
+        let guidance = cards[0].details.join(" ");
+        assert!(guidance.contains("rewritten and paused again"));
+        assert!(guidance.contains("/resume"));
+        assert!(
+            !guidance.contains("start a new session"),
+            "a plan under review is changed by replying, not by starting over"
+        );
+
+        // A revision pauses the same way and must read the same way.
+        let revised = cards_from_events(&[json!({
+            "event": "session_paused",
+            "data": { "reason": format!("revised {}", purrcode_runtime_core::PLAN_REVIEW_PAUSE) }
+        })]);
+        assert_eq!(revised[0].title, "Plan ready for review");
     }
 
     #[test]

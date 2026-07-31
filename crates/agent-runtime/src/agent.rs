@@ -37,7 +37,7 @@ use purrcode_runtime_core::{
     ConversationMessage, JudgmentDecision, ProposedAction, SessionEvent, SessionId, SessionStatus,
     ValidationStatus,
 };
-use purrcode_test_orchestrator::{
+use purrcode_validation_runtime::{
     EvidenceStatus, ValidationDetector, ValidationPlan, ValidationRunner, ValidationStage,
 };
 use purrcode_whisker::RetrievalBudget;
@@ -53,7 +53,7 @@ use tokio::sync::Notify;
 use crate::context::{
     bounded_terminal_text, build_contextual_request, build_messages, build_outcome_request,
     build_plan_messages, completed_outcome, session_worktree, task_related_paths,
-    AgentContextIndex, AgentContextPolicy, ContextualRequestInput,
+    AgentContextIndex, AgentContextPolicy, ContextualRequestInput, PlanRevision,
 };
 use crate::errors::AgentError;
 use crate::normalize::{
@@ -568,6 +568,7 @@ impl<'a> NativeAgent<'a> {
             &SessionEvent::SessionCreated {
                 objective: objective.into(),
                 repository: repository.clone(),
+                authority_mode: Default::default(),
             },
         )?;
         self.start_initialized(store, session_id).await
@@ -661,10 +662,112 @@ impl<'a> NativeAgent<'a> {
                 patch_digest: blake3::hash(b"").to_hex().to_string(),
             },
         )?;
+        let plan = self
+            .run_planner(store, session_id, &objective, &worktree.path, None)
+            .await?;
+        store.append(
+            session_id,
+            &SessionEvent::PlanCreated {
+                steps: plan.steps.clone(),
+            },
+        )?;
+        store.append(
+            session_id,
+            &SessionEvent::SessionPaused {
+                reason: purrcode_runtime_core::PLAN_REVIEW_PAUSE.into(),
+            },
+        )?;
+        Ok(plan)
+    }
+
+    /// Fold a reviewer's feedback into the plan they are reading (PRD §11).
+    ///
+    /// A plan-only run pauses asking to be reviewed, and a review that can only
+    /// answer yes is not a review. This produces the next revision from the
+    /// existing worktree and pauses again, so the exchange can go back and
+    /// forth as many times as the person needs before any file is touched.
+    pub async fn revise_plan(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        feedback: &str,
+    ) -> Result<AgentPlan, AgentError> {
+        let state = store.load(session_id)?;
+        if !matches!(state.status, SessionStatus::Active | SessionStatus::Paused) {
+            return Err(AgentError::SessionNotResumable(format!(
+                "{:?}",
+                state.status
+            )));
+        }
+        if state.plan_steps.is_empty() {
+            return Err(AgentError::CorruptSession(
+                "this session has no plan to revise".into(),
+            ));
+        }
+        let objective = state
+            .objective
+            .clone()
+            .ok_or_else(|| AgentError::CorruptSession("objective is missing".into()))?;
+        let worktree = state
+            .worktree
+            .clone()
+            .ok_or_else(|| AgentError::CorruptSession("worktree is missing".into()))?;
+        let plan = self
+            .run_planner(
+                store,
+                session_id,
+                &objective,
+                &worktree,
+                Some(PlanRevision {
+                    current: &state.plan_steps,
+                    feedback,
+                }),
+            )
+            .await?;
+        store.append(
+            session_id,
+            &SessionEvent::PlanRevised {
+                revision: state.plan_revision + 1,
+                // Why the plan changed is the reviewer's own words, bounded so
+                // one pasted essay cannot dominate the durable log.
+                reason: feedback.chars().take(512).collect(),
+                steps: plan.steps.clone(),
+            },
+        )?;
+        store.append(
+            session_id,
+            &SessionEvent::SessionPaused {
+                reason: format!("revised {}", purrcode_runtime_core::PLAN_REVIEW_PAUSE),
+            },
+        )?;
+        Ok(plan)
+    }
+
+    /// Index, retrieve and ask the planner for one structured plan.
+    ///
+    /// Shared by the first plan and every revision: the two differ only in the
+    /// event that records the result, so letting them differ in how they gather
+    /// context or repair a malformed response would be a second planner nobody
+    /// maintains.
+    async fn run_planner(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        objective: &str,
+        worktree: &Path,
+        revision: Option<PlanRevision<'_>>,
+    ) -> Result<AgentPlan, AgentError> {
         let tracker = self.begin_stream_observation("planner", 1).await?;
-        let database = worktree.path.join(".purrcode").join("context.db");
-        let mut context_index = AgentContextIndex::open(&worktree.path, &database)?;
-        let indexed = context_index.submit_task(&objective, &[], &AgentContextPolicy::default())?;
+        // Feedback usually names code the objective never mentioned, so it
+        // joins the retrieval query — otherwise a revision reasons about the
+        // same context that produced the plan being complained about.
+        let query = match &revision {
+            Some(revision) => format!("{objective}\n{}", revision.feedback),
+            None => objective.to_owned(),
+        };
+        let database = worktree.join(".purrcode").join("context.db");
+        let mut context_index = AgentContextIndex::open(worktree, &database)?;
+        let indexed = context_index.submit_task(&query, &[], &AgentContextPolicy::default())?;
         store.append(
             session_id,
             &SessionEvent::ContextIndexed {
@@ -673,7 +776,7 @@ impl<'a> NativeAgent<'a> {
                 sensitive_files: indexed.summary.sensitive_files,
             },
         )?;
-        let hits = context_index.retrieve(&objective, &RetrievalBudget::default())?;
+        let hits = context_index.retrieve(&query, &RetrievalBudget::default())?;
         store.append(
             session_id,
             &SessionEvent::ModelRequestStarted {
@@ -684,7 +787,7 @@ impl<'a> NativeAgent<'a> {
         )?;
         let request = ModelRequest {
             model: self.model.clone(),
-            messages: build_plan_messages(&objective, &worktree.path, &hits),
+            messages: build_plan_messages(objective, worktree, &hits, revision),
             tools: Vec::new(),
             max_output_tokens: Some(4096),
             reasoning_effort: None,
@@ -729,18 +832,6 @@ impl<'a> NativeAgent<'a> {
                 role: "planner".into(),
                 input_tokens,
                 output_tokens,
-            },
-        )?;
-        store.append(
-            session_id,
-            &SessionEvent::PlanCreated {
-                steps: plan.steps.clone(),
-            },
-        )?;
-        store.append(
-            session_id,
-            &SessionEvent::SessionPaused {
-                reason: "plan-only session is ready for review".into(),
             },
         )?;
         Ok(plan)
@@ -1334,7 +1425,7 @@ impl<'a> NativeAgent<'a> {
 }
 
 fn repair_stages(
-    report: &purrcode_test_orchestrator::ValidationReport,
+    report: &purrcode_validation_runtime::ValidationReport,
 ) -> BTreeSet<ValidationStage> {
     let mut stages: BTreeSet<_> = report
         .repair_routes()
@@ -1357,7 +1448,7 @@ fn repair_stages(
 fn pause_after_validation_budget(
     store: &mut SessionStore,
     session_id: SessionId,
-    report: &purrcode_test_orchestrator::ValidationReport,
+    report: &purrcode_validation_runtime::ValidationReport,
 ) -> Result<AgentOutcome, AgentError> {
     let failed = report
         .evidence

@@ -22,8 +22,12 @@ use crate::design::{Emphasis, Role, Symbols, Tokens};
 pub struct Header<'data> {
     pub repository: &'data str,
     pub branch: &'data str,
+    /// Fully qualified model id, e.g. `ollama/qwen2.5-coder:7b`. The header
+    /// renders only the model part; `/status` shows the whole id.
     pub model: &'data str,
     pub mode: &'data str,
+    /// Permission mode: Ask, Auto, or Full Access (PRD §12, §14).
+    pub permission: &'data str,
     pub phase: &'data str,
     /// True when inference stays on this machine.
     pub local_only: bool,
@@ -70,7 +74,11 @@ impl<'data> Header<'data> {
                 priority: 2,
             },
             Field {
-                text: self.model.to_owned(),
+                // PRD §10.1: the model is the fact, the provider is secondary.
+                // A configured id like `nvidia-nim-x/deepseek-ai/deepseek-v4-pro`
+                // is 45 characters of header for one piece of information, and
+                // it pushes the mode and phase off a narrow terminal.
+                text: model_name(self.model).to_owned(),
                 role: Role::Primary,
                 priority: 3,
             },
@@ -80,9 +88,14 @@ impl<'data> Header<'data> {
                 priority: 4,
             },
             Field {
-                text: self.phase.to_owned(),
+                text: self.permission.to_owned(),
                 role: Role::Muted,
                 priority: 5,
+            },
+            Field {
+                text: self.phase.to_owned(),
+                role: Role::Muted,
+                priority: 6,
             },
         ]
     }
@@ -175,8 +188,35 @@ fn rendered_width(fields: &[Field], separator: &str) -> usize {
         + separators
 }
 
+/// The model portion of a provider-qualified id.
+///
+/// Provider names can themselves contain slashes in a model path
+/// (`nvidia-nim/deepseek-ai/deepseek-v4-pro`), so only the leading provider
+/// segment is dropped — taking the last segment would turn
+/// `deepseek-ai/deepseek-v4-pro` into something the user never typed.
+pub fn model_name(model: &str) -> &str {
+    model.split_once('/').map_or(model, |(_, rest)| rest)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_header_shows_the_model_and_leaves_the_provider_to_status() {
+        assert_eq!(
+            super::model_name("ollama/qwen2.5-coder:7b"),
+            "qwen2.5-coder:7b"
+        );
+        // A provider whose models carry their own path keeps that path: taking
+        // the last segment would show something the user never configured.
+        assert_eq!(
+            super::model_name("nvidia-nim-x/deepseek-ai/deepseek-v4-pro"),
+            "deepseek-ai/deepseek-v4-pro"
+        );
+        // An unqualified name is already the model.
+        assert_eq!(super::model_name("gpt-5"), "gpt-5");
+        assert_eq!(super::model_name(""), "");
+    }
+
     use super::*;
     use crate::test_fixtures::{monochrome_theme, test_theme};
 
@@ -186,6 +226,7 @@ mod tests {
             branch: "main",
             model: "ollama/coder:7b",
             mode: "Build",
+            permission: "Auto",
             phase: "executing",
             local_only: true,
         }
@@ -209,12 +250,18 @@ mod tests {
         for expected in [
             "PurrCode",
             "PurrCode/main",
-            "ollama/coder:7b",
+            "coder:7b",
             "Build",
             "executing",
         ] {
             assert!(line.contains(expected), "missing {expected} in {line}");
         }
+        // The provider is secondary information (PRD §10.1) and belongs to
+        // `/status`, not to the line the user reads on every frame.
+        assert!(
+            !line.contains("ollama/"),
+            "the provider prefix should not be in the header: {line}"
+        );
     }
 
     #[test]
@@ -312,6 +359,7 @@ mod tests {
             branch: "main",
             model: "",
             mode: "",
+            permission: "",
             phase: "",
             local_only: true,
         };

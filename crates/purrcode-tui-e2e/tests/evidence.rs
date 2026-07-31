@@ -94,7 +94,7 @@ fn durable_events_can_be_inspected() {
 
         harness.key(Key::Left)?;
         let screen = harness.wait_for_text("Event 2 / 3")?;
-        assertions::assert_readable(&screen, "Type: Plan revision 1");
+        assertions::assert_readable(&screen, "Type: Plan");
         assertions::assert_readable(&screen, "2 step(s)");
 
         harness.key(Key::Left)?;
@@ -472,8 +472,10 @@ fn mcp_failure_is_explained() {
         // what this test actually proves — is that a failed search never
         // fabricates candidates and never leaves the rest of the session
         // unusable.
-        let screen = harness.wait_for_text("No matching skills were returned.")?;
-        assertions::assert_absent(&screen, &["database-browser", "deploy automation"]);
+        let screen = harness.wait_for_all_and_absent(
+            &["No matching skills were returned."],
+            &["database-browser", "deploy automation"],
+        )?;
         assertions::assert_no_overflow(&screen);
 
         harness.key(Key::Escape)?;

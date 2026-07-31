@@ -152,10 +152,67 @@ fn plan_mode_modifies_nothing() {
     with_artifacts("conversation-plan-mode", &mut harness, |harness| {
         harness.wait_for_text("Ready for a task")?;
         harness.run_command("/plan")?;
-        harness.wait_for_text("Switched to plan mode")?;
+        harness.wait_for_text("Plan mode")?;
         submit(harness, "Plan the refactor")?;
         harness.wait_for_text("Plan created")?;
         let screen = harness.screen();
+        assertions::assert_absent(&screen, &["Approval required", "Editing"]);
+        Ok(())
+    });
+}
+
+#[test]
+fn a_plan_under_review_is_revised_by_replying_to_it() {
+    // PRD §11: in Plan mode the plan is the deliverable, so review has to be
+    // able to change it. The workbench only reused a session whose status was
+    // `active`, so typing into a plan-only run that had paused started a brand
+    // new session — the plan was discarded and the whole task had to be
+    // described again to alter one step.
+    let script = answering(vec![
+        StreamFrame::DurableAudit(fake_provider::plan(&["Add the parser", "Add the tests"])),
+        StreamFrame::DurableAudit(fake_provider::plan_ready_for_review(false)),
+    ]);
+    let mut harness = Harness::start(script).expect("start workbench");
+    with_artifacts("conversation-plan-revision", &mut harness, |harness| {
+        harness.wait_for_text("Ready for a task")?;
+        harness.run_command("/plan")?;
+        harness.wait_for_text("Plan mode")?;
+        submit(harness, "Plan the refactor")?;
+
+        // The pause invites a reply rather than reporting a fault.
+        let screen = harness.wait_for_text("Plan ready for review")?;
+        assertions::assert_absent(&screen, &["Outcome review required"]);
+        assertions::assert_no_overflow(&screen);
+
+        harness.daemon().update(|script| {
+            script.stream_frames = vec![
+                StreamFrame::DurableAudit(fake_provider::plan_revised(
+                    2,
+                    "add a migration step",
+                    &["Add the parser", "Add the migration", "Add the tests"],
+                )),
+                StreamFrame::DurableAudit(fake_provider::plan_ready_for_review(true)),
+            ];
+        });
+        harness.type_text("Add a migration step before the tests")?;
+        harness.key(Key::Ctrl('g'))?;
+
+        // The reply reaches the session as a message. That is what routes it to
+        // a revision; a second POST /v1/sessions would mean the plan was thrown
+        // away and the work re-described from scratch.
+        harness.wait_for_request("POST", "/messages")?;
+        let starts = harness
+            .daemon()
+            .requests()
+            .into_iter()
+            .filter(|request| request.method == "POST" && request.path == "/v1/sessions")
+            .count();
+        assert_eq!(starts, 1, "feedback on a plan must not start a new session");
+
+        // The new plan is distinguishable from the one that was complained
+        // about, and it pauses for review again rather than starting work.
+        let screen = harness.wait_for_text("Plan revised (revision 2)")?;
+        assertions::assert_visible(&screen, &["Plan ready for review"]);
         assertions::assert_absent(&screen, &["Approval required", "Editing"]);
         Ok(())
     });
@@ -178,7 +235,7 @@ fn build_mode_requires_approval() {
     with_artifacts("conversation-build-mode", &mut harness, |harness| {
         harness.wait_for_text("Ready for a task")?;
         harness.run_command("/build")?;
-        harness.wait_for_text("Switched to build mode")?;
+        harness.wait_for_text("Build mode")?;
         submit(harness, "Add a function")?;
         let screen =
             harness.wait_for_all(&["Approval required", "src/lib.rs", "A Approve exact action"])?;
@@ -193,7 +250,7 @@ fn review_mode_reports_recorded_work() {
     with_artifacts("conversation-review-mode", &mut harness, |harness| {
         harness.wait_for_text("Ready for a task")?;
         harness.run_command("/review")?;
-        let screen = harness.wait_for_text("Switched to review mode")?;
+        let screen = harness.wait_for_text("Review mode")?;
         assertions::assert_visible(&screen, &["Review"]);
         Ok(())
     });

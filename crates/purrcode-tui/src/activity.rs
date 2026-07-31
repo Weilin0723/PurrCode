@@ -449,8 +449,17 @@ pub fn derive(events: &[Value]) -> WorkbenchProgress {
                     .get("steps")
                     .and_then(Value::as_array)
                     .map_or(0, Vec::len);
+                // Calling every plan "Plan created" hid the one thing a
+                // reviewer is looking for after sending feedback: that a new
+                // plan exists and their note is what produced it.
+                let label = if name == "plan_revised" {
+                    let revision = data.get("revision").and_then(Value::as_u64).unwrap_or(0);
+                    format!("Plan revised (revision {revision})")
+                } else {
+                    "Plan created".to_owned()
+                };
                 progress.activity.push(
-                    ActivityEntry::new(ActivityState::Done, "Plan created", Some(index))
+                    ActivityEntry::new(ActivityState::Done, label, Some(index))
                         .detail(format!("{steps} step(s)")),
                 );
             }
@@ -560,13 +569,19 @@ pub fn derive(events: &[Value]) -> WorkbenchProgress {
             }
             "session_paused" | "outcome_review_required" => {
                 terminal = Some(SessionState::Paused);
+                // "Outcome review required" is a fault report. A plan waiting
+                // to be read is not one, and labelling it that way told people
+                // to go fix something instead of to reply.
+                let plan_review = name == "session_paused"
+                    && purrcode_runtime_core::is_plan_review_pause(text("reason"));
+                let label = if plan_review {
+                    "Plan ready for review"
+                } else {
+                    "Outcome review required"
+                };
                 progress.activity.push(
-                    ActivityEntry::new(
-                        ActivityState::Attention,
-                        "Outcome review required",
-                        Some(index),
-                    )
-                    .detail(text("reason").to_owned()),
+                    ActivityEntry::new(ActivityState::Attention, label, Some(index))
+                        .detail(text("reason").to_owned()),
                 );
             }
             "session_failed" => {
@@ -699,6 +714,32 @@ mod tests {
 
     fn events(names: Vec<Value>) -> Vec<Value> {
         names
+    }
+
+    #[test]
+    fn a_revised_plan_says_so_and_the_pause_asks_to_be_read() {
+        // After sending feedback the rail said "Plan created" and "Outcome
+        // review required" — nothing distinguished the new plan from the one
+        // being complained about, or said the session was waiting on a reply.
+        let progress = derive(&events(vec![
+            json!({"event":"plan_created","data":{"steps":["a","b"]}}),
+            json!({"event":"plan_revised","data":{"revision":2,"reason":"add a migration step","steps":["a","b","c"]}}),
+            json!({"event":"session_paused","data":{"reason": format!("revised {}", purrcode_runtime_core::PLAN_REVIEW_PAUSE)}}),
+        ]));
+        let labels: Vec<&str> = progress
+            .activity
+            .iter()
+            .map(|entry| entry.label.as_str())
+            .collect();
+        assert_eq!(labels[0], "Plan created");
+        assert_eq!(labels[1], "Plan revised (revision 2)");
+        assert_eq!(labels[2], "Plan ready for review");
+
+        // A pause that is not about a plan keeps its fault wording.
+        let failed = derive(&events(vec![
+            json!({"event":"session_paused","data":{"reason":"validation could not run"}}),
+        ]));
+        assert_eq!(failed.activity[0].label, "Outcome review required");
     }
 
     #[test]

@@ -17,6 +17,7 @@ use purrcode_mcp_host::{
     discover_skills, install_skill, uninstall_skill, verify_installed_skill, McpHost,
     McpServerConfig,
 };
+use purrcode_model_selection::{select_coder, select_judge, ModelCandidate, SelectionBudget};
 use purrcode_ninelives::SessionStore;
 use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
@@ -83,7 +84,27 @@ enum Command {
         #[arg(long)]
         no_start: bool,
     },
-    /// Launch the authenticated graphical PurrCode Studio.
+    /// Launch the authenticated graphical PurrCode Studio (browser shell).
+    ///
+    /// Studio attaches to the same daemon, repository, session, conversation,
+    /// model, permission mode, terminal sessions, diff and validation state as
+    /// the TUI Workbench; it is a graphical view of the same session, not a
+    /// second session.
+    Studio {
+        /// Attach Studio to an existing local or remote daemon.
+        #[arg(long)]
+        remote: Option<String>,
+        /// Loopback address for the browser-facing Studio shell.
+        #[arg(long, default_value = "127.0.0.1:0")]
+        bind: std::net::SocketAddr,
+        /// Print the one-time Studio URL instead of opening a browser.
+        #[arg(long)]
+        no_open: bool,
+        /// Repository to restore in the workspace dashboard.
+        #[arg(long)]
+        repository: Option<PathBuf>,
+    },
+    /// Launch the authenticated graphical PurrCode Studio (backward-compatible alias of `studio`).
     Ui {
         /// Attach Studio to an existing local or remote daemon.
         #[arg(long)]
@@ -532,6 +553,8 @@ enum BundleCommand {
 
 #[derive(Subcommand)]
 enum BenchmarkCommand {
+    /// Validate every benchmark case against the schema.
+    #[command(alias = "validate-cases")]
     Audit {
         #[arg(long)]
         catalog: Option<PathBuf>,
@@ -541,29 +564,8 @@ enum BenchmarkCommand {
         catalog: Option<PathBuf>,
     },
     /// Drive coding fixtures through the running daemon and score real agent outcomes.
+    #[command(alias = "run")]
     Live {
-        #[arg(long)]
-        catalog: Option<PathBuf>,
-        #[arg(long)]
-        max_tasks: Option<usize>,
-        /// Whole-task deadline for each benchmark case.
-        #[arg(long, default_value_t = 300)]
-        timeout_seconds: u64,
-    },
-    /// List available benchmark case IDs and categories.
-    List,
-    /// Validate all benchmark cases against the schema.
-    ValidateCases {
-        #[arg(long)]
-        catalog: Option<PathBuf>,
-    },
-    /// Compare two benchmark reports.
-    Compare {
-        baseline: PathBuf,
-        candidate: PathBuf,
-    },
-    /// Run benchmark cases through the daemon (alias for `Live`).
-    Run {
         #[arg(long)]
         catalog: Option<PathBuf>,
         #[arg(long)]
@@ -574,6 +576,13 @@ enum BenchmarkCommand {
         /// Output path for the benchmark report JSON (defaults to stdout).
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// List available benchmark case IDs and categories.
+    List,
+    /// Compare two benchmark reports.
+    Compare {
+        baseline: PathBuf,
+        candidate: PathBuf,
     },
     /// Render a benchmark JSON report as a human-readable summary.
     Report {
@@ -596,26 +605,19 @@ async fn main() -> Result<()> {
     let daemon_token = cli.daemon_token.unwrap_or(default_daemon_token_path()?);
     let requested_database = cli.database;
     let Some(command) = cli.command else {
+        // When no config exists yet, launch the TUI with a minimal empty config
+        // so the provider/model onboarding overlay can guide setup interactively
+        // instead of exiting with "run purrcode init" (PRD §3.1, §7.2, §8).
         if !config_path.is_file() {
-            bail!("PurrCode is not initialized; run `purrcode init`");
-        }
-        let database = requested_database
-            .clone()
-            .unwrap_or(default_database_path()?);
-        let repository = resolve_product_repository(None)?;
-        if display_available() {
-            run_studio(
-                &config_path,
-                &database,
-                &daemon_url,
-                &daemon_token,
-                repository,
-                None,
-                "127.0.0.1:0".parse()?,
-                false,
-            )
-            .await?;
-        } else {
+            let database = requested_database
+                .clone()
+                .unwrap_or(default_database_path()?);
+            if let Some(parent) = database.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let store = SessionStore::open(&database)?;
+            drop(store);
+            let repository = resolve_product_repository(None)?;
             run_tui(
                 &config_path,
                 &database,
@@ -624,7 +626,24 @@ async fn main() -> Result<()> {
                 repository,
             )
             .await?;
+            return Ok(());
         }
+        let database = requested_database
+            .clone()
+            .unwrap_or(default_database_path()?);
+        let repository = resolve_product_repository(None)?;
+        // Bare `purrcode` launches the TUI Workbench as the default experience,
+        // on every platform. Studio is intentionally opt-in via `purrcode studio`
+        // or opened from inside the TUI — see PRD §3.1. Display detection no
+        // longer changes the default interface.
+        run_tui(
+            &config_path,
+            &database,
+            daemon_url,
+            daemon_token,
+            repository,
+        )
+        .await?;
         return Ok(());
     };
     let database = requested_database.unwrap_or(default_database_path()?);
@@ -645,12 +664,36 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Command::Studio {
+            remote,
+            bind,
+            no_open,
+            repository,
+        } => {
+            if !config_path.is_file() {
+                bail!("PurrCode is not initialized; run `purrcode init`");
+            }
+            let repository = resolve_product_repository(repository)?;
+            run_studio(
+                &config_path,
+                &database,
+                &daemon_url,
+                &daemon_token,
+                repository,
+                remote,
+                bind,
+                no_open,
+            )
+            .await?;
+        }
         Command::Ui {
             remote,
             bind,
             no_open,
             repository,
         } => {
+            // Backward-compatible alias of `purrcode studio` — same handler,
+            // so existing automation and muscle memory keep working.
             if !config_path.is_file() {
                 bail!("PurrCode is not initialized; run `purrcode init`");
             }
@@ -845,6 +888,7 @@ async fn main() -> Result<()> {
                 &SessionEvent::SessionCreated {
                     objective: "user-requested guarded command".into(),
                     repository: repository.clone(),
+                    authority_mode: Default::default(),
                 },
             )?;
             store.append(
@@ -1377,6 +1421,7 @@ async fn main() -> Result<()> {
                         &SessionEvent::SessionCreated {
                             objective,
                             repository,
+                            authority_mode: Default::default(),
                         },
                     )?;
                     store.append(
@@ -1542,6 +1587,7 @@ async fn main() -> Result<()> {
                 &SessionEvent::SessionCreated {
                     objective: format!("MCP {server_name}/{tool_name}"),
                     repository,
+                    authority_mode: Default::default(),
                 },
             )?;
             store.append(
@@ -2026,6 +2072,7 @@ async fn main() -> Result<()> {
                 let catalog = GoldenCatalog::load(&catalog_path)?;
                 let root = catalog_path.parent().unwrap_or_else(|| Path::new("."));
                 println!("{}", serde_json::to_string_pretty(&catalog.audit(root)?)?);
+                println!("status: all cases valid");
             }
             BenchmarkCommand::Baseline { catalog } => {
                 let catalog_path = catalog.unwrap_or_else(default_golden_catalog_path);
@@ -2041,6 +2088,7 @@ async fn main() -> Result<()> {
                 catalog,
                 max_tasks,
                 timeout_seconds,
+                output,
             } => {
                 let catalog_path = catalog.unwrap_or_else(default_golden_catalog_path);
                 let catalog = GoldenCatalog::load(&catalog_path)?;
@@ -2060,7 +2108,15 @@ async fn main() -> Result<()> {
                     timeout_seconds,
                 )
                 .await?;
-                println!("{}", serde_json::to_string_pretty(&report)?);
+                let encoded = serde_json::to_string_pretty(&report)?;
+                match output {
+                    Some(path) => {
+                        fs::write(&path, &encoded)
+                            .with_context(|| format!("write {}", path.display()))?;
+                        println!("report: {}", path.display());
+                    }
+                    None => println!("{encoded}"),
+                }
                 if report.failed > 0 {
                     bail!("{} live golden cases failed", report.failed);
                 }
@@ -2082,14 +2138,6 @@ async fn main() -> Result<()> {
                     let count = catalog.tasks.iter().filter(|t| t.category == cat).count();
                     println!("  {cat}: {count}");
                 }
-            }
-            BenchmarkCommand::ValidateCases { catalog } => {
-                let catalog_path = catalog.unwrap_or_else(default_golden_catalog_path);
-                let catalog = GoldenCatalog::load(&catalog_path)?;
-                let root = catalog_path.parent().unwrap_or_else(|| Path::new("."));
-                let audit = catalog.audit(root)?;
-                println!("{}", serde_json::to_string_pretty(&audit)?);
-                println!("status: all cases valid");
             }
             BenchmarkCommand::Compare {
                 baseline,
@@ -2128,42 +2176,6 @@ async fn main() -> Result<()> {
                         b_passed as f64 / b_total as f64 * 100.0,
                         c_passed as f64 / c_total as f64 * 100.0,
                     );
-                }
-            }
-            BenchmarkCommand::Run {
-                catalog,
-                max_tasks,
-                timeout_seconds,
-                output,
-            } => {
-                let catalog_path = catalog.unwrap_or_else(default_golden_catalog_path);
-                let catalog = GoldenCatalog::load(&catalog_path)?;
-                let root = catalog_path.parent().unwrap_or_else(|| Path::new("."));
-                let token = fs::read_to_string(&daemon_token).with_context(|| {
-                    format!(
-                        "daemon token unavailable at {}; run `purrcode init`",
-                        daemon_token.display()
-                    )
-                })?;
-                let report = run_live_benchmark(
-                    &catalog,
-                    root,
-                    &daemon_url,
-                    token.trim(),
-                    max_tasks,
-                    timeout_seconds,
-                )
-                .await?;
-                let encoded = serde_json::to_string_pretty(&report)?;
-                if let Some(path) = output {
-                    fs::write(&path, &encoded)
-                        .with_context(|| format!("write {}", path.display()))?;
-                    println!("report: {}", path.display());
-                } else {
-                    println!("{encoded}");
-                }
-                if report.failed > 0 {
-                    bail!("{} live golden cases failed", report.failed);
                 }
             }
             BenchmarkCommand::Report { report } => {
@@ -2743,6 +2755,7 @@ fn run_judgment_benchmark_case(
         &SessionEvent::SessionCreated {
             objective: task.objective.clone(),
             repository: repository.to_path_buf(),
+            authority_mode: Default::default(),
         },
     )?;
     evidence.append(
@@ -3455,41 +3468,85 @@ async fn initialize_product(
             }
         }
     }
+    // If no local provider was discovered, check for a NVIDIA_API_KEY env var
+    // or keychain entry and auto-configure NVIDIA NIM (PRD §9, §9.1).
+    if provider_config.is_none()
+        && (std::env::var_os("NVIDIA_API_KEY").is_some()
+            || std::env::var("NVIDIA_API_KEY").is_ok_and(|v| !v.is_empty()))
+    {
+        let nim_key = std::env::var("NVIDIA_API_KEY").unwrap_or_default();
+        provider_name = Some("nvidia-nim".to_owned());
+        provider_config = Some(ProviderConfig::NvidiaNim {
+            base_url: url::Url::parse("https://integrate.api.nvidia.com/v1/")?,
+            api_key_env: "NVIDIA_API_KEY".to_owned(),
+            capabilities: BTreeMap::new(),
+        });
+        // Try to enumerate models from the NIM endpoint
+        if let Ok(response) = client
+            .get("https://integrate.api.nvidia.com/v1/models")
+            .header("Authorization", format!("Bearer {nim_key}"))
+            .send()
+            .await
+        {
+            if response.status().is_success() {
+                if let Ok(value) = response.json::<serde_json::Value>().await {
+                    discovered_models = value["data"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|model| model["id"].as_str().map(str::to_owned))
+                        .collect();
+                }
+            }
+        }
+    }
     let (provider_name, mut provider_config) = provider_name.zip(provider_config).context(
-        "no local model server was discovered; start Ollama or LM Studio with at least one model",
+        "no local model server or NVIDIA NIM credential was discovered; start Ollama or LM          Studio, or set NVIDIA_API_KEY in your environment or keychain",
     )?;
     discovered_models.sort();
     discovered_models.dedup();
     let local = provider_config.is_local();
-    let capabilities = match &mut provider_config {
-        ProviderConfig::Ollama { capabilities, .. }
-        | ProviderConfig::OpenaiCompatible { capabilities, .. } => capabilities,
-        _ => bail!("local discovery created an unsupported provider profile"),
-    };
+    let capabilities = provider_config.configured_models_mut();
     for model in &discovered_models {
         capabilities.insert(model.clone(), ModelCapabilities::unknown(local));
     }
-    let total_memory = {
+    let budget = if local {
         let mut system = System::new();
         system.refresh_memory();
-        system.total_memory()
-    };
-    let low_memory = total_memory <= 16 * 1024 * 1024 * 1024;
-    let coder_model = select_initial_model(&discovered_models, &observed_model_sizes, low_memory);
-    let coder = format!("{provider_name}/{coder_model}");
-    let judge_model = if low_memory {
-        coder_model
+        SelectionBudget::for_local_host(system.total_memory())
     } else {
-        discovered_models
-            .iter()
-            .find(|model| model.as_str() != coder_model)
-            .map(String::as_str)
-            .unwrap_or(coder_model)
+        SelectionBudget::remote()
     };
+    let candidates: Vec<ModelCandidate> = discovered_models
+        .iter()
+        .map(|name| ModelCandidate {
+            name: name.clone(),
+            size_bytes: observed_model_sizes.get(name).copied(),
+            ..ModelCandidate::default()
+        })
+        .collect();
+    let coder_model = select_coder(&candidates, budget)
+        .map(|candidate| candidate.name.clone())
+        .with_context(|| {
+            format!("{provider_name} offered no model that can serve the coding role")
+        })?;
+    let coder = format!("{provider_name}/{coder_model}");
+    let judge_model = select_judge(&candidates, budget, &coder_model)
+        .map(|candidate| candidate.name.clone())
+        .unwrap_or_else(|| coder_model.clone());
     let judge = format!("{provider_name}/{judge_model}");
     let allow_same_model = coder == judge;
+    // Canonical role names only. Writing `coder` and `router` here left a fresh
+    // config disagreeing with what `AppConfig::assign_model_role` writes, so the
+    // first model change through the UI silently renamed them.
     let mut roles = BTreeMap::new();
-    for role in ["router", "summarizer", "planner", "coder", "reviewer"] {
+    for role in [
+        "utility",
+        "summarizer",
+        "planner",
+        "coding_worker",
+        "reviewer",
+    ] {
         roles.insert(role.into(), coder.clone());
     }
     roles.insert("judge".into(), judge.clone());
@@ -3537,23 +3594,6 @@ async fn initialize_product(
         return Ok(());
     }
     ensure_daemon_started(config_path, database, daemon_url, token_file, true).await
-}
-
-fn select_initial_model<'a>(
-    models: &'a [String],
-    observed_sizes: &BTreeMap<String, u64>,
-    low_memory: bool,
-) -> &'a str {
-    if low_memory {
-        models
-            .iter()
-            .filter_map(|model| observed_sizes.get(model).map(|size| (model, size)))
-            .min_by_key(|(_, size)| *size)
-            .map(|(model, _)| model.as_str())
-            .unwrap_or(models[0].as_str())
-    } else {
-        models[0].as_str()
-    }
 }
 
 async fn ensure_daemon_started(
@@ -4086,27 +4126,6 @@ mod cli_tests {
             std::time::Duration::from_secs(300)
         );
         assert!(live_benchmark_timeout(0).is_err());
-    }
-
-    #[test]
-    fn low_memory_initialization_selects_the_smallest_observed_model() {
-        let models = vec!["large".to_owned(), "small".to_owned(), "medium".to_owned()];
-        let sizes = BTreeMap::from([
-            ("large".to_owned(), 8_000),
-            ("small".to_owned(), 1_000),
-            ("medium".to_owned(), 4_000),
-        ]);
-        assert_eq!(select_initial_model(&models, &sizes, true), "small");
-        assert_eq!(select_initial_model(&models, &sizes, false), "large");
-    }
-
-    #[test]
-    fn initial_model_selection_falls_back_when_size_evidence_is_missing() {
-        let models = vec!["first".to_owned(), "second".to_owned()];
-        assert_eq!(
-            select_initial_model(&models, &BTreeMap::new(), true),
-            "first"
-        );
     }
 
     #[test]

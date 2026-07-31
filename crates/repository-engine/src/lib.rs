@@ -20,7 +20,16 @@ static WORKTREE_METADATA_GATE: Mutex<()> = Mutex::const_new(());
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepositorySnapshot {
     pub root: PathBuf,
+    /// Full commit SHA from `git rev-parse HEAD`. Clients must not show this by
+    /// default (PRD §14) — present it only via explicit `/status` / `/inspect`.
     pub head: String,
+    /// Human-readable branch name from `git rev-parse --abbrev-ref HEAD`, or an
+    /// empty string in a detached-HEAD state. This is the value to surface in
+    /// headers and workspace cards.
+    pub branch: String,
+    /// Repository display name — the final path segment of `root` — for use in
+    /// headers/cards instead of the full internal filesystem path.
+    pub name: String,
     pub dirty: bool,
     pub status_porcelain: String,
 }
@@ -79,10 +88,29 @@ impl RepositoryEngine {
     pub async fn inspect(repository: &Path) -> Result<RepositorySnapshot, RepositoryError> {
         let root = canonical_repository_root(repository).await?;
         let head = git_text(&root, &["rev-parse", "HEAD"]).await?;
+        let branch = git_text(&root, &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
         let status_porcelain = git_text(&root, &["status", "--porcelain=v1", "-z"]).await?;
+        let head = head.trim().to_owned();
+        let branch = branch.trim().to_owned();
+        // `--abbrev-ref HEAD` returns "HEAD" for a detached HEAD; treat that as
+        // no branch so the UI falls back to a short SHA rather than the literal
+        // string "HEAD".
+        let branch = if branch == "HEAD" {
+            String::new()
+        } else {
+            branch
+        };
+        // The display name is the final path segment of the canonical root —
+        // never the full internal filesystem path (PRD §14, §35.7).
+        let name = root
+            .file_name()
+            .map(|segment| segment.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned());
         Ok(RepositorySnapshot {
             root,
-            head: head.trim().into(),
+            head,
+            branch,
+            name,
             dirty: !status_porcelain.is_empty(),
             status_porcelain,
         })

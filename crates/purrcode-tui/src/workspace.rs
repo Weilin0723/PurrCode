@@ -19,7 +19,6 @@ pub struct WorkspaceContext {
     pub branch: String,
     pub source_state: String,
     pub daemon_health: String,
-    pub model: String,
     pub sandbox: String,
     pub session_phase: String,
     pub paths: Vec<WorkspacePath>,
@@ -39,7 +38,6 @@ impl WorkspaceContext {
             // The TUI does not execute Git independently of the daemon. Do not invent clean state.
             source_state: "preserved".into(),
             daemon_health: "checking".into(),
-            model: "detecting".into(),
             sandbox: "daemon-managed".into(),
             session_phase: "ready".into(),
             paths: bounded_paths(repository),

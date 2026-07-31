@@ -198,15 +198,26 @@ fn git(repository: &Path, arguments: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// Copy a failed run's artifacts somewhere durable.
+///
+/// Entries that cannot be copied are skipped rather than propagated. A
+/// workspace is a live git repository with a daemon and a PTY child that may
+/// still be exiting, so a lock file or a socket can vanish between the
+/// directory listing and the copy — and a broken symlink cannot be copied at
+/// all. Failing here would fail the test this exists to help debug, turning a
+/// diagnostic aid into a second, unrelated failure.
 fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     for entry in std::fs::read_dir(source).context("read artifact source")? {
-        let entry = entry.context("read artifact entry")?;
+        let Ok(entry) = entry else { continue };
         let target = destination.join(entry.file_name());
-        if entry.file_type().context("stat artifact entry")?.is_dir() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
             std::fs::create_dir_all(&target).context("create artifact subdirectory")?;
             copy_tree(&entry.path(), &target)?;
-        } else {
-            std::fs::copy(entry.path(), &target).context("copy artifact file")?;
+        } else if std::fs::copy(entry.path(), &target).is_err() {
+            continue;
         }
     }
     Ok(())
@@ -300,6 +311,30 @@ mod tests {
                 .expect("read preserved artifact"),
             "screen"
         );
+        std::fs::remove_dir_all(preserved).expect("clean up");
+    }
+
+    #[test]
+    fn preserving_artifacts_survives_an_entry_that_cannot_be_copied() {
+        // A workspace holds a live git repository and a PTY child that may still
+        // be exiting, so an entry can vanish or be a broken symlink. Preserving
+        // artifacts must not fail because of one — it is a debugging aid, and
+        // failing here replaces the real failure with an unrelated one.
+        let workspace = Workspace::new().expect("create workspace");
+        std::fs::create_dir_all(workspace.artifacts_dir()).expect("artifacts dir");
+        std::fs::write(workspace.artifacts_dir().join("screen.txt"), "screen")
+            .expect("write artifact");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            workspace.artifacts_dir().join("does-not-exist"),
+            workspace.artifacts_dir().join("dangling"),
+        )
+        .expect("create dangling symlink");
+
+        let preserved = workspace
+            .preserve("fixtures-preserve-broken-entry")
+            .expect("preserve must not fail on an uncopyable entry");
+        assert!(preserved.join("artifacts/screen.txt").is_file());
         std::fs::remove_dir_all(preserved).expect("clean up");
     }
 

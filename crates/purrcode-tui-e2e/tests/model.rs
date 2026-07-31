@@ -27,13 +27,16 @@ fn configured() -> DaemonScript {
 fn model_switch_updates_header() {
     let mut harness = Harness::start(configured()).expect("start workbench");
     with_artifacts("model-switch", &mut harness, |harness| {
-        let screen = harness.wait_for_text("local/coder:7b")?;
+        // The header carries the model, with the provider left to /status
+        // (PRD §10.1), so it reads `coder:7b` rather than `local/coder:7b`.
+        let screen = harness.wait_for_text("coder:7b")?;
         assertions::assert_no_overflow(&screen);
+        assertions::assert_absent(&screen, &["local/coder:7b"]);
 
         harness.run_command("/model local/reviewer:3b")?;
         harness.wait_for_request("POST", "/v1/models/roles")?;
         let screen = harness.wait_for_wrapped("Switched model to local/reviewer:3b.")?;
-        assertions::assert_visible(&screen, &["local/reviewer:3b"]);
+        assertions::assert_visible(&screen, &["reviewer:3b"]);
         Ok(())
     });
 }
@@ -42,13 +45,13 @@ fn model_switch_updates_header() {
 fn unavailable_model_is_refused_with_reason() {
     let mut harness = Harness::start(configured()).expect("start workbench");
     with_artifacts("model-unavailable", &mut harness, |harness| {
-        harness.wait_for_text("local/coder:7b")?;
+        harness.wait_for_text("coder:7b")?;
         harness.run_command("/model does-not-exist:1b")?;
         let screen = harness.wait_for_wrapped("Unknown model")?;
         assertions::assert_readable(&screen, "Run /models and select a configured model");
         // The header must not have changed to the unknown model.
         assertions::assert_absent(&screen, &["does-not-exist:1b` requires"]);
-        assert!(harness.screen().contains("local/coder:7b"));
+        assert!(harness.screen().contains("coder:7b"));
         Ok(())
     });
 }

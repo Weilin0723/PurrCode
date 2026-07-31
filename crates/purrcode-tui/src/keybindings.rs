@@ -32,8 +32,40 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         AppMode::ModelBrowse => handle_model_browser_key(app, key),
         AppMode::LeaseConflict => handle_lease_conflict_key(app, key),
         AppMode::SessionChoice => handle_session_choice_key(app, key),
+        AppMode::Terminal => handle_terminal_key(app, key),
         AppMode::Conversation => handle_conversation_key(app, key),
     }
+}
+
+/// Keys inside the terminal surface (PRD §19.1).
+///
+/// Almost everything is forwarded to the process — a terminal that swallows
+/// Ctrl+C or arrow keys is not a terminal. Only Esc, Tab and Ctrl+W are claimed
+/// by the workbench, and each is announced on the hint line.
+fn handle_terminal_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.switch_mode(AppMode::Conversation);
+            return true;
+        }
+        KeyCode::Tab => {
+            app.terminal.next_tab();
+            return true;
+        }
+        KeyCode::BackTab => {
+            app.terminal.previous_tab();
+            return true;
+        }
+        KeyCode::Char('w' | 'W') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/terminal-return".into());
+            return true;
+        }
+        _ => {}
+    }
+    if let Some(bytes) = crate::terminal::key_bytes(key) {
+        app.pending_terminal_input = Some(bytes);
+    }
+    true
 }
 
 fn handle_model_browser_key(app: &mut App, key: KeyEvent) -> bool {
@@ -232,6 +264,25 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.pending_command = Some("/diff".into())
+        }
+        // PRD §16 shortcuts. Each routes through the same command the palette
+        // runs, so a shortcut can never do something the palette cannot.
+        KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/terminal".into())
+        }
+        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/models".into())
+        }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/mode".into())
+        }
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/history".into())
+        }
+        // Ctrl+Shift+S. A terminal that cannot report Shift sends Ctrl+S, so
+        // both reach Studio rather than one silently doing nothing.
+        KeyCode::Char('s' | 'S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/studio".into())
         }
         KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.conversation.select_card(-1)

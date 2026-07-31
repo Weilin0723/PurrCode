@@ -31,6 +31,7 @@ use uuid::Uuid;
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const APP_CSS: &str = include_str!("../assets/app.css");
 const APP_JS: &str = include_str!("../assets/app.js");
+const TERM_JS: &str = include_str!("../assets/term.js");
 const SESSION_COOKIE: &str = "purrcode_studio";
 
 /// Configuration for one Studio shell process.
@@ -145,6 +146,7 @@ fn router(state: Arc<StudioState>) -> Router {
         .route("/", get(index))
         .route("/app.css", get(styles))
         .route("/app.js", get(script))
+        .route("/term.js", get(terminal_script))
         .route("/studio/config", get(browser_config))
         .route("/studio/terminals/{id}/stream", get(terminal_socket))
         .route("/api/{*path}", any(proxy))
@@ -172,10 +174,17 @@ async fn terminal_socket(
         .into_response()
 }
 
+/// Stream a terminal to one Studio client.
+///
+/// Each tick forwards only the bytes produced since the last one (PRD §24.7).
+/// The previous implementation re-fetched and re-sent the entire transcript
+/// every 80ms, which grows with the session and makes the client redraw output
+/// it already has; `since` makes an idle terminal cost an empty frame.
 async fn run_terminal_socket(socket: WebSocket, state: Arc<StudioState>, id: String) {
     let (mut sender, mut receiver) = socket.split();
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(80));
-    let endpoint = match state.daemon_url.join(&format!("v1/terminals/{id}")) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(40));
+    let mut since: u64 = 0;
+    let endpoint = match state.daemon_url.join(&format!("v1/terminals/{id}/output")) {
         Ok(endpoint) => endpoint,
         Err(_) => return,
     };
@@ -183,10 +192,18 @@ async fn run_terminal_socket(socket: WebSocket, state: Arc<StudioState>, id: Str
         tokio::select! {
             _ = interval.tick() => {
                 let response = state.client.get(endpoint.clone())
+                    .query(&[("since", since)])
                     .bearer_auth(state.daemon_token.as_ref()).send().await;
                 let Ok(response) = response else { continue };
-                let Ok(body) = response.text().await else { continue };
-                if sender.send(Message::Text(body.into())).await.is_err() { break; }
+                let Ok(body) = response.json::<serde_json::Value>().await else { continue };
+                let next = body["chunk"]["next_offset"].as_u64().unwrap_or(since);
+                let empty = body["chunk"]["bytes"].as_array().is_none_or(|b| b.is_empty());
+                since = next;
+                // An idle terminal still needs the occasional frame so the
+                // client learns when the process exits, but not 25 a second.
+                if empty && body["alive"].as_bool().unwrap_or(true) { continue; }
+                let Ok(text) = serde_json::to_string(&body) else { continue };
+                if sender.send(Message::Text(text.into())).await.is_err() { break; }
             }
             incoming = receiver.next() => {
                 let Some(Ok(message)) = incoming else { break; };
@@ -297,9 +314,43 @@ async fn bootstrap(
     response
 }
 
+/// Shown to a person who reaches Studio without a session.
+///
+/// The bootstrap link is single-use by design, so this page is reached by
+/// ordinary means: bookmarking the bare address, opening it in a second
+/// browser, clearing cookies, or restarting the shell. Answering that with
+/// `Studio authentication required` and nothing else is a dead end — the
+/// reader is left unable to tell a malfunction from a security property, and is
+/// given no way forward.
+///
+/// Unstyled on purpose: the CSP is `default-src 'self'` with no inline styles,
+/// and `/app.css` needs the very session this reader does not have. Semantic
+/// HTML renders readably without it.
+const UNAUTHORIZED_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>PurrCode Studio - session required</title></head>
+<body>
+<h1>This browser has no Studio session</h1>
+<p>Studio opens through a one-time link that is exchanged for a session cookie
+and then immediately invalidated. That link has already been used, or this
+browser never had it.</p>
+<p>This is how Studio is meant to work, not a fault: the link is single-use so
+that a copied URL cannot be replayed by anyone else.</p>
+<h2>To get back in</h2>
+<p>Run this in your repository and open the link it prints:</p>
+<pre>purrcode studio</pre>
+<p>Your session, conversation and terminals are held by the daemon, not by this
+browser, so nothing is lost by opening a new link.</p>
+</body>
+</html>"#;
+
 async fn index(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
     if !authorized(&state, &headers) {
-        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+        return secured_asset(
+            StatusCode::UNAUTHORIZED,
+            "text/html; charset=utf-8",
+            UNAUTHORIZED_HTML,
+        );
     }
     secured_asset(StatusCode::OK, "text/html; charset=utf-8", INDEX_HTML)
 }
@@ -319,6 +370,17 @@ async fn script(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Re
         StatusCode::OK,
         "application/javascript; charset=utf-8",
         APP_JS,
+    )
+}
+
+async fn terminal_script(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
+    if !authorized(&state, &headers) {
+        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+    }
+    secured_asset(
+        StatusCode::OK,
+        "application/javascript; charset=utf-8",
+        TERM_JS,
     )
 }
 
@@ -740,26 +802,271 @@ mod tests {
     }
 
     #[test]
-    fn embedded_studio_exposes_workbench_and_terminal_surfaces() {
-        for heading in [
-            "Conversation",
-            "Activity",
-            "Inspector",
-            "Diff review",
-            "Validation",
-            "Native PTY",
+    fn embedded_studio_is_session_first() {
+        // PRD §24.3: sessions, one conversation, a composer, a hidden drawer.
+        for surface in [
+            r#"aria-label="Sessions""#,
+            r#"id="session-list""#,
+            r#"id="conversation""#,
+            r#"id="composer""#,
+            r#"id="context-drawer""#,
+            r#"id="settings-modal""#,
         ] {
-            assert!(INDEX_HTML.contains(heading), "missing {heading} surface");
+            assert!(INDEX_HTML.contains(surface), "missing {surface}");
         }
+        // PRD §24.4: no dashboard shell and no unfinished enterprise pages.
+        for forbidden in [
+            "Agent Factory",
+            "Deployments",
+            "Agent Runs",
+            "Workspaces",
+            r#"class="nav-item""#,
+        ] {
+            assert!(
+                !INDEX_HTML.contains(forbidden),
+                "{forbidden} must not appear in the primary navigation"
+            );
+        }
+        // The drawer opens contextually rather than owning permanent space.
+        assert!(INDEX_HTML.contains(r#"id="context-drawer" class="context-drawer hidden""#));
         assert!(!INDEX_HTML.contains("<script>"));
         assert!(!INDEX_HTML.contains("<style>"));
         assert!(APP_JS.contains("/messages"));
         assert!(APP_JS.contains("/events"));
         assert!(APP_JS.contains("/diff"));
+        assert!(APP_CSS.contains("user-select: text"));
+        assert!(APP_CSS.contains("@media (max-width: 800px)"));
+    }
+
+    #[test]
+    fn embedded_studio_can_see_and_change_the_active_model() {
+        // PRD §10.1 requires the active model to be visible at all times, and
+        // §36 fails the release if the primary UI cannot select one. The
+        // settings modal existed as markup with nothing wired to it.
+        assert!(INDEX_HTML.contains(r#"id="settings-open""#));
+        assert!(INDEX_HTML.contains(r#"id="model-choices""#));
+        assert!(APP_JS.contains("#settings-open\").addEventListener"));
+        assert!(APP_JS.contains("/api/v1/models"));
+        assert!(APP_JS.contains("/api/v1/providers"));
+        // The canonical role name, not the alias the old config used.
+        assert!(APP_JS.contains(r#"role: "coding_worker""#));
+        // The header and the composer read one value, so they cannot disagree.
+        assert!(APP_JS.contains("#model-info\").textContent = label"));
+        assert!(APP_JS.contains("#composer-model\").textContent = label"));
+    }
+
+    #[test]
+    fn embedded_studio_lets_the_user_choose_task_and_permission_modes() {
+        // PRD §11, §12, §16. Studio previously printed "Build" and "Ask" as
+        // static text, which reads as a setting the user cannot reach.
+        for control in [
+            r#"<select id="composer-mode""#,
+            r#"<select id="composer-permission""#,
+            r#"<select id="settings-permission""#,
+            r#"<select id="settings-default-mode""#,
+        ] {
+            assert!(INDEX_HTML.contains(control), "missing {control}");
+        }
+        // Ask and Plan must reach the daemon as a constraint, not as a hint it
+        // might infer from the objective's wording.
+        assert!(APP_JS.contains(r#"READ_ONLY_MODES = ["ask", "plan"]"#));
+        assert!(APP_JS.contains("plan_only: READ_ONLY_MODES.includes(state.taskMode)"));
+        assert!(APP_JS.contains("authority_mode: AUTHORITY_MODES[state.permission]"));
+        // Full Access invites a larger reading than it deserves, so the text
+        // states what it does not grant.
+        assert!(APP_JS.contains("It grants no new ones"));
+    }
+
+    #[test]
+    fn studio_settings_covers_every_prd_24_6_section() {
+        for section in [
+            "Models and providers",
+            "Permissions",
+            "Appearance",
+            "Repository defaults",
+            "Terminal",
+            "Advanced",
+            "Experimental",
+        ] {
+            assert!(
+                INDEX_HTML.contains(&format!("<h3>{section}</h3>")),
+                "settings is missing the {section} section"
+            );
+        }
+        // With every section present the dialog is taller than a short
+        // viewport, so it must scroll inside itself and keep Close reachable.
+        assert!(APP_CSS.contains("max-height: 85vh"));
+        assert!(APP_CSS.contains(".modal-header { position: sticky"));
+    }
+
+    #[test]
+    fn studio_reads_activity_from_the_daemon_not_from_raw_events() {
+        // Observed in a real session: the activity list read "Submodules
+        // Prepared" and "Model Request Started" because the client title-cased
+        // raw event names. That is internal vocabulary on the main surface
+        // (PRD §15.1) and a second, divergent reading of the run from the one
+        // the Workbench shows (§31).
+        assert!(APP_JS.contains("/activity"));
+        assert!(APP_JS.contains("/validation"));
+        assert!(
+            !APP_JS.contains("function eventTitle"),
+            "no client may invent its own labels for durable events"
+        );
+        assert!(
+            !APP_JS.contains(r#"split("_")"#),
+            "an event name split on underscores is a raw event name"
+        );
+        // Status reaches the reader as a word, not only as a glyph or colour.
+        assert!(APP_JS.contains("activity-state"));
+    }
+
+    #[test]
+    fn studio_shows_the_plan_a_paused_run_asks_you_to_review() {
+        assert!(APP_JS.contains("function renderPlan"));
+        assert!(APP_JS.contains("summary?.plan"));
+        // It renders every step, not a truncated summary of the first one.
+        //
+        // Asserted within one line. `include_str!` embeds whatever the checkout
+        // wrote, so a fragment spanning a newline passes on an LF checkout and
+        // fails on a CRLF one — which is exactly how this passed on Linux and
+        // macOS while failing every Windows run.
+        assert!(APP_JS.contains("`<li>${escapeHtml(planStepText(step))}</li>`"));
+        assert!(APP_CSS.contains(".plan-steps"));
+    }
+
+    #[test]
+    fn a_model_change_reports_each_scope_it_actually_changed() {
+        // Observed while testing: the repository default changed, the header
+        // followed it, and the open session kept running on the old model — but
+        // the only message was an unconditional "Model set to ...". A user
+        // cannot act on a success that may not have happened.
+        assert!(APP_JS.contains("for this session and new work"));
+        assert!(APP_JS.contains("This session kept its model"));
+        assert!(APP_JS.contains("for new work in this repository"));
+        assert!(
+            !APP_JS.contains("`Model set to ${id}`"),
+            "one message for two scopes cannot be truthful about either"
+        );
+        // The header reads the session's model when a session is open.
+        assert!(APP_JS.contains("state.selectedSession?.selected_model"));
+    }
+
+    #[test]
+    fn a_reviewed_plan_can_be_turned_into_work_in_one_action() {
+        // A plan-only run pauses saying it is "ready for review". Without an
+        // action on the plan itself the only way forward was to start a new
+        // session and describe the work again — the runtime has continued from
+        // the plan on resume all along, but no client offered it.
+        assert!(APP_JS.contains("Build this plan"));
+        assert!(APP_JS.contains("/resume"));
+        // It says what it will do and that nothing has happened yet.
+        assert!(APP_JS.contains("Nothing has been changed yet"));
+        // Bound by delegation: the plan block is re-rendered on every refresh.
+        assert!(APP_JS.contains(r#"event.target.id === "build-plan""#));
+    }
+
+    #[test]
+    fn a_plan_under_review_can_be_argued_with() {
+        // PRD §11: the plan is the deliverable, so review has to be able to
+        // change it. The composer used to refuse with "use Build this plan to
+        // continue it", which made review a yes/no vote — a reviewer who
+        // disagreed with one step had to abandon the session and start over.
+        assert!(
+            !APP_JS.contains("Use Build this plan to continue it"),
+            "a follow-up during plan review is feedback, not an error"
+        );
+        // Whether the plan is open for revision is the daemon's answer.
+        assert!(APP_JS.contains("summary?.awaiting_plan_review"));
+        assert!(APP_JS.contains("state.awaitingPlanReview"));
+        // The composer says which of its three jobs pressing Send will do.
+        assert!(APP_JS.contains(r##"$("#send").textContent = revising ? "Revise plan""##));
+        // Revisions are numbered, so feedback visibly took effect.
+        assert!(APP_JS.contains("state.planRevision > 1"));
+    }
+
+    #[test]
+    fn embedded_studio_terminal_is_emulated_and_incremental() {
+        // PRD §24.7: a real emulator, not a stripped log.
         assert!(APP_JS.contains("new WebSocket"));
         assert!(APP_JS.contains("/studio/terminals/"));
-        assert!(APP_CSS.contains("grid-template-columns"));
-        assert!(APP_CSS.contains("user-select: text"));
-        assert!(APP_CSS.contains("@media (max-width: 780px)"));
+        assert!(
+            APP_JS.contains(r#"import { Terminal, measure } from "/term.js""#),
+            "the Studio must drive the terminal emulator"
+        );
+        assert!(
+            !APP_JS.contains(r"\x1b(?:[@-_]|\[[0-?]*[ -/]*[@-~])"),
+            "escape sequences must be interpreted, not stripped"
+        );
+        assert!(INDEX_HTML.contains(r#"<script type="module" src="/app.js">"#));
+        for capability in [
+            "class Terminal",
+            "applyStyle",
+            "eraseDisplay",
+            "scrollUp",
+            "resize(",
+            "keyToBytes",
+        ] {
+            assert!(TERM_JS.contains(capability), "emulator lacks {capability}");
+        }
+        // The shell must not re-send the whole transcript on a timer.
+        assert!(
+            APP_JS.contains("chunk.next_offset") || APP_JS.contains(r#"frame.chunk"#),
+            "the client must consume incremental chunks"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_browser_without_a_session_is_told_how_to_get_one() {
+        // Reached by ordinary means — a bookmarked bare URL, a second browser,
+        // cleared cookies, a restarted shell. A bare "authentication required"
+        // leaves the reader unable to tell a malfunction from a security
+        // property, and with nothing to do about either.
+        let (report, server, _) = start_pair().await;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let response = client
+            .get(format!("http://{}/", report.bind))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        assert!(response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .is_some_and(|value| value.to_str().unwrap_or_default().contains("text/html")));
+        let body = response.text().await.unwrap();
+        // It explains, and it says exactly what to run.
+        assert!(body.contains("single-use"));
+        assert!(body.contains("purrcode studio"));
+        assert!(body.contains("not a fault"));
+        // And it reassures that recovering costs nothing.
+        assert!(body.contains("nothing is lost"));
+        // Unstyled on purpose: /app.css needs the session this reader lacks.
+        assert!(!body.contains("app.css"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn terminal_script_requires_the_session_cookie() {
+        let (report, server, _) = start_pair().await;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let url = format!("http://{}/term.js", report.bind);
+        let unauthorized = client.get(&url).send().await.unwrap();
+        assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+        let cookie = authenticate(&client, &report).await;
+        let authorized = client
+            .get(&url)
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(authorized.status(), reqwest::StatusCode::OK);
+        assert!(authorized.text().await.unwrap().contains("class Terminal"));
+        server.abort();
     }
 }
