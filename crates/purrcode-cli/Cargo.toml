@@ -20,6 +20,7 @@ purrcode-pawgate = { path = "../pawgate-runtime" }
 purrcode-daemon = { path = "../purrcode-daemon" }
 purrcode-golden-suite = { path = "../golden-suite" }
 purrcode-mcp-host = { path = "../mcp-host" }
+purrcode-model-selection = { path = "../model-selection" }
 purrcode-tui = { path = "../purrcode-tui" }
 purrcode-provider-gateway = { path = "../provider-gateway" }
 purrcode-provider-import = { path = "../provider-import" }

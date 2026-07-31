@@ -1,88 +1,103 @@
+import { Terminal, measure } from "/term.js";
+
 const state = {
-  config: null,
-  repository: null,
-  sessions: [],
-  selectedRun: null,
-  selectedSession: null,
-  messages: [],
-  events: [],
-  screen: "home",
-  liveText: "",
-  liveSource: null,
-  streamRun: null,
-  streamRefresh: null,
-  terminals: [],
-  selectedTerminal: null,
-  terminalSocket: null,
-  terminalSocketId: null
+  config: null, repository: null, sessions: [], selectedRun: null,
+  messages: [], events: [], liveText: "", liveSource: null,
+  streamRun: null, streamRefresh: null,
+  terminals: [], selectedTerminal: null, terminalSocket: null, terminalSocketId: null,
+  drawerOpen: false, drawerTab: "changes", emulator: null, replayedTerminal: null
 };
 
+const $ = (sel) => document.querySelector(sel);
+
 async function request(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    credentials: "same-origin"
-  });
+  const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) }, credentials: "same-origin" });
   const text = await response.text();
   let value = null;
-  if (text) {
-    try { value = JSON.parse(text); } catch { value = text; }
-  }
-  if (!response.ok) {
-    const detail = typeof value === "string" ? value : value?.error || `HTTP ${response.status}`;
-    throw new Error(detail);
-  }
+  if (text) { try { value = JSON.parse(text); } catch { value = text; } }
+  if (!response.ok) { throw new Error(typeof value === "string" ? value : value?.error || `HTTP ${response.status}`); }
   return value;
 }
 
 function escapeHtml(value) {
-  const node = document.createElement("span");
-  node.textContent = value ?? "";
-  return node.innerHTML;
+  const node = document.createElement("span"); node.textContent = value ?? ""; return node.innerHTML;
 }
 
 function toast(message) {
-  const element = document.querySelector("#toast");
-  element.textContent = message;
-  element.classList.add("visible");
-  window.clearTimeout(toast.timer);
-  toast.timer = window.setTimeout(() => element.classList.remove("visible"), 3600);
+  const el = $("#toast"); el.textContent = message; el.classList.add("visible");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove("visible"), 3600);
 }
 
-function setScreen(screen) {
-  state.screen = screen;
-  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.screen === screen));
-  const mapped = ["home", "workbench", "diff", "validation", "terminals", "settings"];
-  for (const name of mapped) {
-    document.querySelector(`#${name}-screen`).classList.toggle("hidden", name !== screen);
-  }
-  const placeholder = !mapped.includes(screen);
-  document.querySelector("#placeholder-screen").classList.toggle("hidden", !placeholder);
-  if (placeholder) {
-    const [title, copy] = screenCopy[screen];
-    document.querySelector("#placeholder-title").textContent = title;
-    document.querySelector("#placeholder-copy").textContent = copy;
-  }
+// ── Session list ──
+function renderSessionList() {
+  const c = $("#session-list");
+  if (!state.sessions.length) { c.innerHTML = '<div class="empty">No sessions yet.</div>'; return; }
+  c.innerHTML = state.sessions.slice().reverse().map((s) => `
+    <button class="session-item ${s.id === state.selectedRun ? "active" : ""}" data-session-id="${escapeHtml(s.id)}">
+      <div class="session-title">${escapeHtml(s.objective || "Untitled")}</div>
+      <div class="session-meta">${escapeHtml(s.repository || "—")} · ${escapeHtml(s.status_code || s.status || "—")}</div>
+    </button>`).join("");
+  document.querySelectorAll(".session-item").forEach((btn) => btn.addEventListener("click", () => openSession(btn.dataset.sessionId)));
 }
 
-function renderSessions() {
-  const container = document.querySelector("#runs");
-  document.querySelector("#run-count").textContent = `${state.sessions.length} run${state.sessions.length === 1 ? "" : "s"}`;
-  if (!state.sessions.length) {
-    container.innerHTML = '<div class="empty">No durable runs yet. Submit one objective to begin.</div>';
-    return;
+// ── Conversation ──
+function renderConversation() {
+  const c = $("#conversation");
+  $("#session-status").textContent = state.selectedRun ? (state.selectedSession?.status_code || state.selectedSession?.status || "—") : "—";
+  if (!state.messages.length && !state.liveText) {
+    c.innerHTML = '<div class="empty">No conversation yet. Submit an objective to start.</div>'; return;
   }
-  container.innerHTML = state.sessions.slice().reverse().map((run) => `
-    <article class="run">
-      <div><h3>${escapeHtml(run.objective || "Untitled run")}</h3><p>${escapeHtml(run.repository || "Repository pending")} · ${Number(run.event_count || 0)} events</p></div>
-      <div class="run-actions"><span class="status">${escapeHtml(run.status_code || run.status)}</span><button class="open-run" data-run-id="${escapeHtml(run.id)}">Open</button></div>
+  const durable = state.messages.map((m) => `
+    <article class="message">
+      <div class="message-role"><span>${escapeHtml(m.role)}</span><span class="model">${escapeHtml(m.model || "")}</span></div>
+      <p class="message-content">${escapeHtml(m.content)}</p>
     </article>`).join("");
-  document.querySelectorAll(".open-run").forEach((button) => button.addEventListener("click", () => openWorkbench(button.dataset.runId)));
+  const live = state.liveText ? `
+    <article class="message live"><div class="message-role"><span>assistant · streaming</span></div>
+    <p class="message-content">${escapeHtml(state.liveText)}</p></article>` : "";
+  c.innerHTML = durable + live; c.scrollTop = c.scrollHeight;
 }
 
-async function refreshDashboard() {
-  const refreshButton = document.querySelector("#refresh");
-  refreshButton.disabled = true;
+// ── Activity (compact) ──
+function renderActivity() {
+  const c = $("#activity-compact");
+  if (!state.events.length) { c.innerHTML = ""; return; }
+  const recent = state.events.slice(-8);
+  c.innerHTML = recent.map((e) => {
+    const done = ["session_completed", "validation_recorded", "action_completed"].includes(e.event);
+    const running = ["action_started", "validation_started"].includes(e.event);
+    const icon = done ? '<span class="activity-check">✓</span>' : running ? '<span class="activity-running">●</span>' : '<span class="activity-pending">○</span>';
+    return `<div class="activity-item">${icon} ${escapeHtml(eventTitle(e))}</div>`;
+  }).join("");
+}
+
+function eventTitle(event) {
+  return String(event?.event || "unknown").split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+// ── Streaming ──
+function connectRunStream(runId) {
+  if (state.streamRun === runId && state.liveSource) return;
+  if (state.liveSource) state.liveSource.close();
+  state.streamRun = runId; state.liveText = "";
+  const source = new EventSource(`/api/v1/sessions/${runId}/events/stream?after=${state.events.length}`);
+  state.liveSource = source;
+  source.addEventListener("content_delta", (msg) => {
+    try { const e = JSON.parse(msg.data); state.liveText = (state.liveText + (e.delta || "")).slice(-262144); renderConversation(); }
+    catch { /* stream warning */ }
+  });
+  source.addEventListener("phase", (msg) => {
+    try { const e = JSON.parse(msg.data); if (["completed", "failed", "cancelled"].includes(e.phase)) scheduleStreamRefresh(); }
+    catch { /* */ }
+  });
+  source.addEventListener("durable_audit", scheduleStreamRefresh);
+  source.onerror = () => { /* reconnect; durable output remains */ };
+}
+
+function scheduleStreamRefresh() { clearTimeout(state.streamRefresh); state.streamRefresh = setTimeout(refreshSession, 120); }
+
+// ── Data refresh ──
+async function refreshAll() {
   try {
     state.config = await request("/studio/config");
     const [health, repository, sessions] = await Promise.all([
@@ -90,451 +105,233 @@ async function refreshDashboard() {
       request("/api/v1/repository/inspect", { method: "POST", body: JSON.stringify({ repository: state.config.repository }) }),
       request("/api/v1/sessions")
     ]);
-    state.repository = repository;
-    state.sessions = sessions;
-    document.querySelector("#health-dot").classList.add("ready");
-    document.querySelector("#health-label").textContent = health.status === "ok" ? "Daemon connected" : "Daemon degraded";
-    document.querySelector("#workspace-title").textContent = repository.root;
-    document.querySelector("#branch").textContent = repository.head || "No commit";
-    document.querySelector("#dirty").textContent = repository.dirty ? "Working tree changed" : "Working tree clean";
-    document.querySelector("#repository-path").textContent = repository.root;
-    document.querySelector("#version").textContent = `Daemon API ${state.config.daemon_api_version} · Studio API ${state.config.studio_api_version}`;
-    renderSessions();
+    state.repository = repository; state.sessions = sessions;
+    $("#health-dot").classList.add("ready");
+    $("#health-label").textContent = health.status === "ok" ? "Connected" : "Degraded";
+    const repoName = repository.name || repository.root || "—";
+    const branch = repository.branch || (repository.head || "").slice(0, 12) || "—";
+    $("#repo-info").textContent = `${repoName}/${branch}`;
+    $("#repository-path")?.replaceChildren();
+    $("#version").textContent = `API ${state.config.daemon_api_version}`;
+    $("#footer-info").textContent = `${repoName}/${branch}`;
+    renderSessionList();
   } catch (error) {
-    document.querySelector("#health-dot").classList.remove("ready");
-    document.querySelector("#health-label").textContent = "Connection interrupted";
-    toast(error.message);
-  } finally {
-    refreshButton.disabled = false;
+    $("#health-dot").classList.remove("ready");
+    $("#health-label").textContent = "Disconnected"; toast(error.message);
   }
 }
 
-async function startRun() {
-  const button = document.querySelector("#start-run");
-  const objective = document.querySelector("#objective").value.trim();
-  if (!objective) { toast("Enter an engineering objective first."); return; }
-  button.disabled = true;
-  try {
-    const accepted = await request("/api/v1/sessions", {
-      method: "POST",
-      body: JSON.stringify({ objective, repository: state.config.repository, plan_only: false })
-    });
-    document.querySelector("#objective").value = "";
-    toast(`Run ${accepted.id.slice(0, 8)} accepted. Work continues if this window closes.`);
-    await refreshDashboard();
-    await openWorkbench(accepted.id);
-  } catch (error) {
-    toast(error.message);
-    await refreshDashboard();
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function eventTitle(event) {
-  return String(event?.event || "unknown_event").split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
-}
-
-function bounded(value, maximum = 110) {
-  const rendered = typeof value === "string" ? value : JSON.stringify(value ?? "");
-  return rendered.length > maximum ? `${rendered.slice(0, maximum - 1)}…` : rendered;
-}
-
-function eventSummary(event) {
-  const data = event?.data || {};
-  const candidates = [data.reason, data.model, data.role, data.label, data.evidence, data.strategy, data.activity, data.action_id];
-  const selected = candidates.find((value) => value !== undefined && value !== null && String(value).length);
-  if (selected !== undefined) return bounded(selected);
-  const keys = Object.keys(data);
-  return keys.length ? keys.slice(0, 3).join(" · ") : "Durable lifecycle boundary";
-}
-
-function renderConversation() {
-  const container = document.querySelector("#conversation");
-  document.querySelector("#message-count").textContent = String(state.messages.length);
-  if (!state.messages.length && !state.liveText) {
-    container.innerHTML = '<div class="empty">No conversation messages recorded.</div>';
-    return;
-  }
-  const durable = state.messages.map((message) => `
-    <article class="message">
-      <div class="message-role"><span>${escapeHtml(message.role)}</span><span>${escapeHtml(message.model || "")}</span></div>
-      <p class="message-content">${escapeHtml(message.content)}</p>
-    </article>`).join("");
-  const live = state.liveText ? `
-    <article class="message live">
-      <div class="message-role"><span>assistant · live</span><span>streaming</span></div>
-      <p class="message-content">${escapeHtml(state.liveText)}</p>
-    </article>` : "";
-  container.innerHTML = durable + live;
-  container.scrollTop = container.scrollHeight;
-}
-
-function scheduleStreamRefresh() {
-  window.clearTimeout(state.streamRefresh);
-  state.streamRefresh = window.setTimeout(refreshWorkbench, 120);
-}
-
-function connectRunStream(runId) {
-  if (state.streamRun === runId && state.liveSource) return;
-  if (state.liveSource) state.liveSource.close();
-  state.streamRun = runId;
-  state.liveText = "";
-  const source = new EventSource(`/api/v1/sessions/${runId}/events/stream?after=${state.events.length}`);
-  state.liveSource = source;
-  source.addEventListener("open", () => { document.querySelector("#stream-status").textContent = "live"; });
-  source.addEventListener("content_delta", (message) => {
-    try {
-      const event = JSON.parse(message.data);
-      state.liveText = (state.liveText + (event.delta || "")).slice(-262144);
-      renderConversation();
-    } catch { document.querySelector("#stream-status").textContent = "stream warning"; }
-  });
-  source.addEventListener("phase", (message) => {
-    try {
-      const event = JSON.parse(message.data);
-      document.querySelector("#stream-status").textContent = event.phase || "live";
-      if (["completed", "failed", "cancelled"].includes(event.phase)) scheduleStreamRefresh();
-    } catch { document.querySelector("#stream-status").textContent = "stream warning"; }
-  });
-  source.addEventListener("durable_audit", scheduleStreamRefresh);
-  source.addEventListener("diagnostic", () => { document.querySelector("#stream-status").textContent = "reconnecting"; });
-  source.onerror = () => { document.querySelector("#stream-status").textContent = "reconnecting"; };
-}
-
-function renderActivity() {
-  const container = document.querySelector("#activity");
-  document.querySelector("#event-count").textContent = String(state.events.length);
-  if (!state.events.length) {
-    container.innerHTML = '<div class="empty">No durable events recorded.</div>';
-    return;
-  }
-  container.innerHTML = state.events.map((event, index) => `
-    <button class="event-button" data-event-index="${index}">
-      <span class="event-title">${escapeHtml(eventTitle(event))}</span>
-      <span class="event-summary">${escapeHtml(eventSummary(event))}</span>
-    </button>`).join("");
-  document.querySelectorAll(".event-button").forEach((button) => button.addEventListener("click", () => inspectEvent(Number(button.dataset.eventIndex), button)));
-}
-
-function inspectEvent(index, button) {
-  const event = state.events[index];
-  if (!event) return;
-  document.querySelectorAll(".event-button").forEach((item) => item.classList.toggle("active", item === button));
-  document.querySelector("#inspector-title").textContent = eventTitle(event);
-  document.querySelector("#inspector-summary").textContent = eventSummary(event);
-  document.querySelector("#inspector").textContent = JSON.stringify(event.data || {}, null, 2);
-}
-
-async function refreshWorkbench() {
-  if (!state.selectedRun) {
-    toast("Select a run from Home first.");
-    return;
-  }
-  const button = document.querySelector("#refresh-workbench");
-  button.disabled = true;
+async function refreshSession() {
+  if (!state.selectedRun) return;
   try {
     const [session, messages, events] = await Promise.all([
       request(`/api/v1/sessions/${state.selectedRun}`),
       request(`/api/v1/sessions/${state.selectedRun}/messages`),
       request(`/api/v1/sessions/${state.selectedRun}/events`)
     ]);
-    state.selectedSession = session;
-    state.messages = messages;
-    state.events = events;
-    document.querySelector("#workbench-objective").textContent = session.objective || "Untitled run";
-    document.querySelector("#workbench-status").textContent = session.status_code || session.status;
-    renderConversation();
-    renderActivity();
-    connectRunStream(state.selectedRun);
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    button.disabled = false;
-  }
+    state.selectedSession = session; state.messages = messages; state.events = events;
+    $("#session-objective").textContent = session.objective || "Untitled session";
+    renderConversation(); renderActivity(); connectRunStream(state.selectedRun);
+  } catch (error) { toast(error.message); }
 }
 
-async function openWorkbench(runId) {
-  state.selectedRun = runId;
-  setScreen("workbench");
-  await refreshWorkbench();
+async function openSession(runId) {
+  state.selectedRun = runId; renderSessionList(); await refreshSession();
+}
+
+async function startSession() {
+  const objective = $("#composer").value.trim();
+  if (!objective) { toast("Enter an objective first."); return; }
+  try {
+    const accepted = await request("/api/v1/sessions", { method: "POST", body: JSON.stringify({ objective, repository: state.config.repository, plan_only: false }) });
+    $("#composer").value = ""; toast(`Session ${accepted.id.slice(0, 8)} started.`);
+    await refreshAll(); await openSession(accepted.id);
+  } catch (error) { toast(error.message); }
 }
 
 async function sendFollowUp() {
-  if (!state.selectedRun) { toast("Select a run first."); return; }
-  const field = document.querySelector("#follow-up");
-  const content = field.value.trim();
-  if (!content) { toast("Enter a follow-up message first."); return; }
-  const button = document.querySelector("#send-follow-up");
-  button.disabled = true;
+  if (!state.selectedRun) { toast("Select or start a session first."); return; }
+  const content = $("#composer").value.trim();
+  if (!content) return;
   try {
     await request(`/api/v1/sessions/${state.selectedRun}/messages`, { method: "POST", body: JSON.stringify({ content }) });
-    field.value = "";
-    await refreshWorkbench();
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    button.disabled = false;
-  }
+    $("#composer").value = ""; await refreshSession();
+  } catch (error) { toast(error.message); }
 }
 
+// ── Context drawer ──
+function openDrawer(tab = "changes") {
+  state.drawerOpen = true; state.drawerTab = tab;
+  $("#context-drawer").classList.remove("hidden");
+  document.querySelectorAll(".drawer-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+  document.querySelectorAll(".drawer-panel").forEach((p) => p.classList.toggle("hidden", p.id !== `drawer-${tab}`));
+  if (tab === "changes") refreshDiff();
+  if (tab === "terminal") refreshTerminals();
+  if (tab === "tests") refreshTests();
+  if (tab === "evidence") refreshEvidence();
+}
+
+function closeDrawer() { state.drawerOpen = false; $("#context-drawer").classList.add("hidden"); }
+
 async function refreshDiff() {
-  if (!state.selectedRun) { toast("Select a run from Home first."); return; }
+  if (!state.selectedRun) return;
   try {
     const diff = await request(`/api/v1/sessions/${state.selectedRun}/diff`);
     const files = diff.changed_files || [];
-    document.querySelector("#changed-files").innerHTML = files.length
-      ? files.map((path) => `<span class="changed-file">${escapeHtml(path)}</span>`).join("")
-      : '<span class="empty">No changed files.</span>';
-    document.querySelector("#diff-content").textContent = diff.patch || "No patch recorded.";
-  } catch (error) {
-    document.querySelector("#changed-files").innerHTML = "";
-    document.querySelector("#diff-content").textContent = `Diff unavailable: ${error.message}`;
-  }
+    $("#changed-files").innerHTML = files.length ? files.map((p) => `<span class="changed-file">${escapeHtml(p)}</span>`).join("") : '<span class="empty">No changed files.</span>';
+    $("#diff-content").textContent = diff.patch || "No patch recorded.";
+  } catch (error) { $("#diff-content").textContent = `Diff unavailable: ${error.message}`; }
 }
 
-function validationEvents() {
-  return state.events.filter((event) => [
-    "validation_recorded",
-    "outcome_judgment_recorded",
-    "outcome_review_required",
-    "outcome_review_approved",
-    "session_completed",
-    "session_failed"
-  ].includes(event.event));
+function refreshTests() {
+  const events = state.events.filter((e) => ["validation_recorded", "session_completed", "session_failed"].includes(e.event));
+  const c = $("#test-summary");
+  if (!events.length) { c.innerHTML = '<div class="empty">Test results will appear here when validation runs.</div>'; return; }
+  c.innerHTML = events.map((e) => `<div class="activity-item"><span class="activity-check">✓</span> ${escapeHtml(eventTitle(e))}</div>`).join("");
 }
 
-async function refreshValidation() {
-  if (!state.selectedRun) { toast("Select a run from Home first."); return; }
-  if (!state.events.length) await refreshWorkbench();
-  const events = validationEvents();
-  const container = document.querySelector("#validation-events");
-  if (!events.length) {
-    container.innerHTML = '<div class="empty">Validation has not produced durable evidence yet.</div>';
-    return;
-  }
-  container.innerHTML = events.map((event) => `
-    <article class="validation-item"><div><h3>${escapeHtml(eventTitle(event))}</h3><p>${escapeHtml(eventSummary(event))}</p></div><span class="status">recorded</span></article>`).join("");
+function refreshEvidence() {
+  const events = state.events.filter((e) => ["action_completed", "action_proposed"].includes(e.event));
+  const c = $("#evidence-list");
+  if (!events.length) { c.innerHTML = '<div class="empty">Evidence records will appear here when actions complete.</div>'; return; }
+  c.innerHTML = events.slice(-10).map((e) => `<div class="activity-item">${escapeHtml(eventTitle(e))}</div>`).join("");
 }
 
-function terminalOwnerLabel(owner) {
-  if (!owner) return "unknown owner";
-  if (owner.kind === "agent") return `agent · ${owner.data?.role || "worker"}`;
-  return owner.kind;
-}
+// ── Terminals ──
+//
+// Output is a real emulated screen, not a stripped log: the socket delivers
+// only bytes produced since the last frame and the emulator applies them.
+function terminalOwnerLabel(owner) { if (!owner) return "—"; return owner.kind === "agent" ? `agent · ${owner.data?.role || "worker"}` : owner.kind; }
 
-function terminalText(bytes) {
-  try {
-    return new TextDecoder()
-      .decode(new Uint8Array(bytes || []))
-      .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-      .replace(/\x1b(?:[@-_]|\[[0-?]*[ -/]*[@-~])/g, "")
-      .replace(/\r/g, "");
-  }
-  catch { return "Terminal transcript could not be decoded."; }
-}
-
-function renderTerminalList() {
-  const list = document.querySelector("#terminal-list");
-  if (!state.terminals.length) {
-    list.innerHTML = '<div class="empty">No terminals.</div>';
-    return;
-  }
-  list.innerHTML = state.terminals.map((terminal) => `
-    <button class="terminal-item ${terminal.terminal_id === state.selectedTerminal?.terminal_id ? "active" : ""}" data-terminal-id="${escapeHtml(terminal.terminal_id)}">
-      <strong>${escapeHtml(terminal.terminal_id.slice(0, 8))}</strong>
-      <span>${terminal.alive ? "running" : "exited"} · ${escapeHtml(terminalOwnerLabel(terminal.owner))}</span>
-    </button>`).join("");
-  document.querySelectorAll(".terminal-item").forEach((button) => button.addEventListener("click", () => selectTerminal(button.dataset.terminalId)));
+function ensureEmulator() {
+  if (state.emulator) return state.emulator;
+  const host = $("#terminal-output");
+  const size = measure(host);
+  state.emulator = new Terminal(host, {
+    rows: size.rows,
+    cols: size.cols,
+    onInput: (bytes) => sendTerminalBytes(bytes),
+    onResize: (rows, cols) => resizeTerminal(rows, cols)
+  });
+  window.addEventListener("resize", () => {
+    if (!state.emulator || $("#terminal-output").hidden) return;
+    const next = measure($("#terminal-output"));
+    state.emulator.resize(next.rows, next.cols);
+  });
+  return state.emulator;
 }
 
 function renderSelectedTerminal() {
-  const terminal = state.selectedTerminal;
-  document.querySelector("#terminal-title").textContent = terminal ? `Terminal ${terminal.terminal_id.slice(0, 8)}` : "No terminal selected";
-  document.querySelector("#terminal-owner").textContent = terminal ? `${terminal.alive ? "running" : "exited"} · ${terminalOwnerLabel(terminal.owner)} · generation ${terminal.generation}` : "—";
-  const output = document.querySelector("#terminal-output");
-  output.textContent = terminal ? terminalText(terminal.transcript_tail) : "Start or select a terminal. Output remains available after detach and reconnect.";
-  output.scrollTop = output.scrollHeight;
-  const disabled = !terminal || !terminal.alive;
-  document.querySelector("#terminal-input").disabled = disabled;
-  document.querySelector("#terminal-input-form button").disabled = disabled;
+  const term = state.selectedTerminal;
+  $("#terminal-title").textContent = term ? `Terminal ${term.terminal_id.slice(0, 8)}` : "No terminal";
+  $("#terminal-owner").textContent = term ? `${term.alive ? "running" : "exited"} · ${terminalOwnerLabel(term.owner)}` : "—";
+  const output = $("#terminal-output");
+  output.hidden = !term;
+  $("#terminal-empty").hidden = Boolean(term);
+  $("#terminal-owner-actions").hidden = !term?.alive;
+  if (!term) return;
+  const emulator = ensureEmulator();
+  // Replay is applied once per terminal; live bytes arrive over the socket.
+  if (state.replayedTerminal !== term.terminal_id) {
+    emulator.reset();
+    emulator.write(decodeBytes(term.transcript_tail));
+    state.replayedTerminal = term.terminal_id;
+  }
+}
+
+function decodeBytes(bytes) {
+  try { return new TextDecoder().decode(new Uint8Array(bytes || [])); }
+  catch { return ""; }
 }
 
 function connectTerminalSocket(id) {
-  if (state.terminalSocketId === id && state.terminalSocket && state.terminalSocket.readyState < 2) return;
+  if (state.terminalSocketId === id && state.terminalSocket?.readyState < 2) return;
   if (state.terminalSocket) state.terminalSocket.close();
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${protocol}//${window.location.host}/studio/terminals/${id}/stream`);
-  state.terminalSocket = socket;
-  state.terminalSocketId = id;
-  socket.onmessage = (message) => {
-    try {
-      const value = JSON.parse(message.data);
-      if (value.terminal?.terminal_id !== id) return;
-      state.selectedTerminal = value.terminal;
-      const index = state.terminals.findIndex((item) => item.terminal_id === id);
-      if (index >= 0) state.terminals[index] = value.terminal;
-      renderSelectedTerminal();
-    } catch { toast("Terminal stream returned invalid data."); }
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${proto}//${location.host}/studio/terminals/${id}/stream`);
+  state.terminalSocket = socket; state.terminalSocketId = id;
+  socket.onmessage = (msg) => {
+    let frame;
+    try { frame = JSON.parse(msg.data); } catch { return; }
+    const emulator = ensureEmulator();
+    // `truncated` means the ring buffer dropped output we never saw. Say so
+    // rather than splicing unrelated bytes into the screen.
+    if (frame.chunk?.truncated) emulator.write("\r\n[output truncated — earlier bytes were discarded]\r\n");
+    if (frame.chunk?.bytes?.length) emulator.write(decodeBytes(frame.chunk.bytes));
+    if (state.selectedTerminal) {
+      state.selectedTerminal.alive = frame.alive ?? state.selectedTerminal.alive;
+      state.selectedTerminal.generation = frame.generation ?? state.selectedTerminal.generation;
+      if (frame.owner) state.selectedTerminal.owner = frame.owner;
+      $("#terminal-owner").textContent = `${state.selectedTerminal.alive ? "running" : "exited"} · ${terminalOwnerLabel(state.selectedTerminal.owner)}`;
+    }
   };
-  socket.onerror = () => toast("Terminal stream is reconnecting; durable output remains available.");
+  // Reconnect rather than silently going dead: the process keeps running.
+  socket.onclose = () => { if (state.terminalSocketId === id) setTimeout(() => connectTerminalSocket(id), 1000); };
+  socket.onerror = () => toast("Terminal reconnecting; output remains available.");
+}
+
+function sendTerminalBytes(bytes) {
+  const term = state.selectedTerminal;
+  if (!term) return;
+  const payload = JSON.stringify({ generation: term.generation, input: bytes });
+  if (state.terminalSocket?.readyState === WebSocket.OPEN && state.terminalSocketId === term.terminal_id) state.terminalSocket.send(payload);
+  else request(`/api/v1/terminals/${term.terminal_id}/input`, { method: "POST", body: payload }).catch((e) => toast(e.message));
+}
+
+async function resizeTerminal(rows, cols) {
+  const term = state.selectedTerminal;
+  if (!term) return;
+  try { await request(`/api/v1/terminals/${term.terminal_id}/resize`, { method: "POST", body: JSON.stringify({ size: { rows, cols } }) }); }
+  catch { /* a refused resize must not break the live stream */ }
 }
 
 async function refreshTerminals() {
   try {
-    const result = await request("/api/v1/terminals");
-    state.terminals = result.terminals || [];
+    const result = await request("/api/v1/terminals"); state.terminals = result.terminals || [];
     if (state.selectedTerminal) {
-      const current = state.terminals.find((item) => item.terminal_id === state.selectedTerminal.terminal_id);
-      if (current) {
-        const detail = await request(`/api/v1/terminals/${current.terminal_id}`);
-        state.selectedTerminal = detail.terminal;
-      }
+      const current = state.terminals.find((t) => t.terminal_id === state.selectedTerminal.terminal_id);
+      if (current) { const detail = await request(`/api/v1/terminals/${current.terminal_id}`); state.selectedTerminal = detail.terminal; }
     }
-    renderTerminalList();
     renderSelectedTerminal();
   } catch (error) { toast(error.message); }
 }
 
 async function startTerminal() {
   try {
-    let workspaceId = window.sessionStorage.getItem("purrcode-workspace-id");
-    if (!workspaceId) {
-      workspaceId = crypto.randomUUID();
-      window.sessionStorage.setItem("purrcode-workspace-id", workspaceId);
-    }
-    const result = await request("/api/v1/terminals", {
-      method: "POST",
-      body: JSON.stringify({
-        workspace_id: workspaceId,
-        action: { working_directory: state.config.repository, environment: {}, arguments: [], initial_size: { rows: 30, cols: 100 }, owner: { kind: "human" } }
-      })
-    });
+    let wsId = sessionStorage.getItem("purrcode-wsid"); if (!wsId) { wsId = crypto.randomUUID(); sessionStorage.setItem("purrcode-wsid", wsId); }
+    const result = await request("/api/v1/terminals", { method: "POST", body: JSON.stringify({ workspace_id: wsId, action: { working_directory: state.config.repository, environment: {}, arguments: [], initial_size: { rows: 30, cols: 100 }, owner: { kind: "human" } } }) });
     state.selectedTerminal = result.terminal;
     await request(`/api/v1/terminals/${result.terminal.terminal_id}/attach`, { method: "POST", body: JSON.stringify({ replay_bytes: 262144 }) });
-    await refreshTerminals();
-    connectTerminalSocket(result.terminal.terminal_id);
-    document.querySelector("#terminal-input").focus();
+    await refreshTerminals(); connectTerminalSocket(result.terminal.terminal_id); $("#terminal-output").focus();
   } catch (error) { toast(error.message); }
-}
-
-async function selectTerminal(id) {
-  try {
-    if (state.selectedTerminal && state.selectedTerminal.terminal_id !== id) {
-      await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}/detach`, { method: "POST" });
-    }
-    const result = await request(`/api/v1/terminals/${id}/attach`, { method: "POST", body: JSON.stringify({ replay_bytes: 262144 }) });
-    state.selectedTerminal = result.terminal;
-    connectTerminalSocket(id);
-    renderTerminalList();
-    renderSelectedTerminal();
-  } catch (error) { toast(error.message); }
-}
-
-async function sendTerminalInput(event) {
-  event.preventDefault();
-  const terminal = state.selectedTerminal;
-  const field = document.querySelector("#terminal-input");
-  if (!terminal || !field.value) return;
-  try {
-    const payload = JSON.stringify({ generation: terminal.generation, input: `${field.value}\n` });
-    if (state.terminalSocket?.readyState === WebSocket.OPEN && state.terminalSocketId === terminal.terminal_id) {
-      state.terminalSocket.send(payload);
-    } else {
-      await request(`/api/v1/terminals/${terminal.terminal_id}/input`, { method: "POST", body: payload });
-    }
-    field.value = "";
-    window.setTimeout(refreshTerminals, 50);
-  } catch (error) { toast(error.message); await refreshTerminals(); }
 }
 
 async function setTerminalOwner(owner) {
   if (!state.selectedTerminal) return;
-  try {
-    const result = await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}/owner`, {
-      method: "POST", body: JSON.stringify({ owner })
-    });
-    state.selectedTerminal = result.terminal;
-    renderSelectedTerminal();
-  } catch (error) { toast(error.message); }
+  try { const r = await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}/owner`, { method: "POST", body: JSON.stringify({ owner }) }); state.selectedTerminal = r.terminal; renderSelectedTerminal(); }
+  catch (error) { toast(error.message); }
 }
 
-async function stopSelectedTerminal() {
+async function stopTerminal() {
   if (!state.selectedTerminal) return;
-  try {
-    const result = await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}`, { method: "DELETE" });
-    state.selectedTerminal = result.terminal;
-    await refreshTerminals();
-  } catch (error) { toast(error.message); }
+  try { await request(`/api/v1/terminals/${state.selectedTerminal.terminal_id}`, { method: "DELETE" }); await refreshTerminals(); }
+  catch (error) { toast(error.message); }
 }
 
-async function inspectEnvironment() {
-  const button = document.querySelector("#inspect-environment");
-  const container = document.querySelector("#environment-summary");
-  button.disabled = true;
-  container.innerHTML = '<div class="empty">Inspecting manifests and verifying detected tools…</div>';
-  try {
-    const report = await request("/api/v1/environment/inspect", {
-      method: "POST", body: JSON.stringify({ repository: state.config.repository })
-    });
-    const tools = report.plan.detected_tools || [];
-    const missing = report.plan.missing_tools || [];
-    const checks = new Map((report.checks || []).map((check) => [check.check.kind, check]));
-    container.innerHTML = `
-      <div class="environment-host">
-        <span>${escapeHtml(report.host.os_family)} · ${escapeHtml(report.host.arch)}</span>
-        <span>${escapeHtml(report.host.distribution || "distribution unknown")}</span>
-        <span>${report.ready ? "ready" : "repair required"}</span>
-      </div>
-      ${tools.map((tool) => {
-        const check = checks.get(tool.kind);
-        return `<article class="environment-tool"><div><h3>${escapeHtml(tool.kind)}</h3><p>${escapeHtml(tool.path)} · ${escapeHtml(tool.version || "version unavailable")}</p></div><span class="status">${escapeHtml(check?.result || "unchecked")}</span></article>`;
-      }).join("")}
-      ${missing.map((tool) => `<article class="environment-tool"><div><h3>${escapeHtml(tool.kind)}</h3><p>${escapeHtml(tool.reason)} · ${escapeHtml(tool.min_version || "compatible version")}</p></div><span class="status">missing</span></article>`).join("")}
-      ${!tools.length && !missing.length ? '<div class="empty">No supported project manifests were detected.</div>' : ""}`;
-  } catch (error) {
-    container.innerHTML = `<div class="empty">Inspection failed: ${escapeHtml(error.message)}</div>`;
-  } finally { button.disabled = false; }
-}
+// ── Event wiring ──
+$("#new-session").addEventListener("click", startSession);
+$("#send").addEventListener("click", () => { if (state.selectedRun) sendFollowUp(); else startSession(); });
+$("#composer").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (state.selectedRun) sendFollowUp(); else startSession(); } });
+$("#drawer-close").addEventListener("click", closeDrawer);
+document.querySelectorAll(".drawer-tab").forEach((tab) => tab.addEventListener("click", () => openDrawer(tab.dataset.tab)));
+$("#take-terminal").addEventListener("click", () => setTerminalOwner({ kind: "human" }));
+$("#return-terminal").addEventListener("click", () => setTerminalOwner({ kind: "agent", data: { role: "Coding Agent" } }));
+$("#stop-terminal").addEventListener("click", stopTerminal);
+$("#new-terminal").addEventListener("click", startTerminal);
+$("#open-terminal-empty")?.addEventListener("click", startTerminal);
 
-const screenCopy = {
-  workspaces: ["Workspaces", "Open local and remote repositories without creating a second execution path."],
-  runs: ["Agent runs", "Follow durable plans, specialist activity, approvals, and outcomes."],
-  terminals: ["Terminals", "Real PTY terminals and ownership controls are delivered by the terminal runtime."],
-  factory: ["Agent Factory", "Compile production goals into versioned, reusable agent blueprints."],
-  deployments: ["Deployments", "Inspect local and Azure runtime deployments and rollback state."],
-  evidence: ["Evidence", "Audit exact actions, authorization, execution, validation, and recovery."],
-  settings: ["Settings", "Manage providers, identity selectors, environments, and authority grants."]
-};
+// Keyboard: Esc closes drawer
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.drawerOpen) closeDrawer(); });
 
-document.querySelector("#refresh").addEventListener("click", refreshDashboard);
-document.querySelector("#start-run").addEventListener("click", startRun);
-document.querySelector("#refresh-workbench").addEventListener("click", refreshWorkbench);
-document.querySelector("#send-follow-up").addEventListener("click", sendFollowUp);
-document.querySelector("#refresh-diff").addEventListener("click", refreshDiff);
-document.querySelector("#refresh-validation").addEventListener("click", refreshValidation);
-document.querySelector("#refresh-terminals").addEventListener("click", refreshTerminals);
-document.querySelector("#new-terminal").addEventListener("click", startTerminal);
-document.querySelector("#terminal-input-form").addEventListener("submit", sendTerminalInput);
-document.querySelector("#terminal-input").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey) sendTerminalInput(event);
-});
-document.querySelector("#take-terminal").addEventListener("click", () => setTerminalOwner({ kind: "human" }));
-document.querySelector("#return-terminal").addEventListener("click", () => setTerminalOwner({ kind: "agent", data: { role: "Coding Agent" } }));
-document.querySelector("#stop-terminal").addEventListener("click", stopSelectedTerminal);
-document.querySelector("#inspect-environment").addEventListener("click", inspectEnvironment);
-document.querySelectorAll(".nav-item").forEach((button) => button.addEventListener("click", async () => {
-  const screen = button.dataset.screen;
-  setScreen(screen);
-  if (screen === "workbench" && state.selectedRun) await refreshWorkbench();
-  if (screen === "diff") await refreshDiff();
-  if (screen === "validation") await refreshValidation();
-  if (screen === "terminals") await refreshTerminals();
-}));
-
-refreshDashboard();
-window.setInterval(async () => {
-  await refreshDashboard();
-  if (state.screen === "workbench" && state.selectedRun) await refreshWorkbench();
-  if (state.screen === "terminals") await refreshTerminals();
-}, 5000);
+refreshAll();
+setInterval(async () => { await refreshAll(); if (state.selectedRun) await refreshSession(); }, 5000);

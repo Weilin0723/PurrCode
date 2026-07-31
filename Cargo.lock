@@ -2210,6 +2210,7 @@ dependencies = [
  "purrcode-evidence-bundle",
  "purrcode-golden-suite",
  "purrcode-mcp-host",
+ "purrcode-model-selection",
  "purrcode-ninelives",
  "purrcode-pawgate",
  "purrcode-provider-gateway",

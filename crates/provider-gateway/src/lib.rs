@@ -1060,6 +1060,20 @@ impl ProviderConfig {
             | Self::AzureOpenai { capabilities, .. } => capabilities,
         }
     }
+
+    /// Mutable view of the same map. Every provider variant carries one, so
+    /// callers that record discovered models must not re-match on the variant —
+    /// a match that forgets an arm turns a supported provider into a hard error.
+    pub fn configured_models_mut(&mut self) -> &mut BTreeMap<String, ModelCapabilities> {
+        match self {
+            Self::Openai { capabilities, .. }
+            | Self::OpenaiCompatible { capabilities, .. }
+            | Self::Ollama { capabilities, .. }
+            | Self::NvidiaNim { capabilities, .. }
+            | Self::EnterpriseGateway { capabilities, .. }
+            | Self::AzureOpenai { capabilities, .. } => capabilities,
+        }
+    }
 }
 
 fn is_loopback_url(url: &Url) -> bool {

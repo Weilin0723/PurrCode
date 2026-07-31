@@ -443,6 +443,9 @@ const MAX_REPLAY_BYTES: usize = 1024 * 1024;
 struct Transcript {
     bytes: VecDeque<u8>,
     maximum: usize,
+    /// Total bytes ever written, including bytes the ring buffer discarded.
+    /// Monotonic, so it is a stable cursor for incremental readers.
+    produced: u64,
     last_seen_at: DateTime<Utc>,
 }
 
@@ -450,6 +453,7 @@ impl Transcript {
     fn append(&mut self, chunk: &[u8]) {
         let skip = chunk.len().saturating_sub(self.maximum);
         self.bytes.extend(chunk[skip..].iter().copied());
+        self.produced = self.produced.saturating_add(chunk.len() as u64);
         while self.bytes.len() > self.maximum {
             self.bytes.pop_front();
         }
@@ -464,6 +468,32 @@ impl Transcript {
             .copied()
             .collect()
     }
+
+    /// Bytes produced after `since`, plus the offset the caller should ask for
+    /// next. `truncated` is true when the ring buffer already discarded part of
+    /// the requested range, so a client can tell "here is what came next" from
+    /// "output was lost, resynchronise".
+    fn since(&self, since: u64) -> TerminalChunk {
+        let retained_from = self.produced.saturating_sub(self.bytes.len() as u64);
+        let start = since.max(retained_from);
+        let skip = (start - retained_from) as usize;
+        TerminalChunk {
+            bytes: self.bytes.iter().skip(skip).copied().collect(),
+            next_offset: self.produced,
+            truncated: since < retained_from,
+        }
+    }
+}
+
+/// An incremental slice of terminal output (PRD §24.7). Clients append these
+/// rather than re-reading the whole transcript on a timer.
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct TerminalChunk {
+    pub bytes: Vec<u8>,
+    /// Offset to pass as `since` on the next read.
+    pub next_offset: u64,
+    /// True when output between the requested offset and `bytes` was discarded.
+    pub truncated: bool,
 }
 
 struct TerminalSession {
@@ -596,6 +626,7 @@ impl TerminalRuntime {
         let transcript = Arc::new(Mutex::new(Transcript {
             bytes: VecDeque::new(),
             maximum,
+            produced: 0,
             last_seen_at: Utc::now(),
         }));
         spawn_reader(reader, Arc::clone(&transcript));
@@ -705,6 +736,26 @@ impl TerminalRuntime {
             .map_err(|_| TerminalError::LockPoisoned)?;
         let session = get_session(&mut sessions, terminal_id)?;
         snapshot(terminal_id, session, replay_bytes)
+    }
+
+    /// Output produced after `since`. This is the read path a live client uses:
+    /// it transfers only new bytes, so a busy build does not re-send its whole
+    /// transcript on every tick.
+    pub fn read_since(
+        &self,
+        terminal_id: TerminalId,
+        since: u64,
+    ) -> Result<TerminalChunk, TerminalError> {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let session = get_session(&mut sessions, terminal_id)?;
+        let transcript = session
+            .transcript
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        Ok(transcript.since(since))
     }
 
     pub fn transfer_ownership(
@@ -1043,6 +1094,58 @@ mod tests {
         assert_eq!(s.nanos, 500_000_000);
         let back: Duration = s.into();
         assert_eq!(back, d);
+    }
+
+    fn transcript(maximum: usize) -> Transcript {
+        Transcript {
+            bytes: VecDeque::new(),
+            maximum,
+            produced: 0,
+            last_seen_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn incremental_reads_return_only_new_bytes() {
+        let mut t = transcript(1024);
+        t.append(b"hello ");
+        let first = t.since(0);
+        assert_eq!(first.bytes, b"hello ");
+        assert_eq!(first.next_offset, 6);
+        assert!(!first.truncated);
+
+        t.append(b"world");
+        let second = t.since(first.next_offset);
+        assert_eq!(second.bytes, b"world");
+        assert_eq!(second.next_offset, 11);
+        assert!(!second.truncated);
+
+        // Reading at the head yields nothing, not a repeat of the transcript.
+        assert!(t.since(second.next_offset).bytes.is_empty());
+    }
+
+    #[test]
+    fn a_reader_that_fell_behind_the_ring_buffer_is_told_output_was_lost() {
+        let mut t = transcript(4);
+        t.append(b"abcdefgh");
+        // Only the last four bytes survive; offset 0 can no longer be served.
+        let chunk = t.since(0);
+        assert_eq!(chunk.bytes, b"efgh");
+        assert_eq!(chunk.next_offset, 8);
+        assert!(
+            chunk.truncated,
+            "a client must be able to tell lost output from continuous output"
+        );
+        assert!(!t.since(4).truncated);
+    }
+
+    #[test]
+    fn produced_counts_bytes_the_ring_buffer_discarded() {
+        let mut t = transcript(2);
+        t.append(b"abcdef");
+        assert_eq!(t.produced, 6);
+        assert_eq!(t.bytes.len(), 2);
+        assert_eq!(t.since(6).next_offset, 6);
     }
 
     #[test]

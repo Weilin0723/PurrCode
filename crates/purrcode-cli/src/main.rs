@@ -17,6 +17,7 @@ use purrcode_mcp_host::{
     discover_skills, install_skill, uninstall_skill, verify_installed_skill, McpHost,
     McpServerConfig,
 };
+use purrcode_model_selection::{select_coder, select_judge, ModelCandidate, SelectionBudget};
 use purrcode_ninelives::SessionStore;
 use purrcode_pawgate::{resolve_policy_path, Policy};
 use purrcode_provider_gateway::{
@@ -3547,31 +3548,34 @@ async fn initialize_product(
     discovered_models.sort();
     discovered_models.dedup();
     let local = provider_config.is_local();
-    let capabilities = match &mut provider_config {
-        ProviderConfig::Ollama { capabilities, .. }
-        | ProviderConfig::OpenaiCompatible { capabilities, .. } => capabilities,
-        _ => bail!("local discovery created an unsupported provider profile"),
-    };
+    let capabilities = provider_config.configured_models_mut();
     for model in &discovered_models {
         capabilities.insert(model.clone(), ModelCapabilities::unknown(local));
     }
-    let total_memory = {
+    let budget = if local {
         let mut system = System::new();
         system.refresh_memory();
-        system.total_memory()
-    };
-    let low_memory = total_memory <= 16 * 1024 * 1024 * 1024;
-    let coder_model = select_initial_model(&discovered_models, &observed_model_sizes, low_memory);
-    let coder = format!("{provider_name}/{coder_model}");
-    let judge_model = if low_memory {
-        coder_model
+        SelectionBudget::for_local_host(system.total_memory())
     } else {
-        discovered_models
-            .iter()
-            .find(|model| model.as_str() != coder_model)
-            .map(String::as_str)
-            .unwrap_or(coder_model)
+        SelectionBudget::remote()
     };
+    let candidates: Vec<ModelCandidate> = discovered_models
+        .iter()
+        .map(|name| ModelCandidate {
+            name: name.clone(),
+            size_bytes: observed_model_sizes.get(name).copied(),
+            ..ModelCandidate::default()
+        })
+        .collect();
+    let coder_model = select_coder(&candidates, budget)
+        .map(|candidate| candidate.name.clone())
+        .with_context(|| {
+            format!("{provider_name} offered no model that can serve the coding role")
+        })?;
+    let coder = format!("{provider_name}/{coder_model}");
+    let judge_model = select_judge(&candidates, budget, &coder_model)
+        .map(|candidate| candidate.name.clone())
+        .unwrap_or_else(|| coder_model.clone());
     let judge = format!("{provider_name}/{judge_model}");
     let allow_same_model = coder == judge;
     let mut roles = BTreeMap::new();
@@ -3623,101 +3627,6 @@ async fn initialize_product(
         return Ok(());
     }
     ensure_daemon_started(config_path, database, daemon_url, token_file, true).await
-}
-
-/// Score a model name for coding suitability. Higher is better.
-///
-/// Heuristics: coder/code/deepseek/qwen/codellama names are strongly preferred
-/// for the coding role; instruction-tuned variants (instruct/chat/it) get a
-/// smaller boost. Embedding/vision/preview names are penalized.
-fn coding_name_score(name: &str) -> i32 {
-    let lower = name.to_ascii_lowercase();
-    let mut score: i32 = 0;
-    // Strong coding signals
-    for keyword in [
-        "coder",
-        "code",
-        "deepseek",
-        "qwen",
-        "codellama",
-        "codestral",
-        "starcoder",
-    ] {
-        if lower.contains(keyword) {
-            score += 20;
-        }
-    }
-    // General instruction-tuned signals
-    for keyword in ["instruct", "chat", "it", "hf"] {
-        if lower.contains(keyword) {
-            score += 5;
-        }
-    }
-    // Known good general models
-    for keyword in ["llama", "gpt", "mistral", "gemma", "phi"] {
-        if lower.contains(keyword) {
-            score += 10;
-        }
-    }
-    // Penalty for non-coding-specialized variants
-    for keyword in ["embed", "vision", "preview", "base", "tiny", "mini"] {
-        if lower.contains(keyword) {
-            score -= 15;
-        }
-    }
-    score
-}
-
-fn select_initial_model<'a>(
-    models: &'a [String],
-    observed_sizes: &BTreeMap<String, u64>,
-    low_memory: bool,
-) -> &'a str {
-    if models.len() == 1 {
-        return models[0].as_str();
-    }
-    if low_memory {
-        // On constrained memory, prefer a coding-capable model that fits —
-        // smallest model with a coding signal, or just the smallest overall.
-        let with_sizes: Vec<(&str, Option<&u64>)> = models
-            .iter()
-            .map(|m| (m.as_str(), observed_sizes.get(m)))
-            .collect();
-        let coding_candidates: Vec<_> = with_sizes
-            .iter()
-            .filter(|(name, _)| coding_name_score(name) > 5)
-            .collect();
-        let pool = if !coding_candidates.is_empty() {
-            coding_candidates
-        } else {
-            with_sizes.iter().collect::<Vec<_>>().into_iter().collect()
-        };
-        pool.iter()
-            .min_by_key(|(name, size)| {
-                let size_score = size.map_or(u64::MAX, |s| *s);
-                let name_score = -coding_name_score(name);
-                (size_score, name_score)
-            })
-            .map(|(name, _)| *name)
-            .unwrap_or(models[0].as_str())
-    } else {
-        // On capable hosts, prefer the best coding-scored model, breaking ties
-        // by preferring mid-to-large sizes over the very smallest.
-        models
-            .iter()
-            .max_by_key(|model| {
-                let name_score = coding_name_score(model.as_str());
-                let size_bonus = observed_sizes.get(model.as_str()).map_or(0i64, |s| {
-                    // Log-ish size preference: larger gets a small bonus,
-                    // but not so much that we pick a 70B model over a 32B
-                    // coding-specialized one.
-                    (*s as i64 / 1_000_000_000).min(10)
-                });
-                (name_score, size_bonus)
-            })
-            .map(|m| m.as_str())
-            .unwrap_or(models[0].as_str())
-    }
 }
 
 async fn ensure_daemon_started(
@@ -4250,27 +4159,6 @@ mod cli_tests {
             std::time::Duration::from_secs(300)
         );
         assert!(live_benchmark_timeout(0).is_err());
-    }
-
-    #[test]
-    fn low_memory_initialization_selects_the_smallest_observed_model() {
-        let models = vec!["large".to_owned(), "small".to_owned(), "medium".to_owned()];
-        let sizes = BTreeMap::from([
-            ("large".to_owned(), 8_000),
-            ("small".to_owned(), 1_000),
-            ("medium".to_owned(), 4_000),
-        ]);
-        assert_eq!(select_initial_model(&models, &sizes, true), "small");
-        assert_eq!(select_initial_model(&models, &sizes, false), "large");
-    }
-
-    #[test]
-    fn initial_model_selection_falls_back_when_size_evidence_is_missing() {
-        let models = vec!["first".to_owned(), "second".to_owned()];
-        assert_eq!(
-            select_initial_model(&models, &BTreeMap::new(), true),
-            "first"
-        );
     }
 
     #[test]

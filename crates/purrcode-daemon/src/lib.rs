@@ -321,150 +321,6 @@ pub struct StartupReport {
     pub token_file: PathBuf,
 }
 
-pub async fn serve(config: DaemonConfig) -> Result<StartupReport, DaemonError> {
-    validate_bind(config.bind.ip(), config.allow_public_bind)?;
-    let token = load_or_create_token(&config.token_file)?;
-    let mut store = SessionStore::open(&config.database)?;
-    let recovered = store
-        .recover_uncertain_sessions()?
-        .into_iter()
-        .map(|session| session.0.to_string())
-        .collect::<Vec<_>>();
-    let local_inference_limit = ResourceSnapshot::detect(0).maximum_local_inference_requests;
-    let state = AppState {
-        store: Arc::new(Mutex::new(store)),
-        bearer_token: token.into(),
-        database: config.database.clone(),
-        app_config: config.app_config.clone(),
-        leases: Arc::new(Mutex::new(BTreeMap::new())),
-        lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
-        lifecycle_gate: Arc::new(Mutex::new(())),
-        active_models: Arc::new(Mutex::new(BTreeMap::new())),
-        local_inference_slots: Arc::new(Semaphore::new(local_inference_limit)),
-        local_inference_limit,
-        interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
-        pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
-        live_streams: Arc::new(Mutex::new(BTreeMap::new())),
-        terminals: TerminalRuntime::default(),
-    };
-    let router = Router::new()
-        .route("/v1/health", get(health))
-        .route("/v1/environment/inspect", post(inspect_environment))
-        .route("/v1/terminals", get(list_terminals).post(start_terminal))
-        .route(
-            "/v1/terminals/{id}",
-            get(get_terminal).delete(stop_terminal),
-        )
-        .route("/v1/terminals/{id}/input", post(send_terminal_input))
-        .route("/v1/terminals/{id}/resize", post(resize_terminal))
-        .route("/v1/terminals/{id}/attach", post(attach_terminal))
-        .route("/v1/terminals/{id}/detach", post(detach_terminal))
-        .route("/v1/terminals/{id}/owner", post(change_terminal_owner))
-        .route("/v1/sessions", get(sessions))
-        .route("/v1/sessions", post(start_session))
-        .route("/v1/sessions/{id}", get(session))
-        .route("/v1/sessions/{id}/events", get(events))
-        .route(
-            "/v1/sessions/{id}/messages",
-            get(messages).post(append_message),
-        )
-        .route("/v1/sessions/{id}/events/stream", get(event_stream))
-        .route("/v1/sessions/{id}/hunks", get(review_hunks))
-        .route("/v1/sessions/{id}/diff", get(session_diff))
-        .route("/v1/sessions/{id}/hunks/apply", post(apply_review_hunk))
-        .route("/v1/sessions/{id}/hunks/reject", post(reject_review_hunk))
-        .route("/v1/sessions/{id}/resume", post(resume_session))
-        .route("/v1/sessions/{id}/approve", post(approve_session))
-        .route("/v1/sessions/{id}/reject", post(reject_session))
-        .route("/v1/sessions/{id}/pause", post(pause_session))
-        .route("/v1/sessions/{id}/checkpoint", post(checkpoint_session))
-        .route("/v1/sessions/{id}/rollback", post(rollback_session))
-        .route("/v1/sessions/{id}/compact", post(compact_session))
-        .route("/v1/sessions/{id}/model", post(select_session_model))
-        .route("/v1/sessions/{id}/replace-action", post(replace_action))
-        .route("/v1/sessions/{id}/mcp", post(invoke_mcp))
-        .route("/v1/sessions/{id}/cancel", post(cancel_session))
-        .route("/v1/automations", get(automations))
-        .route("/v1/automations", post(create_automation))
-        .route("/v1/automations/{id}/enable", post(enable_automation))
-        .route("/v1/automations/{id}/disable", post(disable_automation))
-        .route("/v1/automations/{id}/run", post(run_automation))
-        .route("/v1/supervisor", post(run_supervisor))
-        .route("/v1/providers", get(list_providers))
-        .route("/v1/providers", post(configure_provider))
-        .route("/v1/providers/{name}", get(get_provider))
-        .route("/v1/providers/{name}", delete(remove_provider))
-        .route("/v1/providers/test", post(test_provider))
-        .route("/v1/providers/discover", post(discover_provider_models))
-        .route("/v1/credentials", post(store_credential))
-        .route("/v1/models", get(list_models))
-        .route("/v1/models/roles", post(assign_model_role))
-        .route("/v1/local-models", get(local_models))
-        .route(
-            "/v1/local-models/recommendations",
-            get(local_model_recommendations),
-        )
-        .route("/v1/local-models/qualify", post(qualify_local_model))
-        .route("/v1/local-models/unload", post(unload_local_model))
-        .route(
-            "/v1/local-models/pull/propose",
-            post(propose_local_model_pull),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}/approve",
-            post(approve_local_model_pull),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}/start",
-            post(start_local_model_pull),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}",
-            get(local_model_pull_status),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}/events",
-            get(local_model_pull_events),
-        )
-        .route(
-            "/v1/local-models/pull/{action_id}/cancel",
-            post(cancel_local_model_pull),
-        )
-        .route(
-            "/v1/local-models/settings",
-            get(local_model_settings).post(update_local_model_settings),
-        )
-        .route("/v1/repository/inspect", post(inspect_repository))
-        .route("/v1/skills", get(list_skills))
-        .route("/v1/skills/search", post(search_skills))
-        .route("/v1/skills/download", post(download_skill))
-        .route("/v1/skills/install", post(install_skill))
-        .route("/v1/skills/install/propose", post(propose_skill_install))
-        .route(
-            "/v1/skills/install/{action_id}/approve",
-            post(approve_skill_install),
-        )
-        .route("/v1/skills/{id}", get(get_skill))
-        .route("/v1/skills/{id}", delete(remove_skill))
-        .route("/v1/research/fetch", post(fetch_research_page))
-        .route("/v1/skills/publishers/block", post(block_skill_publisher))
-        .with_state(state.clone());
-    let listener = TcpListener::bind(config.bind).await?;
-    let actual_bind = listener.local_addr()?;
-    let report = StartupReport {
-        bind: actual_bind,
-        recovered_uncertain_sessions: recovered,
-        token_file: config.token_file,
-    };
-    let scheduler = tokio::spawn(automation_scheduler(state.clone()));
-    let result = axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await;
-    scheduler.abort();
-    result?;
-    Ok(report)
-}
-
 pub async fn bind_and_report(
     config: DaemonConfig,
 ) -> Result<
@@ -507,6 +363,7 @@ pub async fn bind_and_report(
             "/v1/terminals/{id}",
             get(get_terminal).delete(stop_terminal),
         )
+        .route("/v1/terminals/{id}/output", get(read_terminal_output))
         .route("/v1/terminals/{id}/input", post(send_terminal_input))
         .route("/v1/terminals/{id}/resize", post(resize_terminal))
         .route("/v1/terminals/{id}/attach", post(attach_terminal))
@@ -705,6 +562,41 @@ async fn get_terminal(
         .inspect(parse_terminal_id(&id)?, 256 * 1024)
         .map_err(ApiError::terminal)?;
     Ok(Json(serde_json::json!({ "terminal": terminal })))
+}
+
+#[derive(Deserialize)]
+struct TerminalOutputQuery {
+    /// Byte offset the client already holds. Absent means "from the beginning
+    /// of what is still retained".
+    #[serde(default)]
+    since: u64,
+}
+
+/// Incremental terminal output (PRD §24.7). Returns only the bytes produced
+/// after `since`, so a live client appends instead of re-reading the whole
+/// transcript on a timer.
+async fn read_terminal_output(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<TerminalOutputQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let terminal_id = parse_terminal_id(&id)?;
+    let chunk = state
+        .terminals
+        .read_since(terminal_id, query.since)
+        .map_err(ApiError::terminal)?;
+    let terminal = state
+        .terminals
+        .inspect(terminal_id, 0)
+        .map_err(ApiError::terminal)?;
+    Ok(Json(serde_json::json!({
+        "chunk": chunk,
+        "alive": terminal.alive,
+        "owner": terminal.owner,
+        "generation": terminal.generation,
+    })))
 }
 
 async fn send_terminal_input(

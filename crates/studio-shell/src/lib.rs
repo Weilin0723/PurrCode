@@ -31,6 +31,7 @@ use uuid::Uuid;
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const APP_CSS: &str = include_str!("../assets/app.css");
 const APP_JS: &str = include_str!("../assets/app.js");
+const TERM_JS: &str = include_str!("../assets/term.js");
 const SESSION_COOKIE: &str = "purrcode_studio";
 
 /// Configuration for one Studio shell process.
@@ -145,6 +146,7 @@ fn router(state: Arc<StudioState>) -> Router {
         .route("/", get(index))
         .route("/app.css", get(styles))
         .route("/app.js", get(script))
+        .route("/term.js", get(terminal_script))
         .route("/studio/config", get(browser_config))
         .route("/studio/terminals/{id}/stream", get(terminal_socket))
         .route("/api/{*path}", any(proxy))
@@ -172,10 +174,17 @@ async fn terminal_socket(
         .into_response()
 }
 
+/// Stream a terminal to one Studio client.
+///
+/// Each tick forwards only the bytes produced since the last one (PRD §24.7).
+/// The previous implementation re-fetched and re-sent the entire transcript
+/// every 80ms, which grows with the session and makes the client redraw output
+/// it already has; `since` makes an idle terminal cost an empty frame.
 async fn run_terminal_socket(socket: WebSocket, state: Arc<StudioState>, id: String) {
     let (mut sender, mut receiver) = socket.split();
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(80));
-    let endpoint = match state.daemon_url.join(&format!("v1/terminals/{id}")) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(40));
+    let mut since: u64 = 0;
+    let endpoint = match state.daemon_url.join(&format!("v1/terminals/{id}/output")) {
         Ok(endpoint) => endpoint,
         Err(_) => return,
     };
@@ -183,10 +192,18 @@ async fn run_terminal_socket(socket: WebSocket, state: Arc<StudioState>, id: Str
         tokio::select! {
             _ = interval.tick() => {
                 let response = state.client.get(endpoint.clone())
+                    .query(&[("since", since)])
                     .bearer_auth(state.daemon_token.as_ref()).send().await;
                 let Ok(response) = response else { continue };
-                let Ok(body) = response.text().await else { continue };
-                if sender.send(Message::Text(body.into())).await.is_err() { break; }
+                let Ok(body) = response.json::<serde_json::Value>().await else { continue };
+                let next = body["chunk"]["next_offset"].as_u64().unwrap_or(since);
+                let empty = body["chunk"]["bytes"].as_array().is_none_or(|b| b.is_empty());
+                since = next;
+                // An idle terminal still needs the occasional frame so the
+                // client learns when the process exits, but not 25 a second.
+                if empty && body["alive"].as_bool().unwrap_or(true) { continue; }
+                let Ok(text) = serde_json::to_string(&body) else { continue };
+                if sender.send(Message::Text(text.into())).await.is_err() { break; }
             }
             incoming = receiver.next() => {
                 let Some(Ok(message)) = incoming else { break; };
@@ -319,6 +336,17 @@ async fn script(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Re
         StatusCode::OK,
         "application/javascript; charset=utf-8",
         APP_JS,
+    )
+}
+
+async fn terminal_script(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
+    if !authorized(&state, &headers) {
+        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+    }
+    secured_asset(
+        StatusCode::OK,
+        "application/javascript; charset=utf-8",
+        TERM_JS,
     )
 }
 
@@ -740,26 +768,92 @@ mod tests {
     }
 
     #[test]
-    fn embedded_studio_exposes_workbench_and_terminal_surfaces() {
-        for heading in [
-            "Conversation",
-            "Activity",
-            "Inspector",
-            "Diff review",
-            "Validation",
-            "Native PTY",
+    fn embedded_studio_is_session_first() {
+        // PRD §24.3: sessions, one conversation, a composer, a hidden drawer.
+        for surface in [
+            r#"aria-label="Sessions""#,
+            r#"id="session-list""#,
+            r#"id="conversation""#,
+            r#"id="composer""#,
+            r#"id="context-drawer""#,
+            r#"id="settings-modal""#,
         ] {
-            assert!(INDEX_HTML.contains(heading), "missing {heading} surface");
+            assert!(INDEX_HTML.contains(surface), "missing {surface}");
         }
+        // PRD §24.4: no dashboard shell and no unfinished enterprise pages.
+        for forbidden in [
+            "Agent Factory",
+            "Deployments",
+            "Agent Runs",
+            "Workspaces",
+            r#"class="nav-item""#,
+        ] {
+            assert!(
+                !INDEX_HTML.contains(forbidden),
+                "{forbidden} must not appear in the primary navigation"
+            );
+        }
+        // The drawer opens contextually rather than owning permanent space.
+        assert!(INDEX_HTML.contains(r#"id="context-drawer" class="context-drawer hidden""#));
         assert!(!INDEX_HTML.contains("<script>"));
         assert!(!INDEX_HTML.contains("<style>"));
         assert!(APP_JS.contains("/messages"));
         assert!(APP_JS.contains("/events"));
         assert!(APP_JS.contains("/diff"));
+        assert!(APP_CSS.contains("user-select: text"));
+        assert!(APP_CSS.contains("@media (max-width: 800px)"));
+    }
+
+    #[test]
+    fn embedded_studio_terminal_is_emulated_and_incremental() {
+        // PRD §24.7: a real emulator, not a stripped log.
         assert!(APP_JS.contains("new WebSocket"));
         assert!(APP_JS.contains("/studio/terminals/"));
-        assert!(APP_CSS.contains("grid-template-columns"));
-        assert!(APP_CSS.contains("user-select: text"));
-        assert!(APP_CSS.contains("@media (max-width: 780px)"));
+        assert!(
+            APP_JS.contains(r#"import { Terminal, measure } from "/term.js""#),
+            "the Studio must drive the terminal emulator"
+        );
+        assert!(
+            !APP_JS.contains(r"\x1b(?:[@-_]|\[[0-?]*[ -/]*[@-~])"),
+            "escape sequences must be interpreted, not stripped"
+        );
+        assert!(INDEX_HTML.contains(r#"<script type="module" src="/app.js">"#));
+        for capability in [
+            "class Terminal",
+            "applyStyle",
+            "eraseDisplay",
+            "scrollUp",
+            "resize(",
+            "keyToBytes",
+        ] {
+            assert!(TERM_JS.contains(capability), "emulator lacks {capability}");
+        }
+        // The shell must not re-send the whole transcript on a timer.
+        assert!(
+            APP_JS.contains("chunk.next_offset") || APP_JS.contains(r#"frame.chunk"#),
+            "the client must consume incremental chunks"
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_script_requires_the_session_cookie() {
+        let (report, server, _) = start_pair().await;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let url = format!("http://{}/term.js", report.bind);
+        let unauthorized = client.get(&url).send().await.unwrap();
+        assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+        let cookie = authenticate(&client, &report).await;
+        let authorized = client
+            .get(&url)
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(authorized.status(), reqwest::StatusCode::OK);
+        assert!(authorized.text().await.unwrap().contains("class Terminal"));
+        server.abort();
     }
 }
