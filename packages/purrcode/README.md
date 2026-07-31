@@ -9,14 +9,17 @@ purrcode init
 purrcode
 ```
 
-The npm package v0.8.1 installs PurrCode core v0.8.1 and exposes both `purrcode` and `purrcoded`. Provider
+The npm package v0.9.0 installs PurrCode core v0.9.0 and exposes both `purrcode` and `purrcoded`. Provider
 profiles support Ollama, NVIDIA NIM, LM Studio, and OpenAI-compatible endpoints; credentials remain
 in the operating-system secret store.
+
+`purrcode` opens the terminal Workbench on every platform. `purrcode studio` opens the optional
+graphical view of the same session — same daemon, same model, same permission mode.
 
 You can also install the signed release tarball directly:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.8.1/purrcode-0.8.1.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.9.0/purrcode-0.9.0.tgz
 ```
 
 The installer supports macOS ARM64/x64, Linux ARM64/x64, and Windows x64. It downloads over HTTPS,

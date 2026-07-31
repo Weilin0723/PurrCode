@@ -147,6 +147,15 @@ session rather than the default launch target.
   mean clients no longer each invent a reading of the durable event log. `Unavailable`, `Skipped`
   and `Cancelled` stay distinct from `Passed`, so validation that did not run can never be shown as
   success.
+- **Plan review is a conversation:** a Plan-mode run pauses on its plan and stays open to a reply.
+  Say what to change and the plan is rewritten as a numbered revision and paused again, as many
+  rounds as you need — nothing is written to disk in any of them. `Build this plan` (or `/resume`)
+  turns the plan you settled on into the work, in the same session. Review that could only answer
+  yes was not review: changing one step used to mean starting over and describing the task again.
+- **Repository context even when the task names no file:** the task index selects by filename, so an
+  objective that shares no word with any file — most objectives — indexed nothing and the planner
+  planned against nothing. A selection that matches nothing now widens to the repository's source
+  files under the same budget. A task that does name its file stays scoped to it.
 
 ### Keyboard
 
