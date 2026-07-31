@@ -14,9 +14,11 @@ PurrCode 是一个在隔离 Git worktree 中工作的终端编程智能体。每
 持久化授权，并在执行前再次校验，随后记录真实验证结果。仓库内容、模型输出和下载的技能
 始终被视为不可信数据。
 
-PurrCode v0.8.0 新增安全的图形化 Studio、持久化 Workbench、真实 PTY 终端工作区、
-基于证据的环境诊断，以及自动渐进式构建／测试修复。PawGate、Claw、隔离 worktree 与
-持久化证据边界仍然是唯一可信执行路径。
+PurrCode v0.9.0 让终端 Workbench 成为产品本身：直接运行 `purrcode` 即在所有平台打开
+它，Studio 成为同一会话的一键图形视图，两个客户端都真正解释终端输出而不再剥离转义序列。
+任务模式（Ask / Plan / Build / Review）与权限模式（Ask / Auto / Full Access）无需编辑
+TOML 即可选择，NVIDIA NIM 成为一等提供方，daemon 提供统一的呈现契约，客户端不再各自
+解读运行事件。PawGate、Claw、隔离 worktree 与持久化证据边界仍然是唯一可信执行路径。
 
 ## 为什么选择 PurrCode
 
@@ -44,7 +46,7 @@ npm install --global @minaovo/purrcode
 使用 Node.js 18 或更高版本，也可以直接从 GitHub 安装同一个已签名 launcher：
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.8.1/purrcode-0.8.1.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.9.0/purrcode-0.9.0.tgz
 ```
 
 安装包会选择正确的 macOS、Linux 或 Windows 二进制文件，校验固定的 SHA-256 摘要，并
@@ -53,7 +55,7 @@ npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0
 ### macOS 和 Linux 安装脚本
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.8.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.9.0/scripts/install.sh | sh
 ```
 
 脚本会使用 `SHA256SUMS` 校验发布归档，并默认安装到 `~/.local/bin`。可通过
@@ -87,6 +89,25 @@ purrcode ui
 使用 `/connect import` 可粘贴 Python、JavaScript、cURL、JSON、YAML、TOML 或 dotenv
 示例。PurrCode 只解析、不执行；提取出的密钥只短暂保存在内存中，保存前必须转换为钥匙串或
 环境变量引用。
+
+## v0.9 更新
+
+- **默认进入终端：** 直接运行 `purrcode` 打开终端 Workbench，不会意外弹出浏览器。
+- **一键打开 Studio：** `purrcode studio`（`purrcode ui` 为兼容别名）；在 Workbench 内
+  按 `Ctrl+Shift+S` 或输入 `/studio` 即可打开同一会话的图形视图，不会另起会话。
+- **两个客户端都有真实终端：** Workbench 新增终端界面（`Ctrl+T`），按用途命名的标签页、
+  人工接管与交还、按键直达进程；只有 `Esc`、`Tab`、`Ctrl+W` 由界面本身占用。转义序列被
+  解释而非剥离，因此清屏、进度条与彩色测试摘要都能正常呈现。Studio 只传输自上一帧以来
+  新产生的字节，不再每秒重发十余次完整记录。
+- **可真正选择的模式：** `Ctrl+K` / `/mode` 切换 Ask、Plan、Build、Review；`/permission`
+  切换 Ask、Auto、Full Access。两者都显示在标题栏并随会话下发，因此只读模式是 daemon
+  强制执行的约束而非提示。Full Access 不会授予进程本就没有的任何权限，界面会明确说明。
+- **NVIDIA NIM 一等支持：** 初始化时自动检测 `NVIDIA_API_KEY`，从 NIM 端点枚举模型。
+- **基于证据的模型选择：** 按词元而非子串解析名称，按主机内存预算而非「越大越好」判断
+  体积，已验证的工具调用能力优先于任何名称信号，且排序完全确定。
+- **统一的呈现契约：** `GET /v1/sessions/{id}/activity`、`/validation`、`/summary`
+  使客户端不再各自解读事件日志。`Unavailable`、`Skipped`、`Cancelled` 与 `Passed`
+  严格区分，未运行的验证永远不会显示为成功。
 
 ## v0.8 更新
 
