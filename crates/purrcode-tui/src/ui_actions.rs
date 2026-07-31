@@ -177,6 +177,7 @@ impl UiActionHandler {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShortcutContext {
     Workbench,
+    Terminal,
     Approval,
     Review,
     Recovery,
@@ -189,6 +190,7 @@ impl ShortcutContext {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Workbench => "workbench",
+            Self::Terminal => "terminal",
             Self::Approval => "approval",
             Self::Review => "review",
             Self::Recovery => "recovery",
@@ -1324,6 +1326,72 @@ pub const REGISTRY: &[UiActionDefinition] = &[
         handler: UiActionHandler::Command("skill-search"),
         acceptance_scenarios: scenarios!["skills.mcp_approval", "skills.mcp_failure"],
     },
+    // ── Terminal ───────────────────────────────────────────────
+    UiActionDefinition {
+        id: UiActionId("terminal.open"),
+        category: UiActionCategory::Review,
+        label: "Open terminal",
+        description: "Show the real PTY the agent runs commands in",
+        commands: &["/terminal"],
+        shortcuts: &[Shortcut::primary("Ctrl+T", WORKBENCH)],
+        availability: AvailabilityRule::DaemonReachable,
+        risk: UiRiskClass::Elevated,
+        starts_execution: false,
+        handler: UiActionHandler::Command("terminal"),
+        acceptance_scenarios: scenarios!["terminal.open"],
+    },
+    UiActionDefinition {
+        id: UiActionId("terminal.next"),
+        category: UiActionCategory::Review,
+        label: "Next terminal",
+        description: "Move to the next terminal tab",
+        commands: &[],
+        shortcuts: &[Shortcut::primary("Tab", ShortcutContext::Terminal)],
+        availability: AvailabilityRule::DaemonReachable,
+        risk: UiRiskClass::Safe,
+        starts_execution: false,
+        handler: UiActionHandler::Decision("terminal.next"),
+        acceptance_scenarios: scenarios!["terminal.open"],
+    },
+    UiActionDefinition {
+        id: UiActionId("terminal.take_control"),
+        category: UiActionCategory::Review,
+        label: "Take terminal control",
+        description: "Type into the terminal yourself; the process keeps running",
+        commands: &["/terminal-take"],
+        shortcuts: &[],
+        availability: AvailabilityRule::DaemonReachable,
+        risk: UiRiskClass::Elevated,
+        starts_execution: false,
+        handler: UiActionHandler::Command("terminal-take"),
+        acceptance_scenarios: scenarios!["terminal.takeover"],
+    },
+    UiActionDefinition {
+        id: UiActionId("terminal.return_control"),
+        category: UiActionCategory::Review,
+        label: "Return terminal control",
+        description: "Hand the terminal back to the agent",
+        commands: &["/terminal-return"],
+        shortcuts: &[Shortcut::primary("Ctrl+W", ShortcutContext::Terminal)],
+        availability: AvailabilityRule::DaemonReachable,
+        risk: UiRiskClass::Elevated,
+        starts_execution: false,
+        handler: UiActionHandler::Command("terminal-return"),
+        acceptance_scenarios: scenarios!["terminal.takeover"],
+    },
+    UiActionDefinition {
+        id: UiActionId("session.open_studio"),
+        category: UiActionCategory::Session,
+        label: "Open Studio",
+        description: "Open the graphical view of this same session",
+        commands: &["/studio"],
+        shortcuts: &[Shortcut::primary("Ctrl+Shift+S", WORKBENCH)],
+        availability: AvailabilityRule::DaemonReachable,
+        risk: UiRiskClass::Elevated,
+        starts_execution: false,
+        handler: UiActionHandler::Command("studio"),
+        acceptance_scenarios: scenarios!["session.open_studio"],
+    },
     // ── Settings ───────────────────────────────────────────────
     UiActionDefinition {
         id: UiActionId("settings.show"),
@@ -1391,6 +1459,30 @@ pub const REGISTRY: &[UiActionDefinition] = &[
 /// a gate that fails when a referenced test name is absent from its sources, so
 /// this table cannot claim coverage that does not exist.
 pub const SCENARIOS: &[AcceptanceScenario] = &[
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("terminal.open"),
+        summary: "The terminal surface shows real PTY output with tabs",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/terminal.rs::terminal_shows_real_pty_output"),
+        real_terminal_case: None,
+        critical: true,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("terminal.takeover"),
+        summary: "A human takes terminal control and hands it back",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/terminal.rs::terminal_control_transfers_to_the_human_and_back"),
+        real_terminal_case: None,
+        critical: false,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("session.open_studio"),
+        summary: "Studio opens on the session the workbench already has",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/terminal.rs::studio_opens_on_the_active_session"),
+        real_terminal_case: None,
+        critical: false,
+    },
     // Startup and repository
     AcceptanceScenario {
         id: AcceptanceScenarioId("startup.first_launch"),

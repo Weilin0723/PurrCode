@@ -7,4 +7,5 @@
 pub mod approval;
 pub mod recovery;
 pub mod review;
+pub mod terminal;
 pub mod workbench;

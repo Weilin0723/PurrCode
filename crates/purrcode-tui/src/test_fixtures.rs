@@ -66,6 +66,8 @@ pub(crate) fn offline_app() -> crate::app::App {
         palette_selected: 0,
         model_choices: Vec::new(),
         model_selected: 0,
+        terminal: crate::terminal::TerminalPane::default(),
+        pending_terminal_input: None,
     }
 }
 

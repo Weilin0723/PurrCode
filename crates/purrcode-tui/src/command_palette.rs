@@ -47,6 +47,10 @@ pub const DISPATCH_COMMANDS: &[&str] = &[
     "session",
     "sessions",
     "settings",
+    "studio",
+    "terminal",
+    "terminal-return",
+    "terminal-take",
     "skill-block",
     "skill-download",
     "skill-download-approve",
@@ -618,6 +622,10 @@ impl CommandPalette {
             // Review reads the daemon's own effect evidence; it does not build a
             // second view of what changed.
             "diff" => app.load_review().await,
+            "terminal" => app.open_terminal().await,
+            "terminal-take" => app.set_terminal_owner(true).await,
+            "terminal-return" => app.set_terminal_owner(false).await,
+            "studio" => app.open_studio().await,
             "privacy" => {
                 if app.status_bar.privacy == "local-only" {
                     app.status_bar.set_privacy("mixed");

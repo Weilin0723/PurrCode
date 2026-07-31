@@ -37,6 +37,12 @@ pub struct DaemonScript {
     pub unreachable: bool,
     /// Patch and porcelain returned by the diff endpoint.
     pub diff: Option<(String, String)>,
+    /// Terminals the daemon reports, and the raw PTY bytes each one has
+    /// produced. Bytes are served incrementally through
+    /// `/v1/terminals/{id}/output?since=`, exactly as the real daemon does, so
+    /// a test can prove the workbench interprets escape sequences rather than
+    /// printing them.
+    pub terminals: Vec<ScriptedTerminal>,
     /// Models a discovery request reports.
     pub discovered_models: Vec<String>,
     /// When set, provider save and test fail with this message.
@@ -111,6 +117,44 @@ impl StreamFrame {
                 json!({"kind": "phase", "phase": phase, "role": role})
             ),
         }
+    }
+}
+
+/// One terminal the fake daemon serves.
+#[derive(Clone, Debug)]
+pub struct ScriptedTerminal {
+    pub terminal_id: String,
+    pub alive: bool,
+    pub generation: u64,
+    /// Everything the PTY has produced, including escape sequences.
+    pub output: Vec<u8>,
+    /// Set once the workbench asks for control.
+    pub owner_is_human: bool,
+}
+
+impl ScriptedTerminal {
+    pub fn new(terminal_id: &str, output: impl AsRef<[u8]>) -> Self {
+        Self {
+            terminal_id: terminal_id.to_owned(),
+            alive: true,
+            generation: 0,
+            output: output.as_ref().to_vec(),
+            owner_is_human: false,
+        }
+    }
+
+    fn snapshot(&self) -> Value {
+        json!({
+            "terminal_id": self.terminal_id,
+            "alive": self.alive,
+            "generation": self.generation,
+            "owner": if self.owner_is_human {
+                json!({"kind": "human"})
+            } else {
+                json!({"kind": "agent", "data": {"role": "Coding Agent"}})
+            },
+            "transcript_tail": [],
+        })
     }
 }
 
@@ -311,6 +355,10 @@ fn router(state: DaemonState) -> Router {
         .route("/v1/sessions/{id}/pause", post(pause))
         .route("/v1/sessions/{id}/resume", post(resume))
         .route("/v1/sessions/{id}/rollback", post(rollback))
+        .route("/v1/terminals", get(terminals).post(start_terminal))
+        .route("/v1/terminals/{id}/output", get(terminal_output))
+        .route("/v1/terminals/{id}/input", post(terminal_input))
+        .route("/v1/terminals/{id}/owner", post(terminal_owner))
         .route("/v1/local-models", get(local_models))
         .route("/v1/local-models/recommendations", get(recommendations))
         // Present so a request never 404s into a confusing error; the tests that
@@ -807,6 +855,125 @@ async fn add_message(
         "model": null,
     }));
     Ok(Json(json!({"accepted": true})))
+}
+
+async fn terminals(State(state): State<DaemonState>, headers: HeaderMap) -> ApiResult {
+    guard!(state, headers);
+    record(&state, "GET", "/v1/terminals", None);
+    let script = state.script.lock().expect("script mutex");
+    Ok(Json(json!({
+        "terminals": script.terminals.iter().map(ScriptedTerminal::snapshot).collect::<Vec<_>>(),
+    })))
+}
+
+async fn start_terminal(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    body: String,
+) -> ApiResult {
+    guard!(state, headers);
+    let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    record(&state, "POST", "/v1/terminals", Some(&parsed));
+    let mut script = state.script.lock().expect("script mutex");
+    let terminal =
+        ScriptedTerminal::new(&format!("terminal-{}", script.terminals.len() + 1), b"$ ");
+    script.terminals.push(terminal.clone());
+    Ok(Json(json!({ "terminal": terminal.snapshot() })))
+}
+
+#[derive(serde::Deserialize)]
+struct SinceQuery {
+    #[serde(default)]
+    since: u64,
+}
+
+async fn terminal_output(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<SinceQuery>,
+) -> ApiResult {
+    guard!(state, headers);
+    let script = state.script.lock().expect("script mutex");
+    let Some(terminal) = script.terminals.iter().find(|t| t.terminal_id == id) else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("terminal {id} not found")})),
+        ));
+    };
+    let start = (query.since as usize).min(terminal.output.len());
+    Ok(Json(json!({
+        "chunk": {
+            "bytes": terminal.output[start..],
+            "next_offset": terminal.output.len(),
+            "truncated": false,
+        },
+        "alive": terminal.alive,
+        "generation": terminal.generation,
+        "owner": terminal.snapshot()["owner"],
+    })))
+}
+
+async fn terminal_input(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: String,
+) -> ApiResult {
+    guard!(state, headers);
+    let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    record(
+        &state,
+        "POST",
+        &format!("/v1/terminals/{id}/input"),
+        Some(&parsed),
+    );
+    let mut script = state.script.lock().expect("script mutex");
+    let Some(terminal) = script.terminals.iter_mut().find(|t| t.terminal_id == id) else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("terminal {id} not found")})),
+        ));
+    };
+    // Echo the typed bytes, exactly as a PTY in cooked mode does, so a test can
+    // prove input reached the process.
+    if let Some(input) = serde_json::from_str::<Value>(&body)
+        .ok()
+        .and_then(|value| value["input"].as_str().map(str::to_owned))
+    {
+        terminal.output.extend_from_slice(input.as_bytes());
+    }
+    Ok(Json(json!({"accepted": true})))
+}
+
+async fn terminal_owner(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: String,
+) -> ApiResult {
+    guard!(state, headers);
+    let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    record(
+        &state,
+        "POST",
+        &format!("/v1/terminals/{id}/owner"),
+        Some(&parsed),
+    );
+    let human = body.contains("human");
+    let mut script = state.script.lock().expect("script mutex");
+    let Some(terminal) = script.terminals.iter_mut().find(|t| t.terminal_id == id) else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("terminal {id} not found")})),
+        ));
+    };
+    if terminal.owner_is_human != human {
+        terminal.owner_is_human = human;
+        // Ownership transfer bumps the generation, so stale input is rejected.
+        terminal.generation += 1;
+    }
+    Ok(Json(json!({ "terminal": terminal.snapshot() })))
 }
 
 async fn diff(

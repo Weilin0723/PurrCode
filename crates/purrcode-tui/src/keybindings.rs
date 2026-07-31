@@ -32,8 +32,40 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         AppMode::ModelBrowse => handle_model_browser_key(app, key),
         AppMode::LeaseConflict => handle_lease_conflict_key(app, key),
         AppMode::SessionChoice => handle_session_choice_key(app, key),
+        AppMode::Terminal => handle_terminal_key(app, key),
         AppMode::Conversation => handle_conversation_key(app, key),
     }
+}
+
+/// Keys inside the terminal surface (PRD §19.1).
+///
+/// Almost everything is forwarded to the process — a terminal that swallows
+/// Ctrl+C or arrow keys is not a terminal. Only Esc, Tab and Ctrl+W are claimed
+/// by the workbench, and each is announced on the hint line.
+fn handle_terminal_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.switch_mode(AppMode::Conversation);
+            return true;
+        }
+        KeyCode::Tab => {
+            app.terminal.next_tab();
+            return true;
+        }
+        KeyCode::BackTab => {
+            app.terminal.previous_tab();
+            return true;
+        }
+        KeyCode::Char('w' | 'W') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.pending_command = Some("/terminal-return".into());
+            return true;
+        }
+        _ => {}
+    }
+    if let Some(bytes) = crate::terminal::key_bytes(key) {
+        app.pending_terminal_input = Some(bytes);
+    }
+    true
 }
 
 fn handle_model_browser_key(app: &mut App, key: KeyEvent) -> bool {

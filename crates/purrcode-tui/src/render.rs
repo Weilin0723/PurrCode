@@ -24,6 +24,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             let surface = crate::screens::recovery::session_choice(app);
             crate::screens::recovery::draw(frame, app, &surface);
         }
+        AppMode::Terminal => crate::screens::terminal::draw(frame, app),
         AppMode::Conversation => crate::screens::workbench::draw(frame, app),
     }
     apply_canvas_background(frame, &app.theme);

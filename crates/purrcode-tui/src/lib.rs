@@ -1,6 +1,5 @@
 //! Conversation-first daemon-backed terminal interface.
 
-pub mod action_area;
 pub mod activity;
 mod app;
 pub mod approval;
@@ -10,7 +9,6 @@ mod composer;
 mod conversation;
 pub mod design;
 mod diff_view;
-pub mod glyphs;
 mod keybindings;
 pub mod layout;
 mod provider_setup;
@@ -20,6 +18,7 @@ pub mod screens;
 mod skill_browser;
 mod status_bar;
 mod streaming;
+pub mod terminal;
 pub mod test_fixtures;
 mod theme;
 mod timeline;
