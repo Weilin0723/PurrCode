@@ -6,7 +6,6 @@ members = [
   "crates/ninelives-recovery",
   "crates/claw-sandbox",
   "crates/terminal-runtime",
-  "crates/test-orchestrator",
   "crates/provider-gateway",
   "crates/provider-import",
   "crates/repository-engine",

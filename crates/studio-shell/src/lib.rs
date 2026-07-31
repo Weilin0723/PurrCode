@@ -822,6 +822,50 @@ mod tests {
     }
 
     #[test]
+    fn embedded_studio_lets_the_user_choose_task_and_permission_modes() {
+        // PRD §11, §12, §16. Studio previously printed "Build" and "Ask" as
+        // static text, which reads as a setting the user cannot reach.
+        for control in [
+            r#"<select id="composer-mode""#,
+            r#"<select id="composer-permission""#,
+            r#"<select id="settings-permission""#,
+            r#"<select id="settings-default-mode""#,
+        ] {
+            assert!(INDEX_HTML.contains(control), "missing {control}");
+        }
+        // Ask and Plan must reach the daemon as a constraint, not as a hint it
+        // might infer from the objective's wording.
+        assert!(APP_JS.contains(r#"READ_ONLY_MODES = ["ask", "plan"]"#));
+        assert!(APP_JS.contains("plan_only: READ_ONLY_MODES.includes(state.taskMode)"));
+        assert!(APP_JS.contains("authority_mode: AUTHORITY_MODES[state.permission]"));
+        // Full Access invites a larger reading than it deserves, so the text
+        // states what it does not grant.
+        assert!(APP_JS.contains("It grants no new ones"));
+    }
+
+    #[test]
+    fn studio_settings_covers_every_prd_24_6_section() {
+        for section in [
+            "Models and providers",
+            "Permissions",
+            "Appearance",
+            "Repository defaults",
+            "Terminal",
+            "Advanced",
+            "Experimental",
+        ] {
+            assert!(
+                INDEX_HTML.contains(&format!("<h3>{section}</h3>")),
+                "settings is missing the {section} section"
+            );
+        }
+        // With every section present the dialog is taller than a short
+        // viewport, so it must scroll inside itself and keep Close reachable.
+        assert!(APP_CSS.contains("max-height: 85vh"));
+        assert!(APP_CSS.contains(".modal-header { position: sticky"));
+    }
+
+    #[test]
     fn embedded_studio_terminal_is_emulated_and_incremental() {
         // PRD §24.7: a real emulator, not a stripped log.
         assert!(APP_JS.contains("new WebSocket"));

@@ -553,6 +553,8 @@ enum BundleCommand {
 
 #[derive(Subcommand)]
 enum BenchmarkCommand {
+    /// Validate every benchmark case against the schema.
+    #[command(alias = "validate-cases")]
     Audit {
         #[arg(long)]
         catalog: Option<PathBuf>,
@@ -562,29 +564,8 @@ enum BenchmarkCommand {
         catalog: Option<PathBuf>,
     },
     /// Drive coding fixtures through the running daemon and score real agent outcomes.
+    #[command(alias = "run")]
     Live {
-        #[arg(long)]
-        catalog: Option<PathBuf>,
-        #[arg(long)]
-        max_tasks: Option<usize>,
-        /// Whole-task deadline for each benchmark case.
-        #[arg(long, default_value_t = 300)]
-        timeout_seconds: u64,
-    },
-    /// List available benchmark case IDs and categories.
-    List,
-    /// Validate all benchmark cases against the schema.
-    ValidateCases {
-        #[arg(long)]
-        catalog: Option<PathBuf>,
-    },
-    /// Compare two benchmark reports.
-    Compare {
-        baseline: PathBuf,
-        candidate: PathBuf,
-    },
-    /// Run benchmark cases through the daemon (alias for `Live`).
-    Run {
         #[arg(long)]
         catalog: Option<PathBuf>,
         #[arg(long)]
@@ -595,6 +576,13 @@ enum BenchmarkCommand {
         /// Output path for the benchmark report JSON (defaults to stdout).
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// List available benchmark case IDs and categories.
+    List,
+    /// Compare two benchmark reports.
+    Compare {
+        baseline: PathBuf,
+        candidate: PathBuf,
     },
     /// Render a benchmark JSON report as a human-readable summary.
     Report {
@@ -2084,6 +2072,7 @@ async fn main() -> Result<()> {
                 let catalog = GoldenCatalog::load(&catalog_path)?;
                 let root = catalog_path.parent().unwrap_or_else(|| Path::new("."));
                 println!("{}", serde_json::to_string_pretty(&catalog.audit(root)?)?);
+                println!("status: all cases valid");
             }
             BenchmarkCommand::Baseline { catalog } => {
                 let catalog_path = catalog.unwrap_or_else(default_golden_catalog_path);
@@ -2099,6 +2088,7 @@ async fn main() -> Result<()> {
                 catalog,
                 max_tasks,
                 timeout_seconds,
+                output,
             } => {
                 let catalog_path = catalog.unwrap_or_else(default_golden_catalog_path);
                 let catalog = GoldenCatalog::load(&catalog_path)?;
@@ -2118,7 +2108,15 @@ async fn main() -> Result<()> {
                     timeout_seconds,
                 )
                 .await?;
-                println!("{}", serde_json::to_string_pretty(&report)?);
+                let encoded = serde_json::to_string_pretty(&report)?;
+                match output {
+                    Some(path) => {
+                        fs::write(&path, &encoded)
+                            .with_context(|| format!("write {}", path.display()))?;
+                        println!("report: {}", path.display());
+                    }
+                    None => println!("{encoded}"),
+                }
                 if report.failed > 0 {
                     bail!("{} live golden cases failed", report.failed);
                 }
@@ -2140,14 +2138,6 @@ async fn main() -> Result<()> {
                     let count = catalog.tasks.iter().filter(|t| t.category == cat).count();
                     println!("  {cat}: {count}");
                 }
-            }
-            BenchmarkCommand::ValidateCases { catalog } => {
-                let catalog_path = catalog.unwrap_or_else(default_golden_catalog_path);
-                let catalog = GoldenCatalog::load(&catalog_path)?;
-                let root = catalog_path.parent().unwrap_or_else(|| Path::new("."));
-                let audit = catalog.audit(root)?;
-                println!("{}", serde_json::to_string_pretty(&audit)?);
-                println!("status: all cases valid");
             }
             BenchmarkCommand::Compare {
                 baseline,
@@ -2186,42 +2176,6 @@ async fn main() -> Result<()> {
                         b_passed as f64 / b_total as f64 * 100.0,
                         c_passed as f64 / c_total as f64 * 100.0,
                     );
-                }
-            }
-            BenchmarkCommand::Run {
-                catalog,
-                max_tasks,
-                timeout_seconds,
-                output,
-            } => {
-                let catalog_path = catalog.unwrap_or_else(default_golden_catalog_path);
-                let catalog = GoldenCatalog::load(&catalog_path)?;
-                let root = catalog_path.parent().unwrap_or_else(|| Path::new("."));
-                let token = fs::read_to_string(&daemon_token).with_context(|| {
-                    format!(
-                        "daemon token unavailable at {}; run `purrcode init`",
-                        daemon_token.display()
-                    )
-                })?;
-                let report = run_live_benchmark(
-                    &catalog,
-                    root,
-                    &daemon_url,
-                    token.trim(),
-                    max_tasks,
-                    timeout_seconds,
-                )
-                .await?;
-                let encoded = serde_json::to_string_pretty(&report)?;
-                if let Some(path) = output {
-                    fs::write(&path, &encoded)
-                        .with_context(|| format!("write {}", path.display()))?;
-                    println!("report: {}", path.display());
-                } else {
-                    println!("{encoded}");
-                }
-                if report.failed > 0 {
-                    bail!("{} live golden cases failed", report.failed);
                 }
             }
             BenchmarkCommand::Report { report } => {

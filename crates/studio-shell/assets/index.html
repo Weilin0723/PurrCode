@@ -33,7 +33,20 @@
         <section class="composer-bar">
           <textarea id="composer" rows="2" placeholder="Ask PurrCode to inspect, change, test, or explain…"></textarea>
           <div class="composer-controls">
-            <span class="composer-meta"><span id="composer-mode">Build</span> · <span id="composer-model">—</span> · <span id="composer-permission">Ask</span></span>
+            <div class="composer-meta">
+              <select id="composer-mode" aria-label="Task mode">
+                <option value="ask">Ask</option>
+                <option value="plan">Plan</option>
+                <option value="build" selected>Build</option>
+                <option value="review">Review</option>
+              </select>
+              <button id="composer-model" class="link" aria-label="Change model">—</button>
+              <select id="composer-permission" aria-label="Permission mode">
+                <option value="ask" selected>Ask</option>
+                <option value="auto">Auto</option>
+                <option value="full_access">Full Access</option>
+              </select>
+            </div>
             <button id="send" class="primary">Send</button>
           </div>
         </section>
@@ -79,6 +92,63 @@
         <div id="model-choices" class="model-choices"></div>
         <h4>Providers</h4>
         <div id="provider-list" class="provider-list"><div class="empty">No providers configured.</div></div>
+      </section>
+      <section class="settings-block">
+        <h3>Permissions</h3>
+        <p class="settings-note" id="permission-note"></p>
+        <div class="settings-row">
+          <label for="settings-permission">Default for new work</label>
+          <select id="settings-permission">
+            <option value="ask">Ask</option>
+            <option value="auto">Auto</option>
+            <option value="full_access">Full Access</option>
+          </select>
+        </div>
+      </section>
+      <section class="settings-block">
+        <h3>Appearance</h3>
+        <div class="settings-row">
+          <label for="settings-theme">Theme</label>
+          <select id="settings-theme">
+            <option value="system">Match system</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+      </section>
+      <section class="settings-block">
+        <h3>Repository defaults</h3>
+        <div class="settings-row"><span>Repository</span><strong id="settings-repository">—</strong></div>
+        <div class="settings-row"><span>Branch</span><strong id="settings-branch">—</strong></div>
+        <div class="settings-row">
+          <label for="settings-default-mode">Default task mode</label>
+          <select id="settings-default-mode">
+            <option value="ask">Ask</option>
+            <option value="plan">Plan</option>
+            <option value="build">Build</option>
+            <option value="review">Review</option>
+          </select>
+        </div>
+      </section>
+      <section class="settings-block">
+        <h3>Terminal</h3>
+        <div class="settings-row"><span>Emulation</span><strong>ANSI screen buffer, incremental stream</strong></div>
+        <div class="settings-row"><span>Open terminals</span><strong id="settings-terminal-count">0</strong></div>
+        <button id="settings-open-terminal" class="secondary">Open a terminal</button>
+      </section>
+      <section class="settings-block">
+        <h3>Advanced</h3>
+        <div class="settings-row"><span>Daemon API</span><strong id="settings-daemon-api">—</strong></div>
+        <div class="settings-row"><span>Studio API</span><strong id="settings-studio-api">—</strong></div>
+        <p class="settings-note">Model role routing, context and validation budgets, sandbox
+          behaviour and evidence retention are configured from the terminal Workbench with
+          <code>/settings</code>.</p>
+      </section>
+      <section class="settings-block">
+        <h3>Experimental</h3>
+        <p class="settings-note">No experimental features are enabled for this repository.
+          Azure runtime deployment, remote resource discovery and multi-agent topology remain
+          behind explicit CLI commands.</p>
       </section>
     </div>
   </div>

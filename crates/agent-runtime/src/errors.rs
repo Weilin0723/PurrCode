@@ -4,7 +4,7 @@ use purrcode_claw::ExecutionError;
 use purrcode_ninelives::StoreError;
 use purrcode_provider_gateway::{ProviderError, ProviderErrorCategory, StreamStateError};
 use purrcode_repository_engine::RepositoryError;
-use purrcode_test_orchestrator::ValidationError;
+use purrcode_validation_runtime::ValidationError;
 use purrcode_whisker::ContextError;
 
 use crate::context::AgentContextIndexError;

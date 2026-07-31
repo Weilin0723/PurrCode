@@ -37,7 +37,7 @@ use purrcode_runtime_core::{
     ConversationMessage, JudgmentDecision, ProposedAction, SessionEvent, SessionId, SessionStatus,
     ValidationStatus,
 };
-use purrcode_test_orchestrator::{
+use purrcode_validation_runtime::{
     EvidenceStatus, ValidationDetector, ValidationPlan, ValidationRunner, ValidationStage,
 };
 use purrcode_whisker::RetrievalBudget;
@@ -1335,7 +1335,7 @@ impl<'a> NativeAgent<'a> {
 }
 
 fn repair_stages(
-    report: &purrcode_test_orchestrator::ValidationReport,
+    report: &purrcode_validation_runtime::ValidationReport,
 ) -> BTreeSet<ValidationStage> {
     let mut stages: BTreeSet<_> = report
         .repair_routes()
@@ -1358,7 +1358,7 @@ fn repair_stages(
 fn pause_after_validation_budget(
     store: &mut SessionStore,
     session_id: SessionId,
-    report: &purrcode_test_orchestrator::ValidationReport,
+    report: &purrcode_validation_runtime::ValidationReport,
 ) -> Result<AgentOutcome, AgentError> {
     let failed = report
         .evidence

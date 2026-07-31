@@ -27,7 +27,6 @@ pub struct Conversation {
     pub scroll: usize,
     pub auto_follow: bool,
     pub new_output: bool,
-    pub evidence: Vec<String>,
     pub phase: String,
     pub timeline: Vec<TimelineCard>,
     pub selected_card: Option<usize>,
@@ -62,7 +61,6 @@ impl Conversation {
             scroll: 0,
             auto_follow: true,
             new_output: false,
-            evidence: Vec::new(),
             phase: "ready".into(),
             timeline: Vec::new(),
             selected_card: None,
@@ -242,11 +240,6 @@ impl Conversation {
             self.pending_action_candidate = None;
         }
 
-        if let Some(evidence) = collapsed_evidence(&event) {
-            self.evidence.insert(0, evidence);
-            self.evidence.truncate(3);
-        }
-
         let is_streamed_assistant_snapshot = name == "conversation_message_added"
             && event.pointer("/data/message/role").and_then(Value::as_str) == Some("assistant")
             && self.streaming_message.is_some();
@@ -371,12 +364,6 @@ impl Conversation {
             .to_owned();
         self.pending_action = pending_action_from_events(&events);
         self.pending_action_candidate = None;
-        self.evidence = events
-            .iter()
-            .filter_map(collapsed_evidence)
-            .rev()
-            .take(3)
-            .collect();
         self.timeline = cards_from_events(&events);
         self.last_durable_sequence = events.len() as u64;
         self.durable_events = events;
@@ -429,27 +416,6 @@ impl Conversation {
             .find(|message| message.role == "user")
             .map(|message| message.content.clone())
             .unwrap_or_default()
-    }
-}
-
-fn collapsed_evidence(event: &Value) -> Option<String> {
-    match event.get("event").and_then(Value::as_str) {
-        Some("judgment_recorded") => Some(format!(
-            "Judgment: {}",
-            event.pointer("/data/decision").unwrap_or(&Value::Null)
-        )),
-        Some("validation_recorded") => Some(format!(
-            "Validation: {} — {}",
-            event
-                .pointer("/data/status")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown"),
-            event
-                .pointer("/data/evidence")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-        )),
-        _ => None,
     }
 }
 

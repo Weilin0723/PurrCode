@@ -117,11 +117,6 @@ fn safe_event_name(value: &str) -> String {
         .collect()
 }
 
-#[allow(dead_code)] // Retained as the shared one-line action description.
-pub fn action_summary(action: &Value) -> String {
-    summarize_action(action)
-}
-
 fn card_from_event(value: &Value) -> Option<TimelineCard> {
     let event = value.get("event")?.as_str()?;
     let data = value.get("data").unwrap_or(&Value::Null);

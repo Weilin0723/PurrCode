@@ -6,7 +6,8 @@ const state = {
   streamRun: null, streamRefresh: null,
   terminals: [], selectedTerminal: null, terminalSocket: null, terminalSocketId: null,
   drawerOpen: false, drawerTab: "changes", emulator: null, replayedTerminal: null,
-  models: [], providers: [], activeModel: null
+  models: [], providers: [], activeModel: null,
+  taskMode: "build", permission: "ask"
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -140,11 +141,36 @@ async function openSession(runId) {
   state.selectedRun = runId; renderSessionList(); await refreshSession();
 }
 
+// ── Task and permission modes (PRD §11, §12) ──
+//
+// These are selectors, not labels. Studio previously displayed "Build" and
+// "Ask" as static text, which read as a setting the user could not reach.
+const PERMISSION_LABELS = { ask: "Ask", auto: "Auto", full_access: "Full Access" };
+const AUTHORITY_MODES = { ask: "governed", auto: "elevated", full_access: "unrestricted" };
+// Ask and Plan must not change files. The session payload carries that, so the
+// daemon enforces it rather than inferring intent from the objective's wording.
+const READ_ONLY_MODES = ["ask", "plan"];
+
+function readModes() {
+  state.taskMode = $("#composer-mode").value;
+  state.permission = $("#composer-permission").value;
+  $("#mode-info").textContent = `${$("#composer-mode").selectedOptions[0].text} · ${PERMISSION_LABELS[state.permission]}`;
+}
+
+function sessionPayload(objective) {
+  return JSON.stringify({
+    objective,
+    repository: state.config.repository,
+    plan_only: READ_ONLY_MODES.includes(state.taskMode),
+    authority_mode: AUTHORITY_MODES[state.permission]
+  });
+}
+
 async function startSession() {
   const objective = $("#composer").value.trim();
   if (!objective) { toast("Enter an objective first."); return; }
   try {
-    const accepted = await request("/api/v1/sessions", { method: "POST", body: JSON.stringify({ objective, repository: state.config.repository, plan_only: false }) });
+    const accepted = await request("/api/v1/sessions", { method: "POST", body: sessionPayload(objective) });
     $("#composer").value = ""; toast(`Session ${accepted.id.slice(0, 8)} started.`);
     await refreshAll(); await openSession(accepted.id);
   } catch (error) { toast(error.message); }
@@ -199,9 +225,32 @@ function openSettings() {
   $("#provider-list").innerHTML = state.providers.length
     ? state.providers.map((p) => `<div class="provider-row">${escapeHtml(p.name)}</div>`).join("")
     : '<div class="empty">No providers configured.</div>';
+  // The modal reflects live state rather than its own copy, so it can never
+  // show a setting the composer has already moved past.
+  $("#settings-permission").value = state.permission;
+  $("#settings-default-mode").value = state.taskMode;
+  $("#permission-note").textContent = PERMISSION_NOTES[state.permission];
+  $("#settings-repository").textContent = state.repository?.name || "—";
+  $("#settings-branch").textContent = state.repository?.branch || "—";
+  $("#settings-terminal-count").textContent = String(state.terminals.length);
+  $("#settings-daemon-api").textContent = state.config?.daemon_api_version ?? "—";
+  $("#settings-studio-api").textContent = state.config?.studio_api_version ?? "—";
 }
 
+const PERMISSION_NOTES = {
+  ask: "PurrCode asks before writes, commands, dependency installs and network access.",
+  auto: "Repository reads, writes and recognised build/test commands run automatically. Destructive or unexpected effects still ask.",
+  full_access: "PurrCode may use every permission this process, workspace and configured identity already hold. It grants no new ones — not root, not cloud, not filesystem access the process lacks."
+};
+
 function closeSettings() { $("#settings-modal").classList.add("hidden"); }
+
+/// Theme choice is remembered locally; it is presentation only and never
+/// reaches the daemon.
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme === "system" ? "" : theme;
+  try { localStorage.setItem("purrcode-theme", theme); } catch { /* private mode */ }
+}
 
 function renderModelChoices() {
   const list = $("#model-choices");
@@ -393,6 +442,21 @@ async function stopTerminal() {
 }
 
 // ── Event wiring ──
+$("#settings-permission").addEventListener("change", (e) => {
+  $("#composer-permission").value = e.target.value;
+  readModes();
+try { const t = localStorage.getItem("purrcode-theme"); if (t) { $("#settings-theme").value = t; applyTheme(t); } } catch { /* private mode */ }
+  $("#permission-note").textContent = PERMISSION_NOTES[state.permission];
+});
+$("#settings-default-mode").addEventListener("change", (e) => {
+  $("#composer-mode").value = e.target.value;
+  readModes();
+});
+$("#settings-theme").addEventListener("change", (e) => applyTheme(e.target.value));
+$("#settings-open-terminal").addEventListener("click", () => { closeSettings(); openDrawer("terminal"); startTerminal(); });
+$("#composer-mode").addEventListener("change", readModes);
+$("#composer-permission").addEventListener("change", readModes);
+$("#composer-model").addEventListener("click", openSettings);
 $("#settings-open").addEventListener("click", openSettings);
 $("#settings-close").addEventListener("click", closeSettings);
 $("#change-model").addEventListener("click", openSettings);
@@ -416,4 +480,5 @@ document.addEventListener("keydown", (e) => {
 
 refreshAll();
 refreshModels();
+readModes();
 setInterval(async () => { await refreshAll(); if (state.selectedRun) await refreshSession(); }, 5000);

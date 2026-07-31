@@ -651,7 +651,6 @@ impl App {
                 if !self.has_provider {
                     self.message_bar =
                         "No provider configured. Type /connect to set one up.".into();
-                    self.workspace.model = "none".into();
                 } else if let Ok(models) =
                     self.request(reqwest::Method::GET, "/v1/models", None).await
                 {
@@ -665,7 +664,6 @@ impl App {
                         .and_then(|model| model["id"].as_str())
                     {
                         self.status_bar.set_model(selected);
-                        self.workspace.model = selected.to_owned();
                         self.status_bar.local = models
                             .as_array()
                             .and_then(|models| models.iter().find(|model| model["id"] == selected))
@@ -692,7 +690,6 @@ impl App {
             Err(_) => {
                 self.workspace.daemon_health = "unreachable".into();
                 self.has_provider = false;
-                self.workspace.model = "unavailable".into();
                 self.message_bar = "Daemon unreachable. Type /connect to set up.".into();
             }
         }

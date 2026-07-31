@@ -540,7 +540,6 @@ impl CommandPalette {
                         match update {
                             Ok(_) => {
                                 app.status_bar.set_model(selected);
-                                app.workspace.model = selected.clone();
                                 app.status_bar.local = val
                                     .as_array()
                                     .and_then(|models| {

@@ -358,6 +358,7 @@ pub async fn bind_and_report(
     };
     let router = Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/ui/status", get(ui_status))
         .route("/v1/environment/inspect", post(inspect_environment))
         .route("/v1/terminals", get(list_terminals).post(start_terminal))
         .route(
@@ -2947,6 +2948,113 @@ async fn events(
         return Err(ApiError::NotFound);
     }
     Ok(Json(events))
+}
+
+#[derive(Deserialize)]
+struct UiStatusQuery {
+    repository: PathBuf,
+    #[serde(default)]
+    session: Option<String>,
+    #[serde(default)]
+    task_mode: Option<String>,
+    #[serde(default)]
+    permission_mode: Option<String>,
+}
+
+/// Everything a client puts in its header (PRD §31.1).
+///
+/// PRD §31.2 also names `GET /v1/ui/actions`. It is deliberately not served:
+/// the action registry lives in `purrcode-tui::ui_actions`, so exposing it here
+/// would either invert the dependency graph — the daemon pulling in a terminal
+/// UI crate and its ratatui/crossterm tree — or fork it into a second list that
+/// the `ui-actions coverage` gate could not police. `purrcode ui-actions list`
+/// already renders it, and no client consumes an HTTP copy today.
+///
+/// Assembling this client-side is how the TUI and the Studio ended up showing
+/// different things about one session. The repository is presented by name and
+/// branch; §14 forbids the path, the SHA and the session id by default, so they
+/// are simply not in the response.
+async fn ui_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<UiStatusQuery>,
+) -> Result<Json<purrcode_ui_contracts::UiStatus>, ApiError> {
+    authorize(&state, &headers)?;
+    let snapshot = RepositoryEngine::inspect(&query.repository)
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("repository inspection failed: {error}")))?;
+    let config = AppConfig::load(&state.app_config).ok();
+    let default_model = config.as_ref().and_then(|c| c.models.default.clone());
+    let provider = default_model
+        .as_deref()
+        .and_then(|model| model.split_once('/'))
+        .map(|(provider, _)| provider.to_owned());
+
+    let mut surfaces = vec![purrcode_ui_contracts::Surface::Conversation];
+    if snapshot.dirty {
+        surfaces.push(purrcode_ui_contracts::Surface::Changes);
+    }
+    if state
+        .terminals
+        .list()
+        .map(|terminals| !terminals.is_empty())
+        .unwrap_or(false)
+    {
+        surfaces.push(purrcode_ui_contracts::Surface::Terminal);
+    }
+
+    let mut phase = "ready".to_owned();
+    if let Some(session) = query
+        .session
+        .as_deref()
+        .and_then(|id| parse_session_id(id).ok())
+    {
+        let (state_snapshot, events) = {
+            let store = state.store.lock().await;
+            (
+                store.load(session).ok(),
+                store.events(session).unwrap_or_default(),
+            )
+        };
+        if let Some(session_state) = state_snapshot {
+            phase = format!("{:?}", session_state.status).to_lowercase();
+        }
+        let validation = validation_from_events(&events);
+        if !validation.stages.is_empty() {
+            surfaces.push(purrcode_ui_contracts::Surface::Tests);
+        }
+        if activity_from_events(&events)
+            .iter()
+            .any(|item| item.detail_available)
+        {
+            surfaces.push(purrcode_ui_contracts::Surface::Evidence);
+        }
+    }
+    surfaces.push(purrcode_ui_contracts::Surface::Settings);
+    surfaces.dedup();
+
+    Ok(Json(purrcode_ui_contracts::UiStatus {
+        repository: snapshot.name,
+        branch: snapshot.branch,
+        model: default_model
+            .as_deref()
+            .and_then(|model| model.split_once('/'))
+            .map(|(_, model)| model.to_owned()),
+        provider,
+        task_mode: query.task_mode.unwrap_or_else(|| "Build".into()),
+        permission_mode: query.permission_mode.unwrap_or_else(|| "Ask".into()),
+        phase,
+        local_only: config
+            .as_ref()
+            .map(|c| {
+                matches!(
+                    c.privacy.mode,
+                    purrcode_provider_gateway::PrivacyMode::LocalOnly
+                )
+            })
+            .unwrap_or(true),
+        available_surfaces: surfaces,
+    }))
 }
 
 // ── Presentation APIs (PRD §31) ────────────────────────────────
@@ -6704,6 +6812,52 @@ mod tests {
             action_id: ActionId(Uuid::new_v4()),
             status,
             evidence: format!("{action}: {evidence}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ui_status_presents_a_repository_by_name_and_never_by_path() {
+        let repository = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(repository.path())
+            .status()
+            .unwrap();
+        std::fs::write(repository.path().join("a.rs"), "fn main() {}").unwrap();
+        for args in [
+            vec!["config", "user.email", "t@t"],
+            vec!["config", "user.name", "t"],
+            vec!["add", "-A"],
+            vec!["commit", "-qm", "init"],
+        ] {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(repository.path())
+                .status()
+                .unwrap();
+        }
+
+        let snapshot = RepositoryEngine::inspect(repository.path()).await.unwrap();
+        let status = purrcode_ui_contracts::UiStatus {
+            repository: snapshot.name.clone(),
+            branch: snapshot.branch.clone(),
+            model: Some("qwen3-coder:30b".into()),
+            provider: Some("ollama".into()),
+            task_mode: "Build".into(),
+            permission_mode: "Auto".into(),
+            phase: "ready".into(),
+            local_only: true,
+            available_surfaces: vec![purrcode_ui_contracts::Surface::Conversation],
+        };
+        assert_eq!(status.branch, "main");
+        assert!(!status.repository.contains('/'));
+        let encoded = serde_json::to_string(&status).unwrap();
+        // PRD §14: no path, no SHA, no session id, no event count by default.
+        for forbidden in [snapshot.head.as_str(), "/tmp", "session_id", "event_count"] {
+            assert!(
+                !encoded.contains(forbidden),
+                "{forbidden} leaked into the header: {encoded}"
+            );
         }
     }
 

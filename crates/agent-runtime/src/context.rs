@@ -9,7 +9,7 @@ use purrcode_runtime_core::{
     OutcomeJudgmentRequest, PlanSnapshot, PlanStep, PriorActionResult, ProposedAction, RiskClass,
     SessionEvent, SessionId, SessionState, TaskIntent, ValidationStatus,
 };
-use purrcode_test_orchestrator::{
+use purrcode_validation_runtime::{
     classify_failure, EvidenceStatus, ValidationEvidence, ValidationReport,
 };
 use purrcode_whisker::{

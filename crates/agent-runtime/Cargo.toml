@@ -15,9 +15,9 @@ purrcode-pawgate = { path = "../pawgate-runtime" }
 purrcode-provider-gateway = { path = "../provider-gateway" }
 purrcode-repository-engine = { path = "../repository-engine" }
 purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-validation-runtime = { path = "../validation-runtime" }
 purrcode-ninelives = { path = "../ninelives-recovery" }
 purrcode-claw = { path = "../claw-sandbox" }
-purrcode-test-orchestrator = { path = "../test-orchestrator" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
