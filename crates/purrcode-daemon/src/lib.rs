@@ -3082,19 +3082,39 @@ fn validation_from_events(
     events: &[purrcode_runtime_core::SessionEvent],
 ) -> purrcode_ui_contracts::ValidationSummary {
     use purrcode_runtime_core::SessionEvent as Event;
+    // A cancelled session's validation was interrupted, not skipped by choice
+    // and not failed on its merits. Recording which it was is the difference
+    // between "you stopped this" and "this does not work".
+    let mut cancelled_at = None;
+    for (index, event) in events.iter().enumerate() {
+        if matches!(event, Event::SessionCancelled { .. }) {
+            cancelled_at = Some(index);
+        }
+    }
     let stages = events
         .iter()
-        .filter_map(|event| match event {
+        .enumerate()
+        .filter_map(|(index, event)| match event {
             Event::ValidationRecorded {
                 action_id,
                 status,
                 evidence,
-            } => Some(purrcode_ui_contracts::ValidationStageView {
-                stage: action_id.0.to_string(),
-                outcome: validation_outcome(status),
-                detail: (!evidence.is_empty())
-                    .then(|| evidence.chars().take(400).collect::<String>()),
-            }),
+            } => {
+                let outcome = match (validation_outcome(status), cancelled_at) {
+                    // Only a stage that had not concluded when the cancel landed
+                    // is cancelled; a stage that already failed still failed.
+                    (ValidationOutcome::Unavailable, Some(at)) if index > at => {
+                        ValidationOutcome::Cancelled
+                    }
+                    (outcome, _) => outcome,
+                };
+                Some(purrcode_ui_contracts::ValidationStageView {
+                    stage: action_id.0.to_string(),
+                    outcome,
+                    detail: (!evidence.is_empty())
+                        .then(|| evidence.chars().take(400).collect::<String>()),
+                })
+            }
             _ => None,
         })
         .collect();
@@ -6709,6 +6729,23 @@ mod tests {
         assert_eq!(outcomes[2], ValidationOutcome::Unavailable);
         assert_eq!(outcomes[3], ValidationOutcome::Skipped);
         assert!(summary.headline().contains("did not pass"));
+    }
+
+    #[test]
+    fn validation_interrupted_by_a_cancel_is_cancelled_not_skipped() {
+        let events = vec![
+            validation_event("unit", ValidationStatus::Failed, "1 test failed"),
+            SessionEvent::SessionCancelled {
+                reason: "user stopped the run".into(),
+            },
+            validation_event("integration", ValidationStatus::Unavailable, "not run"),
+        ];
+        let summary = validation_from_events(&events);
+        // A stage that had already failed still failed; the interrupted one is
+        // reported as cancelled rather than as unavailable.
+        assert_eq!(summary.stages[0].outcome, ValidationOutcome::Failed);
+        assert_eq!(summary.stages[1].outcome, ValidationOutcome::Cancelled);
+        assert!(!summary.complete);
     }
 
     #[test]

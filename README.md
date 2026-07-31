@@ -14,9 +14,13 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. Every 
 bound to a durable authorization, checked again immediately before execution, and followed by
 recorded validation. Repository content, model output, and downloaded skills remain untrusted.
 
-PurrCode v0.8.0 adds a secure graphical Studio, durable Workbench, real PTY terminal workspace,
-evidence-based environment doctor, and automatic progressive build/test repair. The existing
-PawGate, Claw, isolated-worktree, and durable-evidence boundaries remain authoritative.
+PurrCode v0.9.0 makes the terminal Workbench the product: bare `purrcode` opens it on every
+platform, Studio becomes a one-action graphical view of the same session, and both clients emulate
+the terminal instead of stripping it. Task modes (Ask / Plan / Build / Review) and permission modes
+(Ask / Auto / Full Access) are selectable without editing TOML, NVIDIA NIM joins the first-class
+providers, and the daemon serves one set of presentation contracts so no client invents its own
+reading of the run. The existing PawGate, Claw, isolated-worktree, and durable-evidence boundaries
+remain authoritative.
 
 ## Why PurrCode
 
@@ -119,8 +123,43 @@ session rather than the default launch target.
 - **First-run onboarding inside the TUI:** when no usable provider exists, the Workbench opens the
   provider/model onboarding overlay instead of exiting with `run purrcode init`.
 - **No unfinished enterprise UI:** placeholder Studio navigation (Agent Factory, Deployments,
-  unfinished Workspaces, unfinished Agent Runs, global Evidence) is hidden. Internal workspace
-  paths and full commit SHAs are replaced by repository name and branch.
+  unfinished Workspaces, unfinished Agent Runs, global Evidence) is gone, and the Studio shell is
+  session-first: sessions, one conversation, a composer, and a drawer that opens when it has
+  something to say. Internal workspace paths and full commit SHAs are replaced by repository name
+  and branch.
+- **A real terminal in both clients:** the Workbench gained a terminal surface (`Ctrl+T`), with
+  tabs named by purpose, human takeover and return, and keystrokes that reach the process — only
+  `Esc`, `Tab` and `Ctrl+W` are claimed by the interface. Escape sequences are interpreted, so a
+  cleared screen, a progress bar and a coloured test summary render as themselves instead of as
+  literal text. Studio streams only the bytes produced since its last frame rather than re-sending
+  the whole transcript 12 times a second.
+- **Modes you can actually select:** `Ctrl+K` / `/mode` switches Ask, Plan, Build and Review;
+  `/permission` switches Ask, Auto and Full Access. Both are shown in the header and travel with
+  the session, so a read-only mode is a constraint the daemon enforces rather than a hint. Full
+  Access grants nothing the process does not already hold, and says so.
+- **NVIDIA NIM as a first-class provider:** `NVIDIA_API_KEY` is detected during onboarding, models
+  are enumerated from the NIM endpoint, and the picker and doctor name it.
+- **Model selection from evidence:** names are read as tokens rather than substrings, so
+  `granite-embedding` is excluded and `granite-code` is preferred; proven tool calling outranks any
+  name signal; size is judged against the host's memory budget instead of "bigger is better"; and
+  the ordering is total, so the same catalogue always picks the same model.
+- **One presentation vocabulary:** `GET /v1/sessions/{id}/activity`, `/validation` and `/summary`
+  mean clients no longer each invent a reading of the durable event log. `Unavailable`, `Skipped`
+  and `Cancelled` stay distinct from `Passed`, so validation that did not run can never be shown as
+  success.
+
+### Keyboard
+
+| Key | Action |
+| --- | --- |
+| `Ctrl+P` | Command palette |
+| `Ctrl+M` | Model picker |
+| `Ctrl+K` | Task mode |
+| `Ctrl+D` | Diff |
+| `Ctrl+T` | Terminal |
+| `Ctrl+H` | History |
+| `Ctrl+Shift+S` | Open Studio |
+| `Esc` | Close overlay or cancel |
 
 ## What changed in v0.8
 
@@ -225,16 +264,19 @@ Model proposal
 
 ## Interfaces
 
-- Conversation-first Ratatui terminal and headless CLI
+- Conversation-first Ratatui terminal Workbench (the default) and headless CLI
+- Session-first graphical Studio over the same daemon and session
 - Authenticated loopback daemon with server-sent events
 - VS Code extension
 - TypeScript and Python clients
 - MCP and persistent skill host
-- Ollama, LM Studio, OpenAI-compatible, and enterprise providers
+- Ollama, LM Studio, OpenAI, OpenAI-compatible, NVIDIA NIM, Azure OpenAI, and enterprise gateways
 
 ## Common commands
 
 ```bash
+purrcode                 # the terminal Workbench
+purrcode studio          # the same session, graphically
 purrcode plan "Add pagination to the orders API"
 purrcode run "Implement pagination and update tests"
 purrcode sessions

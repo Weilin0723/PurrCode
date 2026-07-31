@@ -57,10 +57,14 @@ Updated: 2026-07-30 (v0.8 PR6 — Test orchestration complete locally)
   resize, inspect/list, timed wait, process-group termination with escalation, and one-shot command
   execution. Ownership transitions increment a generation and input must match it exactly, closing
   delayed-agent-input races after human takeover.
-- The authenticated daemon exposes list/start/get/input/resize/attach/detach/owner/stop terminal
-  routes. Studio exposes a real terminal screen with complete selectable output, terminal tabs,
-  human takeover/return, stop, responsive layout, and same-origin WebSocket updates. The browser
-  retains only its HttpOnly Studio cookie; the daemon bearer token remains confined to the shell.
+- The authenticated daemon exposes list/start/get/output/input/resize/attach/detach/owner/stop
+  terminal routes. `GET /v1/terminals/{id}/output?since=` serves only the bytes produced after a
+  caller's offset and reports when the ring buffer discarded output it never saw, so a live client
+  appends instead of re-reading the transcript on a timer.
+- Both clients emulate the terminal rather than stripping it: the Workbench renders a real screen
+  buffer (`purrcode-tui::terminal`) with tabs, human takeover/return and direct keystroke input,
+  and Studio renders the same semantics in `assets/term.js`. The browser retains only its HttpOnly
+  Studio cookie; the daemon bearer token remains confined to the shell.
 - Eleven runtime tests exercise real PTY commands, interactive input, replay, resize, detach,
   takeover rejection, secret-environment rejection, stop, and exit evidence. A real daemon HTTP
   test drives `/bin/cat`, proves stale generation conflict, observes PTY output, and stops it.
@@ -108,11 +112,12 @@ Updated: 2026-07-30 (v0.8 PR6 — Test orchestration complete locally)
   non-loopback binds, rejects cross-origin mutations, applies a restrictive CSP/security headers,
   and forwards only `/v1/*` to the authenticated daemon. PawGate/Claw and the existing daemon remain
   the only execution path.
-- `purrcode ui [--remote URL] [--no-open] [--repository PATH]` is available; a display-capable bare
-  `purrcode` launches Studio, while `purrcode tui` preserves the terminal client and headless hosts
-  continue there automatically. Browser opening uses explicit platform argument vectors, never a
-  shell string. `--daemon-token` supports isolated daemon instances without changing the secure
-  default token location.
+- Bare `purrcode` launches the terminal Workbench on every platform (v0.9 PRD §3.1, §7.1). Display
+  detection no longer rewrites the default interface. `purrcode studio [--remote URL] [--no-open]
+  [--repository PATH]` launches the graphical client; `purrcode ui` is a backward-compatible alias,
+  and `purrcode tui` is an explicit alias of the bare command. Browser opening uses explicit
+  platform argument vectors, never a shell string. `--daemon-token` supports isolated daemon
+  instances without changing the secure default token location.
 - Daemon health now advertises `studio_api_version` from `purrcode-ui-contracts`; incompatible
   clients fail before the UI server is exposed.
 - Three real-HTTP Studio tests prove cookie enforcement, one-time bootstrap consumption, daemon
