@@ -70,6 +70,9 @@ cargo install --locked --path crates/purrcode-daemon
 
 ## Start in three steps
 
+PurrCode defaults to the terminal Workbench. Open a repository, choose a model, describe the
+outcome, and let it inspect, code, test, repair, and finish.
+
 ```bash
 # 1. Discover local providers and create secure defaults
 purrcode init
@@ -77,17 +80,47 @@ purrcode init
 # 2. Enter a repository
 cd your-project
 
-# 3. Open the graphical Studio (or use `purrcode tui`)
-purrcode ui
+# 3. Open the terminal Workbench (the default experience)
+purrcode
 ```
 
-Use `/connect` inside the interface to discover Ollama or LM Studio, or configure a remote provider
-without editing TOML. Credentials use the operating-system secret store and are not passed to model
-context or tool processes.
+The same daemon, session, conversation, model, and permission state is shared by every client:
+
+- `purrcode` — the terminal Workbench (primary, default on every platform).
+- `purrcode studio` — the optional graphical Studio, a one-click view of the same session.
+- `purrcode ui` — backward-compatible alias of `purrcode studio`.
+- `purrcode run` / `purrcode ci` / `purrcode plan` — headless autonomous execution.
+
+Open Studio without leaving the Workbench with `Ctrl+Shift+S` or `/studio`. Studio attaches to the
+active session; it never starts a second one.
+
+Use `/connect` inside either interface to discover Ollama or LM Studio, or to configure a remote
+provider without editing TOML. Credentials use the operating-system secret store and are never
+passed to model context or tool processes.
 
 Paste Python, JavaScript, cURL, JSON, YAML, TOML, or dotenv provider examples with
 `/connect import`. PurrCode parses them without execution, keeps extracted secrets transient, and
 requires a keychain or environment reference before saving.
+
+## What changed in v0.9
+
+PurrCode v0.9 corrects the product-direction drift from v0.8: the terminal Workbench is the default
+interactive experience on every platform, and Studio is an optional graphical view of the same
+session rather than the default launch target.
+
+- **TUI first by default:** bare `purrcode` opens the terminal Workbench — never an unexpected
+  browser. `display_available()` no longer rewrites the default interface.
+- **Studio in one action:** `purrcode studio` (and the backward-compatible `purrcode ui`) opens the
+  graphical view; inside the Workbench, `Ctrl+Shift+S` or `/studio` opens it without leaving the
+  session.
+- **One session across clients:** TUI, Studio, and the headless CLI share one daemon, one session,
+  one model, and one permission mode. Studio attaches to the active session instead of starting a
+  second one.
+- **First-run onboarding inside the TUI:** when no usable provider exists, the Workbench opens the
+  provider/model onboarding overlay instead of exiting with `run purrcode init`.
+- **No unfinished enterprise UI:** placeholder Studio navigation (Agent Factory, Deployments,
+  unfinished Workspaces, unfinished Agent Runs, global Evidence) is hidden. Internal workspace
+  paths and full commit SHAs are replaced by repository name and branch.
 
 ## What changed in v0.8
 

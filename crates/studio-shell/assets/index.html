@@ -16,15 +16,10 @@
     <aside class="sidebar" aria-label="Primary navigation">
       <nav>
         <button class="nav-item active" data-screen="home">Home</button>
-        <button class="nav-item" data-screen="workspaces">Workspaces</button>
-        <button class="nav-item" data-screen="runs">Agent runs</button>
         <button class="nav-item" data-screen="workbench">Workbench</button>
         <button class="nav-item" data-screen="terminals">Terminals</button>
         <button class="nav-item" data-screen="diff">Diff review</button>
         <button class="nav-item" data-screen="validation">Validation</button>
-        <button class="nav-item" data-screen="factory">Agent Factory</button>
-        <button class="nav-item" data-screen="deployments">Deployments</button>
-        <button class="nav-item" data-screen="evidence">Evidence</button>
         <button class="nav-item" data-screen="settings">Settings</button>
       </nav>
       <div class="authority-summary">
@@ -40,7 +35,7 @@
           <button id="refresh" class="secondary">Refresh</button>
         </div>
         <section class="workspace-card" aria-labelledby="workspace-title">
-          <div><span class="eyebrow">Active workspace</span><h2 id="workspace-title">Loading repository…</h2></div>
+          <div><span class="eyebrow">Active repository</span><h2 id="workspace-title">Loading repository…</h2></div>
           <div class="workspace-meta"><span id="branch">—</span><span id="dirty">—</span></div>
         </section>
         <section class="objective-card">
@@ -92,21 +87,32 @@
           <section class="terminal-console">
             <div class="terminal-toolbar">
               <div><strong id="terminal-title">No terminal selected</strong><span id="terminal-owner">—</span></div>
-              <div class="heading-actions"><button id="take-terminal" class="secondary">Take control</button><button id="return-terminal" class="secondary">Return to agent</button><button id="stop-terminal" class="secondary">Stop</button></div>
+              <div class="heading-actions" id="terminal-owner-actions" hidden><button id="take-terminal" class="secondary">Take control</button><button id="return-terminal" class="secondary">Return to agent</button><button id="stop-terminal" class="secondary">Stop</button></div>
             </div>
-            <pre id="terminal-output" tabindex="0">Start or select a terminal. Output remains available after detach and reconnect.</pre>
-            <form id="terminal-input-form" class="terminal-input"><textarea id="terminal-input" rows="2" placeholder="Type terminal input; Enter sends, Shift+Enter adds a line"></textarea><button>Send</button></form>
+            <div id="terminal-empty" class="empty terminal-empty">No terminal attached. <button id="open-terminal-empty" class="link">Open terminal</button> to start a native PTY session.</div>
+            <pre id="terminal-output" tabindex="0" hidden>Start or select a terminal. Output remains available after detach and reconnect.</pre>
+            <form id="terminal-input-form" class="terminal-input" hidden><textarea id="terminal-input" rows="2" placeholder="Type terminal input; Enter sends, Shift+Enter adds a line"></textarea><button>Send</button></form>
           </section>
         </div>
       </section>
       <section id="settings-screen" class="screen hidden">
         <div class="page-heading compact-heading">
-          <div><span class="eyebrow">Environment doctor</span><h1>Environment</h1></div>
-          <button id="inspect-environment">Inspect repository</button>
+          <div><span class="eyebrow">Settings</span><h1>Settings</h1></div>
         </div>
+        <section class="settings-block" aria-labelledby="models-providers-heading">
+          <div class="settings-block-heading"><div><span class="eyebrow">Models and providers</span><h2 id="models-providers-heading">Models and providers</h2></div><button id="add-provider" class="secondary">Add provider</button></div>
+          <div class="settings-model">
+            <div><span class="eyebrow">Active model</span><strong id="active-model">Detecting…</strong><span id="active-model-provider">—</span></div>
+            <button id="change-model">Change model</button>
+          </div>
+          <div id="provider-list" class="provider-list"><div class="empty">No providers configured yet.</div></div>
+        </section>
+        <section class="settings-block" aria-labelledby="environment-heading">
+          <div class="settings-block-heading"><div><span class="eyebrow">Environment doctor</span><h2 id="environment-heading">Environment</h2></div><button id="inspect-environment" class="secondary">Inspect repository</button></div>
         <div id="environment-summary" class="environment-summary">
           <div class="empty">Inspection is explicit and read-only. No tool is installed until an exact governed action is authorized.</div>
         </div>
+        </section>
       </section>
       <section id="placeholder-screen" class="screen hidden">
         <span class="eyebrow">PurrCode Studio</span><h1 id="placeholder-title">Workbench</h1>

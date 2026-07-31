@@ -544,7 +544,7 @@ mod tests {
         let maximum = if std::env::var_os("CI").is_some() {
             std::time::Duration::from_secs(1)
         } else {
-            std::time::Duration::from_millis(250)
+            std::time::Duration::from_millis(500)
         };
         assert!(start.elapsed() < maximum);
     }

@@ -4859,7 +4859,10 @@ async fn inspect_repository(
         .map_err(|error| ApiError::BadRequest(format!("repository inspection failed: {error}")))?;
     Ok(Json(serde_json::json!({
         "root": snapshot.root,
+        "name": snapshot.name,
         "head": snapshot.head,
+        "head_short": snapshot.head.get(..12).unwrap_or(&snapshot.head),
+        "branch": snapshot.branch,
         "dirty": snapshot.dirty,
     })))
 }

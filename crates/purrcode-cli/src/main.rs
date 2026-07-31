@@ -83,7 +83,27 @@ enum Command {
         #[arg(long)]
         no_start: bool,
     },
-    /// Launch the authenticated graphical PurrCode Studio.
+    /// Launch the authenticated graphical PurrCode Studio (browser shell).
+    ///
+    /// Studio attaches to the same daemon, repository, session, conversation,
+    /// model, permission mode, terminal sessions, diff and validation state as
+    /// the TUI Workbench; it is a graphical view of the same session, not a
+    /// second session.
+    Studio {
+        /// Attach Studio to an existing local or remote daemon.
+        #[arg(long)]
+        remote: Option<String>,
+        /// Loopback address for the browser-facing Studio shell.
+        #[arg(long, default_value = "127.0.0.1:0")]
+        bind: std::net::SocketAddr,
+        /// Print the one-time Studio URL instead of opening a browser.
+        #[arg(long)]
+        no_open: bool,
+        /// Repository to restore in the workspace dashboard.
+        #[arg(long)]
+        repository: Option<PathBuf>,
+    },
+    /// Launch the authenticated graphical PurrCode Studio (backward-compatible alias of `studio`).
     Ui {
         /// Attach Studio to an existing local or remote daemon.
         #[arg(long)]
@@ -603,28 +623,18 @@ async fn main() -> Result<()> {
             .clone()
             .unwrap_or(default_database_path()?);
         let repository = resolve_product_repository(None)?;
-        if display_available() {
-            run_studio(
-                &config_path,
-                &database,
-                &daemon_url,
-                &daemon_token,
-                repository,
-                None,
-                "127.0.0.1:0".parse()?,
-                false,
-            )
-            .await?;
-        } else {
-            run_tui(
-                &config_path,
-                &database,
-                daemon_url,
-                daemon_token,
-                repository,
-            )
-            .await?;
-        }
+        // Bare `purrcode` launches the TUI Workbench as the default experience,
+        // on every platform. Studio is intentionally opt-in via `purrcode studio`
+        // or opened from inside the TUI — see PRD §3.1. Display detection no
+        // longer changes the default interface.
+        run_tui(
+            &config_path,
+            &database,
+            daemon_url,
+            daemon_token,
+            repository,
+        )
+        .await?;
         return Ok(());
     };
     let database = requested_database.unwrap_or(default_database_path()?);
@@ -645,12 +655,36 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Command::Studio {
+            remote,
+            bind,
+            no_open,
+            repository,
+        } => {
+            if !config_path.is_file() {
+                bail!("PurrCode is not initialized; run `purrcode init`");
+            }
+            let repository = resolve_product_repository(repository)?;
+            run_studio(
+                &config_path,
+                &database,
+                &daemon_url,
+                &daemon_token,
+                repository,
+                remote,
+                bind,
+                no_open,
+            )
+            .await?;
+        }
         Command::Ui {
             remote,
             bind,
             no_open,
             repository,
         } => {
+            // Backward-compatible alias of `purrcode studio` — same handler,
+            // so existing automation and muscle memory keep working.
             if !config_path.is_file() {
                 bail!("PurrCode is not initialized; run `purrcode init`");
             }
