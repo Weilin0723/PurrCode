@@ -12,7 +12,7 @@
     <header class="topbar">
       <div class="brand"><span class="mark">P</span><span>PurrCode</span></div>
       <div class="header-info"><span id="repo-info">—</span><span class="sep">·</span><span id="model-info">model —</span><span class="sep">·</span><span id="mode-info">—</span></div>
-      <div class="connection"><span id="health-dot" class="dot"></span><span id="health-label">Connecting</span></div>
+      <div class="connection"><button id="settings-open" class="link">Settings</button><span id="health-dot" class="dot"></span><span id="health-label">Connecting</span></div>
     </header>
     <div class="main-layout">
       <aside class="sidebar" aria-label="Sessions">
@@ -76,6 +76,8 @@
       <section class="settings-block">
         <h3>Models and providers</h3>
         <div class="settings-model"><div><span>Active model</span><strong id="active-model">Detecting…</strong><span id="active-model-provider">—</span></div><button id="change-model" class="secondary">Change model</button></div>
+        <div id="model-choices" class="model-choices"></div>
+        <h4>Providers</h4>
         <div id="provider-list" class="provider-list"><div class="empty">No providers configured.</div></div>
       </section>
     </div>

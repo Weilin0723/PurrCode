@@ -805,6 +805,23 @@ mod tests {
     }
 
     #[test]
+    fn embedded_studio_can_see_and_change_the_active_model() {
+        // PRD §10.1 requires the active model to be visible at all times, and
+        // §36 fails the release if the primary UI cannot select one. The
+        // settings modal existed as markup with nothing wired to it.
+        assert!(INDEX_HTML.contains(r#"id="settings-open""#));
+        assert!(INDEX_HTML.contains(r#"id="model-choices""#));
+        assert!(APP_JS.contains("#settings-open\").addEventListener"));
+        assert!(APP_JS.contains("/api/v1/models"));
+        assert!(APP_JS.contains("/api/v1/providers"));
+        // The canonical role name, not the alias the old config used.
+        assert!(APP_JS.contains(r#"role: "coding_worker""#));
+        // The header and the composer read one value, so they cannot disagree.
+        assert!(APP_JS.contains("#model-info\").textContent = label"));
+        assert!(APP_JS.contains("#composer-model\").textContent = label"));
+    }
+
+    #[test]
     fn embedded_studio_terminal_is_emulated_and_incremental() {
         // PRD §24.7: a real emulator, not a stripped log.
         assert!(APP_JS.contains("new WebSocket"));

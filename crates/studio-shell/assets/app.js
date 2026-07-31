@@ -5,7 +5,8 @@ const state = {
   messages: [], events: [], liveText: "", liveSource: null,
   streamRun: null, streamRefresh: null,
   terminals: [], selectedTerminal: null, terminalSocket: null, terminalSocketId: null,
-  drawerOpen: false, drawerTab: "changes", emulator: null, replayedTerminal: null
+  drawerOpen: false, drawerTab: "changes", emulator: null, replayedTerminal: null,
+  models: [], providers: [], activeModel: null
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -156,6 +157,79 @@ async function sendFollowUp() {
   try {
     await request(`/api/v1/sessions/${state.selectedRun}/messages`, { method: "POST", body: JSON.stringify({ content }) });
     $("#composer").value = ""; await refreshSession();
+  } catch (error) { toast(error.message); }
+}
+
+// ── Models, providers, settings ──
+//
+// PRD §10.1: the active model is visible at all times, and §36 fails the
+// release if the primary UI cannot select one. The header, the composer meta
+// and the settings modal all read `state.activeModel`, so they cannot disagree.
+async function refreshModels() {
+  try {
+    const [models, providers] = await Promise.all([
+      request("/api/v1/models"),
+      request("/api/v1/providers")
+    ]);
+    state.models = models || [];
+    state.providers = providers || [];
+    state.activeModel = state.models.find((m) => m.default) || state.models[0] || null;
+    renderModel();
+  } catch {
+    // A model list we could not read is reported as unknown, never as absent:
+    // "no models" and "could not ask" are different problems.
+    $("#model-info").textContent = "model unavailable";
+    $("#composer-model").textContent = "unavailable";
+  }
+}
+
+function renderModel() {
+  const label = state.activeModel ? state.activeModel.model : "no model";
+  const provider = state.activeModel ? state.activeModel.provider : "";
+  $("#model-info").textContent = label;
+  $("#composer-model").textContent = label;
+  $("#active-model").textContent = label;
+  $("#active-model-provider").textContent = provider || "no provider configured";
+}
+
+function openSettings() {
+  $("#settings-modal").classList.remove("hidden");
+  renderModel();
+  renderModelChoices();
+  $("#provider-list").innerHTML = state.providers.length
+    ? state.providers.map((p) => `<div class="provider-row">${escapeHtml(p.name)}</div>`).join("")
+    : '<div class="empty">No providers configured.</div>';
+}
+
+function closeSettings() { $("#settings-modal").classList.add("hidden"); }
+
+function renderModelChoices() {
+  const list = $("#model-choices");
+  if (!state.models.length) {
+    list.innerHTML = '<div class="empty">No models are configured. Add a provider first.</div>';
+    return;
+  }
+  list.innerHTML = state.models.map((m) => `
+    <button class="model-choice${m.id === state.activeModel?.id ? " active" : ""}" data-model="${escapeHtml(m.id)}">
+      <span>${escapeHtml(m.model)}</span>
+      <span class="model-meta">${escapeHtml(m.provider)} · ${m.local ? "local" : "remote"}</span>
+    </button>`).join("");
+  list.querySelectorAll(".model-choice").forEach((button) =>
+    button.addEventListener("click", () => selectModel(button.dataset.model)));
+}
+
+async function selectModel(id) {
+  try {
+    // Selecting for the repository sets the coding role; a live session is
+    // switched too, so the choice takes effect where the user is looking.
+    await request("/api/v1/models/roles", { method: "POST", body: JSON.stringify({ role: "coding_worker", model: id }) });
+    if (state.selectedRun) {
+      await request(`/api/v1/sessions/${state.selectedRun}/model`, { method: "POST", body: JSON.stringify({ model: id }) })
+        .catch(() => toast("The model changed for new work; this session is busy."));
+    }
+    await refreshModels();
+    renderModelChoices();
+    toast(`Model set to ${id}`);
   } catch (error) { toast(error.message); }
 }
 
@@ -319,6 +393,9 @@ async function stopTerminal() {
 }
 
 // ── Event wiring ──
+$("#settings-open").addEventListener("click", openSettings);
+$("#settings-close").addEventListener("click", closeSettings);
+$("#change-model").addEventListener("click", openSettings);
 $("#new-session").addEventListener("click", startSession);
 $("#send").addEventListener("click", () => { if (state.selectedRun) sendFollowUp(); else startSession(); });
 $("#composer").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (state.selectedRun) sendFollowUp(); else startSession(); } });
@@ -331,7 +408,12 @@ $("#new-terminal").addEventListener("click", startTerminal);
 $("#open-terminal-empty")?.addEventListener("click", startTerminal);
 
 // Keyboard: Esc closes drawer
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.drawerOpen) closeDrawer(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("#settings-modal").classList.contains("hidden")) closeSettings();
+  else if (state.drawerOpen) closeDrawer();
+});
 
 refreshAll();
+refreshModels();
 setInterval(async () => { await refreshAll(); if (state.selectedRun) await refreshSession(); }, 5000);

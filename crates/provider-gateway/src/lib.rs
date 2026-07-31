@@ -878,24 +878,42 @@ impl AppConfig {
         Ok(())
     }
 
+    /// Canonical name for a runtime role.
+    ///
+    /// `purrcode init` writes `coder` and `router` into the role map, so
+    /// rejecting those here made the daemon refuse names its own initializer
+    /// had just written. They are aliases, normalised to one key rather than
+    /// stored twice — two spellings of one role is how a role map ends up
+    /// disagreeing with itself.
+    pub fn canonical_model_role(role: &str) -> Option<&'static str> {
+        match role {
+            "coding_worker" | "coder" => Some("coding_worker"),
+            "judge" => Some("judge"),
+            "planner" => Some("planner"),
+            "reviewer" => Some("reviewer"),
+            "summarizer" => Some("summarizer"),
+            "utility" | "router" => Some("utility"),
+            "embedding" => Some("embedding"),
+            _ => None,
+        }
+    }
+
     pub fn assign_model_role(&mut self, role: &str, model: &ModelId) -> Result<(), ProviderError> {
-        if !matches!(
-            role,
-            "coding_worker"
-                | "judge"
-                | "planner"
-                | "reviewer"
-                | "summarizer"
-                | "utility"
-                | "embedding"
-        ) {
+        let Some(canonical) = Self::canonical_model_role(role) else {
             return Err(ProviderError::Configuration(format!(
                 "unsupported model role `{role}`"
             )));
-        }
+        };
         self.register_model(model)?;
+        // Drop any alias spelling of this role. A config written by an older
+        // `purrcode init` holds both `coder` and `coding_worker`; leaving the
+        // superseded key behind means the file records two different answers to
+        // one question.
+        self.models
+            .roles
+            .retain(|existing, _| Self::canonical_model_role(existing) != Some(canonical));
         self.models.roles.insert(
-            role.to_owned(),
+            canonical.to_owned(),
             format!("{}/{}", model.provider, model.model),
         );
         Ok(())
@@ -2021,6 +2039,73 @@ impl ProviderError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn init_written_role_names_are_accepted_and_normalised() {
+        // `purrcode init` writes `coder` and `router`; refusing them here made
+        // the daemon reject names its own initializer had just written.
+        assert_eq!(
+            AppConfig::canonical_model_role("coder"),
+            Some("coding_worker")
+        );
+        assert_eq!(AppConfig::canonical_model_role("router"), Some("utility"));
+        assert_eq!(
+            AppConfig::canonical_model_role("coding_worker"),
+            Some("coding_worker")
+        );
+        assert_eq!(AppConfig::canonical_model_role("nonsense"), None);
+    }
+
+    #[test]
+    fn an_alias_and_its_canonical_name_share_one_role_entry() {
+        let mut config: AppConfig = toml::from_str("schema_version = 1").unwrap();
+        config.providers.insert(
+            "ollama".into(),
+            ProviderConfig::Ollama {
+                base_url: url::Url::parse("http://127.0.0.1:11434/").unwrap(),
+                capabilities: BTreeMap::new(),
+            },
+        );
+        let first = ModelId::parse("ollama/a:1b").unwrap();
+        let second = ModelId::parse("ollama/b:1b").unwrap();
+        config.assign_model_role("coder", &first).unwrap();
+        config.assign_model_role("coding_worker", &second).unwrap();
+        // Two spellings of one role must not become two entries that disagree.
+        assert_eq!(config.models.roles.len(), 1);
+        assert_eq!(
+            config.models.roles.get("coding_worker").map(String::as_str),
+            Some("ollama/b:1b")
+        );
+        assert!(!config.models.roles.contains_key("coder"));
+    }
+
+    #[test]
+    fn assigning_a_role_clears_the_alias_a_legacy_config_left_behind() {
+        let mut config: AppConfig = toml::from_str(
+            r#"
+schema_version = 1
+[providers.ollama]
+type = "ollama"
+base_url = "http://127.0.0.1:11434/"
+[models.roles]
+coder = "ollama/old:1b"
+router = "ollama/old:1b"
+"#,
+        )
+        .unwrap();
+        let fresh = ModelId::parse("ollama/new:1b").unwrap();
+        config.assign_model_role("coding_worker", &fresh).unwrap();
+        assert!(!config.models.roles.contains_key("coder"));
+        assert_eq!(
+            config.models.roles.get("coding_worker").map(String::as_str),
+            Some("ollama/new:1b")
+        );
+        // An unrelated alias is left alone.
+        assert_eq!(
+            config.models.roles.get("router").map(String::as_str),
+            Some("ollama/old:1b")
+        );
+    }
+
     use super::*;
     use futures::StreamExt as _;
     use std::sync::atomic::{AtomicUsize, Ordering};

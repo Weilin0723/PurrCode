@@ -5055,7 +5055,7 @@ async fn assign_model_role(
     config
         .assign_model_role(&body.role, &model)
         .and_then(|()| {
-            if matches!(body.role.as_str(), "coding_worker" | "coder") {
+            if AppConfig::canonical_model_role(&body.role) == Some("coding_worker") {
                 config.models.default = Some(body.model.clone());
             }
             config.save(&state.app_config)
@@ -5064,7 +5064,7 @@ async fn assign_model_role(
     Ok(Json(serde_json::json!({
         "role": body.role,
         "model": body.model,
-        "default_updated": matches!(body.role.as_str(), "coding_worker" | "coder")
+        "default_updated": AppConfig::canonical_model_role(&body.role) == Some("coding_worker")
     })))
 }
 
