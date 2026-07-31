@@ -271,6 +271,10 @@ pub struct SessionSummary {
     #[serde(default)]
     pub branch: Option<String>,
     pub changed_file_count: usize,
+    /// The plan, when one was produced. In Plan mode this *is* the deliverable
+    /// (PRD §11), so a client that cannot show it has nothing to review.
+    #[serde(default)]
+    pub plan: Vec<String>,
     #[serde(default)]
     pub validation: Option<ValidationSummary>,
     /// True when this session needs a person before it can continue.

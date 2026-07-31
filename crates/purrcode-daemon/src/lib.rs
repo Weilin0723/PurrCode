@@ -3374,6 +3374,19 @@ async fn session_summary(
             .iter()
             .filter(|item| item.kind == ActivityKind::Edit)
             .count(),
+        // The latest revision wins: a revised plan supersedes the one before it
+        // rather than adding to it.
+        plan: events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                purrcode_runtime_core::SessionEvent::PlanCreated { steps }
+                | purrcode_runtime_core::SessionEvent::PlanRevised { steps, .. } => {
+                    Some(steps.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default(),
         validation: (!validation.stages.is_empty()).then_some(validation),
         needs_attention: activity
             .iter()
@@ -7040,6 +7053,44 @@ mod tests {
         assert_eq!(activity[0].status, ActivityStatus::Failed);
         assert!(activity[0].label.contains("failed"));
         assert!(activity[0].detail_available);
+    }
+
+    #[test]
+    fn a_plan_only_run_exposes_the_plan_it_asks_you_to_review() {
+        // Observed in a real Plan-mode run: the session paused saying
+        // "plan-only session is ready for review" while the ten steps it
+        // produced reached the client only as one truncated activity summary.
+        // A run cannot ask for review of something it does not show.
+        let events = [
+            SessionEvent::PlanCreated {
+                steps: vec![
+                    "Establish project structure".into(),
+                    "Add the parser".into(),
+                ],
+            },
+            SessionEvent::PlanRevised {
+                revision: 2,
+                reason: "narrowed scope".into(),
+                steps: vec![
+                    "Establish project structure".into(),
+                    "Add the parser".into(),
+                    "Wire the retriever".into(),
+                ],
+            },
+        ];
+        let plan = events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                SessionEvent::PlanCreated { steps } | SessionEvent::PlanRevised { steps, .. } => {
+                    Some(steps.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        // The latest revision supersedes the earlier plan rather than adding to it.
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[2], "Wire the retriever");
     }
 
     #[test]

@@ -6,7 +6,7 @@ const state = {
   streamRun: null, streamRefresh: null,
   terminals: [], selectedTerminal: null, terminalSocket: null, terminalSocketId: null,
   drawerOpen: false, drawerTab: "changes", emulator: null, replayedTerminal: null,
-  models: [], providers: [], activeModel: null,
+  models: [], providers: [], activeModel: null, activity: [], plan: [],
   taskMode: "build", permission: "ask"
 };
 
@@ -57,24 +57,105 @@ function renderConversation() {
   const live = state.liveText ? `
     <article class="message live"><div class="message-role"><span>assistant · streaming</span></div>
     <p class="message-content">${escapeHtml(state.liveText)}</p></article>` : "";
-  c.innerHTML = durable + live; c.scrollTop = c.scrollHeight;
+  c.innerHTML = durable + renderPlan() + live; c.scrollTop = c.scrollHeight;
+}
+
+/// The plan, in full.
+///
+/// In Plan mode the plan is the deliverable (PRD §11), and the run pauses
+/// saying it is "ready for review". It was reaching the client only as the
+/// first step, truncated into an activity summary — a session that announces
+/// something to review and then shows nothing to review.
+function renderPlan() {
+  if (!state.plan.length) return "";
+  const steps = state.plan
+    .map((step) => `<li>${escapeHtml(planStepText(step))}</li>`)
+    .join("");
+  // A plan-only run pauses saying it is ready for review. Reviewing it should
+  // lead somewhere: the runtime already continues from the plan on resume, so
+  // the plan carries the one action that acts on it. Without this the only way
+  // forward was to start a new session and describe the work again.
+  const paused = (state.selectedSession?.status_code || "") === "paused";
+  const action = paused
+    ? `<div class="plan-actions">
+         <button id="build-plan" class="primary">Build this plan</button>
+         <span class="plan-hint">Continues this session with the plan in context. Nothing has been changed yet.</span>
+       </div>`
+    : "";
+  return `<article class="message plan">
+    <div class="message-role"><span>Plan</span><span class="model">${state.plan.length} steps</span></div>
+    <ol class="plan-steps">${steps}</ol>
+    ${action}
+  </article>`;
+}
+
+async function buildPlan() {
+  if (!state.selectedRun) return;
+  const button = $("#build-plan");
+  if (button) { button.disabled = true; button.textContent = "Starting…"; }
+  try {
+    await request(`/api/v1/sessions/${state.selectedRun}/resume`, { method: "POST" });
+    toast("Building from the plan.");
+    await refreshSession();
+  } catch (error) {
+    toast(`Could not start: ${error.message}`);
+    if (button) { button.disabled = false; button.textContent = "Build this plan"; }
+  }
+}
+
+/// A plan step without its own leading number.
+///
+/// Models usually number their steps, and the list numbers them again, so a
+/// step arrives reading "1. 1. Define core data models". Only a leading
+/// enumerator is removed — a step that genuinely starts with a figure, like
+/// "2024 exports must keep working", is left alone because the separator is
+/// required.
+function planStepText(step) {
+  return String(step).replace(/^\s*\d{1,3}\s*[.)]\s+/, "").trim();
 }
 
 // ── Activity (compact) ──
-function renderActivity() {
-  const c = $("#activity-compact");
-  if (!state.events.length) { c.innerHTML = ""; return; }
-  const recent = state.events.slice(-8);
-  c.innerHTML = recent.map((e) => {
-    const done = ["session_completed", "validation_recorded", "action_completed"].includes(e.event);
-    const running = ["action_started", "validation_started"].includes(e.event);
-    const icon = done ? '<span class="activity-check">✓</span>' : running ? '<span class="activity-running">●</span>' : '<span class="activity-pending">○</span>';
-    return `<div class="activity-item">${icon} ${escapeHtml(eventTitle(e))}</div>`;
-  }).join("");
+//
+// PRD §15.1 and §31.4: the daemon decides what a person reads. Title-casing raw
+// event names here produced "Submodules Prepared" and "Model Request Started" —
+// internal vocabulary leaking into the main surface, and a second, divergent
+// reading of the same run from the one the Workbench shows.
+const ACTIVITY_ICON = {
+  done: '<span class="activity-check">✓</span>',
+  running: '<span class="activity-running">●</span>',
+  blocked: '<span class="activity-attention">!</span>',
+  failed: '<span class="activity-failed">✗</span>',
+  pending: '<span class="activity-pending">○</span>'
+};
+
+async function refreshActivity() {
+  if (!state.selectedRun) { state.activity = []; state.plan = []; renderActivity(); return; }
+  try {
+    const [activity, summary] = await Promise.all([
+      request(`/api/v1/sessions/${state.selectedRun}/activity`),
+      request(`/api/v1/sessions/${state.selectedRun}/summary`)
+    ]);
+    state.activity = activity || [];
+    state.plan = summary?.plan || [];
+    renderConversation();
+  } catch {
+    // Leave the last known activity in place: blanking it would claim the
+    // session had done nothing, which is a different statement from "we could
+    // not read it just now".
+  }
+  renderActivity();
 }
 
-function eventTitle(event) {
-  return String(event?.event || "unknown").split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+function renderActivity() {
+  const c = $("#activity-compact");
+  if (!state.activity.length) { c.innerHTML = ""; return; }
+  c.innerHTML = state.activity.slice(-8).map((item) => {
+    const icon = ACTIVITY_ICON[item.status] || ACTIVITY_ICON.pending;
+    const summary = item.summary ? `<span class="activity-summary">${escapeHtml(item.summary)}</span>` : "";
+    // The status word rides along with the glyph so it never depends on colour
+    // or on a symbol alone.
+    return `<div class="activity-item">${icon} ${escapeHtml(item.label)} <span class="activity-state">${escapeHtml(item.status)}</span>${summary}</div>`;
+  }).join("");
 }
 
 // ── Streaming ──
@@ -133,7 +214,9 @@ async function refreshSession() {
     ]);
     state.selectedSession = session; state.messages = messages; state.events = events;
     $("#session-objective").textContent = session.objective || "Untitled session";
-    renderConversation(); renderActivity(); connectRunStream(state.selectedRun);
+    // The header follows the session, so opening one shows that session's model.
+    renderModel();
+    renderConversation(); await refreshActivity(); connectRunStream(state.selectedRun);
   } catch (error) { toast(error.message); }
 }
 
@@ -178,6 +261,10 @@ async function startSession() {
 
 async function sendFollowUp() {
   if (!state.selectedRun) { toast("Select or start a session first."); return; }
+  if ((state.selectedSession?.status_code || "") === "paused" && state.plan.length) {
+    toast("This run is paused on its plan. Use Build this plan to continue it.");
+    return;
+  }
   const content = $("#composer").value.trim();
   if (!content) return;
   try {
@@ -210,12 +297,25 @@ async function refreshModels() {
 }
 
 function renderModel() {
-  const label = state.activeModel ? state.activeModel.model : "no model";
-  const provider = state.activeModel ? state.activeModel.provider : "";
+  // A selected session has its own model, which can differ from the repository
+  // default. Showing the default while a session runs on something else is a
+  // header that reports the wrong fact.
+  const sessionModel = state.selectedSession?.selected_model;
+  const entry = sessionModel
+    ? state.models.find((m) => m.id === sessionModel)
+    : state.activeModel;
+  const label = entry ? entry.model : sessionModel ? modelName(sessionModel) : "no model";
+  const provider = entry ? entry.provider : "";
   $("#model-info").textContent = label;
   $("#composer-model").textContent = label;
-  $("#active-model").textContent = label;
-  $("#active-model-provider").textContent = provider || "no provider configured";
+  $("#active-model").textContent = state.activeModel ? state.activeModel.model : "no model";
+  $("#active-model-provider").textContent = state.activeModel?.provider || "no provider configured";
+}
+
+/// The model part of a provider-qualified id, matching the Workbench header.
+function modelName(id) {
+  const cut = id.indexOf("/");
+  return cut < 0 ? id : id.slice(cut + 1);
 }
 
 function openSettings() {
@@ -268,18 +368,32 @@ function renderModelChoices() {
 }
 
 async function selectModel(id) {
+  // Two scopes, reported separately. Announcing one success for both is how a
+  // user ends up believing the open session switched when it did not — the
+  // symptom being a header that shows the new model while the run keeps using
+  // the old one.
+  let repositoryOk = false;
   try {
-    // Selecting for the repository sets the coding role; a live session is
-    // switched too, so the choice takes effect where the user is looking.
     await request("/api/v1/models/roles", { method: "POST", body: JSON.stringify({ role: "coding_worker", model: id }) });
-    if (state.selectedRun) {
-      await request(`/api/v1/sessions/${state.selectedRun}/model`, { method: "POST", body: JSON.stringify({ model: id }) })
-        .catch(() => toast("The model changed for new work; this session is busy."));
+    repositoryOk = true;
+  } catch (error) {
+    toast(`Repository default unchanged: ${error.message}`);
+  }
+  let sessionResult = null;
+  if (state.selectedRun) {
+    try {
+      await request(`/api/v1/sessions/${state.selectedRun}/model`, { method: "POST", body: JSON.stringify({ model: id }) });
+      sessionResult = "ok";
+    } catch (error) {
+      sessionResult = error.message;
     }
-    await refreshModels();
-    renderModelChoices();
-    toast(`Model set to ${id}`);
-  } catch (error) { toast(error.message); }
+  }
+  await refreshModels();
+  await refreshSession();
+  renderModelChoices();
+  if (sessionResult === "ok") toast(`${id} for this session and new work`);
+  else if (sessionResult) toast(`This session kept its model: ${sessionResult}`);
+  else if (repositoryOk) toast(`${id} for new work in this repository`);
 }
 
 // ── Context drawer ──
@@ -306,18 +420,29 @@ async function refreshDiff() {
   } catch (error) { $("#diff-content").textContent = `Diff unavailable: ${error.message}`; }
 }
 
-function refreshTests() {
-  const events = state.events.filter((e) => ["validation_recorded", "session_completed", "session_failed"].includes(e.event));
+async function refreshTests() {
   const c = $("#test-summary");
-  if (!events.length) { c.innerHTML = '<div class="empty">Test results will appear here when validation runs.</div>'; return; }
-  c.innerHTML = events.map((e) => `<div class="activity-item"><span class="activity-check">✓</span> ${escapeHtml(eventTitle(e))}</div>`).join("");
+  if (!state.selectedRun) { c.innerHTML = '<div class="empty">Test results will appear here when validation runs.</div>'; return; }
+  try {
+    const summary = await request(`/api/v1/sessions/${state.selectedRun}/validation`);
+    const stages = summary?.stages || [];
+    if (!stages.length) { c.innerHTML = '<div class="empty">No validation has run.</div>'; return; }
+    // Unavailable, skipped, cancelled and timed-out are never drawn as a pass
+    // (PRD §21.3): the glyph and the word both come from the outcome.
+    c.innerHTML = stages.map((s) => {
+      const passed = s.outcome === "passed";
+      const icon = passed ? ACTIVITY_ICON.done : ACTIVITY_ICON.failed;
+      return `<div class="activity-item">${icon} ${escapeHtml(s.stage)} <span class="activity-state">${escapeHtml(s.outcome.replace(/_/g, " "))}</span></div>`;
+    }).join("");
+  } catch (error) { c.innerHTML = `<div class="empty">Validation unavailable: ${escapeHtml(error.message)}</div>`; }
 }
 
 function refreshEvidence() {
-  const events = state.events.filter((e) => ["action_completed", "action_proposed"].includes(e.event));
   const c = $("#evidence-list");
-  if (!events.length) { c.innerHTML = '<div class="empty">Evidence records will appear here when actions complete.</div>'; return; }
-  c.innerHTML = events.slice(-10).map((e) => `<div class="activity-item">${escapeHtml(eventTitle(e))}</div>`).join("");
+  const items = state.activity.filter((item) => item.detail_available);
+  if (!items.length) { c.innerHTML = '<div class="empty">Evidence records will appear here when actions complete.</div>'; return; }
+  c.innerHTML = items.slice(-10).map((item) =>
+    `<div class="activity-item">${escapeHtml(item.label)}${item.summary ? `<span class="activity-summary">${escapeHtml(item.summary)}</span>` : ""}</div>`).join("");
 }
 
 // ── Terminals ──
@@ -457,6 +582,11 @@ $("#settings-open-terminal").addEventListener("click", () => { closeSettings(); 
 $("#composer-mode").addEventListener("change", readModes);
 $("#composer-permission").addEventListener("change", readModes);
 $("#composer-model").addEventListener("click", openSettings);
+// Delegated: the plan block is re-rendered on every refresh, so a handler
+// bound to the button itself would be lost.
+$("#conversation").addEventListener("click", (event) => {
+  if (event.target.id === "build-plan") buildPlan();
+});
 $("#settings-open").addEventListener("click", openSettings);
 $("#settings-close").addEventListener("click", closeSettings);
 $("#change-model").addEventListener("click", openSettings);

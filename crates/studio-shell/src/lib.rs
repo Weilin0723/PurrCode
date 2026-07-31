@@ -314,9 +314,43 @@ async fn bootstrap(
     response
 }
 
+/// Shown to a person who reaches Studio without a session.
+///
+/// The bootstrap link is single-use by design, so this page is reached by
+/// ordinary means: bookmarking the bare address, opening it in a second
+/// browser, clearing cookies, or restarting the shell. Answering that with
+/// `Studio authentication required` and nothing else is a dead end — the
+/// reader is left unable to tell a malfunction from a security property, and is
+/// given no way forward.
+///
+/// Unstyled on purpose: the CSP is `default-src 'self'` with no inline styles,
+/// and `/app.css` needs the very session this reader does not have. Semantic
+/// HTML renders readably without it.
+const UNAUTHORIZED_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>PurrCode Studio - session required</title></head>
+<body>
+<h1>This browser has no Studio session</h1>
+<p>Studio opens through a one-time link that is exchanged for a session cookie
+and then immediately invalidated. That link has already been used, or this
+browser never had it.</p>
+<p>This is how Studio is meant to work, not a fault: the link is single-use so
+that a copied URL cannot be replayed by anyone else.</p>
+<h2>To get back in</h2>
+<p>Run this in your repository and open the link it prints:</p>
+<pre>purrcode studio</pre>
+<p>Your session, conversation and terminals are held by the daemon, not by this
+browser, so nothing is lost by opening a new link.</p>
+</body>
+</html>"#;
+
 async fn index(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
     if !authorized(&state, &headers) {
-        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+        return secured_asset(
+            StatusCode::UNAUTHORIZED,
+            "text/html; charset=utf-8",
+            UNAUTHORIZED_HTML,
+        );
     }
     secured_asset(StatusCode::OK, "text/html; charset=utf-8", INDEX_HTML)
 }
@@ -866,6 +900,70 @@ mod tests {
     }
 
     #[test]
+    fn studio_reads_activity_from_the_daemon_not_from_raw_events() {
+        // Observed in a real session: the activity list read "Submodules
+        // Prepared" and "Model Request Started" because the client title-cased
+        // raw event names. That is internal vocabulary on the main surface
+        // (PRD §15.1) and a second, divergent reading of the run from the one
+        // the Workbench shows (§31).
+        assert!(APP_JS.contains("/activity"));
+        assert!(APP_JS.contains("/validation"));
+        assert!(
+            !APP_JS.contains("function eventTitle"),
+            "no client may invent its own labels for durable events"
+        );
+        assert!(
+            !APP_JS.contains(r#"split("_")"#),
+            "an event name split on underscores is a raw event name"
+        );
+        // Status reaches the reader as a word, not only as a glyph or colour.
+        assert!(APP_JS.contains("activity-state"));
+    }
+
+    #[test]
+    fn studio_shows_the_plan_a_paused_run_asks_you_to_review() {
+        assert!(APP_JS.contains("function renderPlan"));
+        assert!(APP_JS.contains("summary?.plan"));
+        // It renders every step, not a truncated summary of the first one.
+        assert!(APP_JS.contains("state.plan\n    .map((step)"));
+        assert!(APP_CSS.contains(".plan-steps"));
+    }
+
+    #[test]
+    fn a_model_change_reports_each_scope_it_actually_changed() {
+        // Observed while testing: the repository default changed, the header
+        // followed it, and the open session kept running on the old model — but
+        // the only message was an unconditional "Model set to ...". A user
+        // cannot act on a success that may not have happened.
+        assert!(APP_JS.contains("for this session and new work"));
+        assert!(APP_JS.contains("This session kept its model"));
+        assert!(APP_JS.contains("for new work in this repository"));
+        assert!(
+            !APP_JS.contains("`Model set to ${id}`"),
+            "one message for two scopes cannot be truthful about either"
+        );
+        // The header reads the session's model when a session is open.
+        assert!(APP_JS.contains("state.selectedSession?.selected_model"));
+    }
+
+    #[test]
+    fn a_reviewed_plan_can_be_turned_into_work_in_one_action() {
+        // A plan-only run pauses saying it is "ready for review", and the
+        // composer refuses follow-ups on a paused session. Without an action on
+        // the plan itself the only way forward was to start a new session and
+        // describe the work again — the runtime has continued from the plan on
+        // resume all along, but no client offered it.
+        assert!(APP_JS.contains("Build this plan"));
+        assert!(APP_JS.contains("/resume"));
+        // It says what it will do and that nothing has happened yet.
+        assert!(APP_JS.contains("Nothing has been changed yet"));
+        // A refused follow-up points at that action instead of dead-ending.
+        assert!(APP_JS.contains("Use Build this plan to continue it"));
+        // Bound by delegation: the plan block is re-rendered on every refresh.
+        assert!(APP_JS.contains(r#"event.target.id === "build-plan""#));
+    }
+
+    #[test]
     fn embedded_studio_terminal_is_emulated_and_incremental() {
         // PRD §24.7: a real emulator, not a stripped log.
         assert!(APP_JS.contains("new WebSocket"));
@@ -894,6 +992,39 @@ mod tests {
             APP_JS.contains("chunk.next_offset") || APP_JS.contains(r#"frame.chunk"#),
             "the client must consume incremental chunks"
         );
+    }
+
+    #[tokio::test]
+    async fn a_browser_without_a_session_is_told_how_to_get_one() {
+        // Reached by ordinary means — a bookmarked bare URL, a second browser,
+        // cleared cookies, a restarted shell. A bare "authentication required"
+        // leaves the reader unable to tell a malfunction from a security
+        // property, and with nothing to do about either.
+        let (report, server, _) = start_pair().await;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let response = client
+            .get(format!("http://{}/", report.bind))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        assert!(response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .is_some_and(|value| value.to_str().unwrap_or_default().contains("text/html")));
+        let body = response.text().await.unwrap();
+        // It explains, and it says exactly what to run.
+        assert!(body.contains("single-use"));
+        assert!(body.contains("purrcode studio"));
+        assert!(body.contains("not a fault"));
+        // And it reassures that recovering costs nothing.
+        assert!(body.contains("nothing is lost"));
+        // Unstyled on purpose: /app.css needs the session this reader lacks.
+        assert!(!body.contains("app.css"));
+        server.abort();
     }
 
     #[tokio::test]

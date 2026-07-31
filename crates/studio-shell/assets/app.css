@@ -56,6 +56,12 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font); font-s
 .activity-compact .activity-check { color: var(--success); }
 .activity-compact .activity-running { color: var(--accent); }
 .activity-compact .activity-pending { color: var(--muted); }
+.activity-attention { color: var(--warning); font-weight: 700; }
+.activity-failed { color: var(--danger); }
+/* The status word travels with the glyph so state never depends on colour or on
+   a symbol alone. */
+.activity-state { color: var(--muted); font-size: 11px; text-transform: lowercase; }
+.activity-summary { display: block; margin-left: 18px; color: var(--muted); font-size: 11px; }
 .activity-compact a { color: var(--accent); cursor: pointer; text-decoration: underline; border: 0; background: 0; font: inherit; padding: 0; }
 
 /* Composer */
@@ -172,3 +178,14 @@ footer { padding: 6px 16px; border-top: 1px solid var(--line); background: var(-
 
 /* Light theme, opt-in from Settings → Appearance. */
 :root[data-theme="light"] { --bg: #f7f8fa; --surface: #ffffff; --surface-2: #eef0f4; --line: #d5d9e0; --fg: #14161a; --muted: #5a6270; --accent: #0b62d6; --accent-2: #0a55bb; }
+
+/* The plan is the deliverable of a Plan-mode run, so it reads as content rather
+   than as a status line. */
+.message.plan { border-left: 2px solid var(--accent); padding-left: 12px; }
+.plan-steps { margin: 8px 0 0; padding-left: 24px; display: flex; flex-direction: column; gap: 10px; }
+.plan-steps li { line-height: 1.6; padding-left: 4px; }
+.plan-steps li::marker { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* The action that turns a reviewed plan into work. */
+.plan-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.plan-hint { color: var(--muted); font-size: 12px; }
