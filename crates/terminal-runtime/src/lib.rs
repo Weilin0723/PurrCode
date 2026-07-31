@@ -911,11 +911,26 @@ fn spawn_reader(
         let mut chunk = [0_u8; 8192];
         loop {
             match reader.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break,
                 Ok(read) => match transcript.lock() {
                     Ok(mut transcript) => transcript.append(&chunk[..read]),
                     Err(_) => break,
                 },
+                // A signal or a momentarily empty PTY is not the end of the
+                // stream. Treating every error as terminal killed the reader on
+                // the first EINTR and silently discarded the rest of the
+                // process's output — including, sometimes, all of it.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                // Anything else — the PTY closed, the far end went away — ends
+                // the stream for real.
+                Err(_) => break,
             }
         }
         drained.store(true, Ordering::Release);
@@ -1360,6 +1375,65 @@ mod tests {
         assert!(!outcome.timed_out);
         assert!(String::from_utf8_lossy(&outcome.stdout).contains("terminal-command-evidence"));
         assert!(outcome.stderr.is_empty());
+    }
+
+    #[test]
+    fn a_transient_read_error_does_not_discard_the_rest_of_the_output() {
+        /// A reader that fails the way a real PTY does under load: an EINTR
+        /// between two chunks. Before the fix the first error ended the stream
+        /// and everything after it was lost, which is how a command could exit
+        /// zero with no captured output at all.
+        struct Interrupted {
+            chunks: Vec<&'static str>,
+            index: usize,
+            interrupted: bool,
+        }
+        impl Read for Interrupted {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.index == 1 && !self.interrupted {
+                    self.interrupted = true;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "signal",
+                    ));
+                }
+                match self.chunks.get(self.index) {
+                    Some(chunk) => {
+                        self.index += 1;
+                        buffer[..chunk.len()].copy_from_slice(chunk.as_bytes());
+                        Ok(chunk.len())
+                    }
+                    None => Ok(0),
+                }
+            }
+        }
+
+        let transcript = Arc::new(Mutex::new(Transcript {
+            bytes: VecDeque::new(),
+            maximum: 1024,
+            produced: 0,
+            last_seen_at: Utc::now(),
+        }));
+        let drained = Arc::new(AtomicBool::new(false));
+        spawn_reader(
+            Box::new(Interrupted {
+                chunks: vec!["before-", "after"],
+                index: 0,
+                interrupted: false,
+            }),
+            Arc::clone(&transcript),
+            Arc::clone(&drained),
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !drained.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(drained.load(Ordering::Acquire), "reader never finished");
+        let captured = String::from_utf8(transcript.lock().unwrap().tail(1024)).unwrap();
+        assert_eq!(
+            captured, "before-after",
+            "output after a transient error was discarded"
+        );
     }
 
     #[cfg(unix)]

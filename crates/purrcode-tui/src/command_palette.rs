@@ -51,6 +51,7 @@ pub const DISPATCH_COMMANDS: &[&str] = &[
     "mode",
     "permission",
     "settings",
+    "status",
     "studio",
     "terminal",
     "terminal-return",
@@ -625,6 +626,32 @@ impl CommandPalette {
             // Review reads the daemon's own effect evidence; it does not build a
             // second view of what changed.
             "diff" => app.load_review().await,
+            // PRD §14: the header deliberately omits paths, SHAs, session ids
+            // and endpoints. They have to remain reachable, or hiding them is
+            // just withholding them.
+            "status" => {
+                let mut lines = vec![
+                    format!("Repository: {}", app.config.repository.display()),
+                    format!(
+                        "Branch: {} ({})",
+                        app.workspace.branch, app.workspace.source_state
+                    ),
+                    format!("Model: {}", app.status_bar.model),
+                    format!("Task mode: {}", app.status_bar.task_mode.label()),
+                    format!("Permission: {}", app.status_bar.permission.label()),
+                    format!("Privacy: {}", app.status_bar.privacy),
+                    format!(
+                        "Daemon: {} ({})",
+                        app.config.daemon_url, app.workspace.daemon_health
+                    ),
+                    format!("Sandbox: {}", app.workspace.sandbox),
+                ];
+                match app.session_id.as_deref() {
+                    Some(session) => lines.push(format!("Session: {session}")),
+                    None => lines.push("Session: none started".into()),
+                }
+                app.message_bar = lines.join("\n");
+            }
             "terminal" => app.open_terminal().await,
             "terminal-take" => app.set_terminal_owner(true).await,
             "terminal-return" => app.set_terminal_owner(false).await,

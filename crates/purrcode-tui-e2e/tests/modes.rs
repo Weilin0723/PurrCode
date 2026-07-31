@@ -143,3 +143,25 @@ fn a_read_only_task_mode_is_sent_as_a_constraint_not_a_hint() {
         Ok(())
     });
 }
+
+#[test]
+fn status_shows_what_the_header_deliberately_omits() {
+    let mut harness = open_workbench();
+    with_artifacts("modes-status", &mut harness, |harness| {
+        new_session(harness)?;
+        // The header shows `repo/branch` and a bare model name; PRD §14 forbids
+        // the path, the full id and the session id there. Hiding them is only
+        // legitimate if they stay reachable.
+        let header = harness.screen();
+        assert!(
+            !header.contains("local/fake:1b"),
+            "the provider-qualified id belongs in /status, not the header"
+        );
+
+        harness.run_command("/status")?;
+        let screen = harness.wait_for_text("Repository:")?;
+        assertions::assert_readable(&screen, "Model: local/fake:1b");
+        assertions::assert_visible(&screen, &["Branch:", "Permission:", "Sandbox:"]);
+        Ok(())
+    });
+}

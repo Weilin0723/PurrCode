@@ -57,11 +57,15 @@ fn first_launch_shows_workbench_and_next_action() {
 fn the_header_orients_without_internal_metadata() {
     let mut harness = Harness::start(configured()).expect("start workbench");
     with_artifacts("startup-header", &mut harness, |harness| {
-        let screen = harness.wait_for_all(&["PurrCode", "local/fake:1b"])?;
+        let screen = harness.wait_for_all(&["PurrCode", "fake:1b"])?;
         assertions::assert_visible(&screen, &["main", "Build"]);
-        // Sandbox backend, daemon version and worktree path belong to the status
-        // drawer, not the header.
-        assertions::assert_absent(&screen, &["seatbelt", "worktree", "daemon.token"]);
+        // The provider prefix, sandbox backend, daemon version and worktree path
+        // belong to `/status`, not to the line the user reads on every frame
+        // (PRD §10.1, §14).
+        assertions::assert_absent(
+            &screen,
+            &["local/fake:1b", "seatbelt", "worktree", "daemon.token"],
+        );
         Ok(())
     });
 }

@@ -1358,6 +1358,19 @@ pub const REGISTRY: &[UiActionDefinition] = &[
             "settings.permission_rejected",
         ],
     },
+    UiActionDefinition {
+        id: UiActionId("session.status"),
+        category: UiActionCategory::Session,
+        label: "Show technical status",
+        description: "Repository path, commit state, full model id, session id, daemon and sandbox",
+        commands: &["/status"],
+        shortcuts: &[],
+        availability: AvailabilityRule::Always,
+        risk: UiRiskClass::Safe,
+        starts_execution: false,
+        handler: UiActionHandler::Command("status"),
+        acceptance_scenarios: scenarios!["session.status"],
+    },
     // ── Terminal ───────────────────────────────────────────────
     UiActionDefinition {
         id: UiActionId("terminal.open"),
@@ -1491,6 +1504,14 @@ pub const REGISTRY: &[UiActionDefinition] = &[
 /// a gate that fails when a referenced test name is absent from its sources, so
 /// this table cannot claim coverage that does not exist.
 pub const SCENARIOS: &[AcceptanceScenario] = &[
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("session.status"),
+        summary: "Detail the header hides stays reachable on demand",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/modes.rs::status_shows_what_the_header_deliberately_omits"),
+        real_terminal_case: None,
+        critical: false,
+    },
     AcceptanceScenario {
         id: AcceptanceScenarioId("task.change_mode"),
         summary: "The task mode changes and the header follows",
