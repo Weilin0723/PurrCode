@@ -261,6 +261,7 @@ fn setup_form_text(setup: &crate::provider_setup::ProviderSetup) -> String {
             crate::provider_setup::ProviderType::LmStudio => "LM Studio",
             crate::provider_setup::ProviderType::Openai => "OpenAI",
             crate::provider_setup::ProviderType::OpenaiCompatible => "OpenAI-compatible",
+            crate::provider_setup::ProviderType::NvidiaNim => "NVIDIA NIM",
             crate::provider_setup::ProviderType::EnterpriseGateway => "Enterprise gateway",
         });
     let import = setup

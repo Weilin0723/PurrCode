@@ -627,6 +627,19 @@ impl AppConfig {
                 headers: BTreeMap::new(),
                 capabilities,
             },
+            "nim" | "nvidia-nim" | "nvidia" => {
+                let api_key_env = credential_reference.ok_or_else(|| {
+                    ProviderError::Configuration(
+                        "NVIDIA NIM authentication must resolve to a keychain or environment reference"
+                            .into(),
+                    )
+                })?;
+                ProviderConfig::NvidiaNim {
+                    base_url,
+                    api_key_env,
+                    capabilities,
+                }
+            }
             "openai" => {
                 let api_key_env = credential_reference.ok_or_else(|| {
                     ProviderError::Configuration(
@@ -761,6 +774,9 @@ impl AppConfig {
             if let ProviderConfig::Ollama { base_url, .. } = provider {
                 *base_url = normalize_ollama_base_url(base_url.clone());
             }
+            if let ProviderConfig::NvidiaNim { base_url, .. } = provider {
+                *base_url = normalize_nim_base_url(base_url.clone());
+            }
         }
     }
 
@@ -813,6 +829,9 @@ impl AppConfig {
                     "local providers do not require an API key".into(),
                 ));
             }
+            ProviderConfig::NvidiaNim { api_key_env, .. } => {
+                *api_key_env = reference;
+            }
             ProviderConfig::AzureOpenai { credential, .. } => {
                 *credential = AzureCredential::KeychainKey {
                     name: credential_name.to_owned(),
@@ -842,6 +861,10 @@ impl AppConfig {
                 ..
             }
             | ProviderConfig::EnterpriseGateway {
+                capabilities: models,
+                ..
+            }
+            | ProviderConfig::NvidiaNim {
                 capabilities: models,
                 ..
             }
@@ -952,6 +975,19 @@ pub enum ProviderConfig {
         #[serde(default)]
         capabilities: BTreeMap<String, ModelCapabilities>,
     },
+    /// NVIDIA NIM / build.nvidia.com OpenAI-compatible endpoint. First-class
+    /// variant so onboarding, the model picker, and the CLI doctor can show
+    /// "NVIDIA NIM" instead of the generic "OpenAI-compatible" label. Uses the
+    /// OpenAI chat-completions wire format with a Bearer key from the keychain
+    /// or the `NVIDIA_API_KEY` environment reference (PRD §9, §9.3).
+    NvidiaNim {
+        #[serde(default = "nim_base_url")]
+        base_url: Url,
+        #[serde(default = "nim_key_env")]
+        api_key_env: String,
+        #[serde(default)]
+        capabilities: BTreeMap<String, ModelCapabilities>,
+    },
     EnterpriseGateway {
         base_url: Url,
         api_key_env: Option<String>,
@@ -986,6 +1022,7 @@ impl ProviderConfig {
                 base_url, local, ..
             } => (base_url, *local),
             Self::Ollama { base_url, .. } => (base_url, true),
+            Self::NvidiaNim { base_url, .. } => (base_url, false),
             Self::EnterpriseGateway { base_url, .. } => (base_url, false),
             Self::AzureOpenai { endpoint, .. } => (endpoint, false),
         };
@@ -1007,6 +1044,7 @@ impl ProviderConfig {
             Self::Openai { .. } => false,
             Self::OpenaiCompatible { local, .. } => *local,
             Self::Ollama { .. } => true,
+            Self::NvidiaNim { .. } => false,
             Self::EnterpriseGateway { .. } => false,
             Self::AzureOpenai { .. } => false,
         }
@@ -1017,6 +1055,7 @@ impl ProviderConfig {
             Self::Openai { capabilities, .. }
             | Self::OpenaiCompatible { capabilities, .. }
             | Self::Ollama { capabilities, .. }
+            | Self::NvidiaNim { capabilities, .. }
             | Self::EnterpriseGateway { capabilities, .. }
             | Self::AzureOpenai { capabilities, .. } => capabilities,
         }
@@ -1049,6 +1088,32 @@ fn normalize_ollama_base_url(mut url: Url) -> Url {
 }
 fn openai_key_env() -> String {
     "OPENAI_API_KEY".into()
+}
+/// Ensures the NVIDIA NIM base URL has a trailing slash and a `/v1/` path
+/// prefix so callers that join relative paths (e.g. `chat/completions`) work
+/// with or without the conventional suffix.
+fn normalize_nim_base_url(mut url: Url) -> Url {
+    let trimmed = url.path().trim_end_matches('/');
+    // Accept both bare `…/v1` and `…/v1/`. If neither is present, append `/v1/`.
+    if !trimmed.ends_with("/v1") {
+        let normalized = if trimmed.is_empty() {
+            "/v1/".to_owned()
+        } else {
+            format!("{trimmed}/v1/")
+        };
+        url.set_path(&normalized);
+    } else {
+        url.set_path(&format!("{trimmed}/"));
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    url
+}
+fn nim_base_url() -> Url {
+    Url::parse("https://integrate.api.nvidia.com/v1/").expect("static NVIDIA NIM URL is valid")
+}
+fn nim_key_env() -> String {
+    "NVIDIA_API_KEY".into()
 }
 
 async fn run_credential_command(command: &[String]) -> Result<String, ProviderError> {
@@ -1239,6 +1304,25 @@ impl HttpProvider {
                 None,
                 capabilities,
                 ProviderApiMode::OllamaNative,
+                None,
+                None,
+            ),
+            ProviderConfig::NvidiaNim {
+                base_url,
+                api_key_env,
+                capabilities,
+            } => (
+                base_url,
+                Some(api_key_env),
+                None,
+                false,
+                BTreeMap::new(),
+                BTreeMap::new(),
+                None,
+                None,
+                None,
+                capabilities,
+                ProviderApiMode::OpenaiCompatible,
                 None,
                 None,
             ),

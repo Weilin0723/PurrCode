@@ -78,6 +78,7 @@ pub enum ProviderKind {
     OpenAiCompatible,
     Ollama,
     LmStudio,
+    NvidiaNim,
     Unknown,
 }
 

@@ -616,8 +616,28 @@ async fn main() -> Result<()> {
     let daemon_token = cli.daemon_token.unwrap_or(default_daemon_token_path()?);
     let requested_database = cli.database;
     let Some(command) = cli.command else {
+        // When no config exists yet, launch the TUI with a minimal empty config
+        // so the provider/model onboarding overlay can guide setup interactively
+        // instead of exiting with "run purrcode init" (PRD §3.1, §7.2, §8).
         if !config_path.is_file() {
-            bail!("PurrCode is not initialized; run `purrcode init`");
+            let database = requested_database
+                .clone()
+                .unwrap_or(default_database_path()?);
+            if let Some(parent) = database.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let store = SessionStore::open(&database)?;
+            drop(store);
+            let repository = resolve_product_repository(None)?;
+            run_tui(
+                &config_path,
+                &database,
+                daemon_url,
+                daemon_token,
+                repository,
+            )
+            .await?;
+            return Ok(());
         }
         let database = requested_database
             .clone()
@@ -3489,8 +3509,41 @@ async fn initialize_product(
             }
         }
     }
+    // If no local provider was discovered, check for a NVIDIA_API_KEY env var
+    // or keychain entry and auto-configure NVIDIA NIM (PRD §9, §9.1).
+    if provider_config.is_none() {
+        if std::env::var_os("NVIDIA_API_KEY").is_some()
+            || std::env::var("NVIDIA_API_KEY").map_or(false, |v| !v.is_empty())
+        {
+            let nim_key = std::env::var("NVIDIA_API_KEY").unwrap_or_default();
+            provider_name = Some("nvidia-nim".to_owned());
+            provider_config = Some(ProviderConfig::NvidiaNim {
+                base_url: url::Url::parse("https://integrate.api.nvidia.com/v1/")?,
+                api_key_env: "NVIDIA_API_KEY".to_owned(),
+                capabilities: BTreeMap::new(),
+            });
+            // Try to enumerate models from the NIM endpoint
+            if let Ok(response) = client
+                .get("https://integrate.api.nvidia.com/v1/models")
+                .header("Authorization", format!("Bearer {nim_key}"))
+                .send()
+                .await
+            {
+                if response.status().is_success() {
+                    if let Ok(value) = response.json::<serde_json::Value>().await {
+                        discovered_models = value["data"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|model| model["id"].as_str().map(str::to_owned))
+                            .collect();
+                    }
+                }
+            }
+        }
+    }
     let (provider_name, mut provider_config) = provider_name.zip(provider_config).context(
-        "no local model server was discovered; start Ollama or LM Studio with at least one model",
+        "no local model server or NVIDIA NIM credential was discovered; start Ollama or LM          Studio, or set NVIDIA_API_KEY in your environment or keychain",
     )?;
     discovered_models.sort();
     discovered_models.dedup();
@@ -3573,20 +3626,98 @@ async fn initialize_product(
     ensure_daemon_started(config_path, database, daemon_url, token_file, true).await
 }
 
+/// Score a model name for coding suitability. Higher is better.
+///
+/// Heuristics: coder/code/deepseek/qwen/codellama names are strongly preferred
+/// for the coding role; instruction-tuned variants (instruct/chat/it) get a
+/// smaller boost. Embedding/vision/preview names are penalized.
+fn coding_name_score(name: &str) -> i32 {
+    let lower = name.to_ascii_lowercase();
+    let mut score: i32 = 0;
+    // Strong coding signals
+    for keyword in [
+        "coder",
+        "code",
+        "deepseek",
+        "qwen",
+        "codellama",
+        "codestral",
+        "starcoder",
+    ] {
+        if lower.contains(keyword) {
+            score += 20;
+        }
+    }
+    // General instruction-tuned signals
+    for keyword in ["instruct", "chat", "it", "hf"] {
+        if lower.contains(keyword) {
+            score += 5;
+        }
+    }
+    // Known good general models
+    for keyword in ["llama", "gpt", "mistral", "gemma", "phi"] {
+        if lower.contains(keyword) {
+            score += 10;
+        }
+    }
+    // Penalty for non-coding-specialized variants
+    for keyword in ["embed", "vision", "preview", "base", "tiny", "mini"] {
+        if lower.contains(keyword) {
+            score -= 15;
+        }
+    }
+    score
+}
+
 fn select_initial_model<'a>(
     models: &'a [String],
     observed_sizes: &BTreeMap<String, u64>,
     low_memory: bool,
 ) -> &'a str {
+    if models.len() == 1 {
+        return models[0].as_str();
+    }
     if low_memory {
-        models
+        // On constrained memory, prefer a coding-capable model that fits —
+        // smallest model with a coding signal, or just the smallest overall.
+        let with_sizes: Vec<(&str, Option<&u64>)> = models
             .iter()
-            .filter_map(|model| observed_sizes.get(model).map(|size| (model, size)))
-            .min_by_key(|(_, size)| *size)
-            .map(|(model, _)| model.as_str())
+            .map(|m| (m.as_str(), observed_sizes.get(m)))
+            .collect();
+        let coding_candidates: Vec<_> = with_sizes
+            .iter()
+            .filter(|(name, _)| coding_name_score(name) > 5)
+            .collect();
+        let pool = if !coding_candidates.is_empty() {
+            coding_candidates
+        } else {
+            with_sizes.iter().collect::<Vec<_>>().into_iter().collect()
+        };
+        pool.iter()
+            .min_by_key(|(name, size)| {
+                let size_score = size.map_or(u64::MAX, |s| *s);
+                let name_score = -coding_name_score(name);
+                (size_score, name_score)
+            })
+            .map(|(name, _)| *name)
             .unwrap_or(models[0].as_str())
     } else {
-        models[0].as_str()
+        // On capable hosts, prefer the best coding-scored model, breaking ties
+        // by preferring mid-to-large sizes over the very smallest.
+        models
+            .iter()
+            .max_by_key(|model| {
+                let name_score = coding_name_score(model.as_str());
+                let size_bonus = observed_sizes.get(model.as_str()).map_or(0i64, |s| {
+                    // Log-ish size preference: larger gets a small bonus,
+                    // but not so much that we pick a 70B model over a 32B
+                    // coding-specialized one.
+                    (*s as i64 / 1_000_000_000).min(10)
+                });
+                (name_score, size_bonus)
+            })
+            .map(|m| m.as_str())
+            .unwrap_or(models[0].as_str())
     }
 }
 

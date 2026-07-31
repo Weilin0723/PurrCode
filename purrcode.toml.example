@@ -18,6 +18,15 @@ local = true
 type = "ollama"
 base_url = "http://127.0.0.1:11434/v1/"
 
+# NVIDIA NIM (build.nvidia.com / integrate.api.nvidia.com) — first-class provider
+# type. Uses the OpenAI chat-completions wire format with a Bearer key.
+# [providers.nvidia-nim]
+# type = "nvidia-nim"
+# base_url = "https://integrate.api.nvidia.com/v1/"
+# api_key_env = "NVIDIA_API_KEY"
+# [providers.nvidia-nim.capabilities]
+# "z-ai/glm-5.2" = { local = false, latency_class = "fast" }
+
 # Enterprise example (keep credential values outside this file):
 # [providers.company]
 # type = "enterprise-gateway"

@@ -626,7 +626,11 @@ fn finalize_candidate(candidate: &mut ProviderImportCandidate) {
         } else if base.contains("api.openai.com") {
             ProviderKind::OpenAi
         } else if !base.is_empty() {
-            ProviderKind::OpenAiCompatible
+            if base.contains("integrate.api.nvidia.com") || base.contains("nvidia") {
+                ProviderKind::NvidiaNim
+            } else {
+                ProviderKind::OpenAiCompatible
+            }
         } else {
             ProviderKind::Unknown
         };
@@ -634,7 +638,7 @@ fn finalize_candidate(candidate: &mut ProviderImportCandidate) {
         ProviderKind::Ollama => "Ollama",
         ProviderKind::LmStudio => "LM Studio",
         ProviderKind::OpenAi => "OpenAI",
-        ProviderKind::OpenAiCompatible if base.contains("nvidia") => "NVIDIA NIM",
+        ProviderKind::NvidiaNim => "NVIDIA NIM",
         ProviderKind::OpenAiCompatible => "OpenAI-compatible",
         ProviderKind::Unknown => "Imported provider",
     }

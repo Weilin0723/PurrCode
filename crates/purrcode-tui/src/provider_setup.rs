@@ -12,6 +12,7 @@ pub enum ProviderType {
     LmStudio,
     Openai,
     OpenaiCompatible,
+    NvidiaNim,
     EnterpriseGateway,
 }
 
@@ -198,6 +199,12 @@ impl ProviderSetup {
             ProviderType::OpenaiCompatible => {
                 self.configure_defaults("openai-compatible", "", false, false)
             }
+            ProviderType::NvidiaNim => self.configure_defaults(
+                "nvidia-nim",
+                "https://integrate.api.nvidia.com/v1",
+                false,
+                false,
+            ),
             ProviderType::EnterpriseGateway => {
                 self.configure_defaults("enterprise-gateway", "", false, false)
             }
@@ -503,6 +510,7 @@ impl ProviderSetup {
             ProviderKind::OpenAi => ProviderType::Openai,
             ProviderKind::Ollama => ProviderType::Ollama,
             ProviderKind::LmStudio => ProviderType::LmStudio,
+            ProviderKind::NvidiaNim => ProviderType::NvidiaNim,
             ProviderKind::OpenAiCompatible | ProviderKind::Unknown => {
                 ProviderType::OpenaiCompatible
             }
