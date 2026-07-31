@@ -193,9 +193,13 @@ fn unavailable_palette_entries_explain_why() {
         harness.type_text("approve")?;
 
         // Visible, but honest about not being runnable — never a silent dead end.
-        let screen = harness.wait_for_text("Approve action")?;
-        assertions::assert_readable(&screen, "unavailable");
-        assertions::assert_readable(&screen, "no action is pending");
+        harness.wait_for_all(&[
+            "Search approve",
+            "6 action(s) matching",
+            "Approve action",
+            "unavailable",
+            "no action is pending",
+        ])?;
         Ok(())
     });
 }
@@ -208,11 +212,19 @@ fn an_unavailable_action_run_from_the_palette_explains_itself_and_does_nothing()
         harness.key(Key::Ctrl('p'))?;
         harness.wait_for_text("Commands")?;
         harness.type_text("approve")?;
-        harness.wait_for_text("Approve action")?;
+        harness.wait_for_all(&[
+            "Search approve",
+            "6 action(s) matching",
+            "Approve action",
+            "unavailable",
+            "no action is pending",
+        ])?;
+        harness.key(Key::Down)?;
+        harness.key(Key::Down)?;
+        harness.wait_for_text("> Approve action")?;
         harness.key(Key::Enter)?;
 
-        let screen = harness.wait_for_text("unavailable")?;
-        assertions::assert_readable(&screen, "no action is pending");
+        harness.wait_for_wrapped("Approve action is unavailable: no action is pending.")?;
         // Crucially: no approval reached the daemon.
         assert!(
             !harness.daemon().saw("POST", "/approve"),
