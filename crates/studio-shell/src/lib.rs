@@ -925,7 +925,12 @@ mod tests {
         assert!(APP_JS.contains("function renderPlan"));
         assert!(APP_JS.contains("summary?.plan"));
         // It renders every step, not a truncated summary of the first one.
-        assert!(APP_JS.contains("state.plan\n    .map((step)"));
+        //
+        // Asserted within one line. `include_str!` embeds whatever the checkout
+        // wrote, so a fragment spanning a newline passes on an LF checkout and
+        // fails on a CRLF one — which is exactly how this passed on Linux and
+        // macOS while failing every Windows run.
+        assert!(APP_JS.contains("`<li>${escapeHtml(planStepText(step))}</li>`"));
         assert!(APP_CSS.contains(".plan-steps"));
     }
 

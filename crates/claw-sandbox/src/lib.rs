@@ -897,17 +897,28 @@ mod tests {
         );
     }
 
+    /// Bytes the background child has appended so far, or 0 before it starts.
+    #[cfg(unix)]
+    fn work_done(ticks: &Path) -> u64 {
+        std::fs::metadata(ticks).map(|meta| meta.len()).unwrap_or(0)
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn timeout_terminates_the_entire_process_group() {
         use purrcode_runtime_core::CommandAction;
         let temporary = tempfile::tempdir().unwrap();
-        let pid_file = temporary.path().join("child.pid");
+        // The child appends while it lives. Liveness used to be read from the
+        // child's pid, which is not sound: the moment the group is killed the
+        // pid is freed, and any process the test runner starts next can take
+        // it — reporting the child as alive forever. Observing the work is
+        // immune to that, and it is the property under test anyway.
+        let ticks = temporary.path().join("ticks.log");
         let action = ProposedAction::Command(CommandAction {
             program: PathBuf::from("sh"),
             arguments: vec![
                 "-c".into(),
-                format!("sleep 30 & echo $! > {}; wait", pid_file.display()),
+                "while :; do echo tick >> ticks.log; sleep 0.1; done & wait".into(),
             ],
             working_directory: temporary.path().to_path_buf(),
             environment: Default::default(),
@@ -917,7 +928,7 @@ mod tests {
             network: false,
             timeout_seconds: 1,
             maximum_output_bytes: 1024,
-            allowed_write_globs: vec!["child.pid".into()],
+            allowed_write_globs: vec!["ticks.log".into()],
             maximum_changed_files: 1,
         };
         let action_id = ActionId::new();
@@ -936,37 +947,27 @@ mod tests {
             ToolRuntime::execute(&mut store, action_id, &action, &constraints).await,
             Err(ExecutionError::Timeout)
         ));
-        let pid: i32 = std::fs::read_to_string(pid_file)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        while process_is_running(pid) && tokio::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        let exists = process_is_running(pid);
+        let mut done = work_done(&ticks);
         assert!(
-            !exists,
-            "background child {pid} survived process-group timeout"
+            done > 0,
+            "the background child never ran, so surviving the timeout was never tested"
         );
-    }
-
-    #[cfg(target_os = "linux")]
-    fn process_is_running(pid: i32) -> bool {
-        let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-            Ok(stat) => stat,
-            Err(_) => return false,
-        };
-        // A zombie has terminated and cannot execute; it only awaits collection by its adopter.
-        stat.rsplit_once(") ")
-            .and_then(|(_, fields)| fields.chars().next())
-            .is_some_and(|state| state != 'Z')
-    }
-
-    #[cfg(all(unix, not(target_os = "linux")))]
-    fn process_is_running(pid: i32) -> bool {
-        unsafe { libc::kill(pid, 0) == 0 }
+        // A child that was stopped stops appending. Poll until two consecutive
+        // samples agree; a child still running grows past every sample and
+        // trips the deadline.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            let next = work_done(&ticks);
+            if next == done {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "background child kept working after the process-group timeout"
+            );
+            done = next;
+        }
     }
 
     #[tokio::test]

@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Assets the Studio shell embeds with `include_str!` and serves verbatim to a
+# browser. Their bytes are the shipped product, so they must not depend on which
+# platform checked the repository out: a CRLF checkout changes what the binary
+# contains, and the release signs and attests those bytes.
+crates/studio-shell/assets/** text eol=lf

@@ -227,6 +227,10 @@ pub struct Tier1Report {
     pub entry_limit_reached: bool,
     pub file_limit_reached: bool,
     pub byte_limit_reached: bool,
+    /// True when nothing matched the task and the repository's source files
+    /// were indexed instead. The context is real but it is not task-scoped, so
+    /// a caller that reports index coverage must not present it as such.
+    pub selection_widened: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -617,10 +621,15 @@ impl ContextIndex {
             .map(|term| term.trim().to_ascii_lowercase())
             .filter(|term| !term.is_empty())
             .collect::<Vec<_>>();
-        let scan_repository = !directory_prefixes.is_empty()
+        // Scan whenever the task named no exact file, even with nothing to
+        // match on: the walk is what makes the fallback below possible, and it
+        // is bounded by `maximum_examined_entries` either way.
+        let scan_repository = exact_paths.is_empty()
+            || !directory_prefixes.is_empty()
             || !filename_terms.is_empty()
             || !request.languages.is_empty();
         let mut selected = exact_paths;
+        let mut source_files = BTreeSet::new();
         let mut language_map = BTreeMap::new();
         let mut language_paths = BTreeSet::new();
         let mut examined_entries = 0_usize;
@@ -658,8 +667,22 @@ impl ContextIndex {
                     || request.languages.contains(&language);
                 if path_selected {
                     selected.insert(relative);
+                } else if language != LanguageId::Other {
+                    source_files.insert(relative);
                 }
             }
+        }
+
+        // A task-scoped selection that matched nothing must not leave the model
+        // with no repository context at all. Selection is by filename, and most
+        // objectives share no word with any filename — "build a CSV to JSON
+        // converter" against a Rust repository selected zero files, so the
+        // planner reported "Indexed 0 file(s), 0 symbol(s)" and then planned
+        // against nothing. Widening to the repository's source files under the
+        // same budget is what retrieval needs to have anything to rank.
+        let selection_widened = selected.is_empty() && !source_files.is_empty();
+        if selection_widened {
+            selected = source_files;
         }
 
         let transaction = self.connection.transaction()?;
@@ -712,6 +735,7 @@ impl ContextIndex {
             entry_limit_reached,
             file_limit_reached,
             byte_limit_reached,
+            selection_widened,
         })
     }
 
@@ -1821,6 +1845,68 @@ mod tests {
             maximum_file_bytes: 1024,
             pause_at_input_latency_millis: 100,
         }
+    }
+
+    #[test]
+    fn a_task_that_matches_no_filename_still_gets_repository_context() {
+        // Observed in a real run: "Indexed 0 file(s), 0 symbol(s)", after which
+        // the planner had nothing to plan against. Selection is by filename, so
+        // this was not an edge case — most objectives share no word with any
+        // file in the tree.
+        let repository = tempfile::tempdir().unwrap();
+        fs::create_dir(repository.path().join("src")).unwrap();
+        fs::write(
+            repository.path().join("src/lib.rs"),
+            "pub struct OrderService;\npub fn paginate_orders() {}\n",
+        )
+        .unwrap();
+        fs::write(repository.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        let mut index = open_test_index(repository.path());
+        index.ensure_tier0(&Tier0Budget::default()).unwrap();
+        let request = Tier1Request {
+            mentioned_paths: Vec::new(),
+            related_paths: Vec::new(),
+            filename_terms: vec!["build".into(), "converter".into()],
+            languages: BTreeSet::new(),
+            include_changed_files: true,
+            budget: Tier1Budget::default(),
+        };
+        let report = index.index_tier1(&request).unwrap();
+        assert!(
+            report.selection_widened,
+            "nothing matched, so it must widen"
+        );
+        assert!(report.index_report.indexed_files >= 2);
+        assert!(report.index_report.symbols >= 2);
+        // Retrieval can only rank what was indexed.
+        let hits = index
+            .retrieve("paginate orders", &RetrievalBudget::default())
+            .unwrap();
+        assert_eq!(hits[0].path, PathBuf::from("src/lib.rs"));
+    }
+
+    #[test]
+    fn a_task_that_names_a_file_stays_scoped_to_it() {
+        // Widening must be the fallback, not the behaviour: a task that named
+        // its file would otherwise drag in the whole repository and bury it.
+        let repository = tempfile::tempdir().unwrap();
+        fs::create_dir(repository.path().join("src")).unwrap();
+        fs::write(repository.path().join("src/lib.rs"), "pub fn a() {}\n").unwrap();
+        fs::write(repository.path().join("src/other.rs"), "pub fn b() {}\n").unwrap();
+        let mut index = open_test_index(repository.path());
+        index.ensure_tier0(&Tier0Budget::default()).unwrap();
+        let report = index
+            .index_tier1(&Tier1Request {
+                mentioned_paths: vec![PathBuf::from("src/lib.rs")],
+                related_paths: Vec::new(),
+                filename_terms: Vec::new(),
+                languages: BTreeSet::new(),
+                include_changed_files: false,
+                budget: Tier1Budget::default(),
+            })
+            .unwrap();
+        assert!(!report.selection_widened);
+        assert_eq!(report.selected_paths, vec![PathBuf::from("src/lib.rs")]);
     }
 
     #[test]
