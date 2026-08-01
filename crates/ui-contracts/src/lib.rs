@@ -46,6 +46,7 @@ pub enum Surface {
     Terminal,
     Tests,
     Evidence,
+    GitHub,
     Settings,
 }
 
@@ -56,6 +57,7 @@ impl Surface {
         Self::Terminal,
         Self::Tests,
         Self::Evidence,
+        Self::GitHub,
         Self::Settings,
     ];
 
@@ -66,6 +68,7 @@ impl Surface {
             Self::Terminal => "Terminal",
             Self::Tests => "Tests",
             Self::Evidence => "Evidence",
+            Self::GitHub => "GitHub",
             Self::Settings => "Settings",
         }
     }

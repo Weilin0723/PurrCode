@@ -1,0 +1,44 @@
+<!-- PurrCode cat-head icon (color) for VS Code Activity Bar -->
+<!-- Derived from purrcode-logo-source.png per PRD §25 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Ragdoll cat head -->
+  <defs>
+    <radialGradient id="face" cx="50%" cy="45%" r="50%">
+      <stop offset="0%" stop-color="#f5e6d3"/>
+      <stop offset="100%" stop-color="#d4c5b0"/>
+    </radialGradient>
+    <radialGradient id="marking" cx="50%" cy="30%" r="40%">
+      <stop offset="0%" stop-color="#a89880" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#a89880" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Head -->
+  <ellipse cx="16" cy="16" rx="12" ry="11" fill="url(#face)" stroke="#c4b49a" stroke-width="0.5"/>
+  <!-- Ear left -->
+  <polygon points="6,7 3,0 11,4" fill="#d4c5b0" stroke="#c4b49a" stroke-width="0.5"/>
+  <!-- Ear right -->
+  <polygon points="26,7 29,0 21,4" fill="#d4c5b0" stroke="#c4b49a" stroke-width="0.5"/>
+  <!-- Marking overlay -->
+  <ellipse cx="16" cy="14" rx="10" ry="9" fill="url(#marking)"/>
+  <!-- Eyes -->
+  <ellipse cx="11" cy="14" rx="3.5" ry="3.5" fill="#5b9bd5"/>
+  <ellipse cx="21" cy="14" rx="3.5" ry="3.5" fill="#5b9bd5"/>
+  <ellipse cx="11" cy="14" rx="2" ry="2.5" fill="#1a1a2e"/>
+  <ellipse cx="21" cy="14" rx="2" ry="2.5" fill="#1a1a2e"/>
+  <!-- Eye reflection -->
+  <circle cx="10" cy="13" r="0.8" fill="white" opacity="0.7"/>
+  <circle cx="20" cy="13" r="0.8" fill="white" opacity="0.7"/>
+  <!-- Nose -->
+  <ellipse cx="16" cy="21" rx="1.5" ry="1" fill="#e8a0a0"/>
+  <!-- Mouth -->
+  <path d="M13,23 Q16,25 19,23" fill="none" stroke="#c4b49a" stroke-width="0.5"/>
+  <!-- Whiskers -->
+  <line x1="5" y1="20" x2="10" y2="20.5" stroke="#c4b49a" stroke-width="0.4"/>
+  <line x1="5" y1="22" x2="10" y2="22" stroke="#c4b49a" stroke-width="0.4"/>
+  <line x1="27" y1="20" x2="22" y2="20.5" stroke="#c4b49a" stroke-width="0.4"/>
+  <line x1="27" y1="22" x2="22" y2="22" stroke="#c4b49a" stroke-width="0.4"/>
+  <!-- Collar -->
+  <path d="M10,26 Q16,28 22,26" fill="none" stroke="#9b59b6" stroke-width="1.5"/>
+  <!-- Tag -->
+  <circle cx="16" cy="27.5" r="1.5" fill="#f5c842" stroke="#c4a330" stroke-width="0.3"/>
+</svg>

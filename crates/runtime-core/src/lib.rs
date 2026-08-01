@@ -1,5 +1,6 @@
 //! Provider-independent domain contracts for the trusted runtime.
 
+pub mod adaptation;
 pub mod authority;
 pub mod terminal;
 

@@ -1,0 +1,8 @@
+PurrCode v1.0 Codex Goal Bundle
+
+Files:
+- PurrCode_v1.0_Codex_Master_PRD.md
+- assets/purrcode-v1-ide-reference.png
+- assets/purrcode-logo-source.png
+
+Give the complete bundle to Codex. The two PNG files are authoritative design references described by the PRD.
