@@ -9,6 +9,7 @@ import { Daemon, Session, SessionDetail, ConversationMessage, ArtifactCard, Acti
 export class WorkbenchProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "purrcode.workbench";
   private _view?: vscode.WebviewView;
+  private _currentSessionId: string | null = null;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -88,22 +89,40 @@ export class WorkbenchProvider implements vscode.WebviewViewProvider {
   // ── internal ──
 
   private async fetchDetail(sessionId: string): Promise<SessionDetail> {
-    const [session, conversation, activity, artifacts] = await Promise.all([
-      this.daemon.getSummary(sessionId).catch(() => this.daemon.getSession(sessionId)),
-      this.daemon.getConversation(sessionId).catch(() => [] as ConversationMessage[]),
-      this.daemon.getActivity(sessionId).catch(() => [] as ActivityItem[]),
-      this.daemon.getArtifacts(sessionId).catch(() => [] as ArtifactCard[]),
-    ]);
-    return {
-      session,
-      conversation: Array.isArray(conversation) ? conversation : [conversation].filter(Boolean) as any,
-      activity,
-      artifacts,
-      terminals: [],
-      changes: { files_changed: 0, additions: 0, deletions: 0, files: [] },
-      validation: { status: "pending", passed: 0, failed: 0, skipped: 0 },
-    };
-  }
+      const [session, conversation, activity, artifacts, changes, validation] = await Promise.all([
+        this.daemon.getSummary(sessionId).catch(() => this.daemon.getSession(sessionId)),
+        this.daemon.getConversation(sessionId).catch(() => [] as ConversationMessage[]),
+        this.daemon.getActivity(sessionId).catch(() => [] as ActivityItem[]),
+        this.daemon.getArtifacts(sessionId).catch(() => [] as ArtifactCard[]),
+        this.daemon.getChanges(sessionId).catch(() => ({ files_changed: 0, additions: 0, deletions: 0, files: [] } as any)),
+        this.daemon.getValidation(sessionId).catch(() => ({ status: "pending", passed: 0, failed: 0, skipped: 0 } as any)),
+      ]);
+      // Enhance the changes artifact with file list for diff viewing
+      const artifactsWithFiles = [...artifacts];
+      const changesIndex = artifactsWithFiles.findIndex(a => a.kind === "changes");
+      if (changesIndex >= 0) {
+        artifactsWithFiles[changesIndex] = {
+          ...artifactsWithFiles[changesIndex],
+          files: changes.files.map((f: string) => ({ path: f, added: undefined, removed: undefined }))
+        };
+      } else if (changes.files.length > 0) {
+        artifactsWithFiles.push({
+          kind: "changes",
+          title: "Changes",
+          summary: `${changes.files_changed} files changed (${changes.additions}+, ${changes.deletions}-)`,
+          files: changes.files.map((f: string) => ({ path: f, added: undefined, removed: undefined }))
+        });
+      }
+      return {
+        session,
+        conversation,
+        activity,
+        artifacts: artifactsWithFiles,
+        terminals: [],
+        changes, // kept for potential other uses
+        validation
+      };
+    }
 
   private handleMessage(webview: vscode.Webview, message: any): void {
     switch (message.type) {
@@ -118,6 +137,11 @@ export class WorkbenchProvider implements vscode.WebviewViewProvider {
         break;
       case "action":
         // Handled by extension host
+        break;
+      case "openTerminal":
+        // Create and show a terminal for this session
+        const terminal = vscode.window.createTerminal(`PurrCode: ${message.sessionId}`);
+        terminal.show();
         break;
     }
   }
@@ -177,6 +201,17 @@ body {
   font-size: 11px; padding: 2px 8px; border-radius: 4px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
+}
+#header #btnTerminal {
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border: none;
+  cursor: pointer;
+}
+#header #btnTerminal:hover {
+  background: var(--vscode-badge-background);
+  opacity: 0.8;
 }
 #header .chip.purple { background: var(--pc-accent); color: var(--pc-bg); }
 
@@ -281,6 +316,7 @@ body {
   <span class="chip purple" id="chipModel"></span>
   <span class="chip" id="chipMode"></span>
   <span class="chip" id="chipPerm"></span>
+  <button id="btnTerminal" title="Open Terminal">💻</button>
 </div>
 
 <div id="body">
@@ -330,22 +366,25 @@ const el = (id) => document.getElementById(id);
 const $messages = el("messages");
 const $empty = el("empty-state");
 const $title = el("headerTitle");
-const $modelChip = el("chcp");
+const $modelChip = el("chipModel");
 const $modeChip = el("chipMode");
 const $permChip = el("chipPerm");
 const $status = el("status");
-const $input = el("input");
+const $input = el("txInput");
 const $btnSend = el("btnSend");
 const $btnStop = el("btnStop");
-const $selModel = el("selModel");
-
+const $btnTerminal = el("btnTerminal");
+const $selMode = el("selMode");
+const $slStyle = el("slStyle");
+const $selPerm = el("selPerm");
+// ── Composer actions ──
 // ── Composer actions ──
 $btnSend.addEventListener("click", () => {
   const text = $input.value.trim();
   if (!text) return;
-  const taskMode = el("selTask").value;
-  const style = el("slStyle").value;
-  const perm = el("selPerm").value;
+  const taskMode = $selMode.value;
+  const style = $slStyle.value;
+  const perm = $selPerm.value;
   send({
     type: "submit",
     text,
@@ -365,6 +404,11 @@ $input.addEventListener("keydown", (e) => {
 
 $btnStop.addEventListener("click", () => {
   send({ type: "stop", sessionId: state.sessionId });
+});
+
+// Open terminal in VS Code
+$btnTerminal.addEventListener("click", () => {
+  send({ type: "openTerminal", sessionId: state.sessionId });
 });
 
 // ── Message handler ──

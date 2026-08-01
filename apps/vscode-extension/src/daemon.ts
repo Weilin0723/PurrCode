@@ -146,12 +146,55 @@ export class Daemon {
     return this.request("GET", "/v1/sessions/" + sessionId + "/hunks");
   }
 
+  async getFileDiff(sessionId: string, filePath: string): Promise<{ content: string; format: string }> {
+    return this.request("GET", "/v1/sessions/" + sessionId + "/diff", { filePath });
+  }
+
   async getEvents(sessionId: string): Promise<unknown[]> {
     return this.request("GET", "/v1/sessions/" + sessionId + "/events");
   }
 
   async getTerminals(sessionId: string): Promise<SessionDetail["terminals"]> {
     return this.request("GET", "/v1/sessions/" + sessionId + "/terminals");
+  }
+
+  async createTerminal(
+    sessionId: string,
+    label?: string,
+    cwd?: string
+  ): Promise<{ id: string; label: string }> {
+    return this.request("POST", "/v1/sessions/" + sessionId + "/terminals", {
+      label,
+      cwd,
+    });
+  }
+
+  async sendToTerminal(
+    sessionId: string,
+    terminalId: string,
+    data: string,
+    addNewline?: boolean
+  ): Promise<void> {
+    await this.request("POST", "/v1/sessions/" + sessionId + "/terminals/" + terminalId, {
+      data,
+      addNewline,
+    });
+  }
+
+  async resizeTerminal(
+    sessionId: string,
+    terminalId: string,
+    cols: number,
+    rows: number
+  ): Promise<void> {
+    await this.request("POST", "/v1/sessions/" + sessionId + "/terminals/" + terminalId + "/resize", {
+      cols,
+      rows,
+    });
+  }
+
+  async killTerminal(sessionId: string, terminalId: string): Promise<void> {
+    await this.request("DELETE", "/v1/sessions/" + sessionId + "/terminals/" + terminalId);
   }
 
   // ── Bootstrap / discovery ──

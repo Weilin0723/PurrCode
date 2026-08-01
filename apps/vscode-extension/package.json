@@ -7,7 +7,10 @@
   "engines": {
     "vscode": "^1.95.0"
   },
-  "categories": ["Machine Learning", "Other"],
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
   "activationEvents": [
     "onView:purrcode.workbench",
     "onView:purrcode.sessions"
@@ -15,35 +18,43 @@
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
-      {"command": "purrcode.start", "title": "PurrCode: Start Task"},
-      {"command": "purrcode.startSelection", "title": "PurrCode: Start Task With Selection"},
-      {"command": "purrcode.refresh", "title": "PurrCode: Refresh Sessions"},
-      {"command": "purrcode.openSession", "title": "PurrCode: Open Session in Workbench"},
-      {"command": "purrcode.openWorkbench", "title": "PurrCode: Focus Workbench"},
-      {"command": "purrcode.openInTerminal", "title": "PurrCode: Open Current Session in Terminal"},
-      {"command": "purrcode.resume", "title": "PurrCode: Resume Session"},
-      {"command": "purrcode.approve", "title": "PurrCode: Approve Pending Action"},
-      {"command": "purrcode.reject", "title": "PurrCode: Reject Pending Action"},
-      {"command": "purrcode.pause", "title": "PurrCode: Pause Session"},
-      {"command": "purrcode.cancel", "title": "PurrCode: Cancel Session"},
-      {"command": "purrcode.checkpoint", "title": "PurrCode: Create Checkpoint"},
-      {"command": "purrcode.rollback", "title": "PurrCode: Roll Back Isolated Changes"},
-      {"command": "purrcode.compact", "title": "PurrCode: Compact Context"},
-      {"command": "purrcode.selectModel", "title": "PurrCode: Select Session Model"},
-      {"command": "purrcode.openDiff", "title": "PurrCode: Open Current File Diff"},
-      {"command": "purrcode.applyHunk", "title": "PurrCode: Apply Reviewed Hunk"},
-      {"command": "purrcode.rejectHunk", "title": "PurrCode: Reject Reviewed Hunk"},
-      {"command": "purrcode.showEvidence", "title": "PurrCode: Show Session Evidence"},
-      {"command": "purrcode.githubConnect", "title": "PurrCode: Connect GitHub"},
-      {"command": "purrcode.githubCreatePR", "title": "PurrCode: Create Pull Request"},
-      {"command": "purrcode.workflowDirect", "title": "PurrCode: Force Direct Workflow"},
-      {"command": "purrcode.workflowStandard", "title": "PurrCode: Force Standard Workflow"},
-      {"command": "purrcode.workflowUltra", "title": "PurrCode: Force Ultra Workflow"},
-      {"command": "purrcode.workflowAuto", "title": "PurrCode: Auto Workflow"},
-      {"command": "purrcode.searchOff", "title": "PurrCode: Search Off"},
-      {"command": "purrcode.searchAuto", "title": "PurrCode: Search Auto"},
-      {"command": "purrcode.searchAlways", "title": "PurrCode: Search Always"},
-      {"command": "purrcode.viewUsage", "title": "PurrCode: View Session Usage"}
+            {"command": "purrcode.start", "title": "PurrCode: Start Task"},
+            {"command": "purrcode.startSelection", "title": "PurrCode: Start Task With Selection"},
+            {"command": "purrcode.refresh", "title": "PurrCode: Refresh Sessions"},
+            {"command": "purrcode.openSession", "title": "PurrCode: Open Session in Workbench"},
+            {"command": "purrcode.openWorkbench", "title": "PurrCode: Focus Workbench"},
+            {"command": "purrcode.openInTerminal", "title": "PurrCode: Open Current Session in Terminal"},
+            {"command": "purrcode.resume", "title": "PurrCode: Resume Session"},
+            {"command": "purrcode.approve", "title": "PurrCode: Approve Pending Action"},
+            {"command": "purrcode.reject", "title": "PurrCode: Reject Pending Action"},
+            {"command": "purrcode.pause", "title": "PurrCode: Pause Session"},
+            {"command": "purrcode.cancel", "title": "PurrCode: Cancel Session"},
+            {"command": "purrcode.checkpoint", "title": "PurrCode: Create Checkpoint"},
+            {"command": "purrcode.rollback", "title": "PurrCode: Roll Back Isolated Changes"},
+            {"command": "purrcode.compact", "title": "PurrCode: Compact Context"},
+            {"command": "purrcode.selectModel", "title": "PurrCode: Select Session Model"},
+            {"command": "purrcode.openDiff", "title": "PurrCode: Open Current File Diff"},
+            {"command": "purrcode.applyHunk", "title": "PurrCode: Apply Reviewed Hunk"},
+            {"command": "purrcode.rejectHunk", "title": "PurrCode: Reject Reviewed Hunk"},
+            {"command": "purrcode.showEvidence", "title": "PurrCode: Show Session Evidence"},
+            {"command": "purrcode.githubConnect", "title": "PurrCode: Connect GitHub"},
+            {"command": "purrcode.githubCreatePR", "title": "PurrCode: Create Pull Request"},
+            {"command": "purrcode.workflowDirect", "title": "PurrCode: Force Direct Workflow"},
+            {"command": "purrcode.workflowStandard", "title": "PurrCode: Force Standard Workflow"},
+            {"command": "purrcode.workflowUltra", "title": "PurrCode: Force Ultra Workflow"},
+            {"command": "purrcode.workflowAuto", "title": "PurrCode: Auto Workflow"},
+            {"command": "purrcode.searchOff", "title": "PurrCode: Search Off"},
+            {"command": "purrcode.searchAuto", "title": "PurrCode: Search Auto"},
+            {"command": "purrcode.searchAlways", "title": "PurrCode: Search Always"},
+            {"command": "purrcode.viewUsage", "title": "PurrCode: View Session Usage"},
+            {"command": "purrcode.openFileDiff", "title": "PurrCode: Open File Diff"}
+          ],
+    "keybindings": [
+      {
+        "command": "purrcode.openWorkbench",
+        "key": "ctrl+shift+i",
+        "when": "editorTextFocus"
+      }
     ],
     "viewsContainers": {
       "activitybar": [
@@ -118,7 +129,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/vscode": "^1.95.0",
+    "types/vscode": "^1.95.0",
     "typescript": "^5.7.0"
   }
 }
