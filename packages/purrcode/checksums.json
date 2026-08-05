@@ -1,7 +1,7 @@
 {
-  "purrcode-aarch64-apple-darwin.tar.gz": "092df9918e71838d1d18310dd6233fea6bc258cf78be013148bde5be57989791",
-  "purrcode-aarch64-unknown-linux-gnu.tar.gz": "d0d3a1d03b446f4f267884981702e98a699b3e7493cc8640e626e33a8c1520c2",
-  "purrcode-x86_64-apple-darwin.tar.gz": "ed76e54ce4e5326c236b0e63b57e48a576b94b56e4ea4515fe71d3a3eebc17cd",
-  "purrcode-x86_64-pc-windows-msvc.zip": "babf678f71c98b1e2df34952cdb80a92be530125e726a39fec0b960d38177146",
-  "purrcode-x86_64-unknown-linux-gnu.tar.gz": "170960c2328f0140ae02311419ded383454c6c05bc4fed308c6b3ccf3ee9f13e"
+  "purrcode-aarch64-apple-darwin.tar.gz": "42cf5a92e2818f2c716dcea4a13d8dd304900bce4ab999fda91dc5066b0b0c15",
+  "purrcode-aarch64-unknown-linux-gnu.tar.gz": "418b10348c5f1459840836ede60581d8411c411dd9019d54c3c7f6d77ddbc5be",
+  "purrcode-x86_64-apple-darwin.tar.gz": "6ddc0c60e68bf9c1c408ee8c273b5bb36eb82cb98cd315a78965ce1f218be90a",
+  "purrcode-x86_64-pc-windows-msvc.zip": "50a5092d2bd6a22b7cc73ca216489922fbdcb290b966f5ba329d58dd2a410783",
+  "purrcode-x86_64-unknown-linux-gnu.tar.gz": "9ab0df9661f97ab757a0a1bcbdaae42bd85f6f13536fd25169e2defa363eb470"
 }
