@@ -14,10 +14,10 @@ The script is deterministic, so a re-run reproduces the tree byte for byte.
 | --- | --- | --- |
 | `purrcode-logo-source.png` | Supplied source. Do not edit. | — |
 | `purrcode-logo-horizontal-dark.png` | Full lockup for dark surfaces | Mascot + wordmark cut from the source, white paper turned to transparency |
-| `purrcode-logo-horizontal-light.png` | Full lockup for light surfaces | As above, with `Purr` repainted slate so it does not vanish on white |
+| `purrcode-logo-horizontal-light.png` | Full lockup for light surfaces | As above, with `Purr` repainted black so it does not vanish on white |
 | `purrcode-mascot-large.png` | 1024px mascot | Source mascot, trimmed and centred on a transparent square |
 | `purrcode-wordmark-dark.svg` / `.png` | `Purr` white, `Code` blue | Traced from the source glyph masks |
-| `purrcode-wordmark-light.svg` / `.png` | `Purr` slate, `Code` blue | Same trace, different fill |
+| `purrcode-wordmark-light.svg` / `.png` | `Purr` black, `Code` blue | Same trace, different fill |
 | `purrcode-cat-head.svg` | Colour icon for the Activity Bar and avatars | Mascot posterised to six brand colours, each region traced |
 | `purrcode-cat-head-monochrome.svg` | Single-colour icon (`currentColor`) | Mascot silhouette with the eyes knocked out |
 | `icons/16…512.png` | App, marketplace and OS icons | Source mascot resampled; no wordmark, no canvas |

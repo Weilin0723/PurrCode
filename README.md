@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="brand/purrcode-logo-horizontal-dark.png" alt="PurrCode" width="320" />
+  <img src="brand/purrcode-logo-horizontal-light.png" alt="PurrCode" width="320" />
 </p>
 
 <p align="center">

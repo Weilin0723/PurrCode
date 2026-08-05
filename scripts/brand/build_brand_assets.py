@@ -28,10 +28,10 @@ BRAND = REPO / "brand"
 SOURCE = BRAND / "purrcode-logo-source.png"
 
 # The blue of `Code`, sampled from the source. `Purr` is white on dark surfaces
-# and this slate on light ones, so the wordmark keeps its contrast either way.
+# and this black on light ones, so the wordmark keeps its contrast either way.
 ACCENT_BLUE = (95, 192, 250)
 PURR_ON_DARK = (255, 255, 255)
-PURR_ON_LIGHT = (30, 38, 51)
+PURR_ON_LIGHT = (0, 0, 0)
 
 ICON_SIZES = (16, 24, 32, 48, 64, 128, 256, 512)
 
