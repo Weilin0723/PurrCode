@@ -922,10 +922,12 @@ mod tests {
         let sender = controller.start(None, now);
         sender.try_send(delta("pur")).unwrap();
         sender.try_send(delta("r")).unwrap();
-        assert!(controller
-            .drain(now + DELTA_BATCH_MIN)
-            .iter()
-            .all(|event| !matches!(event, StreamOutput::Content { .. })));
+        assert!(
+            controller
+                .drain(now + DELTA_BATCH_MIN)
+                .iter()
+                .all(|event| !matches!(event, StreamOutput::Content { .. }))
+        );
         assert_eq!(
             controller.drain(now + DELTA_BATCH_MIN + DELTA_BATCH_TARGET),
             vec![StreamOutput::Content {
@@ -943,9 +945,11 @@ mod tests {
         let now = Instant::now();
         let mut controller = StreamController::new();
         let sender = controller.start(None, now);
-        assert!(controller
-            .actionable_stall(now + FIRST_TOKEN_STALL)
-            .is_none());
+        assert!(
+            controller
+                .actionable_stall(now + FIRST_TOKEN_STALL)
+                .is_none()
+        );
         sender
             .try_send(StreamEvent::Phase(phase(
                 StreamPhase::WaitingForFirstToken,
@@ -953,14 +957,18 @@ mod tests {
             )))
             .unwrap();
         controller.drain(now + Duration::from_millis(10));
-        assert!(controller
-            .actionable_stall(now + FIRST_TOKEN_STALL + Duration::from_millis(10))
-            .is_some());
+        assert!(
+            controller
+                .actionable_stall(now + FIRST_TOKEN_STALL + Duration::from_millis(10))
+                .is_some()
+        );
         sender.try_send(delta("semantic")).unwrap();
         controller.drain(now + FIRST_TOKEN_STALL + Duration::from_millis(11));
-        assert!(controller
-            .actionable_stall(now + FIRST_TOKEN_STALL * 2)
-            .is_none());
+        assert!(
+            controller
+                .actionable_stall(now + FIRST_TOKEN_STALL * 2)
+                .is_none()
+        );
     }
 
     #[test]
@@ -993,9 +1001,11 @@ mod tests {
             decoded,
             vec![StreamEvent::DurableAudit { sequence: 7, event }]
         );
-        assert!(!decoded
-            .iter()
-            .any(|event| matches!(event, StreamEvent::ContentDelta { .. })));
+        assert!(
+            !decoded
+                .iter()
+                .any(|event| matches!(event, StreamEvent::ContentDelta { .. }))
+        );
     }
 
     #[test]
@@ -1097,9 +1107,11 @@ mod tests {
     #[test]
     fn terminal_control_characters_are_rejected() {
         let value = json!({"kind": "content_delta", "delta": "safe\u{1b}[2J"});
-        assert!(decode_wire_value(value, None, None)
-            .unwrap_err()
-            .contains("control character"));
+        assert!(
+            decode_wire_value(value, None, None)
+                .unwrap_err()
+                .contains("control character")
+        );
     }
 
     #[test]

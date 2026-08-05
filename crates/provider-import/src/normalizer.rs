@@ -37,7 +37,7 @@ pub fn normalize_candidate(
     }) {
         return Err(ImportError::Malformed {
             format: "provider profile".into(),
-            message: "detected secret must be converted to a keychain or environment reference"
+            message: "detected secret must be converted to a credential or environment reference"
                 .into(),
         });
     }

@@ -5,6 +5,8 @@
 //! evidence. Missing evidence is preserved in the result instead of being replaced by optimistic
 //! defaults.
 
+#![allow(clippy::collapsible_if)]
+
 pub use crate::local_models::ResourceSnapshot;
 use purrcode_provider_gateway::QualificationReport;
 use serde::{Deserialize, Serialize};
@@ -1212,10 +1214,12 @@ mod tests {
             report.constraints.lifecycle,
             RecommendedLifecycle::UnloadAfterRequest
         );
-        assert!(report
-            .resource_risks
-            .iter()
-            .any(|risk| risk.code == RiskCode::HighSwapPressure));
+        assert!(
+            report
+                .resource_risks
+                .iter()
+                .any(|risk| risk.code == RiskCode::HighSwapPressure)
+        );
     }
 
     #[test]
@@ -1323,10 +1327,12 @@ mod tests {
             RecommendationOutcome::Recommended { .. }
         ));
         assert!(report.cards[0].estimated_runtime_memory_bytes.is_some());
-        assert!(report.cards[0]
-            .missing_evidence
-            .iter()
-            .any(|gap| gap.code == MissingEvidenceCode::ModelSize));
+        assert!(
+            report.cards[0]
+                .missing_evidence
+                .iter()
+                .any(|gap| gap.code == MissingEvidenceCode::ModelSize)
+        );
         assert!(!blocker(
             &report.cards[0],
             BlockerCode::MemoryEstimateUnavailable
@@ -1379,10 +1385,12 @@ mod tests {
             &report.cards[0],
             BlockerCode::MemoryEstimateUnavailable
         ));
-        assert!(report.cards[0]
-            .missing_evidence
-            .iter()
-            .any(|gap| gap.code == MissingEvidenceCode::ModelSize));
+        assert!(
+            report.cards[0]
+                .missing_evidence
+                .iter()
+                .any(|gap| gap.code == MissingEvidenceCode::ModelSize)
+        );
     }
 
     #[test]
@@ -1406,10 +1414,12 @@ mod tests {
             .iter()
             .find(|card| card.model == "aggressive")
             .unwrap();
-        assert!(aggressive
-            .risks
-            .iter()
-            .any(|risk| risk.code == RiskCode::AggressiveQuantization));
+        assert!(
+            aggressive
+                .risks
+                .iter()
+                .any(|risk| risk.code == RiskCode::AggressiveQuantization)
+        );
         assert!(aggressive.score < normal.score);
     }
 
@@ -1424,10 +1434,12 @@ mod tests {
         let report = recommend_local_models(&resources(64, 48, 0, "normal", 4, true), &[model]);
         assert_eq!(report.cards[0].recommended_context_tokens, 4_096);
         assert_eq!(report.constraints.context_limit_tokens, 4_096);
-        assert!(report.cards[0]
-            .risks
-            .iter()
-            .any(|risk| risk.code == RiskCode::ContextCapped));
+        assert!(
+            report.cards[0]
+                .risks
+                .iter()
+                .any(|risk| risk.code == RiskCode::ContextCapped)
+        );
     }
 
     #[test]

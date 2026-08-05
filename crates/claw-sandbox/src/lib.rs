@@ -5,8 +5,8 @@ use cap_std::fs::{Dir, OpenOptions};
 use globset::{Glob, GlobSetBuilder};
 use purrcode_ninelives::{SessionStore, StoreError};
 use purrcode_runtime_core::{
-    ActionId, DeleteFileAction, ProposedAction, WriteFileAction, MAX_GREP_MAX_BYTES,
-    MAX_GREP_MAX_RESULTS, MAX_LIST_MAX_ENTRIES, MAX_READ_FILE_BYTES,
+    ActionId, DeleteFileAction, MAX_GREP_MAX_BYTES, MAX_GREP_MAX_RESULTS, MAX_LIST_MAX_ENTRIES,
+    MAX_READ_FILE_BYTES, ProposedAction, WriteFileAction,
 };
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -14,7 +14,7 @@ use std::process::Stdio;
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SandboxLevel {
@@ -357,12 +357,11 @@ fn collect_files(
         let line = format!("{}\n", child_rel.to_string_lossy());
         state.output.extend_from_slice(line.as_bytes());
         *state.entries += 1;
-        if current_depth < state.max_depth {
-            if let Ok(meta) = state.directory.metadata(&child_rel) {
-                if meta.is_dir() {
-                    collect_files(base_path, &child_rel, current_depth + 1, state)?;
-                }
-            }
+        if current_depth < state.max_depth
+            && let Ok(meta) = state.directory.metadata(&child_rel)
+            && meta.is_dir()
+        {
+            collect_files(base_path, &child_rel, current_depth + 1, state)?;
         }
     }
     Ok(())
@@ -812,7 +811,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use purrcode_runtime_core::{
-        ActionConstraints, ApprovalAuthority, Authorization, RepositoryReadAction, SessionId,
+        ActionConstraints, ApprovalAuthority, Authorization, JudgmentDecision,
+        RepositoryReadAction, SessionEvent, SessionId,
     };
 
     #[tokio::test]
@@ -832,11 +832,43 @@ mod tests {
             maximum_changed_files: 1,
         };
         let action_id = ActionId::new();
+        let session_id = SessionId::new();
         let mut store = SessionStore::in_memory().unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "test an authorized atomic write".into(),
+                    repository: temporary.path().to_path_buf(),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::ActionProposed {
+                    action_id,
+                    action: action.clone(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::JudgmentRecorded {
+                    action_id,
+                    decision: JudgmentDecision::RequireApproval {
+                        reason: "test requires explicit human approval".into(),
+                        constraints: constraints.clone(),
+                    },
+                },
+            )
+            .unwrap();
         store
             .authorize(&Authorization {
                 action_id,
-                session_id: SessionId::new(),
+                session_id,
                 action_digest: action.digest(&constraints).unwrap(),
                 constraints: constraints.clone(),
                 authorized_at: Utc::now(),
@@ -875,11 +907,43 @@ mod tests {
             maximum_changed_files: 1,
         };
         let action_id = ActionId::new();
+        let session_id = SessionId::new();
         let mut store = SessionStore::in_memory().unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "test optimistic write concurrency".into(),
+                    repository: temporary.path().to_path_buf(),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::ActionProposed {
+                    action_id,
+                    action: action.clone(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::JudgmentRecorded {
+                    action_id,
+                    decision: JudgmentDecision::RequireApproval {
+                        reason: "test requires explicit human approval".into(),
+                        constraints: constraints.clone(),
+                    },
+                },
+            )
+            .unwrap();
         store
             .authorize(&Authorization {
                 action_id,
-                session_id: SessionId::new(),
+                session_id,
                 action_digest: action.digest(&constraints).unwrap(),
                 constraints: constraints.clone(),
                 authorized_at: Utc::now(),
@@ -1288,9 +1352,11 @@ mod tests {
         assert_eq!(result.sandbox_level, capability.level);
         assert!(result.sandbox_backend.starts_with(&capability.backend));
         if !capability.network_isolation {
-            assert!(result
-                .sandbox_backend
-                .contains("network isolation unavailable"));
+            assert!(
+                result
+                    .sandbox_backend
+                    .contains("network isolation unavailable")
+            );
         }
         assert!(
             ToolRuntime::execute(&mut store, action_id, &action, &constraints)

@@ -3,10 +3,10 @@
 use crate::app::{App, AppMode};
 use crate::theme::Theme;
 use crate::trace_inspector::TraceInspector;
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
-use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
     match app.mode {
@@ -150,19 +150,25 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
             setup.import_source.len(),
             purrcode_provider_import::DEFAULT_MAX_INPUT_BYTES,
             setup.import_source.lines().count().max(1),
-            setup.error.as_ref().map_or_else(String::new, |error| format!("\n\nError: {error}"))
+            setup
+                .error
+                .as_ref()
+                .map_or_else(String::new, |error| format!("\n\nError: {error}"))
         ),
         crate::provider_setup::SetupScreen::ImportAuthChoice => {
             setup_import_auth_choice_text(setup)
         }
         crate::provider_setup::SetupScreen::ImportKeychainConfirm => format!(
-            "Confirm OS keychain storage\n\nPurrCode detected one static credential. Its value remains in a zeroizing transient buffer and is not shown.\n\nStore it under credential name `{}`?\nOnly `keychain:{}` will be written to provider configuration.\n\nY  Confirm storage    N/Esc  Back",
-            setup.profile_name, setup.profile_name
+            "Confirm credential storage\n\nPurrCode detected one static credential. Its value remains in a zeroizing transient buffer and is not shown.\n\nStore it under credential name `{}`?\nThe secret will be written to `credentials.toml` next to `config.toml`; only the name is stored in provider configuration.\n\nY  Confirm storage    N/Esc  Back",
+            setup.profile_name
         ),
         crate::provider_setup::SetupScreen::ImportEnvironment => format!(
             "Use an environment-variable reference\n\nVariable: [{}]\n\nPurrCode will save only this variable name. Ensure the variable contains the credential before the real connection test.\n\nCtrl+G/Enter  Confirm reference    Esc  Back{}",
             setup.environment_reference,
-            setup.error.as_ref().map_or_else(String::new, |error| format!("\n\nError: {error}"))
+            setup
+                .error
+                .as_ref()
+                .map_or_else(String::new, |error| format!("\n\nError: {error}"))
         ),
         crate::provider_setup::SetupScreen::Form
         | crate::provider_setup::SetupScreen::ImportReview => setup_form_text(setup),
@@ -183,8 +189,8 @@ fn draw_setup(frame: &mut Frame<'_>, app: &App) {
 fn setup_import_auth_choice_text(setup: &crate::provider_setup::ProviderSetup) -> String {
     let choices = [
         (
-            "Store in OS keychain",
-            "recommended · saves only a keychain reference",
+            "Store in credentials.toml",
+            "recommended · saves the secret next to config.toml",
         ),
         (
             "Use existing environment variable",
@@ -291,12 +297,21 @@ fn setup_form_text(setup: &crate::provider_setup::ProviderSetup) -> String {
     };
     format!(
         "Review provider\n\nProvider: {provider}\n\n{} Profile name  [{}]\n{} Base URL *    [{}]\n{} API key/auth  [{}]\n{} Model ID *    [{}]\n{} Role           [{}]\n\nDiscovered models: {}\nNetwork: {}{}{}\n\nType to edit · Ctrl+U clear field · ↑↓ choose discovered model\nTab/Shift+Tab field · Ctrl+G save and run real connection test · Esc cancel",
-        marker(0), setup.profile_name,
-        marker(1), setup.base_url,
-        marker(2), setup.auth_status(),
-        marker(3), setup.model_id,
-        marker(4), setup.role,
-        if setup.discovered_models.is_empty() { "none".into() } else { setup.discovered_models.join(", ") },
+        marker(0),
+        setup.profile_name,
+        marker(1),
+        setup.base_url,
+        marker(2),
+        setup.auth_status(),
+        marker(3),
+        setup.model_id,
+        marker(4),
+        setup.role,
+        if setup.discovered_models.is_empty() {
+            "none".into()
+        } else {
+            setup.discovered_models.join(", ")
+        },
         if setup.local { "local" } else { "remote" },
         import,
         diagnostics,

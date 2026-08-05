@@ -463,6 +463,98 @@ pub fn derive(events: &[Value]) -> WorkbenchProgress {
                         .detail(format!("{steps} step(s)")),
                 );
             }
+            "spec_bundle_recorded" => {
+                let bundle = data.get("bundle").unwrap_or(&Value::Null);
+                let title = bundle
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Specification");
+                let revision = bundle
+                    .get("revision")
+                    .map(display_scalar)
+                    .unwrap_or_else(|| "?".into());
+                let requirements = bundle
+                    .get("requirements")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                progress.activity.push(
+                    ActivityEntry::new(ActivityState::Done, "Specification recorded", Some(index))
+                        .detail(format!(
+                            "{title} · revision {revision} · {requirements} requirement(s)"
+                        )),
+                );
+            }
+            "task_graph_recorded" => {
+                let graph = data.get("graph").unwrap_or(&Value::Null);
+                let revision = graph
+                    .get("revision")
+                    .map(display_scalar)
+                    .unwrap_or_else(|| "?".into());
+                let tasks = graph
+                    .get("tasks")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                progress.activity.push(
+                    ActivityEntry::new(ActivityState::Done, "Task graph recorded", Some(index))
+                        .detail(format!("revision {revision} · {tasks} task(s)")),
+                );
+            }
+            "task_status_changed" => {
+                let task_id = data
+                    .get("task_id")
+                    .map(display_scalar)
+                    .unwrap_or_else(|| "unknown".into());
+                let status = data
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(humanize)
+                    .unwrap_or_else(|| "Unknown".into());
+                let state = match status.to_ascii_lowercase().as_str() {
+                    "failed" | "blocked" | "needs attention" => ActivityState::Attention,
+                    "running" => ActivityState::Active,
+                    "pending" | "ready" => ActivityState::Pending,
+                    _ => ActivityState::Done,
+                };
+                progress.activity.push(
+                    ActivityEntry::new(
+                        state,
+                        format!("Task {} · {status}", short_id(&task_id)),
+                        Some(index),
+                    )
+                    .detail(text("reason").to_owned()),
+                );
+            }
+            "evidence_linked" => {
+                let evidence = data.get("evidence").unwrap_or(&Value::Null);
+                let task_id = evidence
+                    .get("task_id")
+                    .map(display_scalar)
+                    .unwrap_or_else(|| "unknown".into());
+                let coverage = evidence
+                    .get("coverage")
+                    .and_then(Value::as_str)
+                    .map(humanize)
+                    .unwrap_or_else(|| "Unknown".into());
+                let state = match coverage.to_ascii_lowercase().as_str() {
+                    "failed" | "unavailable" | "stale" => ActivityState::Attention,
+                    "not run" => ActivityState::Pending,
+                    _ => ActivityState::Done,
+                };
+                progress.activity.push(
+                    ActivityEntry::new(
+                        state,
+                        format!("Evidence linked · task {}", short_id(&task_id)),
+                        Some(index),
+                    )
+                    .detail(format!(
+                        "{coverage}: {}",
+                        evidence
+                            .get("summary")
+                            .and_then(Value::as_str)
+                            .unwrap_or("No summary")
+                    )),
+                );
+            }
             "model_request_started" | "provider_request_started" => {
                 model_pending = Some(index);
             }
@@ -707,6 +799,25 @@ pub fn derive(events: &[Value]) -> WorkbenchProgress {
     progress
 }
 
+fn display_scalar(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn short_id(value: &str) -> &str {
+    value.get(..8).unwrap_or(value)
+}
+
+fn humanize(value: &str) -> String {
+    let mut label = value.replace('_', " ").to_ascii_lowercase();
+    if let Some(first) = label.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    label
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,6 +851,38 @@ mod tests {
             json!({"event":"session_paused","data":{"reason":"validation could not run"}}),
         ]));
         assert_eq!(failed.activity[0].label, "Outcome review required");
+    }
+
+    #[test]
+    fn work_graph_events_are_presented_as_human_progress() {
+        let progress = derive(&events(vec![
+            json!({
+                "event": "task_status_changed",
+                "data": {"task_id": "12345678-dead-beef", "status": "needs_attention", "reason": "check logs"}
+            }),
+            json!({
+                "event": "evidence_linked",
+                "data": {"evidence": {"task_id": "12345678-dead-beef", "coverage": "covered", "summary": "tests passed"}}
+            }),
+        ]));
+        assert!(
+            progress
+                .activity
+                .iter()
+                .any(|entry| entry.label.contains("Needs attention"))
+        );
+        assert!(
+            progress
+                .activity
+                .iter()
+                .any(|entry| entry.label == "Evidence linked · task 12345678")
+        );
+        assert!(
+            !progress
+                .activity
+                .iter()
+                .any(|entry| entry.label.contains("needs_attention"))
+        );
     }
 
     #[test]
@@ -808,10 +951,12 @@ mod tests {
         ]);
         assert_eq!(rejected.waiting_on, WaitingOn::Nothing);
         assert!(rejected.effects.proposed_paths.is_empty());
-        assert!(rejected
-            .activity
-            .iter()
-            .any(|entry| entry.label == "Action rejected"));
+        assert!(
+            rejected
+                .activity
+                .iter()
+                .any(|entry| entry.label == "Action rejected")
+        );
     }
 
     #[test]
@@ -877,10 +1022,12 @@ mod tests {
             "a green completion beside an uncertain outcome misleads the user"
         );
         assert_eq!(completion.label, "Completed with unverified results");
-        assert!(!progress
-            .activity
-            .iter()
-            .any(|entry| entry.label == "Completed" && entry.state == ActivityState::Done));
+        assert!(
+            !progress
+                .activity
+                .iter()
+                .any(|entry| entry.label == "Completed" && entry.state == ActivityState::Done)
+        );
     }
 
     #[test]
@@ -891,10 +1038,12 @@ mod tests {
         ]);
         assert_eq!(progress.session_state, SessionState::Completed);
         assert!(!progress.session_state.needs_attention());
-        assert!(progress
-            .activity
-            .iter()
-            .any(|entry| entry.label == "Completed" && entry.state == ActivityState::Done));
+        assert!(
+            progress
+                .activity
+                .iter()
+                .any(|entry| entry.label == "Completed" && entry.state == ActivityState::Done)
+        );
     }
 
     #[test]
@@ -916,14 +1065,18 @@ mod tests {
             json!({"event":"execution_started","data":{"action_id":"a"}}),
             json!({"event":"execution_finished","data":{"action_id":"a","exit_code":1}}),
         ]);
-        assert!(progress
-            .activity
-            .iter()
-            .any(|entry| entry.state == ActivityState::Failed && entry.label == "Tool failed"));
-        assert!(!progress
-            .activity
-            .iter()
-            .any(|entry| entry.label.starts_with("Edited")));
+        assert!(
+            progress
+                .activity
+                .iter()
+                .any(|entry| entry.state == ActivityState::Failed && entry.label == "Tool failed")
+        );
+        assert!(
+            !progress
+                .activity
+                .iter()
+                .any(|entry| entry.label.starts_with("Edited"))
+        );
     }
 
     #[test]

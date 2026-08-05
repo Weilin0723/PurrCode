@@ -5,9 +5,9 @@
 //! instead. A modal clears the cells it covers so the surface underneath cannot
 //! bleed through and make a decision ambiguous.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders, Clear, Widget};
-use ratatui::Frame;
 
 use crate::design::{Role, Tokens};
 

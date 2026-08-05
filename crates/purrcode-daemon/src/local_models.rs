@@ -612,12 +612,14 @@ mod tests {
             LocalModelLifecycleSettings::load(&reloaded).unwrap(),
             settings
         );
-        assert!(LocalModelLifecycleSettings {
-            policy: LocalModelLifecycle::IdleTimeout,
-            idle_timeout_seconds: 5,
-        }
-        .validate()
-        .is_err());
+        assert!(
+            LocalModelLifecycleSettings {
+                policy: LocalModelLifecycle::IdleTimeout,
+                idle_timeout_seconds: 5,
+            }
+            .validate()
+            .is_err()
+        );
 
         let invalid: AppConfig = toml::from_str(
             "schema_version = 1\n\n[local_model_lifecycle]\npolicy = \"idle_timeout\"\nidle_timeout_seconds = 5\n",

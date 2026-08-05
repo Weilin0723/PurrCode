@@ -13,6 +13,216 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Availability is part of the fact a panel presents.
+///
+/// `Empty` means the daemon successfully checked and found no records.
+/// `Unavailable` means the capability cannot currently be exercised. `Error`
+/// means an attempted check failed. Clients must never collapse either into
+/// `Empty`, because doing so can turn missing changes or validation into a
+/// false safety claim.
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PanelState {
+    Loading,
+    Ready,
+    Empty,
+    Unavailable,
+    Error,
+}
+
+/// One independently refreshable presentation panel.
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct PanelView<T> {
+    pub state: PanelState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<T>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub retryable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<String>,
+}
+
+impl<T> PanelView<T> {
+    pub fn loading() -> Self {
+        Self {
+            state: PanelState::Loading,
+            data: None,
+            message: None,
+            retryable: false,
+            observed_at: None,
+        }
+    }
+
+    pub fn ready(data: T, observed_at: impl Into<String>) -> Self {
+        Self {
+            state: PanelState::Ready,
+            data: Some(data),
+            message: None,
+            retryable: false,
+            observed_at: Some(observed_at.into()),
+        }
+    }
+
+    pub fn empty(message: impl Into<String>, observed_at: impl Into<String>) -> Self {
+        Self {
+            state: PanelState::Empty,
+            data: None,
+            message: Some(message.into()),
+            retryable: false,
+            observed_at: Some(observed_at.into()),
+        }
+    }
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            state: PanelState::Unavailable,
+            data: None,
+            message: Some(message.into()),
+            retryable: false,
+            observed_at: None,
+        }
+    }
+
+    pub fn error(message: impl Into<String>, retryable: bool) -> Self {
+        Self {
+            state: PanelState::Error,
+            data: None,
+            message: Some(message.into()),
+            retryable,
+            observed_at: None,
+        }
+    }
+}
+
+/// Client-neutral task status. This mirrors the durable work model without
+/// leaking runtime enum spellings into JavaScript or terminal clients.
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatusView {
+    Pending,
+    Ready,
+    Running,
+    Blocked,
+    NeedsAttention,
+    Passed,
+    Failed,
+    Skipped,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct TaskView {
+    pub id: String,
+    pub objective: String,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    pub required: bool,
+    pub risk: String,
+    #[serde(default)]
+    pub owner: Option<String>,
+    pub status: TaskStatusView,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
+    #[serde(default)]
+    pub current_activity: Option<String>,
+    #[serde(default)]
+    pub evidence_summary: Option<String>,
+    pub retry_count: u32,
+}
+
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct TaskGraphView {
+    pub revision: u64,
+    #[serde(default)]
+    pub tasks: Vec<TaskView>,
+    #[serde(default)]
+    pub current_task: Option<String>,
+    pub passed: usize,
+    pub running: usize,
+    pub ready: usize,
+    pub blocked: usize,
+    pub remaining: usize,
+}
+
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageStatusView {
+    Covered,
+    Failed,
+    NotRun,
+    Unavailable,
+    NotApplicable,
+    Stale,
+    AcceptedException,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct CriterionCoverageView {
+    pub id: String,
+    pub statement: String,
+    pub status: CoverageStatusView,
+    #[serde(default)]
+    pub task_ids: Vec<String>,
+    #[serde(default)]
+    pub evidence_ids: Vec<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct RequirementView {
+    pub id: String,
+    pub statement: String,
+    pub required: bool,
+    #[serde(default)]
+    pub criteria: Vec<CriterionCoverageView>,
+}
+
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct SpecBundleView {
+    pub revision: u64,
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub requirements: Vec<RequirementView>,
+    #[serde(default)]
+    pub non_goals: Vec<String>,
+    #[serde(default)]
+    pub design_decisions: Vec<DesignDecisionView>,
+    pub covered_criteria: usize,
+    pub total_required_criteria: usize,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct DesignDecisionView {
+    pub id: String,
+    pub title: String,
+    pub decision: String,
+    pub rationale: String,
+    #[serde(default)]
+    pub affected_components: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceView {
+    pub id: String,
+    pub requirement_id: String,
+    pub criterion_id: String,
+    pub task_id: String,
+    pub status: CoverageStatusView,
+    pub source: String,
+    pub summary: String,
+    pub digest: String,
+    pub recorded_at: String,
+}
+
 /// PurrCode public UI/runtime protocol version.
 ///
 /// The daemon advertises this on `/v1/health` and the Studio shell refuses to
@@ -46,6 +256,7 @@ pub enum Surface {
     Terminal,
     Tests,
     Evidence,
+    GitHub,
     Settings,
 }
 
@@ -56,6 +267,7 @@ impl Surface {
         Self::Terminal,
         Self::Tests,
         Self::Evidence,
+        Self::GitHub,
         Self::Settings,
     ];
 
@@ -66,6 +278,7 @@ impl Surface {
             Self::Terminal => "Terminal",
             Self::Tests => "Tests",
             Self::Evidence => "Evidence",
+            Self::GitHub => "GitHub",
             Self::Settings => "Settings",
         }
     }
@@ -214,28 +427,33 @@ impl ValidationSummary {
     }
 
     /// A one-line summary that never overstates the result.
+    ///
+    /// Terminal PRD §29: naming every unresolved stage produces a paragraph of
+    /// near-identical fragments that nobody reads. The count is the headline;
+    /// the stages themselves are already listed underneath it, each with its
+    /// own outcome.
     pub fn headline(&self) -> String {
         if self.stages.is_empty() {
             return "No validation has run".to_owned();
         }
-        if self.complete {
-            return format!("{} validation stage(s) passed", self.stages.len());
-        }
-        let unresolved: Vec<&ValidationStageView> = self
+        let passed = self
             .stages
             .iter()
-            .filter(|stage| !stage.outcome.is_success())
-            .collect();
-        format!(
-            "{} of {} stage(s) did not pass: {}",
-            unresolved.len(),
-            self.stages.len(),
-            unresolved
-                .iter()
-                .map(|stage| format!("{} {}", stage.stage, stage.outcome.label()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+            .filter(|stage| stage.outcome.is_success())
+            .count();
+        if self.complete {
+            return format!("All {} checks passed", self.stages.len());
+        }
+        let failed = self
+            .stages
+            .iter()
+            .filter(|stage| matches!(stage.outcome, ValidationOutcome::Failed))
+            .count();
+        let mut headline = format!("{passed} / {} checks passed", self.stages.len());
+        if failed > 0 {
+            headline.push_str(&format!(" · {failed} failed"));
+        }
+        headline
     }
 }
 
@@ -288,15 +506,79 @@ pub struct SessionSummary {
     /// building work the person was still editing, or refuse their feedback.
     #[serde(default)]
     pub awaiting_plan_review: bool,
+    /// True after recovery reconciliation has inspected the isolated
+    /// worktree and paused for an explicit human resume decision.
+    #[serde(default)]
+    pub recovery_reconciled: bool,
     #[serde(default)]
     pub validation: Option<ValidationSummary>,
     /// True when this session needs a person before it can continue.
     pub needs_attention: bool,
+    #[serde(default)]
+    pub selected_model: Option<String>,
+    #[serde(default)]
+    pub task_mode: String,
+    #[serde(default)]
+    pub permission_mode: String,
+    #[serde(default)]
+    pub execution_style: Option<String>,
+    #[serde(default)]
+    pub workflow: Option<String>,
+    #[serde(default)]
+    pub search_policy: Option<String>,
+    #[serde(default)]
+    pub budget_profile: Option<String>,
+    #[serde(default)]
+    pub usage: Option<UsageSummaryView>,
+}
+
+/// Compact, client-neutral usage facts shown in the completion summary.
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct UsageSummaryView {
+    pub total_tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub model_call_count: u32,
+    pub search_requests: u32,
+    pub mcp_calls: u32,
+    #[serde(default)]
+    pub estimated_total_cost: Option<String>,
+    /// Tokens served from the provider's prompt cache. `0` when the provider
+    /// does not report a cache.
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    /// Tokens written into the provider's prompt cache.
+    #[serde(default)]
+    pub cache_write_tokens: u64,
+    /// Total wall-clock the model calls took, summed across the session. `0`
+    /// before any model call has reported a latency.
+    #[serde(default)]
+    pub total_latency_ms: u64,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_states_never_conflate_error_unavailable_and_empty() {
+        let empty = PanelView::<serde_json::Value>::empty("checked", "now");
+        let unavailable = PanelView::<serde_json::Value>::unavailable("no worktree");
+        let error = PanelView::<serde_json::Value>::error("daemon timed out", true);
+        assert_eq!(empty.state, PanelState::Empty);
+        assert_eq!(unavailable.state, PanelState::Unavailable);
+        assert_eq!(error.state, PanelState::Error);
+        assert!(error.retryable);
+        assert!(empty.data.is_none() && unavailable.data.is_none() && error.data.is_none());
+    }
+
+    #[test]
+    fn ready_panel_is_the_only_constructor_that_carries_data() {
+        let ready = PanelView::ready(vec!["test passed"], "now");
+        assert_eq!(ready.state, PanelState::Ready);
+        assert_eq!(ready.data, Some(vec!["test passed"]));
+        assert_eq!(ready.observed_at.as_deref(), Some("now"));
+    }
 
     #[test]
     fn only_the_conversation_is_permanent() {
@@ -350,12 +632,12 @@ mod tests {
             },
         ]);
         assert!(!summary.complete);
+        // The count is the headline (PRD §29); the unavailable stage is listed
+        // underneath with its own outcome. What must never happen is the line
+        // reading as a clean run.
         let headline = summary.headline();
-        assert!(
-            headline.contains("integration tests unavailable"),
-            "{headline}"
-        );
-        assert!(!headline.contains("passed"), "{headline}");
+        assert_eq!(headline, "1 / 2 checks passed", "{headline}");
+        assert!(!headline.starts_with("All"), "{headline}");
     }
 
     #[test]
@@ -373,7 +655,7 @@ mod tests {
             detail: None,
         }]);
         assert!(summary.complete);
-        assert_eq!(summary.headline(), "1 validation stage(s) passed");
+        assert_eq!(summary.headline(), "All 1 checks passed");
     }
 
     #[test]

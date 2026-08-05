@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use purrcode_tui_e2e::fake_daemon::{DaemonScript, ScriptedSession};
 use purrcode_tui_e2e::fake_provider;
 use purrcode_tui_e2e::harness::with_artifacts;
-use purrcode_tui_e2e::{assertions, Harness, HarnessOptions, Key};
-use serde_json::{json, Value};
+use purrcode_tui_e2e::{Harness, HarnessOptions, Key, assertions};
+use serde_json::{Value, json};
 
 const SESSION: &str = "review-session";
 
@@ -217,6 +217,9 @@ fn rollback_discards_agent_owned_work() {
         harness.key(Key::Escape)?;
         harness.wait_for_text("PurrCode")?;
         harness.run_command("/rollback")?;
+        harness.wait_for_request("GET", &format!("/v1/sessions/{SESSION}/rollback"))?;
+        harness.wait_for_wrapped("Rollback preview")?;
+        harness.run_command("/rollback fixture-digest")?;
         harness.wait_for_request("POST", &format!("/v1/sessions/{SESSION}/rollback"))?;
         let screen = harness.wait_for_wrapped("Agent-owned changes were discarded")?;
         assertions::assert_readable(&screen, "your working tree is untouched");
@@ -236,7 +239,7 @@ fn rollback_without_agent_owned_work_is_refused() {
         harness.key(Key::Char('o'))?;
         harness.wait_for_text("PurrCode")?;
         harness.run_command("/rollback")?;
-        harness.wait_for_request("POST", &format!("/v1/sessions/{SESSION}/rollback"))?;
+        harness.wait_for_request("GET", &format!("/v1/sessions/{SESSION}/rollback"))?;
         // A refusal, not a silent no-op.
         let screen = harness.wait_for_wrapped("no agent-owned worktree")?;
         assertions::assert_absent(&screen, &["Agent-owned changes were discarded"]);

@@ -1,9 +1,9 @@
 //! The review screen: changed files, bounded diff, validation summary.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::components::hints::Hints;

@@ -348,12 +348,14 @@ mod tests {
     fn only_start_and_input_actions_start_execution() {
         let id = TerminalId::new();
         assert!(start_action().starts_execution());
-        assert!(TerminalAction::SendInput(SendTerminalInputAction {
-            terminal_id: id,
-            expected_generation: OwnershipGeneration(0),
-            input: TerminalInput::Interrupt,
-        })
-        .starts_execution());
+        assert!(
+            TerminalAction::SendInput(SendTerminalInputAction {
+                terminal_id: id,
+                expected_generation: OwnershipGeneration(0),
+                input: TerminalInput::Interrupt,
+            })
+            .starts_execution()
+        );
         for observer in [
             TerminalAction::Attach { terminal_id: id },
             TerminalAction::Detach { terminal_id: id },

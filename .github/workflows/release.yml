@@ -69,6 +69,14 @@ jobs:
           cp "target/${{ matrix.target }}/release/purrcoded" "purrcode-${{ matrix.target }}/"
           cp README.md LICENSE* "purrcode-${{ matrix.target }}/" 2>/dev/null || true
           tar -czf "purrcode-${{ matrix.target }}.tar.gz" "purrcode-${{ matrix.target }}"
+      - name: Package macOS drag-and-drop app
+        if: matrix.target == 'aarch64-apple-darwin'
+        shell: bash
+        run: |
+          PURRCODE_BIN="target/${{ matrix.target }}/release/purrcode" \
+          PURRCODE_VERSION="${GITHUB_REF_NAME#v}" \
+            bash scripts/package-app.sh
+          ditto -c -k --sequesterRsrc --keepParent "dist/PurrCode.app" "dist/PurrCode.app.zip"
       - name: Package Windows binaries
         if: runner.os == 'Windows'
         shell: pwsh
@@ -83,6 +91,13 @@ jobs:
         with:
           name: purrcode-${{ matrix.target }}
           path: purrcode-${{ matrix.target }}.${{ matrix.archive }}
+          if-no-files-found: error
+      - name: Upload macOS drag-and-drop app
+        if: matrix.target == 'aarch64-apple-darwin'
+        uses: actions/upload-artifact@v4
+        with:
+          name: purrcode-macos-app
+          path: dist/PurrCode.app.zip
           if-no-files-found: error
 
   publish:
@@ -111,12 +126,12 @@ jobs:
           mv "dist/${packed_name}" "dist/purrcode-${GITHUB_REF_NAME#v}.tgz"
       - name: Create checksum manifest
         working-directory: dist
-        run: sha256sum purrcode-* > SHA256SUMS
+        run: sha256sum purrcode-* PurrCode.app.zip > SHA256SUMS
       - uses: sigstore/cosign-installer@v4.1.2
       - name: Sign every artifact with GitHub OIDC
         working-directory: dist
         run: |
-          for artifact in purrcode-* SHA256SUMS; do
+          for artifact in purrcode-* PurrCode.app.zip SHA256SUMS; do
             cosign sign-blob --yes --bundle "${artifact}.sigstore.json" "$artifact"
           done
       - uses: actions/attest-build-provenance@v2

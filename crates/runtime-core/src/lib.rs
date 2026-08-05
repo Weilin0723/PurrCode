@@ -1,16 +1,25 @@
 //! Provider-independent domain contracts for the trusted runtime.
 
+pub mod adaptation;
 pub mod authority;
+pub mod product_state;
 pub mod terminal;
+pub mod work;
 
 pub use authority::{
-    apply_human_authority, AuthenticationChannel, AuthorityMode, AuthorityOutcome, GrantCapability,
-    GrantId, HumanAuthorityGrant, HumanIdentity,
+    AuthenticationChannel, AuthorityMode, GrantCapability, GrantId, HumanAuthorityGrant,
+    HumanIdentity,
 };
+pub use product_state::{InputDisposition, ProductState, ProductStateView, StateColor};
 pub use terminal::{
     OwnershipGeneration, OwnershipTransition, ResizeTerminalAction, SendTerminalInputAction,
     StartTerminalAction, StopProcessAction, TerminalAction, TerminalDimensions, TerminalId,
     TerminalInput, TerminalOwner, TerminalSessionRecord, TerminalStatus, TranscriptPolicy,
+};
+pub use work::{
+    AcceptanceCriterion, CriterionId, DesignDecision, DesignDecisionId, EvidenceCoverage,
+    EvidenceId, EvidenceLink, EvidenceObligation, Requirement, RequirementId, SpecBundle, SpecKind,
+    TaskGraph, WorkModelError, WorkPriority, WorkRisk, WorkTask, WorkTaskId, WorkTaskStatus,
 };
 
 use chrono::{DateTime, Utc};
@@ -684,6 +693,12 @@ pub enum ApprovalAuthority {
 /// three places and drifting.
 pub const PLAN_REVIEW_PAUSE: &str = "plan is ready for review";
 
+/// Durable prefix used after an interrupted turn has been reconciled against
+/// its isolated worktree. Clients use the resulting state to offer an explicit
+/// resume action without automatically replaying an uncertain effect.
+pub const RECOVERY_RECONCILED_PAUSE: &str =
+    "Recovery reconciled the durable log with the isolated worktree:";
+
 /// True when a [`SessionEvent::SessionPaused`] reason is a plan awaiting review.
 pub fn is_plan_review_pause(reason: &str) -> bool {
     reason.ends_with(PLAN_REVIEW_PAUSE)
@@ -701,6 +716,22 @@ pub enum SessionEvent {
         /// `Governed` so sessions recorded before v0.9 still load.
         #[serde(default)]
         authority_mode: AuthorityMode,
+    },
+    /// Human-selected adaptive controls are durable session state, not client
+    /// preferences. This keeps TUI, IDE, and CLI attached to one decision.
+    #[serde(alias = "session_controls_updated")]
+    SessionControlsUpdated {
+        controls: adaptation::SessionControls,
+    },
+    /// The classifier's explainable decision and bounded lane graph.
+    WorkflowPlanCreated {
+        decision: adaptation::ComplexityDecision,
+        plan: adaptation::WorkflowPlan,
+    },
+    /// Provider usage is recorded as evidence; credentials remain references,
+    /// never raw secrets.
+    UsageRecorded {
+        record: adaptation::UsageRecord,
     },
     ConversationMessageAdded {
         message: ConversationMessage,
@@ -721,6 +752,28 @@ pub enum SessionEvent {
         revision: u64,
         reason: String,
         steps: Vec<String>,
+    },
+    /// A durable, reviewable statement of intent. Direct sessions may omit it;
+    /// Standard and Rigorous sessions use it as the source for their task graph.
+    SpecBundleRecorded {
+        bundle: work::SpecBundle,
+        reason: String,
+    },
+    /// The executable work graph derived from the accepted spec revision.
+    TaskGraphRecorded {
+        graph: work::TaskGraph,
+        reason: String,
+    },
+    /// A single task transition. The reducer independently verifies that the
+    /// transition is legal and releases dependants after a passing task.
+    TaskStatusChanged {
+        task_id: work::WorkTaskId,
+        status: work::WorkTaskStatus,
+        reason: String,
+    },
+    /// Evidence tied to an exact requirement, criterion and task.
+    EvidenceLinked {
+        evidence: work::EvidenceLink,
     },
     ContextCompacted {
         summary: String,
@@ -937,6 +990,15 @@ pub enum SessionEvent {
         action_id: ActionId,
         decision: JudgmentDecision,
     },
+    /// A completion was rejected because it was only a progress report and was
+    /// sent back to the provider for a real answer. Durable so the meta-
+    /// completion failure rate is measurable rather than anecdotal (PRD §2.3
+    /// FR-B5).
+    CompletionRepairRecorded {
+        /// Which completion-repair attempt this was (1-based).
+        attempt: u8,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
@@ -977,6 +1039,13 @@ pub struct SessionState {
     pub plan_steps: Vec<String>,
     pub context_summary: Option<String>,
     pub selected_model: Option<String>,
+    pub controls: adaptation::SessionControls,
+    pub complexity_decision: Option<adaptation::ComplexityDecision>,
+    pub workflow_plan: Option<adaptation::WorkflowPlan>,
+    pub spec_bundle: Option<work::SpecBundle>,
+    pub task_graph: Option<work::TaskGraph>,
+    pub evidence_links: Vec<work::EvidenceLink>,
+    pub usage_records: Vec<adaptation::UsageRecord>,
     pub conversation_messages: Vec<ConversationMessage>,
     pub proposed_actions: BTreeMap<ActionId, ProposedAction>,
     pub judgments: BTreeMap<ActionId, JudgmentDecision>,
@@ -999,6 +1068,13 @@ impl SessionState {
             plan_steps: Vec::new(),
             context_summary: None,
             selected_model: None,
+            controls: adaptation::SessionControls::default(),
+            complexity_decision: None,
+            workflow_plan: None,
+            spec_bundle: None,
+            task_graph: None,
+            evidence_links: Vec::new(),
+            usage_records: Vec::new(),
             conversation_messages: Vec::new(),
             proposed_actions: BTreeMap::new(),
             judgments: BTreeMap::new(),
@@ -1058,6 +1134,129 @@ impl SessionState {
                         session: self.id,
                         event: format!("{event:?}"),
                         reason: "terminal judgment recorded for unknown action".into(),
+                    });
+                }
+            }
+            SessionEvent::SpecBundleRecorded { bundle, reason } => {
+                require_event_reason(self.id, event, reason)?;
+                bundle
+                    .validate()
+                    .map_err(|error| DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    })?;
+                if self
+                    .spec_bundle
+                    .as_ref()
+                    .is_some_and(|current| bundle.revision <= current.revision)
+                {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "spec revision must increase".into(),
+                    });
+                }
+            }
+            SessionEvent::TaskGraphRecorded { graph, reason } => {
+                require_event_reason(self.id, event, reason)?;
+                graph.validate(self.spec_bundle.as_ref()).map_err(|error| {
+                    DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    }
+                })?;
+                if self
+                    .task_graph
+                    .as_ref()
+                    .is_some_and(|current| graph.revision <= current.revision)
+                {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "task graph revision must increase".into(),
+                    });
+                }
+            }
+            SessionEvent::TaskStatusChanged {
+                task_id,
+                status,
+                reason,
+            } => {
+                require_event_reason(self.id, event, reason)?;
+                if *status == work::WorkTaskStatus::Passed {
+                    let task = self
+                        .task_graph
+                        .as_ref()
+                        .and_then(|graph| graph.task(*task_id))
+                        .ok_or_else(|| DomainError::InvalidStateTransition {
+                            session: self.id,
+                            event: format!("{event:?}"),
+                            reason: "passing task does not exist in the recorded graph".into(),
+                        })?;
+                    let uncovered = task.acceptance_criteria.iter().find(|criterion| {
+                        !self.evidence_links.iter().any(|evidence| {
+                            evidence.task_id == *task_id
+                                && evidence.criterion_id == **criterion
+                                && matches!(
+                                    evidence.coverage,
+                                    work::EvidenceCoverage::Covered
+                                        | work::EvidenceCoverage::AcceptedException
+                                )
+                        })
+                    });
+                    if let Some(criterion) = uncovered {
+                        return Err(DomainError::InvalidStateTransition {
+                            session: self.id,
+                            event: format!("{event:?}"),
+                            reason: format!(
+                                "task cannot pass before criterion {criterion:?} has closing evidence"
+                            ),
+                        });
+                    }
+                }
+                let mut graph =
+                    self.task_graph
+                        .clone()
+                        .ok_or_else(|| DomainError::InvalidStateTransition {
+                            session: self.id,
+                            event: format!("{event:?}"),
+                            reason: "task transition requires a recorded graph".into(),
+                        })?;
+                graph.transition(*task_id, *status).map_err(|error| {
+                    DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    }
+                })?;
+            }
+            SessionEvent::EvidenceLinked { evidence } => {
+                let (Some(spec), Some(graph)) =
+                    (self.spec_bundle.as_ref(), self.task_graph.as_ref())
+                else {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "evidence requires a recorded spec and task graph".into(),
+                    });
+                };
+                evidence.validate(spec, graph).map_err(|error| {
+                    DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    }
+                })?;
+                if self
+                    .evidence_links
+                    .iter()
+                    .any(|existing| existing.id == evidence.id)
+                {
+                    return Err(DomainError::DuplicateEvent {
+                        session: self.id,
+                        event: format!("{event:?}"),
                     });
                 }
             }
@@ -1123,6 +1322,21 @@ impl SessionState {
                 self.require_transition(Uncertain, "validation uncertain", event)?;
             }
             SessionEvent::SessionCompleted => {
+                if let Some(graph) = self.task_graph.as_ref()
+                    && let Some(incomplete) = graph.tasks.iter().find(|task| {
+                        task.priority == work::WorkPriority::Required
+                            && task.status != work::WorkTaskStatus::Passed
+                    })
+                {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!(
+                            "required task {:?} is {:?}, not passed",
+                            incomplete.id, incomplete.status
+                        ),
+                    });
+                }
                 self.require_transition(Completed, "session completed", event)?;
             }
             SessionEvent::SessionCancelled { .. } => {
@@ -1148,6 +1362,16 @@ impl SessionState {
             } => {
                 self.objective = Some(objective.clone());
                 self.repository = Some(repository.clone());
+            }
+            SessionEvent::SessionControlsUpdated { controls } => {
+                self.controls = controls.clone();
+            }
+            SessionEvent::WorkflowPlanCreated { decision, plan } => {
+                self.complexity_decision = Some(decision.clone());
+                self.workflow_plan = Some(plan.clone());
+            }
+            SessionEvent::UsageRecorded { record } => {
+                self.usage_records.push(record.clone());
             }
             SessionEvent::WorktreeCreated {
                 path, base_head, ..
@@ -1177,6 +1401,26 @@ impl SessionState {
             } => {
                 self.plan_revision = *revision;
                 self.plan_steps = steps.clone();
+            }
+            SessionEvent::SpecBundleRecorded { bundle, .. } => {
+                self.spec_bundle = Some(bundle.clone());
+            }
+            SessionEvent::TaskGraphRecorded { graph, .. } => {
+                let mut graph = graph.clone();
+                graph.refresh_ready();
+                self.task_graph = Some(graph);
+            }
+            SessionEvent::TaskStatusChanged {
+                task_id, status, ..
+            } => {
+                self.task_graph
+                    .as_mut()
+                    .expect("task transition was validated against a graph")
+                    .transition(*task_id, *status)
+                    .expect("task transition was validated before apply");
+            }
+            SessionEvent::EvidenceLinked { evidence } => {
+                self.evidence_links.push(evidence.clone());
             }
             SessionEvent::ContextCompacted {
                 summary,
@@ -1251,6 +1495,9 @@ impl SessionState {
             SessionEvent::SessionFailed { .. } => {
                 self.status = SessionStatus::Failed;
             }
+            // Durable audit of completion-repair attempts; changes no session
+            // state.
+            SessionEvent::CompletionRepairRecorded { .. } => {}
             _ => {}
         }
     }
@@ -1302,6 +1549,22 @@ impl SessionState {
     }
 }
 
+fn require_event_reason(
+    session: SessionId,
+    event: &SessionEvent,
+    reason: &str,
+) -> Result<(), DomainError> {
+    if reason.trim().is_empty() {
+        Err(DomainError::InvalidStateTransition {
+            session,
+            event: format!("{event:?}"),
+            reason: "durable work-model changes require a reason".into(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
 /// Reconstruct session state by replaying an ordered slice of events.
 /// Returns an error if any event is invalid for the derived state.
 pub fn reconstruct_state(
@@ -1317,8 +1580,10 @@ pub fn reconstruct_state(
 
 /// Required transition matrix.
 ///
-/// Terminal statuses (`Completed`, `Cancelled`, `Failed`) only accept recovery
-/// events. `AwaitingApproval` and `Executing` track a single `ActionId`; an
+/// `Completed`, `Cancelled`, and `Failed` close one agent turn, but a person
+/// may start another turn in the same conversation. `Uncertain` remains a
+/// recovery boundary rather than accepting ordinary chat.
+/// `AwaitingApproval` and `Executing` track a single `ActionId`; an
 /// approval or execution event must reference that id.
 ///
 /// Returns true only for the explicitly enumerated transitions below. A wildcard
@@ -1328,7 +1593,8 @@ pub fn reconstruct_state(
 fn is_valid_transition(current: &SessionStatus, next: &SessionStatus) -> bool {
     use SessionStatus::*;
     match (current, next) {
-        // ── Terminal states: no outgoing transitions ─────────────
+        // ── Ended turn: a follow-up starts a new turn ────────────
+        (Completed | Cancelled | Failed, Active) => true,
         (Completed | Cancelled | Failed, _) => false,
 
         // ── Uncertain: can recover to any non-terminal state ─────
@@ -1501,7 +1767,9 @@ pub enum DomainError {
         event: String,
         reason: String,
     },
-    #[error("session {session:?} received approval event for action {action_id:?} but was awaiting {expected:?}")]
+    #[error(
+        "session {session:?} received approval event for action {action_id:?} but was awaiting {expected:?}"
+    )]
     UnexpectedApproval {
         session: SessionId,
         action_id: ActionId,
@@ -1516,6 +1784,183 @@ pub enum DomainError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spec_task_and_evidence_replay_as_one_durable_work_model() {
+        let id = SessionId::new();
+        let requirement_id = RequirementId::new();
+        let criterion_id = CriterionId::new();
+        let task_id = WorkTaskId::new();
+        let spec = SpecBundle {
+            revision: 1,
+            kind: SpecKind::FeatureRequirementsFirst,
+            title: "Truthful review".into(),
+            requirements: vec![Requirement {
+                id: requirement_id,
+                statement: "Review distinguishes failed evidence".into(),
+                priority: WorkPriority::Required,
+                acceptance_criteria: vec![AcceptanceCriterion {
+                    id: criterion_id,
+                    statement: "A timeout renders Error".into(),
+                }],
+            }],
+            non_goals: vec![],
+            design_decisions: vec![],
+        };
+        let graph = TaskGraph {
+            revision: 1,
+            tasks: vec![WorkTask {
+                id: task_id,
+                objective: "Add typed panel state".into(),
+                dependencies: vec![],
+                priority: WorkPriority::Required,
+                risk: WorkRisk::High,
+                acceptance_criteria: vec![criterion_id],
+                scope: vec![PathBuf::from("crates/purrcode-ide")],
+                owner: Some("implementation".into()),
+                status: WorkTaskStatus::Pending,
+                retry_count: 0,
+                evidence_obligations: vec![EvidenceObligation {
+                    requirement_id,
+                    criterion_id,
+                    description: "Inject a timeout".into(),
+                    required: true,
+                }],
+            }],
+        };
+        let evidence = EvidenceLink {
+            id: EvidenceId::new(),
+            requirement_id,
+            criterion_id,
+            task_id,
+            action_id: None,
+            coverage: EvidenceCoverage::Covered,
+            validation_status: Some(ValidationStatus::Passed),
+            source: "contract test".into(),
+            summary: "timeout remained distinct from empty".into(),
+            digest: "evidence-digest".into(),
+            recorded_at: Utc::now(),
+        };
+        let events = vec![
+            SessionEvent::SessionCreated {
+                objective: "Make review truthful".into(),
+                repository: PathBuf::from("/repo"),
+                authority_mode: AuthorityMode::Governed,
+            },
+            SessionEvent::SpecBundleRecorded {
+                bundle: spec.clone(),
+                reason: "accepted requirements".into(),
+            },
+            SessionEvent::TaskGraphRecorded {
+                graph,
+                reason: "derived implementation tasks".into(),
+            },
+            SessionEvent::TaskStatusChanged {
+                task_id,
+                status: WorkTaskStatus::Running,
+                reason: "worker started".into(),
+            },
+            SessionEvent::EvidenceLinked {
+                evidence: evidence.clone(),
+            },
+            SessionEvent::TaskStatusChanged {
+                task_id,
+                status: WorkTaskStatus::Passed,
+                reason: "required evidence passed".into(),
+            },
+        ];
+
+        let state = reconstruct_state(id, &events).unwrap();
+        assert_eq!(state.spec_bundle, Some(spec));
+        assert_eq!(
+            state.task_graph.unwrap().task(task_id).unwrap().status,
+            WorkTaskStatus::Passed
+        );
+        assert_eq!(state.evidence_links, vec![evidence]);
+    }
+
+    #[test]
+    fn task_transition_without_a_graph_fails_loudly() {
+        let mut state = SessionState::empty(SessionId::new());
+        let error = state
+            .reduce_event(&SessionEvent::TaskStatusChanged {
+                task_id: WorkTaskId::new(),
+                status: WorkTaskStatus::Running,
+                reason: "cannot run missing task".into(),
+            })
+            .unwrap_err();
+        assert!(matches!(error, DomainError::InvalidStateTransition { .. }));
+        assert_eq!(state.event_count, 0);
+    }
+
+    #[test]
+    fn required_task_cannot_pass_without_closing_evidence() {
+        let id = SessionId::new();
+        let requirement_id = RequirementId::new();
+        let criterion_id = CriterionId::new();
+        let task_id = WorkTaskId::new();
+        let events = [
+            SessionEvent::SpecBundleRecorded {
+                bundle: SpecBundle {
+                    revision: 1,
+                    kind: SpecKind::Direct,
+                    title: "Evidence gate".into(),
+                    requirements: vec![Requirement {
+                        id: requirement_id,
+                        statement: "Task completion is evidence-derived".into(),
+                        priority: WorkPriority::Required,
+                        acceptance_criteria: vec![AcceptanceCriterion {
+                            id: criterion_id,
+                            statement: "Missing evidence blocks pass".into(),
+                        }],
+                    }],
+                    non_goals: vec![],
+                    design_decisions: vec![],
+                },
+                reason: "record direct intent".into(),
+            },
+            SessionEvent::TaskGraphRecorded {
+                graph: TaskGraph {
+                    revision: 1,
+                    tasks: vec![WorkTask {
+                        id: task_id,
+                        objective: "Prove the gate".into(),
+                        dependencies: vec![],
+                        priority: WorkPriority::Required,
+                        risk: WorkRisk::High,
+                        acceptance_criteria: vec![criterion_id],
+                        scope: vec![],
+                        owner: None,
+                        status: WorkTaskStatus::Pending,
+                        retry_count: 0,
+                        evidence_obligations: vec![],
+                    }],
+                },
+                reason: "record task".into(),
+            },
+            SessionEvent::TaskStatusChanged {
+                task_id,
+                status: WorkTaskStatus::Running,
+                reason: "start task".into(),
+            },
+        ];
+        let mut state = SessionState::empty(id);
+        for event in events {
+            state.reduce_event(&event).unwrap();
+        }
+        let error = state
+            .reduce_event(&SessionEvent::TaskStatusChanged {
+                task_id,
+                status: WorkTaskStatus::Passed,
+                reason: "model said complete".into(),
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("closing evidence"));
+        assert_eq!(
+            state.task_graph.unwrap().task(task_id).unwrap().status,
+            WorkTaskStatus::Running
+        );
+    }
 
     #[test]
     fn plan_revision_and_context_compaction_replay_deterministically() {
@@ -1723,22 +2168,26 @@ mod tests {
         let mut state = SessionState::empty(SessionId::new());
         state.reduce_event(&SessionEvent::SessionCompleted).unwrap();
         assert_eq!(state.status, SessionStatus::Completed);
-        assert!(state
-            .reduce_event(&SessionEvent::SessionPaused {
-                reason: "after completed".into(),
-            })
-            .is_err());
+        assert!(
+            state
+                .reduce_event(&SessionEvent::SessionPaused {
+                    reason: "after completed".into(),
+                })
+                .is_err()
+        );
     }
 
     #[test]
     fn reducer_rejects_execution_started_from_completed() {
         let mut state = SessionState::empty(SessionId::new());
         state.reduce_event(&SessionEvent::SessionCompleted).unwrap();
-        assert!(state
-            .reduce_event(&SessionEvent::ExecutionStarted {
-                action_id: ActionId::new(),
-            })
-            .is_err());
+        assert!(
+            state
+                .reduce_event(&SessionEvent::ExecutionStarted {
+                    action_id: ActionId::new(),
+                })
+                .is_err()
+        );
     }
 
     #[test]
@@ -1812,11 +2261,13 @@ mod tests {
             .unwrap();
         assert_eq!(state.event_count, 2);
         // After terminal state, further events are rejected and event_count does not advance
-        assert!(state
-            .reduce_event(&SessionEvent::SessionPaused {
-                reason: "after terminal".into(),
-            })
-            .is_err());
+        assert!(
+            state
+                .reduce_event(&SessionEvent::SessionPaused {
+                    reason: "after terminal".into(),
+                })
+                .is_err()
+        );
         assert_eq!(
             state.event_count, 2,
             "event_count must not increment on invalid transitions"
@@ -1891,6 +2342,22 @@ mod tests {
         // Active -> Active is not in the matrix (though not practically needed)
         assert!(!is_valid_transition(
             &SessionStatus::Active,
+            &SessionStatus::Active
+        ));
+        assert!(is_valid_transition(
+            &SessionStatus::Completed,
+            &SessionStatus::Active
+        ));
+        assert!(!is_valid_transition(
+            &SessionStatus::Failed,
+            &SessionStatus::Paused
+        ));
+        assert!(is_valid_transition(
+            &SessionStatus::Failed,
+            &SessionStatus::Active
+        ));
+        assert!(is_valid_transition(
+            &SessionStatus::Cancelled,
             &SessionStatus::Active
         ));
     }

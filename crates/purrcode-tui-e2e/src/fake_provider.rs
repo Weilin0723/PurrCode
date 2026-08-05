@@ -10,7 +10,7 @@
 //! daemon would never emit.
 
 use purrcode_runtime_core::{ActionConstraints, ProposedAction, WriteFileAction};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 /// Constraints for an action scoped to one directory with no network access.
@@ -217,10 +217,12 @@ mod tests {
     fn startup_events_derive_a_context_prepared_stage() {
         let progress = activity::derive(&startup("Add a test", "/repo"));
         assert_eq!(progress.objective, "Add a test");
-        assert!(progress
-            .activity
-            .iter()
-            .any(|entry| entry.label == "Context prepared"));
+        assert!(
+            progress
+                .activity
+                .iter()
+                .any(|entry| entry.label == "Context prepared")
+        );
     }
 
     #[test]
@@ -241,10 +243,12 @@ mod tests {
     fn a_provider_failure_ends_the_session_with_an_explanation() {
         let progress = activity::derive(&provider_failure("connection refused"));
         assert_eq!(progress.session_state, activity::SessionState::Failed);
-        assert!(progress.activity.iter().any(|entry| entry
-            .detail
-            .as_deref()
-            .is_some_and(|detail| { detail.contains("connection refused") })));
+        assert!(progress.activity.iter().any(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("connection refused"))
+        }));
     }
 
     #[test]

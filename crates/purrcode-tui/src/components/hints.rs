@@ -5,10 +5,10 @@
 //! hint never points at something that would refuse to run. The composer border
 //! carries no shortcut list and no character counts.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::design::{Emphasis, Role, Symbols, Tokens};

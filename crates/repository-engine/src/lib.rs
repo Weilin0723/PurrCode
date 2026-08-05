@@ -11,7 +11,7 @@ use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_GIT_OUTPUT: usize = 4 * 1024 * 1024;
@@ -50,6 +50,83 @@ pub struct WorktreeEffects {
     pub status_porcelain: String,
     pub changed_files: Vec<PathBuf>,
     pub binary_patch: Vec<u8>,
+}
+
+/// Which set of changes a caller is asking about.
+///
+/// "The diff" is three different questions once an agent works in an isolated
+/// worktree, and answering the wrong one is how a review misses code that was
+/// already committed inside the worktree (Terminal PRD §23, §24).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ChangeScope {
+    /// Everything the session did, from the revision it started at to now:
+    /// commits made inside the worktree, uncommitted edits, and new files.
+    /// This is what a human means by "show me what PurrCode changed".
+    #[default]
+    Agent,
+    /// Uncommitted edits only, relative to the worktree's current `HEAD`.
+    WorkingTree,
+    /// What is staged for the next commit.
+    Staged,
+}
+
+impl ChangeScope {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Agent => "Agent changes",
+            Self::WorkingTree => "Working tree",
+            Self::Staged => "Staged changes",
+        }
+    }
+
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::WorkingTree => "working_tree",
+            Self::Staged => "staged",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "working_tree" | "working-tree" | "worktree" | "unstaged" => Self::WorkingTree,
+            "staged" | "index" | "cached" => Self::Staged,
+            _ => Self::Agent,
+        }
+    }
+}
+
+/// A change set, with counts that come from git rather than from counting
+/// characters in a patch.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ChangeSet {
+    pub scope_files: Vec<ChangedFile>,
+    pub additions: usize,
+    pub deletions: usize,
+    pub patch: Vec<u8>,
+}
+
+impl ChangeSet {
+    pub fn files_changed(&self) -> usize {
+        self.scope_files.len()
+    }
+}
+
+/// One file in a change set, with the status letter git assigned it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChangedFile {
+    pub path: PathBuf,
+    /// `M`, `A`, `D`, `R`… as git reports it. A renamed file that reads as
+    /// modified loses the fact that its old path is gone.
+    pub status: char,
+    pub additions: Option<usize>,
+    pub deletions: Option<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileDiffContents {
+    pub before: Option<String>,
+    pub after: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -216,6 +293,215 @@ impl RepositoryEngine {
             changed_files,
             binary_patch,
         })
+    }
+
+    /// The change set for one scope.
+    ///
+    /// The `Agent` scope diffs against the revision the session *started* at,
+    /// not against the worktree's current `HEAD`. Those are the same thing only
+    /// until the agent commits: after that, `git diff HEAD` reports the agent's
+    /// own work as "no changes", and a review that trusted it would sign off on
+    /// code nobody looked at (Terminal PRD §24).
+    pub async fn changes(
+        worktree: &SessionWorktree,
+        scope: ChangeScope,
+    ) -> Result<ChangeSet, RepositoryError> {
+        ensure_session_path(
+            &worktree.source_repository,
+            worktree.session_id,
+            &worktree.path,
+        )?;
+
+        let base: String = match scope {
+            ChangeScope::Agent => worktree.base_head.clone(),
+            _ => "HEAD".to_owned(),
+        };
+        let staged_only = matches!(scope, ChangeScope::Staged);
+        Self::change_set_at(&worktree.path, &base, staged_only).await
+    }
+
+    /// The change set for one scope, computed at an arbitrary repository root.
+    ///
+    /// This is the git plumbing behind [`Self::changes`]. The session method
+    /// keeps its `ensure_session_path` guard; this helper deliberately has no
+    /// such guard so the daemon can describe the user's *own* checkout through
+    /// `workspace_changes`, which is not a session worktree and must not be
+    /// subjected to the worktree-path check at `ensure_session_path`.
+    ///
+    /// `include_patch` is `false` for a plain workspace folder: the workspace
+    /// changes route renders a per-file list with numstat only and never pays
+    /// for the binary patch that the review surface needs.
+    async fn change_set_at(
+        root: &Path,
+        base: &str,
+        staged_only: bool,
+    ) -> Result<ChangeSet, RepositoryError> {
+        Self::change_set_at_inner(root, base, staged_only, true).await
+    }
+
+    async fn change_set_at_inner(
+        root: &Path,
+        base: &str,
+        staged_only: bool,
+        include_patch: bool,
+    ) -> Result<ChangeSet, RepositoryError> {
+        let mut arguments: Vec<&str> = vec!["diff"];
+        if staged_only {
+            arguments.push("--cached");
+        }
+        let numstat_arguments = {
+            let mut arguments = arguments.clone();
+            arguments.extend(["--numstat", "-z", base, "--", "."]);
+            arguments
+        };
+        let status_arguments = {
+            let mut arguments = arguments.clone();
+            arguments.extend(["--name-status", "-z", base, "--", "."]);
+            arguments
+        };
+
+        let numstat = git_bytes(root, &numstat_arguments).await?;
+        let name_status = git_bytes(root, &status_arguments).await?;
+        let patch = if include_patch {
+            let patch_arguments = {
+                let mut arguments = arguments.clone();
+                arguments.extend(["--binary", base, "--", "."]);
+                arguments
+            };
+            git_bytes(root, &patch_arguments).await?
+        } else {
+            Vec::new()
+        };
+        let mut patch = patch;
+
+        let counts = parse_numstat(&numstat);
+        let mut files: Vec<ChangedFile> = parse_name_status(&name_status)
+            .into_iter()
+            .map(|(path, status)| {
+                let (additions, deletions) = counts.get(&path).copied().unwrap_or((None, None));
+                ChangedFile {
+                    path,
+                    status,
+                    additions,
+                    deletions,
+                }
+            })
+            .collect();
+
+        // A file git has never seen is invisible to `git diff`, so an added
+        // file would otherwise not appear in the review at all. Staged scope
+        // deliberately excludes them: they are, by definition, not staged.
+        if !staged_only {
+            let untracked = git_bytes(
+                root,
+                &[
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "-z",
+                    "--",
+                    ".",
+                ],
+            )
+            .await?;
+            for path in nul_paths(&untracked) {
+                let path_text = path
+                    .to_str()
+                    .ok_or_else(|| RepositoryError::NonUtf8Path(path.clone()))?;
+                let addition = git_bytes_allow_codes(
+                    root,
+                    &[
+                        "diff",
+                        "--binary",
+                        "--no-index",
+                        "--",
+                        "/dev/null",
+                        path_text,
+                    ],
+                    &[0, 1],
+                )
+                .await?;
+                let added_lines = count_added_lines(&addition);
+                if include_patch {
+                    patch.extend_from_slice(&addition);
+                }
+                files.push(ChangedFile {
+                    path,
+                    status: 'A',
+                    additions: Some(added_lines),
+                    deletions: Some(0),
+                });
+            }
+        }
+
+        files.sort_by(|left, right| left.path.cmp(&right.path));
+        files.dedup_by(|left, right| left.path == right.path);
+        let additions = files.iter().filter_map(|file| file.additions).sum();
+        let deletions = files.iter().filter_map(|file| file.deletions).sum();
+        Ok(ChangeSet {
+            scope_files: files,
+            additions,
+            deletions,
+            patch,
+        })
+    }
+
+    /// The change set for a plain workspace folder (the user's own checkout).
+    ///
+    /// Unlike [`Self::changes`], this never requires an isolated session
+    /// worktree: it is the route behind "Your uncommitted changes", which
+    /// describes the open repository directly. The binary patch is skipped
+    /// entirely — the workspace panel renders numstat and name-status only, so
+    /// `git diff --numstat` over a dirty tree never also pays for the patch.
+    pub async fn workspace_changes(
+        repository: &Path,
+        scope: ChangeScope,
+    ) -> Result<ChangeSet, RepositoryError> {
+        let staged_only = matches!(scope, ChangeScope::Staged);
+        Self::change_set_at_inner(repository, "HEAD", staged_only, false).await
+    }
+
+    /// Return text snapshots suitable for a native IDE diff. Binary files and
+    /// files that cannot be represented as UTF-8 remain unavailable; callers
+    /// can fall back to the authoritative unified patch in that case.
+    pub async fn file_diff_contents(
+        worktree: &SessionWorktree,
+        relative: &Path,
+    ) -> Result<FileDiffContents, RepositoryError> {
+        ensure_session_path(
+            &worktree.source_repository,
+            worktree.session_id,
+            &worktree.path,
+        )?;
+        if relative.is_absolute()
+            || !relative
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(RepositoryError::UnsafeWorktreePath(relative.to_path_buf()));
+        }
+        let target = worktree.path.join(relative);
+        let after = match std::fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(RepositoryError::UnsafeWorktreePath(relative.to_path_buf()));
+            }
+            Ok(metadata) if metadata.is_file() => String::from_utf8(std::fs::read(&target)?).ok(),
+            Ok(_) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let path_text = relative
+            .to_str()
+            .ok_or_else(|| RepositoryError::NonUtf8Path(relative.to_path_buf()))?;
+        let revision_path = format!("HEAD:{path_text}");
+        let before =
+            match git_bytes_allow_codes(&worktree.path, &["show", &revision_path], &[0, 128])
+                .await?
+            {
+                bytes if bytes.is_empty() => None,
+                bytes => String::from_utf8(bytes).ok(),
+            };
+        Ok(FileDiffContents { before, after })
     }
 
     pub async fn review_hunks(
@@ -533,6 +819,69 @@ fn remove_untracked(root: &Path, relative: &Path) -> Result<(), RepositoryError>
         std::fs::remove_file(absolute)?;
     }
     Ok(())
+}
+
+/// `git diff --numstat -z`: `additions\tdeletions\tpath\0`, with `-` for
+/// binary files, whose line counts are genuinely unknown rather than zero.
+fn parse_numstat(bytes: &[u8]) -> BTreeMap<PathBuf, (Option<usize>, Option<usize>)> {
+    let mut counts = BTreeMap::new();
+    let mut fields = bytes.split(|byte| *byte == 0).filter(|f| !f.is_empty());
+    while let Some(record) = fields.next() {
+        let text = String::from_utf8_lossy(record);
+        let mut parts = text.splitn(3, '\t');
+        let (Some(added), Some(removed), path) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let number = |value: &str| value.parse::<usize>().ok();
+        // A rename emits an empty path field followed by the old and new paths
+        // as their own NUL-separated records.
+        let path = match path {
+            Some(path) if !path.is_empty() => PathBuf::from(path),
+            _ => {
+                let _old = fields.next();
+                match fields.next() {
+                    Some(new) => PathBuf::from(String::from_utf8_lossy(new).into_owned()),
+                    None => continue,
+                }
+            }
+        };
+        counts.insert(path, (number(added), number(removed)));
+    }
+    counts
+}
+
+/// `git diff --name-status -z`: `status\0path\0`, with renames carrying two
+/// paths.
+fn parse_name_status(bytes: &[u8]) -> Vec<(PathBuf, char)> {
+    let mut files = Vec::new();
+    let mut fields = bytes.split(|byte| *byte == 0).filter(|f| !f.is_empty());
+    while let Some(status) = fields.next() {
+        let status = String::from_utf8_lossy(status);
+        let letter = status.chars().next().unwrap_or('M');
+        let Some(path) = fields.next() else { break };
+        let path = PathBuf::from(String::from_utf8_lossy(path).into_owned());
+        if letter == 'R' || letter == 'C' {
+            // The first path is the source; the destination is the file that
+            // now exists and the one a reviewer opens.
+            match fields.next() {
+                Some(destination) => files.push((
+                    PathBuf::from(String::from_utf8_lossy(destination).into_owned()),
+                    letter,
+                )),
+                None => files.push((path, letter)),
+            }
+        } else {
+            files.push((path, letter));
+        }
+    }
+    files
+}
+
+fn count_added_lines(patch: &[u8]) -> usize {
+    String::from_utf8_lossy(patch)
+        .lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .count()
 }
 
 fn nul_paths(bytes: &[u8]) -> BTreeSet<PathBuf> {
@@ -1000,6 +1349,148 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_changes_include_work_the_agent_already_committed() {
+        // The bug this exists to stop: an agent that commits inside its own
+        // worktree makes `git diff HEAD` empty, so a diff panel built on it
+        // shows "no changes" for a session that rewrote three files.
+        let temporary = tempfile::tempdir().unwrap();
+        git(temporary.path(), &["init", "-q"]);
+        std::fs::write(temporary.path().join("kept.txt"), "one\ntwo\n").unwrap();
+        git(temporary.path(), &["add", "."]);
+        git(temporary.path(), &["commit", "-q", "-m", "base"]);
+
+        let worktree = RepositoryEngine::create_worktree(temporary.path(), SessionId::new())
+            .await
+            .unwrap();
+
+        // The agent edits and commits.
+        std::fs::write(worktree.path.join("kept.txt"), "one\nchanged\n").unwrap();
+        git(&worktree.path, &["add", "."]);
+        git(&worktree.path, &["commit", "-q", "-m", "agent work"]);
+
+        let working_tree = RepositoryEngine::changes(&worktree, ChangeScope::WorkingTree)
+            .await
+            .unwrap();
+        assert_eq!(
+            working_tree.files_changed(),
+            0,
+            "nothing is uncommitted, which is exactly why HEAD is the wrong base"
+        );
+
+        let agent = RepositoryEngine::changes(&worktree, ChangeScope::Agent)
+            .await
+            .unwrap();
+        assert_eq!(
+            agent.files_changed(),
+            1,
+            "the committed edit must be visible"
+        );
+        assert_eq!(agent.scope_files[0].path, Path::new("kept.txt"));
+        assert_eq!(agent.scope_files[0].status, 'M');
+        assert_eq!(agent.additions, 1);
+        assert_eq!(agent.deletions, 1);
+        assert!(agent.patch.starts_with(b"diff --git"));
+    }
+
+    #[tokio::test]
+    async fn agent_changes_cover_added_deleted_and_renamed_files() {
+        let temporary = tempfile::tempdir().unwrap();
+        git(temporary.path(), &["init", "-q"]);
+        std::fs::write(temporary.path().join("gone.txt"), "delete me\n").unwrap();
+        std::fs::write(temporary.path().join("old-name.txt"), "rename me\n").unwrap();
+        git(temporary.path(), &["add", "."]);
+        git(temporary.path(), &["commit", "-q", "-m", "base"]);
+
+        let worktree = RepositoryEngine::create_worktree(temporary.path(), SessionId::new())
+            .await
+            .unwrap();
+        std::fs::remove_file(worktree.path.join("gone.txt")).unwrap();
+        std::fs::rename(
+            worktree.path.join("old-name.txt"),
+            worktree.path.join("new-name.txt"),
+        )
+        .unwrap();
+        std::fs::write(worktree.path.join("brand-new.txt"), "fresh\n").unwrap();
+
+        let changes = RepositoryEngine::changes(&worktree, ChangeScope::Agent)
+            .await
+            .unwrap();
+        let by_path = |name: &str| {
+            changes
+                .scope_files
+                .iter()
+                .find(|file| file.path == Path::new(name))
+                .cloned()
+        };
+        assert_eq!(by_path("gone.txt").map(|file| file.status), Some('D'));
+        assert_eq!(
+            by_path("brand-new.txt").map(|file| file.status),
+            Some('A'),
+            "a file git has never seen must still reach the review"
+        );
+        assert!(
+            by_path("new-name.txt").is_some(),
+            "a rename must be reported at the path that now exists, got {:?}",
+            changes.scope_files
+        );
+    }
+
+    #[tokio::test]
+    async fn a_clean_worktree_reports_nothing_rather_than_something() {
+        let temporary = tempfile::tempdir().unwrap();
+        git(temporary.path(), &["init", "-q"]);
+        std::fs::write(temporary.path().join("kept.txt"), "one\n").unwrap();
+        git(temporary.path(), &["add", "."]);
+        git(temporary.path(), &["commit", "-q", "-m", "base"]);
+        let worktree = RepositoryEngine::create_worktree(temporary.path(), SessionId::new())
+            .await
+            .unwrap();
+
+        for scope in [
+            ChangeScope::Agent,
+            ChangeScope::WorkingTree,
+            ChangeScope::Staged,
+        ] {
+            let changes = RepositoryEngine::changes(&worktree, scope).await.unwrap();
+            assert_eq!(changes.files_changed(), 0, "{scope:?} must be empty");
+            assert_eq!(changes.additions, 0);
+            assert!(changes.patch.is_empty(), "{scope:?} must have no patch");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_staged_scope_only_reports_what_is_staged() {
+        let temporary = tempfile::tempdir().unwrap();
+        git(temporary.path(), &["init", "-q"]);
+        std::fs::write(temporary.path().join("a.txt"), "a\n").unwrap();
+        std::fs::write(temporary.path().join("b.txt"), "b\n").unwrap();
+        git(temporary.path(), &["add", "."]);
+        git(temporary.path(), &["commit", "-q", "-m", "base"]);
+        let worktree = RepositoryEngine::create_worktree(temporary.path(), SessionId::new())
+            .await
+            .unwrap();
+
+        std::fs::write(worktree.path.join("a.txt"), "staged\n").unwrap();
+        std::fs::write(worktree.path.join("b.txt"), "not staged\n").unwrap();
+        git(&worktree.path, &["add", "a.txt"]);
+
+        let staged = RepositoryEngine::changes(&worktree, ChangeScope::Staged)
+            .await
+            .unwrap();
+        assert_eq!(staged.files_changed(), 1);
+        assert_eq!(staged.scope_files[0].path, Path::new("a.txt"));
+
+        let agent = RepositoryEngine::changes(&worktree, ChangeScope::Agent)
+            .await
+            .unwrap();
+        assert_eq!(
+            agent.files_changed(),
+            2,
+            "both edits are the session's work"
+        );
+    }
+
+    #[tokio::test]
     async fn concurrent_worktree_metadata_mutations_are_serialized() {
         let temporary = tempfile::tempdir().unwrap();
         git(temporary.path(), &["init", "-q"]);
@@ -1174,6 +1665,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspace_changes_describe_the_users_own_checkout() {
+        // The workspace route is the user's real repository, not a session
+        // worktree: `git diff --numstat` must report a modified file's counts
+        // and `git ls-files --others` must reach an untracked file, without any
+        // `ensure_session_path` guard rejecting the root.
+        let temporary = tempfile::tempdir().unwrap();
+        git(temporary.path(), &["init", "-q"]);
+        std::fs::write(temporary.path().join("tracked.txt"), "one\ntwo\n").unwrap();
+        git(temporary.path(), &["add", "."]);
+        git(temporary.path(), &["commit", "-q", "-m", "base"]);
+        std::fs::write(temporary.path().join("tracked.txt"), "one\nchanged\n").unwrap();
+        std::fs::write(temporary.path().join("untracked.txt"), "fresh\n").unwrap();
+
+        let changes =
+            RepositoryEngine::workspace_changes(temporary.path(), ChangeScope::WorkingTree)
+                .await
+                .unwrap();
+        let by_path = |name: &str| {
+            changes
+                .scope_files
+                .iter()
+                .find(|file| file.path == Path::new(name))
+                .cloned()
+        };
+        let modified = by_path("tracked.txt").expect("the modified file must be reported");
+        assert_eq!(modified.status, 'M');
+        assert_eq!(
+            modified.additions,
+            Some(1),
+            "numstat must give the modified file's added-line count"
+        );
+        assert_eq!(modified.deletions, Some(1));
+        let untracked = by_path("untracked.txt").expect("the untracked file must be reported");
+        assert_eq!(untracked.status, 'A');
+        assert_eq!(untracked.additions, Some(1));
+        assert_eq!(changes.files_changed(), 2);
+        // The workspace route skips the binary patch entirely.
+        assert!(changes.patch.is_empty());
+    }
+
+    #[tokio::test]
     async fn effects_include_staged_and_untracked_files() {
         let temporary = tempfile::tempdir().unwrap();
         git(temporary.path(), &["init", "-q"]);
@@ -1246,10 +1778,12 @@ mod tests {
             "base"
         );
         assert!(!worktree.path.join("untracked.txt").exists());
-        assert!(RepositoryEngine::effects(&worktree)
-            .await
-            .unwrap()
-            .changed_files
-            .is_empty());
+        assert!(
+            RepositoryEngine::effects(&worktree)
+                .await
+                .unwrap()
+                .changed_files
+                .is_empty()
+        );
     }
 }

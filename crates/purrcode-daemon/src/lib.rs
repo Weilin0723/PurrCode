@@ -1,5 +1,7 @@
 //! Authenticated loopback API and durable session owner.
 
+#![allow(clippy::collapsible_if)]
+
 /// Version of the authenticated loopback contract used by this build.
 ///
 /// The CLI checks this before reusing a daemon already bound to the configured
@@ -7,37 +9,63 @@
 /// older TUI/CLI process.
 pub const DAEMON_API_VERSION: u32 = 2;
 
+/// Contract fingerprint for the native desktop IDE.
+///
+/// `DAEMON_API_VERSION` is shared with the older CLI/TUI surface and was not
+/// bumped when the native IDE presentation routes were added.  Keep a
+/// separate, explicit contract marker so a CLI cannot silently attach to a
+/// long-running daemon that predates `/v1/workspace`, repository-scoped
+/// sessions, or the evidence/presentation routes.
+pub const NATIVE_IDE_API_VERSION: u32 = 1;
+/// Human-readable build marker paired with the native IDE contract. A daemon
+/// may keep the package version while its route set changes, so the CLI checks
+/// this marker together with the numeric API and capability list.
+pub const NATIVE_IDE_BUILD_FINGERPRINT: &str = "purrcode-native-ide-v1";
+pub const NATIVE_IDE_CAPABILITIES: &[&str] = &[
+    "sessions.repository_filter",
+    "sessions.start",
+    "sessions.evidence",
+    "workspace.git_overview",
+];
+
 mod local_models;
 pub mod model_recommendation;
 mod ollama_pull;
+mod work_presentation;
 
 use async_trait::async_trait;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::{FutureExt, StreamExt};
 use purrcode_agent_runtime::{
-    bounded_agent_stream_channel, AgentAction, AgentCancellation, AgentContextIndex,
-    AgentStreamEvent, AgentStreamObserver, AgentTurn, CapabilityResolution, IndexingSignals,
-    MemoryPressure, NativeAgent, SkillResolver, Tier2Policy,
+    AgentAction, AgentCancellation, AgentContextIndex, AgentStreamEvent, AgentStreamObserver,
+    AgentTurn, CapabilityResolution, IndexingSignals, MemoryPressure, NativeAgent, SkillResolver,
+    Tier2Policy, bounded_agent_stream_channel,
 };
 use purrcode_claw::ToolRuntime;
+use purrcode_codex_bridge::{CodexBridge, CodexBridgeConfig, CodexDoctorReport};
 use purrcode_mcp_host::{
-    read_skill_manifest, skill_digest, DynamicQualificationRequest, McpHost, McpServerConfig,
-    Qualifier as SkillQualifier,
+    DynamicQualificationRequest, McpHost, McpServerConfig, Qualifier as SkillQualifier,
+    read_skill_manifest, skill_digest,
 };
 use purrcode_ninelives::{Automation, SessionStore, StoreError};
-use purrcode_pawgate::{resolve_policy_path, Policy};
+use purrcode_pawgate::{Policy, resolve_policy_path};
+use purrcode_provider_gateway::failover::FailoverProvider;
 use purrcode_provider_gateway::{
-    keychain_reference, qualify_model, validate_credential_reference, AppConfig, ModelEvent,
-    ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode, ProviderConfig,
-    ProviderRouter, ProviderStreamEvent,
+    AppConfig, ModelEvent, ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode,
+    ProviderConfig, ProviderRouter, ProviderStreamEvent, env_style_reference, keychain_reference,
+    qualify_model, validate_credential_reference,
 };
-use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
+use purrcode_repository_engine::{ChangeScope, RepositoryEngine, SessionWorktree};
+use purrcode_runtime_core::adaptation::{
+    BudgetProfileKind, ModelRoutingControl, PermissionMode, SearchPolicy, SessionControls,
+    TaskEvidence, TaskMode, UsageRecord, WorkflowControl, build_workflow_plan, classify_task,
+};
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, AuthorityMode, Authorization,
     ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
@@ -71,7 +99,7 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, watch, Mutex, Semaphore};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, broadcast, watch};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
@@ -80,17 +108,18 @@ use crate::local_models::{
     UnloadLocalModelRequest,
 };
 use crate::model_recommendation::{
-    recommend_local_models, CapabilityObservation, ModelEvidence, OllamaMetadataEvidence,
-    QualificationEvidence,
+    CapabilityObservation, ModelEvidence, OllamaMetadataEvidence, QualificationEvidence,
+    recommend_local_models,
 };
 use crate::ollama_pull::{
-    proposed_pull, resolve_ollama_program, validate_model_name as validate_pull_model_name,
-    validate_pull_action, PullAdapter, PullPhase, PullProgress,
+    PullAdapter, PullPhase, PullProgress, proposed_pull, resolve_ollama_program,
+    validate_model_name as validate_pull_model_name, validate_pull_action,
 };
 
 #[derive(Clone)]
 struct AppState {
     store: Arc<Mutex<SessionStore>>,
+    unavailable_sessions: Arc<BTreeMap<SessionId, UnavailableSession>>,
     bearer_token: Arc<str>,
     database: PathBuf,
     app_config: PathBuf,
@@ -104,6 +133,18 @@ struct AppState {
     pull_jobs: Arc<Mutex<BTreeMap<ActionId, PullJob>>>,
     live_streams: Arc<Mutex<BTreeMap<SessionId, Arc<LiveStreamHub>>>>,
     terminals: TerminalRuntime,
+}
+
+/// Metadata retained for a session whose durable event log cannot be replayed
+/// under the current state machine. It is intentionally outside `SessionState`:
+/// the invalid session is never presented as a valid state and cannot be
+/// mutated, while the rest of the daemon remains available.
+#[derive(Clone, Debug)]
+struct UnavailableSession {
+    repository: Option<PathBuf>,
+    objective: Option<String>,
+    event_count: u64,
+    reason: String,
 }
 
 struct AgentLease {
@@ -319,6 +360,7 @@ pub struct DaemonConfig {
 pub struct StartupReport {
     pub bind: SocketAddr,
     pub recovered_uncertain_sessions: Vec<String>,
+    pub unavailable_sessions: Vec<String>,
     pub token_file: PathBuf,
 }
 
@@ -334,14 +376,20 @@ pub async fn bind_and_report(
     validate_bind(config.bind.ip(), config.allow_public_bind)?;
     let token = load_or_create_token(&config.token_file)?;
     let mut store = SessionStore::open(&config.database)?;
-    let recovered = store
-        .recover_uncertain_sessions()?
+    let recovery = store.recover_uncertain_sessions_with_quarantine()?;
+    let recovered = recovery
+        .recovered
         .into_iter()
         .map(|session| session.0.to_string())
         .collect::<Vec<_>>();
+    let mut unavailable = BTreeMap::new();
+    for (id, reason) in recovery.unavailable {
+        unavailable.insert(id, unavailable_session_metadata(&store, id, reason));
+    }
     let local_inference_limit = ResourceSnapshot::detect(0).maximum_local_inference_requests;
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
+        unavailable_sessions: Arc::new(unavailable.clone()),
         bearer_token: token.into(),
         database: config.database.clone(),
         app_config: config.app_config.clone(),
@@ -372,6 +420,8 @@ pub async fn bind_and_report(
         .route("/v1/terminals/{id}/detach", post(detach_terminal))
         .route("/v1/terminals/{id}/owner", post(change_terminal_owner))
         .route("/v1/sessions", get(sessions))
+        .route("/v1/workspace", get(workspace_state))
+        .route("/v1/workspace/changes", get(workspace_changes))
         .route("/v1/sessions", post(start_session))
         .route("/v1/sessions/{id}", get(session))
         .route("/v1/sessions/{id}/events", get(events))
@@ -383,16 +433,32 @@ pub async fn bind_and_report(
         .route("/v1/sessions/{id}/summary", get(session_summary))
         .route("/v1/sessions/{id}/activity", get(session_activity))
         .route("/v1/sessions/{id}/validation", get(session_validation))
+        .route("/v1/sessions/{id}/conversation", get(messages))
+        .route("/v1/sessions/{id}/artifacts", get(session_artifacts))
+        .route("/v1/sessions/{id}/changes", get(session_changes))
+        .route("/v1/sessions/{id}/github", get(session_github))
+        .route("/v1/sessions/{id}/usage", get(session_usage))
+        .route("/v1/sessions/{id}/spec", get(session_spec))
+        .route("/v1/sessions/{id}/tasks", get(session_tasks))
+        .route("/v1/sessions/{id}/evidence", get(session_evidence))
+        .route(
+            "/v1/sessions/{id}/controls",
+            get(session_controls).post(update_session_controls),
+        )
         .route("/v1/sessions/{id}/hunks", get(review_hunks))
         .route("/v1/sessions/{id}/diff", get(session_diff))
         .route("/v1/sessions/{id}/hunks/apply", post(apply_review_hunk))
         .route("/v1/sessions/{id}/hunks/reject", post(reject_review_hunk))
         .route("/v1/sessions/{id}/resume", post(resume_session))
+        .route("/v1/sessions/{id}/recover", post(recover_session))
         .route("/v1/sessions/{id}/approve", post(approve_session))
         .route("/v1/sessions/{id}/reject", post(reject_session))
         .route("/v1/sessions/{id}/pause", post(pause_session))
         .route("/v1/sessions/{id}/checkpoint", post(checkpoint_session))
-        .route("/v1/sessions/{id}/rollback", post(rollback_session))
+        .route(
+            "/v1/sessions/{id}/rollback",
+            get(rollback_preview).post(rollback_session),
+        )
         .route("/v1/sessions/{id}/compact", post(compact_session))
         .route("/v1/sessions/{id}/model", post(select_session_model))
         .route("/v1/sessions/{id}/replace-action", post(replace_action))
@@ -411,7 +477,20 @@ pub async fn bind_and_report(
         .route("/v1/providers/test", post(test_provider))
         .route("/v1/providers/discover", post(discover_provider_models))
         .route("/v1/credentials", post(store_credential))
+        .route("/v1/credentials/{name}", delete(delete_credential))
         .route("/v1/models", get(list_models))
+        .route("/v1/bootstrap", get(bootstrap))
+        .route("/v1/github/status", get(github_status))
+        .route("/v1/github/connect", post(github_connect))
+        .route("/v1/github/disconnect", post(github_disconnect))
+        .route("/v1/sessions/{id}/github/pr", post(github_create_pr))
+        .route(
+            "/v1/sessions/{id}/github/branch",
+            post(github_create_branch),
+        )
+        .route("/v1/sessions/{id}/github/status", get(github_checks))
+        .route("/v1/sessions/{id}/github/merge", post(github_merge_pr))
+        .route("/v1/sessions/{id}/github/issue/{issue}", get(github_issue))
         .route("/v1/models/roles", post(assign_model_role))
         .route("/v1/local-models", get(local_models))
         .route(
@@ -462,12 +541,20 @@ pub async fn bind_and_report(
         .route("/v1/skills/{id}", delete(remove_skill))
         .route("/v1/research/fetch", post(fetch_research_page))
         .route("/v1/skills/publishers/block", post(block_skill_publisher))
+        .route(
+            "/v1/mcp/servers",
+            get(list_mcp_servers).post(upsert_mcp_server),
+        )
+        .route("/v1/mcp/servers/{id}", delete(remove_mcp_server))
+        .route("/v1/codex", get(get_codex_config).post(update_codex_config))
+        .route("/v1/codex/doctor", post(run_codex_doctor))
         .with_state(state.clone());
     let listener = TcpListener::bind(config.bind).await?;
     let actual_bind = listener.local_addr()?;
     let report = StartupReport {
         bind: actual_bind,
         recovered_uncertain_sessions: recovered,
+        unavailable_sessions: unavailable.keys().map(|id| id.0.to_string()).collect(),
         token_file: config.token_file,
     };
     let future = async move {
@@ -480,6 +567,32 @@ pub async fn bind_and_report(
         Ok(())
     };
     Ok((report, future))
+}
+
+fn unavailable_session_metadata(
+    store: &SessionStore,
+    id: SessionId,
+    reason: String,
+) -> UnavailableSession {
+    let events = store.events(id).unwrap_or_default();
+    let event_count = events.len() as u64;
+    let (objective, repository) = events
+        .iter()
+        .find_map(|event| match event {
+            SessionEvent::SessionCreated {
+                objective,
+                repository,
+                ..
+            } => Some((Some(objective.clone()), Some(repository.clone()))),
+            _ => None,
+        })
+        .unwrap_or((None, None));
+    UnavailableSession {
+        repository,
+        objective,
+        event_count,
+        reason,
+    }
 }
 
 #[derive(Deserialize)]
@@ -511,10 +624,18 @@ async fn inspect_environment(
     Ok(Json(report))
 }
 
+/// Keystrokes or pasted text for a live terminal.
+///
+/// `bytes` exists because not every key encoding is text: an arrow key sends
+/// `ESC [ A` and Ctrl+C sends a lone `0x03`. A client that has already encoded
+/// a key sends `bytes`; one that just has text sends `input`.
 #[derive(Deserialize)]
 struct TerminalInputRequest {
     generation: OwnershipGeneration,
-    input: String,
+    #[serde(default)]
+    input: Option<String>,
+    #[serde(default)]
+    bytes: Option<Vec<u8>>,
 }
 
 #[derive(Deserialize)]
@@ -616,7 +737,10 @@ async fn send_terminal_input(
         .send_input(SendTerminalInputAction {
             terminal_id: parse_terminal_id(&id)?,
             owner_generation: request.generation,
-            input: request.input.into_bytes(),
+            input: request
+                .bytes
+                .or_else(|| request.input.map(String::into_bytes))
+                .unwrap_or_default(),
         })
         .map_err(ApiError::terminal)?;
     Ok(StatusCode::NO_CONTENT)
@@ -717,6 +841,9 @@ async fn health(
         version: env!("CARGO_PKG_VERSION"),
         daemon_api_version: DAEMON_API_VERSION,
         studio_api_version: purrcode_ui_contracts::STUDIO_API_VERSION,
+        native_ide_api_version: NATIVE_IDE_API_VERSION,
+        native_ide_build_fingerprint: NATIVE_IDE_BUILD_FINGERPRINT,
+        native_ide_capabilities: NATIVE_IDE_CAPABILITIES,
     }))
 }
 
@@ -892,12 +1019,32 @@ struct SupervisorView {
 }
 
 struct JudgedSupervisorWorker {
+    /// Default route: used when a worker spec has no `model` override.
     provider: Arc<dyn ModelProvider>,
     model: ModelId,
+    /// Present only in production: resolves per-worker `spec.model` overrides.
+    router: Option<ProviderRouter>,
     policy: Policy,
     database: PathBuf,
     local_inference: bool,
     local_inference_slots: Arc<Semaphore>,
+}
+
+impl JudgedSupervisorWorker {
+    /// Resolve the provider/model for one worker: `spec.model` overrides the
+    /// shared default so different sub-agents can use different APIs.
+    fn route_for(&self, spec: &WorkerSpec) -> Result<(Arc<dyn ModelProvider>, ModelId), String> {
+        let Some(model) = spec.model.as_deref() else {
+            return Ok((self.provider.clone(), self.model.clone()));
+        };
+        let model = ModelId::parse(model).map_err(|error| error.to_string())?;
+        let router = self
+            .router
+            .as_ref()
+            .ok_or_else(|| "worker model override requires a configured router".to_owned())?;
+        let provider = router.provider(&model).map_err(|error| error.to_string())?;
+        Ok((provider, model))
+    }
 }
 
 #[async_trait]
@@ -935,13 +1082,14 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 },
             )
             .map_err(|error| error.to_string())?;
+        let (provider, model) = self.route_for(spec)?;
         store
             .append(
                 session_id,
                 &SessionEvent::ModelRequestStarted {
                     role: format!("parallel_worker:{}", spec.id),
-                    provider: self.model.provider.clone(),
-                    model: self.model.model.clone(),
+                    provider: model.provider.clone(),
+                    model: model.model.clone(),
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -956,11 +1104,10 @@ impl IsolatedWorker for JudgedSupervisorWorker {
         } else {
             None
         };
-        let value = self
-            .provider
+        let value = provider
             .structured(
                 ModelRequest {
-                    model: self.model.clone(),
+                    model,
                     messages: vec![
                         ModelMessage {
                             role: "developer".into(),
@@ -1015,7 +1162,7 @@ impl IsolatedWorker for JudgedSupervisorWorker {
             AgentAction::ReadCommand(_) => {
                 return Err(
                     "legacy read commands must be normalized by the primary agent runtime".into(),
-                )
+                );
             }
             AgentAction::WriteFile {
                 path,
@@ -1143,8 +1290,16 @@ async fn run_supervisor(
         .get(&model.provider)
         .ok_or_else(|| ApiError::BadRequest("coding provider is not configured".into()))?
         .is_local();
-    let router = ProviderRouter::from_config(&config)
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let router = ProviderRouter::from_config(
+        &config,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let provider = router
         .provider(&model)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -1173,6 +1328,7 @@ async fn run_supervisor(
     let worker = JudgedSupervisorWorker {
         provider,
         model,
+        router: Some(router),
         policy,
         database: state.database.clone(),
         local_inference,
@@ -1260,28 +1416,103 @@ async fn run_supervisor(
     ))
 }
 
+#[derive(Deserialize, Default)]
+struct SessionsQuery {
+    /// Only sessions belonging to this repository.
+    ///
+    /// A client that has one folder open must not be shown another folder's
+    /// work: the titles look plausible, the branch is wrong, and opening one
+    /// silently moves the user to a different project.
+    #[serde(default)]
+    repository: Option<PathBuf>,
+}
+
 async fn sessions(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<SessionsQuery>,
 ) -> Result<Json<Vec<SessionView>>, ApiError> {
     authorize(&state, &headers)?;
+    let wanted = query
+        .repository
+        .as_deref()
+        .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
     let active_leases: std::collections::BTreeSet<_> =
         state.leases.lock().await.keys().copied().collect();
+    let unavailable = state.unavailable_sessions.clone();
     let store = state.store.lock().await;
     let mut views = Vec::new();
     for id in store.list_session_ids()? {
+        if let Some(unavailable) = unavailable.get(&id) {
+            let repository = unavailable.repository.as_ref().map(|repository| {
+                repository
+                    .canonicalize()
+                    .unwrap_or_else(|_| repository.clone())
+            });
+            if let Some(wanted) = wanted.as_deref() {
+                let same = repository
+                    .as_deref()
+                    .is_some_and(|repository| repository == wanted);
+                if !same {
+                    continue;
+                }
+            }
+            views.push(SessionView {
+                id: id.0.to_string(),
+                status: "Unavailable".into(),
+                status_code: "unavailable",
+                event_count: unavailable.event_count,
+                lease_active: false,
+                awaiting_plan_review: false,
+                recovery_reconciled: false,
+                objective: unavailable.objective.clone(),
+                repository,
+                worktree: None,
+                selected_model: None,
+                created_at: None,
+                updated_at: None,
+                unavailable_reason: Some(unavailable.reason.clone()),
+            });
+            continue;
+        }
         let session = store.load(id)?;
+        let events = store.events(id)?;
+        if let Some(wanted) = wanted.as_deref() {
+            let same = session.repository.as_deref().is_some_and(|repository| {
+                repository == wanted
+                    || repository
+                        .canonicalize()
+                        .is_ok_and(|resolved| resolved == wanted)
+            });
+            if !same {
+                continue;
+            }
+        }
+        // SessionCreated events from older daemons may have stored a symlink
+        // spelling of the repository. Emit the canonical identity that was
+        // used for filtering so clients can compare the response without
+        // re-opening another workspace by accident.
+        let repository = session.repository.as_ref().map(|repository| {
+            repository
+                .canonicalize()
+                .unwrap_or_else(|_| repository.clone())
+        });
+        let timestamps = store.timestamped_events(id)?;
         views.push(SessionView {
             id: id.0.to_string(),
             status: format!("{:?}", session.status),
-            status_code: status_code(&session.status),
+            status_code: presentation_status(&session),
             event_count: session.event_count,
             lease_active: active_leases.contains(&id),
             awaiting_plan_review: awaiting_plan_review(&session),
+            recovery_reconciled: recovery_reconciled(&session, &events),
             objective: session.objective,
-            repository: session.repository,
+            repository,
             worktree: session.worktree,
             selected_model: session.selected_model,
+            created_at: timestamps.first().map(|(timestamp, _)| *timestamp),
+            updated_at: timestamps.last().map(|(timestamp, _)| *timestamp),
+            unavailable_reason: None,
         });
     }
     Ok(Json(views))
@@ -1291,6 +1522,11 @@ async fn sessions(
 struct StartSessionRequest {
     objective: String,
     repository: PathBuf,
+    /// Optional session model chosen before the first turn. Persisting it as
+    /// part of creation avoids racing a model-change request against the agent
+    /// lease that creation immediately starts.
+    #[serde(default)]
+    model: Option<String>,
     #[serde(default)]
     plan_only: bool,
     /// The permission mode an authenticated human chose (PRD §12), in the
@@ -1299,12 +1535,58 @@ struct StartSessionRequest {
     /// than living only in whichever client happened to make the request.
     #[serde(default)]
     authority_mode: Option<String>,
+    #[serde(default)]
+    workflow: Option<String>,
+    #[serde(default)]
+    routing: Option<String>,
+    #[serde(default)]
+    search_policy: Option<String>,
+    #[serde(default)]
+    budget_profile: Option<String>,
+    #[serde(default)]
+    execution_style: Option<String>,
+    #[serde(default)]
+    task_mode: Option<String>,
+    /// The product-vocabulary permission a client sent (`ask`, `auto`,
+    /// `full access`). It resolves to the same authority as `authority_mode`;
+    /// clients may send either, and disagreement is rejected rather than
+    /// silently resolved one way.
+    #[serde(default)]
+    permission_mode: Option<String>,
+    #[serde(default)]
+    max_tokens: Option<u64>,
 }
 
 impl StartSessionRequest {
     /// Reject a mode the contract does not define instead of storing it. A
     /// permission value nobody can interpret is worse than none.
     fn authority_mode(&self) -> Result<AuthorityMode, ApiError> {
+        // A client may say `permission_mode: "full access"` or
+        // `authority_mode: "unrestricted"`. They mean the same thing, so the
+        // product word is translated into the authority word here and any
+        // conflict between the two is refused.
+        if let Some(permission) = self.permission_mode.as_deref() {
+            let parsed = PermissionMode::parse(permission).ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "unknown permission mode `{permission}`; expected ask, auto or full access"
+                ))
+            })?;
+            if let Some(authority) = self.authority_mode.as_deref() {
+                if authority != parsed.authority_mode() {
+                    return Err(ApiError::BadRequest(format!(
+                        "permission_mode `{permission}` and authority_mode `{authority}` disagree"
+                    )));
+                }
+            }
+            return Ok(match parsed {
+                PermissionMode::Ask => AuthorityMode::Governed,
+                PermissionMode::Auto => AuthorityMode::Elevated {
+                    capabilities: Vec::new(),
+                    allowed_programs: Vec::new(),
+                },
+                PermissionMode::FullAccess => AuthorityMode::Unrestricted,
+            });
+        }
         match self.authority_mode.as_deref() {
             None | Some("governed") => Ok(AuthorityMode::Governed),
             Some("elevated") => Ok(AuthorityMode::Elevated {
@@ -1317,12 +1599,220 @@ impl StartSessionRequest {
             ))),
         }
     }
+
+    fn controls(&self) -> Result<SessionControls, ApiError> {
+        let mut controls = SessionControls::default();
+        if let Some(workflow) = self.workflow.as_deref() {
+            controls.workflow = WorkflowControl::parse(workflow)
+                .ok_or_else(|| ApiError::BadRequest(format!("unknown workflow `{workflow}`")))?;
+        }
+        if let Some(routing) = self.routing.as_deref() {
+            controls.routing = ModelRoutingControl::parse(routing)
+                .ok_or_else(|| ApiError::BadRequest(format!("unknown routing `{routing}`")))?;
+        }
+        if let Some(search) = self.search_policy.as_deref() {
+            controls.search_policy = Some(SearchPolicy::parse(search).ok_or_else(|| {
+                ApiError::BadRequest(format!("unknown search policy `{search}`"))
+            })?);
+        }
+        if let Some(budget) = self.budget_profile.as_deref() {
+            controls.budget_profile = BudgetProfileKind::parse(budget)
+                .ok_or_else(|| ApiError::BadRequest(format!("unknown budget `{budget}`")))?;
+        }
+        if let Some(style) = self.execution_style.as_deref() {
+            controls.execution_style = purrcode_runtime_core::adaptation::ExecutionStyle::parse(
+                style,
+            )
+            .ok_or_else(|| ApiError::BadRequest(format!("unknown execution style `{style}`")))?;
+        }
+        if let Some(mode) = self.task_mode.as_deref() {
+            // `auto` is a start-request strategy, not a durable runtime mode.
+            // It is resolved against the objective before the controls event
+            // is written, so every later client sees the effective safe mode.
+            if !mode.trim().eq_ignore_ascii_case("auto") {
+                controls.task_mode = TaskMode::parse(mode)
+                    .ok_or_else(|| ApiError::BadRequest(format!("unknown task mode `{mode}`")))?;
+            }
+        }
+        // Permission is recorded on the controls so every client reads one
+        // value, but the enforceable copy is the authority mode above.
+        controls.permission_mode = match self.permission_mode.as_deref() {
+            Some(permission) => PermissionMode::parse(permission).ok_or_else(|| {
+                ApiError::BadRequest(format!("unknown permission mode `{permission}`"))
+            })?,
+            None => match self.authority_mode.as_deref() {
+                Some("elevated") => PermissionMode::Auto,
+                Some("unrestricted") => PermissionMode::FullAccess,
+                _ => PermissionMode::Ask,
+            },
+        };
+        if let Some(max_tokens) = self.max_tokens {
+            if max_tokens == 0 {
+                return Err(ApiError::BadRequest(
+                    "max_tokens must be greater than zero".into(),
+                ));
+            }
+            controls.budget_profile = BudgetProfileKind::Custom;
+            controls.custom_budget = Some(purrcode_runtime_core::adaptation::BudgetConstraints {
+                maximum_total_tokens: Some(max_tokens),
+                ..Default::default()
+            });
+        }
+        Ok(controls)
+    }
+}
+
+fn validate_supported_controls(controls: &SessionControls) -> Result<(), ApiError> {
+    if matches!(
+        controls.routing,
+        ModelRoutingControl::Economy | ModelRoutingControl::Quality
+    ) {
+        return Err(ApiError::BadRequest(format!(
+            "routing={} is unavailable in this native runtime; choose auto or fixed",
+            controls.routing.label()
+        )));
+    }
+    if controls.budget_profile == BudgetProfileKind::Custom && controls.custom_budget.is_none() {
+        return Err(ApiError::BadRequest(
+            "custom budget requires at least one explicit constraint".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
 struct AcceptedSession {
     id: String,
     status: &'static str,
+}
+
+/// `auto` is intentionally a small server-side intent resolver rather than a
+/// second user-facing taxonomy.  It only takes ownership of deterministic
+/// cases; explicit Plan/Review/Build (and the legacy Ask constraint) retain
+/// their existing semantics.
+fn is_auto_task_request(request: &StartSessionRequest) -> bool {
+    request
+        .task_mode
+        .as_deref()
+        .is_none_or(|mode| mode.trim().eq_ignore_ascii_case("auto"))
+}
+
+fn normalized_intent_words(objective: &str) -> Vec<String> {
+    objective
+        .split_whitespace()
+        .map(|word| {
+            word.trim_matches(|character: char| {
+                !character.is_ascii_alphanumeric() && character != '\''
+            })
+            .to_ascii_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+fn is_simple_conversational_intent(objective: &str) -> bool {
+    let words = normalized_intent_words(objective);
+    let phrase = words.join(" ");
+    matches!(
+        phrase.as_str(),
+        "hello"
+            | "hi"
+            | "hey"
+            | "hello there"
+            | "hi there"
+            | "hey there"
+            | "say hello"
+            | "say hi"
+            | "thanks"
+            | "thank you"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+            | "what's up"
+            | "how are you"
+            | "what can you do"
+            | "what do you do"
+    )
+}
+
+fn is_mutating_intent(objective: &str) -> bool {
+    let Some(first) = normalized_intent_words(objective).first().cloned() else {
+        return false;
+    };
+    matches!(
+        first.as_str(),
+        "add"
+            | "build"
+            | "change"
+            | "create"
+            | "delete"
+            | "disable"
+            | "enable"
+            | "fix"
+            | "implement"
+            | "migrate"
+            | "modify"
+            | "move"
+            | "port"
+            | "refactor"
+            | "remove"
+            | "rename"
+            | "replace"
+            | "test"
+            | "update"
+            | "upgrade"
+            | "write"
+    )
+}
+
+fn auto_constraint(objective: &str) -> Option<TaskMode> {
+    let first = normalized_intent_words(objective).into_iter().next()?;
+    match first.as_str() {
+        "plan" => Some(TaskMode::Plan),
+        "review" => Some(TaskMode::Review),
+        _ => None,
+    }
+}
+
+/// Return whether this request can be answered without starting an agent.
+/// The effective mode is persisted separately in `SessionControlsUpdated`.
+fn resolve_effective_task_mode(
+    request: &StartSessionRequest,
+    controls: &mut SessionControls,
+) -> bool {
+    if request.plan_only {
+        return false;
+    }
+    let explicit = request.task_mode.as_deref().and_then(TaskMode::parse);
+    match explicit {
+        Some(TaskMode::Plan | TaskMode::Review | TaskMode::Build) => false,
+        Some(TaskMode::Ask) => is_simple_conversational_intent(&request.objective),
+        None if is_auto_task_request(request) => {
+            if is_simple_conversational_intent(&request.objective) {
+                true
+            } else if let Some(constrained_mode) = auto_constraint(&request.objective) {
+                controls.task_mode = constrained_mode;
+                false
+            } else {
+                if is_mutating_intent(&request.objective) {
+                    controls.task_mode = TaskMode::Build;
+                } else {
+                    controls.task_mode = TaskMode::Ask;
+                }
+                false
+            }
+        }
+        None => false,
+    }
+}
+
+fn direct_reply_for(objective: &str) -> &'static str {
+    match normalized_intent_words(objective).join(" ").as_str() {
+        "what can you do" | "what do you do" => {
+            "I can inspect and explain this repository, answer questions, plan changes, edit code, run tests, and help review the result."
+        }
+        _ => "Hello! What would you like to inspect, explain, or change?",
+    }
 }
 
 async fn start_session(
@@ -1340,6 +1830,51 @@ async fn start_session(
         .canonicalize()
         .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
     let authority_mode = request.authority_mode()?;
+    let mut controls = request.controls()?;
+    if let Some(model) = request.model.as_deref() {
+        let model =
+            ModelId::parse(model).map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        let config = AppConfig::load(&state.app_config)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        ProviderRouter::from_config(
+            &config,
+            Some(
+                state
+                    .app_config
+                    .with_file_name("credentials.toml")
+                    .as_path(),
+            ),
+        )
+        .and_then(|router| router.provider(&model).map(|_| ()))
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    }
+    if request.plan_only {
+        if request.task_mode.as_deref().is_some_and(|mode| {
+            !mode.trim().eq_ignore_ascii_case("auto")
+                && TaskMode::parse(mode) != Some(TaskMode::Plan)
+        }) {
+            return Err(ApiError::BadRequest(
+                "plan_only conflicts with task_mode; use task_mode=plan, task_mode=auto, or omit plan_only".into(),
+            ));
+        }
+        // The legacy boolean is accepted only as an unambiguous spelling of
+        // the canonical Plan mode.  The durable controls still carry the
+        // effective value every client must consume.
+        controls.task_mode = TaskMode::Plan;
+    }
+    validate_supported_controls(&controls)?;
+    let direct_reply = resolve_effective_task_mode(&request, &mut controls);
+    let task_mode = controls.task_mode;
+    let workflow = if direct_reply {
+        None
+    } else {
+        let evidence = TaskEvidence::from_objective(&request.objective);
+        let decision = classify_task(&evidence, &controls);
+        let plan = build_workflow_plan(request.objective.clone(), &decision).map_err(|error| {
+            ApiError::BadRequest(format!("workflow planning failed safely: {error}"))
+        })?;
+        Some((decision, plan))
+    };
     let id = SessionId::new();
     let objective = request.objective;
     let mut store = state.store.lock().await;
@@ -1351,13 +1886,20 @@ async fn start_session(
             authority_mode,
         },
     )?;
+    store.append(id, &SessionEvent::SessionControlsUpdated { controls })?;
+    if let Some(model) = request.model.clone() {
+        store.append(id, &SessionEvent::ModelSelected { model })?;
+    }
+    if let Some((decision, plan)) = workflow {
+        store.append(id, &SessionEvent::WorkflowPlanCreated { decision, plan })?;
+    }
     store.append(
         id,
         &SessionEvent::ConversationMessageAdded {
             message: ConversationMessage {
                 id: Uuid::new_v4().to_string(),
                 role: "user".into(),
-                content: objective,
+                content: objective.clone(),
                 timestamp: Utc::now(),
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
@@ -1365,11 +1907,34 @@ async fn start_session(
             },
         },
     )?;
+    if direct_reply {
+        store.append(
+            id,
+            &SessionEvent::ConversationMessageAdded {
+                message: ConversationMessage {
+                    id: Uuid::new_v4().to_string(),
+                    role: "assistant".into(),
+                    content: direct_reply_for(&objective).into(),
+                    timestamp: Utc::now(),
+                    tool_calls: Vec::new(),
+                    tool_results: Vec::new(),
+                    model: None,
+                },
+            },
+        )?;
+        store.append(id, &SessionEvent::SessionCompleted)?;
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(AcceptedSession {
+                id: id.0.to_string(),
+                status: "completed",
+            }),
+        ));
+    }
     drop(store);
-    let operation = if request.plan_only {
-        AgentOperation::Plan
-    } else {
-        AgentOperation::Start
+    let operation = match task_mode {
+        TaskMode::Plan | TaskMode::Review => AgentOperation::Plan,
+        TaskMode::Ask | TaskMode::Build => AgentOperation::Start,
     };
     if let Err(error) = spawn_agent_operation(state.clone(), id, operation).await {
         let reason = error_message(&error).chars().take(512).collect();
@@ -1416,10 +1981,14 @@ async fn append_message(
     let id = parse_session_id(&id)?;
     let session = state.store.lock().await.load(id)?;
     let paused = session.status == SessionStatus::Paused;
-    if session.status != SessionStatus::Active && !paused {
+    let ended_status = matches!(
+        session.status,
+        SessionStatus::Completed | SessionStatus::Failed | SessionStatus::Cancelled
+    )
+    .then(|| session.status.clone());
+    if session.status != SessionStatus::Active && !paused && ended_status.is_none() {
         return Err(ApiError::Conflict(
-            "only an active or paused session can accept a follow-up message; start a new session"
-                .into(),
+            "this session cannot accept a follow-up message".into(),
         ));
     }
     if request.content.trim().is_empty() {
@@ -1438,9 +2007,21 @@ async fn append_message(
             feedback: content.to_owned(),
         }
     } else {
-        AgentOperation::Resume
+        // Every other follow-up carries the user's own words into the
+        // operation. A worktree-less session (a greeting, a read-only
+        // "explain this codebase") is initialized lazily inside the operation
+        // and then answers the follow-up; it must never silently re-run the
+        // original objective, which is what happened when the follow-up text
+        // was durably recorded and then thrown away by the previous `Start`
+        // selection.
+        AgentOperation::Continue {
+            message: content.to_owned(),
+        }
     };
     let mut store = state.store.lock().await;
+    if ended_status.is_some() {
+        store.append(id, &SessionEvent::SessionResumed)?;
+    }
     store.append(
         id,
         &SessionEvent::ConversationMessageAdded {
@@ -1458,13 +2039,42 @@ async fn append_message(
     if paused {
         store.append(id, &SessionEvent::SessionResumed)?;
     }
+    // A lightweight follow-up stays lightweight. It still records a complete
+    // turn in the same durable conversation, but does not start a provider,
+    // plan, worktree, or validation workflow.
+    if ended_status.is_some() && is_simple_conversational_intent(content) {
+        store.append(
+            id,
+            &SessionEvent::ConversationMessageAdded {
+                message: ConversationMessage {
+                    id: Uuid::new_v4().to_string(),
+                    role: "assistant".into(),
+                    content: direct_reply_for(content).into(),
+                    timestamp: Utc::now(),
+                    tool_calls: Vec::new(),
+                    tool_results: Vec::new(),
+                    model: None,
+                },
+            },
+        )?;
+        store.append(id, &SessionEvent::SessionCompleted)?;
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(AcceptedSession {
+                id: id.0.to_string(),
+                status: "message accepted",
+            }),
+        ));
+    }
     drop(store);
     let status = if matches!(operation, AgentOperation::RevisePlan { .. }) {
         "revising the plan"
+    } else if matches!(operation, AgentOperation::Continue { .. }) {
+        "answering"
     } else {
         "message accepted"
     };
-    resume_or_restore_pause(&state, id, paused, operation).await?;
+    resume_or_restore_pause(&state, id, paused, ended_status, operation).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
@@ -1484,6 +2094,7 @@ async fn resume_or_restore_pause(
     state: &AppState,
     id: SessionId,
     was_paused: bool,
+    ended_status: Option<SessionStatus>,
     operation: AgentOperation,
 ) -> Result<(), ApiError> {
     let Err(error) = spawn_agent_operation(state.clone(), id, operation).await else {
@@ -1502,6 +2113,18 @@ async fn resume_or_restore_pause(
             })
             .unwrap_or_else(|| "paused".to_owned());
         store.append(id, &SessionEvent::SessionPaused { reason })?;
+    } else if let Some(ended_status) = ended_status {
+        let event = match ended_status {
+            SessionStatus::Completed => SessionEvent::SessionCompleted,
+            SessionStatus::Failed => SessionEvent::SessionFailed {
+                reason: "the follow-up could not start".into(),
+            },
+            SessionStatus::Cancelled => SessionEvent::SessionCancelled {
+                reason: "the follow-up could not start".into(),
+            },
+            _ => unreachable!("only ended turn states are retained"),
+        };
+        state.store.lock().await.append(id, &event)?;
     }
     Err(error)
 }
@@ -1516,6 +2139,114 @@ fn awaiting_plan_review(session: &purrcode_runtime_core::SessionState) -> bool {
     session.status == SessionStatus::Paused
         && !session.plan_steps.is_empty()
         && session.proposed_actions.is_empty()
+}
+
+fn session_search_policy(session: &purrcode_runtime_core::SessionState) -> SearchPolicy {
+    session
+        .workflow_plan
+        .as_ref()
+        .map(|plan| plan.search_policy)
+        .or(session.controls.search_policy)
+        // A session without a durable workflow plan is not ready for network
+        // research unless it carries an explicit durable user override. Never
+        // derive a permissive default inside an effect route.
+        .unwrap_or(SearchPolicy::Off)
+}
+
+fn reserve_search_request(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    provider: &str,
+    purpose: &str,
+) -> Result<(), ApiError> {
+    let session = store.load(session_id)?;
+    let used = session
+        .usage_records
+        .iter()
+        .map(|record| record.search_requests)
+        .sum::<u32>();
+    if session
+        .controls
+        .effective_budget()
+        .maximum_search_requests
+        .is_some_and(|limit| used >= limit)
+    {
+        return Err(ApiError::Conflict(
+            "session search-request budget is exhausted".into(),
+        ));
+    }
+    store.append(
+        session_id,
+        &SessionEvent::UsageRecorded {
+            record: UsageRecord {
+                request_id: Default::default(),
+                session_id,
+                workflow_lane_id: None,
+                provider_id: provider.into(),
+                model_id: purpose.into(),
+                credential_id: "daemon-managed".into(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                tool_result_tokens: 0,
+                search_requests: 1,
+                mcp_calls: 0,
+                estimated_cost: None,
+                latency_ms: 0,
+                recorded_at: Utc::now(),
+            },
+        },
+    )?;
+    Ok(())
+}
+
+fn reserve_mcp_call(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    server: &str,
+    tool: &str,
+) -> Result<(), ApiError> {
+    let session = store.load(session_id)?;
+    let used = session
+        .usage_records
+        .iter()
+        .map(|record| record.mcp_calls)
+        .sum::<u32>();
+    if session
+        .controls
+        .effective_budget()
+        .maximum_mcp_calls
+        .is_some_and(|limit| used >= limit)
+    {
+        return Err(ApiError::Conflict(
+            "session MCP-call budget is exhausted".into(),
+        ));
+    }
+    store.append(
+        session_id,
+        &SessionEvent::UsageRecorded {
+            record: UsageRecord {
+                request_id: Default::default(),
+                session_id,
+                workflow_lane_id: None,
+                provider_id: server.into(),
+                model_id: tool.into(),
+                credential_id: "daemon-managed".into(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                tool_result_tokens: 0,
+                search_requests: 0,
+                mcp_calls: 1,
+                estimated_cost: None,
+                latency_ms: 0,
+                recorded_at: Utc::now(),
+            },
+        },
+    )?;
+    Ok(())
 }
 
 fn reject_secret_content(content: &str) -> Result<(), ApiError> {
@@ -1538,7 +2269,13 @@ async fn resume_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     ensure_session_exists(&state, id).await?;
-    let paused = state.store.lock().await.load(id)?.status == SessionStatus::Paused;
+    let status = state.store.lock().await.load(id)?.status;
+    let paused = status == SessionStatus::Paused;
+    let ended_status = matches!(
+        status,
+        SessionStatus::Completed | SessionStatus::Failed | SessionStatus::Cancelled
+    )
+    .then(|| status.clone());
     if paused {
         state
             .store
@@ -1546,7 +2283,19 @@ async fn resume_session(
             .await
             .append(id, &SessionEvent::SessionResumed)?;
     }
-    resume_or_restore_pause(&state, id, paused, AgentOperation::Resume).await?;
+    if ended_status.is_some() {
+        state
+            .store
+            .lock()
+            .await
+            .append(id, &SessionEvent::SessionResumed)?;
+    }
+    let operation = if state.store.lock().await.load(id)?.worktree.is_none() {
+        AgentOperation::Start
+    } else {
+        AgentOperation::Resume
+    };
+    resume_or_restore_pause(&state, id, paused, ended_status, operation).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
@@ -1554,6 +2303,58 @@ async fn resume_session(
             status: "resuming",
         }),
     ))
+}
+
+async fn recover_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<AcceptedSession>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    require_idle(&state, id).await?;
+    let (session, events) = {
+        let store = state.store.lock().await;
+        (store.load(id)?, store.events(id)?)
+    };
+    if session.status != SessionStatus::Uncertain {
+        return Err(ApiError::Conflict(
+            "recovery reconciliation is available only for a session that needs recovery".into(),
+        ));
+    }
+    let worktree = worktree_from_state(&session)?;
+    let effects = RepositoryEngine::effects(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    let mut unfinished = std::collections::BTreeSet::new();
+    for event in &events {
+        match event {
+            SessionEvent::ExecutionStarted { action_id } => {
+                unfinished.insert(*action_id);
+            }
+            SessionEvent::ExecutionFinished { action_id, .. } => {
+                unfinished.remove(action_id);
+            }
+            _ => {}
+        }
+    }
+    let patch_digest = blake3::hash(&effects.binary_patch).to_hex().to_string();
+    state.store.lock().await.append(
+        id,
+        &SessionEvent::SessionPaused {
+            reason: format!(
+                "{} {} changed file(s), patch digest {}, {} unfinished action(s). No effect was replayed or rolled back. Inspect Changes, then Resume to replan or use rollback preview to abandon the isolated changes.",
+                purrcode_runtime_core::RECOVERY_RECONCILED_PAUSE,
+                effects.changed_files.len(),
+                &patch_digest[..12],
+                unfinished.len()
+            ),
+        },
+    )?;
+    Ok(Json(AcceptedSession {
+        id: id.0.to_string(),
+        status: "reconciled and paused for review",
+    }))
 }
 
 async fn approve_session(
@@ -1729,16 +2530,70 @@ async fn checkpoint_session(
     }))
 }
 
+async fn rollback_preview(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    require_idle(&state, id).await?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let effects = RepositoryEngine::effects(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    let changed_file_count = effects.changed_files.len();
+    Ok(Json(serde_json::json!({
+        "changed_files": effects.changed_files,
+        "changed_file_count": changed_file_count,
+        "patch_digest": blake3::hash(&effects.binary_patch).to_hex().to_string(),
+        "requires_unattributed_effect_acknowledgement": true,
+        "warning": "Git records the current isolated-worktree patch but cannot prove whether every hunk came from the agent, a human terminal, shell, or MCP tool. Rollback discards all listed isolated changes and never touches the source working tree."
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RollbackRequest {
+    expected_patch_digest: String,
+    acknowledge_unattributed_effects: bool,
+}
+
+fn validate_rollback_request(
+    request: &RollbackRequest,
+    current_digest: &str,
+) -> Result<(), ApiError> {
+    if !request.acknowledge_unattributed_effects {
+        return Err(ApiError::BadRequest(
+            "rollback requires acknowledgement that some isolated changes may be unattributed"
+                .into(),
+        ));
+    }
+    if request.expected_patch_digest != current_digest {
+        return Err(ApiError::Conflict(
+            "the isolated changes changed after rollback preview; inspect them again".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn rollback_session(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
+    Json(request): Json<RollbackRequest>,
 ) -> Result<Json<AcceptedSession>, ApiError> {
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     require_idle(&state, id).await?;
     let session = state.store.lock().await.load(id)?;
     let worktree = worktree_from_state(&session)?;
+    let effects = RepositoryEngine::effects(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    let current_digest = blake3::hash(&effects.binary_patch).to_hex().to_string();
+    validate_rollback_request(&request, &current_digest)?;
     RepositoryEngine::rollback_all(&worktree)
         .await
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
@@ -1746,7 +2601,10 @@ async fn rollback_session(
         id,
         &SessionEvent::WorktreeDispositionRecorded {
             strategy: "rollback_all".into(),
-            detail: "agent-owned worktree changes rolled back from daemon".into(),
+            detail: format!(
+                "{} previewed isolated-worktree change(s) rolled back after exact patch-digest confirmation",
+                effects.changed_files.len()
+            ),
         },
     )?;
     Ok(Json(AcceptedSession {
@@ -1809,9 +2667,17 @@ async fn select_session_model(
         ModelId::parse(&request.model).map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let config = AppConfig::load(&state.app_config)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    ProviderRouter::from_config(&config)
-        .and_then(|router| router.provider(&model).map(|_| ()))
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    ProviderRouter::from_config(
+        &config,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .and_then(|router| router.provider(&model).map(|_| ()))
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     state.store.lock().await.append(
         id,
         &SessionEvent::ModelSelected {
@@ -1857,6 +2723,7 @@ async fn replace_action(
     }
     let repository = session
         .repository
+        .clone()
         .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
     let worktree = session
         .worktree
@@ -1921,10 +2788,24 @@ struct McpInvocationRequest {
     action_id: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct McpSection {
     #[serde(default)]
     servers: BTreeMap<String, McpServerConfig>,
+}
+
+fn mcp_section(config: &AppConfig) -> Result<McpSection, ApiError> {
+    config
+        .extensions
+        .get("mcp")
+        .cloned()
+        .unwrap_or_else(|| toml::Value::Table(Default::default()))
+        .try_into()
+        .map_err(|error| ApiError::BadRequest(format!("invalid MCP configuration: {error}")))
+}
+
+fn task_mode_allows_mcp(task_mode: TaskMode, tool: &str) -> bool {
+    !task_mode.read_only() || tool == "__discover__"
 }
 
 async fn invoke_mcp(
@@ -1954,6 +2835,12 @@ async fn invoke_mcp(
     require_idle(&state, id).await?;
     let session = state.store.lock().await.load(id)?;
     let restore_paused = session.status == SessionStatus::Paused;
+    if !task_mode_allows_mcp(session.controls.task_mode, &request.tool) {
+        return Err(ApiError::Conflict(format!(
+            "{} mode is read-only; start an explicit Build session before invoking a mutating MCP tool",
+            session.controls.task_mode
+        )));
+    }
     let status_allows_request = match requested_action_id {
         Some(action_id) => {
             matches!(
@@ -1980,13 +2867,7 @@ async fn invoke_mcp(
         .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
     let config = AppConfig::load(&state.app_config)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let section: McpSection = config
-        .extensions
-        .get("mcp")
-        .cloned()
-        .unwrap_or_else(|| toml::Value::Table(Default::default()))
-        .try_into()
-        .map_err(|error| ApiError::BadRequest(format!("invalid MCP configuration: {error}")))?;
+    let section = mcp_section(&config)?;
     let server = section.servers.get(&request.server).ok_or_else(|| {
         ApiError::BadRequest(format!("MCP server `{}` is not configured", request.server))
     })?;
@@ -2056,12 +2937,12 @@ async fn invoke_mcp(
         JudgmentDecision::Deny { reason } => {
             return Err(ApiError::Conflict(format!(
                 "MCP action is now denied by PawGate: {reason}"
-            )))
+            )));
         }
         other => {
             return Err(ApiError::Conflict(format!(
                 "MCP policy returned unsupported decision {other:?}"
-            )))
+            )));
         }
     };
     let (persisted_constraints, _) =
@@ -2074,6 +2955,7 @@ async fn invoke_mcp(
     let mut store = SessionStore::open(&state.database)?;
     let (constraints, _) =
         authorize_exact_human_action(&mut store, id, action_id, &action, "MCP invocation", false)?;
+    reserve_mcp_call(&mut store, id, &request.server, &request.tool)?;
     let skill_started = std::time::Instant::now();
     let skill_parent = state.database.parent().unwrap_or(Path::new("."));
     let mut skill_store = SkillStore::open(
@@ -2148,6 +3030,144 @@ async fn invoke_mcp(
         )?;
     }
     Ok(Json(value))
+}
+
+async fn list_mcp_servers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<BTreeMap<String, McpServerConfig>>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    Ok(Json(mcp_section(&config)?.servers))
+}
+
+async fn upsert_mcp_server(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(server): Json<McpServerConfig>,
+) -> Result<Json<McpServerConfig>, ApiError> {
+    authorize(&state, &headers)?;
+    // Only environment variable *names* are ever permitted — never inline secret values.
+    // `environment_from` maps child variables to host variable names, matching the
+    // `purrcode.toml.example` contract, so the serialized payload must not trip the
+    // secret detector either.
+    let serialized = serde_json::to_string(&server)
+        .map_err(|error| ApiError::BadRequest(format!("invalid MCP server payload: {error}")))?;
+    reject_secret_content(&serialized)?;
+    if server.id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "MCP server id must be a non-empty string".into(),
+        ));
+    }
+    for (child, host) in &server.environment_from {
+        if child.trim().is_empty() || host.trim().is_empty() {
+            return Err(ApiError::BadRequest(
+                "environment_from entries must be non-empty variable names".into(),
+            ));
+        }
+    }
+    let _config_guard = state.lifecycle_gate.lock().await;
+    let mut config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let mut section = mcp_section(&config)?;
+    let id = server.id.clone();
+    section.servers.insert(id.clone(), server.clone());
+    let value = toml::Value::try_from(section).map_err(|error| {
+        ApiError::BadRequest(format!("MCP configuration serialization failed: {error}"))
+    })?;
+    config.extensions.insert("mcp".into(), value);
+    config
+        .save(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("MCP server save failed: {error}")))?;
+    Ok(Json(server))
+}
+
+async fn remove_mcp_server(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let _config_guard = state.lifecycle_gate.lock().await;
+    let mut config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let mut section = mcp_section(&config)?;
+    if section.servers.remove(&id).is_none() {
+        return Err(ApiError::NotFound);
+    }
+    let value = toml::Value::try_from(section).map_err(|error| {
+        ApiError::BadRequest(format!("MCP configuration serialization failed: {error}"))
+    })?;
+    config.extensions.insert("mcp".into(), value);
+    config
+        .save(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("MCP server removal failed: {error}")))?;
+    Ok(Json(serde_json::json!({"id": id, "removed": true})))
+}
+
+async fn get_codex_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<CodexBridgeConfig>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    Ok(Json(codex_config(&config)))
+}
+
+async fn update_codex_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(codex): Json<CodexBridgeConfig>,
+) -> Result<Json<CodexBridgeConfig>, ApiError> {
+    authorize(&state, &headers)?;
+    codex
+        .validate()
+        .map_err(|error| ApiError::BadRequest(format!("invalid Codex configuration: {error}")))?;
+    let _config_guard = state.lifecycle_gate.lock().await;
+    let mut config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let value = toml::Value::try_from(codex.clone()).map_err(|error| {
+        ApiError::BadRequest(format!("Codex configuration serialization failed: {error}"))
+    })?;
+    config.extensions.insert("codex".into(), value);
+    config.save(&state.app_config).map_err(|error| {
+        ApiError::BadRequest(format!("Codex configuration save failed: {error}"))
+    })?;
+    Ok(Json(codex))
+}
+
+fn codex_config(config: &AppConfig) -> CodexBridgeConfig {
+    config
+        .extensions
+        .get("codex")
+        .cloned()
+        .and_then(|value| {
+            let parsed: Result<CodexBridgeConfig, _> = value.try_into();
+            parsed.ok()
+        })
+        .unwrap_or_default()
+}
+
+async fn run_codex_doctor(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<CodexDoctorReport>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let codex = codex_config(&config);
+    let binary = codex.binary.clone();
+    let bridge =
+        CodexBridge::new(codex).map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let report = bridge.doctor().await.map_err(|error| {
+        ApiError::BadRequest(format!(
+            "Codex doctor failed for binary `{}`: {error}",
+            binary.display()
+        ))
+    })?;
+    Ok(Json(report))
 }
 
 async fn require_idle(state: &AppState, id: SessionId) -> Result<(), ApiError> {
@@ -2309,6 +3329,16 @@ enum AgentOperation {
     RevisePlan {
         feedback: String,
     },
+    /// Answer a follow-up message using the user's own words, which travel with
+    /// the operation rather than being re-read from the tail of the
+    /// conversation. This is the same guarantee `RevisePlan` documents: the
+    /// agent must answer the follow-up it was given, never silently re-run the
+    /// original objective. It is selected for every non-plan-review follow-up
+    /// regardless of whether a worktree exists — a worktree-less session is
+    /// initialized lazily and then answers the follow-up.
+    Continue {
+        message: String,
+    },
 }
 
 async fn spawn_agent_operation(
@@ -2323,19 +3353,20 @@ async fn spawn_agent_operation(
         ));
     }
     let budget = inference_budget(&state, id).await?;
-    let local_permit = if budget.local_inference {
+    preflight_agent_configuration(
+        &budget.config,
+        &budget.models,
         Some(
             state
-                .local_inference_slots
-                .clone()
-                .try_acquire_owned()
-                .map_err(|_| {
-                    ApiError::Conflict(format!(
-                        "resource governor allows {} concurrent local inference request(s); wait, unload a model, or switch to a remote provider",
-                        state.local_inference_limit
-                    ))
-                })?,
-        )
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .await
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let local_inference_slots = if budget.local_inference {
+        Some(state.local_inference_slots.clone())
     } else {
         None
     };
@@ -2345,10 +3376,13 @@ async fn spawn_agent_operation(
             "session already has an active daemon lease".into(),
         ));
     }
-    mark_models_active(&state, &budget.models).await;
     let task_state = state.clone();
-    let lifecycle_models = budget.models.clone();
-    let coding_model = budget.models[0].clone();
+    let lifecycle_models: Vec<ModelId> = budget.models.values().cloned().collect();
+    let coding_model = budget
+        .models
+        .get("coding_worker")
+        .cloned()
+        .ok_or_else(|| ApiError::BadRequest("no coding model resolved".into()))?;
     let streamed_model = coding_model.clone();
     let operation_config = budget.config.clone();
     let cancellation = AgentCancellation::new();
@@ -2359,14 +3393,33 @@ async fn spawn_agent_operation(
     let lease_generation = Uuid::new_v4();
     let cleanup_generation = lease_generation;
     let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+    // Everything above can still reject the request. Count models as active
+    // only once the operation is fully constructed and guaranteed a cleanup
+    // task, otherwise a setup error would leak lifecycle state.
+    mark_models_active(&state, &lifecycle_models).await;
     let handle = tokio::spawn(async move {
         if start_rx.await.is_err() {
             return;
         }
-        let _local_permit = local_permit;
         let leases = task_state.leases.clone();
         let db = task_state.database.clone();
         let cleanup_id = id;
+        let local_permit = match acquire_local_inference_slot(local_inference_slots).await {
+            Ok(permit) => permit,
+            Err(reason) => {
+                remove_agent_lease_if_current(&leases, cleanup_id, cleanup_generation).await;
+                release_active_models(&task_state, &lifecycle_models).await;
+                if let Ok(mut store) = SessionStore::open(&db) {
+                    let _ = store.append(
+                        cleanup_id,
+                        &SessionEvent::SessionFailed {
+                            reason: reason.to_owned(),
+                        },
+                    );
+                }
+                return;
+            }
+        };
         let stream_task = tokio::spawn(async move {
             while let Some(event) = receiver.recv().await {
                 stream_hub.publish(event, &streamed_model).await;
@@ -2387,6 +3440,10 @@ async fn spawn_agent_operation(
         stream_task.abort();
         let _ = stream_task.await;
         remove_agent_lease_if_current(&leases, cleanup_id, cleanup_generation).await;
+        // Context tier 2 is background indexing, not inference. Release the
+        // governed model slot before lifecycle cleanup and before tier 2 so a
+        // second session can start instead of being rejected or starved.
+        drop(local_permit);
         release_active_models(&task_state, &lifecycle_models).await;
         match result {
             Ok(Ok(())) => {}
@@ -2441,7 +3498,7 @@ async fn spawn_agent_operation(
         AgentLease {
             generation: lease_generation,
             task: handle,
-            models: budget.models,
+            models: budget.models.values().cloned().collect(),
             cancellation,
         },
     );
@@ -2449,8 +3506,25 @@ async fn spawn_agent_operation(
     Ok(())
 }
 
+/// Wait for governed local capacity instead of rejecting a valid session.
+///
+/// The lease already makes the queued operation cancellable, while the owned
+/// permit limits actual local inference to the host's safe concurrency.
+async fn acquire_local_inference_slot(
+    slots: Option<Arc<Semaphore>>,
+) -> Result<Option<OwnedSemaphorePermit>, &'static str> {
+    let Some(slots) = slots else {
+        return Ok(None);
+    };
+    slots
+        .acquire_owned()
+        .await
+        .map(Some)
+        .map_err(|_| "local inference governor closed while this session was queued")
+}
+
 struct InferenceBudget {
-    models: Vec<ModelId>,
+    models: BTreeMap<String, ModelId>,
     local_inference: bool,
     config: AppConfig,
 }
@@ -2470,7 +3544,11 @@ async fn lifecycle_models_before_interruption(
     }
     let config = AppConfig::load(&state.app_config)
         .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
-    configured_session_models(state, id, &config).await
+    Ok(configured_session_models(state, id, &config)
+        .await?
+        .values()
+        .cloned()
+        .collect())
 }
 
 async fn remove_agent_lease_if_current(
@@ -2535,22 +3613,25 @@ async fn configured_session_models(
     state: &AppState,
     id: SessionId,
     config: &AppConfig,
-) -> Result<Vec<ModelId>, ApiError> {
+) -> Result<BTreeMap<String, ModelId>, ApiError> {
     let session = state.store.lock().await.load(id)?;
     let selected = session
         .selected_model
         .as_deref()
         .or(config.models.default.as_deref())
         .ok_or_else(|| ApiError::BadRequest("no default model selected".into()))?;
-    let mut models = vec![ModelId::parse(selected)
-        .map_err(|error| ApiError::BadRequest(format!("invalid selected model: {error}")))?];
-    if let Some(judge) = config.models.roles.get("judge") {
-        let judge = ModelId::parse(judge)
-            .map_err(|error| ApiError::BadRequest(format!("invalid judge model: {error}")))?;
-        if !models.contains(&judge) {
-            models.push(judge);
-        }
+    // Every configured role is a candidate; the session-selected (or default)
+    // model always owns the `coding_worker` role so a user's explicit choice
+    // wins over the static role map.
+    let mut models = BTreeMap::new();
+    for (role, model) in &config.models.roles {
+        let model = ModelId::parse(model)
+            .map_err(|error| ApiError::BadRequest(format!("invalid {role} model: {error}")))?;
+        models.insert(role.clone(), model);
     }
+    let coding = ModelId::parse(selected)
+        .map_err(|error| ApiError::BadRequest(format!("invalid selected model: {error}")))?;
+    models.insert("coding_worker".to_owned(), coding);
     Ok(models)
 }
 
@@ -2559,7 +3640,7 @@ async fn inference_budget(state: &AppState, id: SessionId) -> Result<InferenceBu
         .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
     let models = configured_session_models(state, id, &config).await?;
     let mut local_inference = false;
-    for model in &models {
+    for model in models.values() {
         let provider = config.providers.get(&model.provider).ok_or_else(|| {
             ApiError::BadRequest(format!(
                 "selected model references unknown provider `{}`",
@@ -2575,6 +3656,90 @@ async fn inference_budget(state: &AppState, id: SessionId) -> Result<InferenceBu
     })
 }
 
+/// Validate the model routes needed by every native-agent operation before a
+/// session is reported as accepted.  This is intentionally deterministic and
+/// configuration-bound: network health remains observable in the Preparing /
+/// Connecting stream phases, while missing roles, providers, or malformed
+/// routes are rejected synchronously (FR-004).
+async fn preflight_agent_configuration(
+    config: &AppConfig,
+    models: &BTreeMap<String, ModelId>,
+    credential_store_path: Option<&Path>,
+) -> Result<ModelId, DaemonError> {
+    let judge_selected = config.models.roles.get("judge").ok_or_else(|| {
+        DaemonError::AgentConfiguration(
+            "models.roles.judge is required for daemon-owned agent sessions".into(),
+        )
+    })?;
+    let judge_model = ModelId::parse(judge_selected)
+        .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    let coding_model = models
+        .get("coding_worker")
+        .ok_or_else(|| DaemonError::AgentConfiguration("no coding worker model resolved".into()))?;
+    if &judge_model == coding_model && !config.judgment.allow_same_model {
+        return Err(DaemonError::AgentConfiguration(
+            "coding and judgment roles must use different configured models".into(),
+        ));
+    }
+    let router = ProviderRouter::from_config(config, credential_store_path)
+        .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    // Every configured role route must resolve to a provider whose
+    // capabilities are reachable, not just the coding and judge models.
+    for (role, model) in models {
+        let provider = router
+            .provider(model)
+            .map_err(|error| DaemonError::AgentConfiguration(format!("{role} route: {error}")))?;
+        provider.capabilities(model).await.map_err(|error| {
+            DaemonError::AgentConfiguration(format!("{role} model route: {error}"))
+        })?;
+    }
+    Ok(judge_model)
+}
+
+/// Resolve every configured `[models.roles]` entry to a `ModelId`, with the
+/// session-selected (or default) model owning the `coding_worker` role.
+fn resolve_role_models(
+    config: &AppConfig,
+    selected: &ModelId,
+) -> Result<BTreeMap<String, ModelId>, DaemonError> {
+    let mut models = BTreeMap::new();
+    for (role, model) in &config.models.roles {
+        let model = ModelId::parse(model).map_err(|error| {
+            DaemonError::AgentConfiguration(format!("invalid {role} model: {error}"))
+        })?;
+        models.insert(role.clone(), model);
+    }
+    models.insert("coding_worker".to_owned(), selected.clone());
+    Ok(models)
+}
+
+/// Build a `FailoverProvider` for one role: the role's configured provider as
+/// primary, then every other configured provider as a fallback (in config
+/// order). A 429/402/timeout/unreachable error advances to the next provider
+/// so an exhausted API cannot break the session.
+fn failover_for_role(
+    router: &ProviderRouter,
+    model: &ModelId,
+) -> Result<Arc<dyn ModelProvider>, DaemonError> {
+    let primary = router
+        .provider(model)
+        .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    let mut fallbacks = Vec::new();
+    for name in router.provider_names() {
+        if name == model.provider {
+            continue;
+        }
+        // Resolve the fallback through its own provider (the model name does
+        // not matter for routing; the provider handle is what we reuse).
+        let fallback_model = ModelId::parse(&format!("{name}/placeholder"))
+            .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+        if let Ok(provider) = router.provider(&fallback_model) {
+            fallbacks.push(provider);
+        }
+    }
+    Ok(Arc::new(FailoverProvider::new(primary, fallbacks)) as Arc<dyn ModelProvider>)
+}
+
 async fn run_agent_operation(
     state: &AppState,
     id: SessionId,
@@ -2586,6 +3751,23 @@ async fn run_agent_operation(
 ) -> Result<(), DaemonError> {
     let mut store = SessionStore::open(&state.database)?;
     let session = store.load(id)?;
+    let controls = session.controls.clone();
+    let existing_usage = session.usage_records.clone();
+    // Resolve every configured role to its model, with the session-selected
+    // model owning the `coding_worker` role.
+    let role_models = resolve_role_models(&config, &model)?;
+    let _ = preflight_agent_configuration(
+        &config,
+        &role_models,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .await
+    .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
     let judge_selected = config.models.roles.get("judge").ok_or_else(|| {
         DaemonError::AgentConfiguration(
             "models.roles.judge is required for daemon-owned agent sessions".into(),
@@ -2620,21 +3802,51 @@ async fn run_agent_operation(
             ));
         }
     }
-    let router = ProviderRouter::from_config(&config)
-        .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
-    let provider = router
-        .provider(&model)
-        .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    let router = ProviderRouter::from_config(
+        &config,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    // Build a provider handle per role, wrapped in a failover chain across the
+    // other configured providers so a single exhausted API cannot break the
+    // session (quota/timeout/unreachable errors advance to the next provider).
+    let mut role_providers: BTreeMap<String, (Arc<dyn ModelProvider>, ModelId)> = BTreeMap::new();
+    for (role, role_model) in &role_models {
+        let provider = failover_for_role(&router, role_model)?;
+        role_providers.insert(role.clone(), (provider, role_model.clone()));
+    }
     let judge_provider = router
         .provider(&judge_model)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    // Wrap the judge in a full failover chain so a quota/timeout/unreachable
+    // error on the judge provider can advance to a fallback instead of
+    // immediately failing the session as "judge failed closed".
+    let judge_provider = Arc::new(FailoverProvider::new(
+        judge_provider,
+        router
+            .provider_names()
+            .iter()
+            .filter(|name| **name != judge_model.provider)
+            .filter_map(|name| {
+                let fallback = ModelId::parse(&format!("{name}/placeholder")).ok()?;
+                router.provider(&fallback).ok()
+            })
+            .collect(),
+    )) as Arc<dyn ModelProvider>;
     let objective = session.objective.clone().unwrap_or_default();
     let repository = session
         .repository
         .ok_or_else(|| DaemonError::AgentConfiguration("session repository is missing".into()))?;
     let policy = effective_policy(&config, &repository)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
-    let agent = NativeAgent::new(provider.as_ref(), model, policy)
+    let agent = NativeAgent::new(role_providers, policy)
+        .with_controls(controls)
+        .with_usage_records(existing_usage)
         .with_contextual_judge(judge_provider.as_ref(), judge_model)
         .with_stream_observer(observer)
         .with_cancellation(cancellation);
@@ -2673,6 +3885,10 @@ async fn run_agent_operation(
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Resume => agent.resume(&mut store, id).await.map(|_| ()),
+        AgentOperation::Continue { message } => agent
+            .continue_turn(&mut store, id, &message)
+            .await
+            .map(|_| ()),
         AgentOperation::RevisePlan { feedback } => agent
             .revise_plan(&mut store, id, &feedback)
             .await
@@ -2998,22 +4214,35 @@ async fn session(
 ) -> Result<Json<SessionView>, ApiError> {
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
+    if let Some(unavailable) = state.unavailable_sessions.get(&id) {
+        return Err(ApiError::Conflict(format!(
+            "session {} is unavailable because its event log cannot be replayed: {}",
+            id.0, unavailable.reason
+        )));
+    }
     let lease_active = state.leases.lock().await.contains_key(&id);
-    let session = state.store.lock().await.load(id)?;
+    let store = state.store.lock().await;
+    let session = store.load(id)?;
     if session.event_count == 0 {
         return Err(ApiError::NotFound);
     }
+    let timestamps = store.timestamped_events(id)?;
+    let events = store.events(id)?;
     Ok(Json(SessionView {
         id: id.0.to_string(),
         status: format!("{:?}", session.status),
-        status_code: status_code(&session.status),
+        status_code: presentation_status(&session),
         event_count: session.event_count,
         lease_active,
         awaiting_plan_review: awaiting_plan_review(&session),
+        recovery_reconciled: recovery_reconciled(&session, &events),
         objective: session.objective,
         repository: session.repository,
         worktree: session.worktree,
         selected_model: session.selected_model,
+        created_at: timestamps.first().map(|(timestamp, _)| *timestamp),
+        updated_at: timestamps.last().map(|(timestamp, _)| *timestamp),
+        unavailable_reason: None,
     }))
 }
 
@@ -3098,7 +4327,9 @@ async fn ui_status(
             )
         };
         if let Some(session_state) = state_snapshot {
-            phase = format!("{:?}", session_state.status).to_lowercase();
+            let activity = activity_from_events(&events);
+            let lease_active = state.leases.lock().await.contains_key(&session);
+            phase = presentation_status_reconciled(&session_state, &activity, lease_active).into();
         }
         let validation = validation_from_events(&events);
         if !validation.stages.is_empty() {
@@ -3122,7 +4353,7 @@ async fn ui_status(
             .and_then(|model| model.split_once('/'))
             .map(|(_, model)| model.to_owned()),
         provider,
-        task_mode: query.task_mode.unwrap_or_else(|| "Build".into()),
+        task_mode: query.task_mode.unwrap_or_else(|| "Ask".into()),
         permission_mode: query.permission_mode.unwrap_or_else(|| "Ask".into()),
         phase,
         local_only: config
@@ -3156,8 +4387,26 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
     // list, which reads as idle — the first real run of this endpoint spent a
     // minute in exactly that state.
     let mut thinking: Option<usize> = None;
+    let latest_resumed = events
+        .iter()
+        .rposition(|event| matches!(event, Event::SessionResumed));
+    let latest_user_message = events.iter().rposition(|event| {
+        matches!(
+            event,
+            Event::ConversationMessageAdded { message }
+                if message.role.eq_ignore_ascii_case("user")
+        )
+    });
+    // Activity is a per-turn work log, not a lifetime audit stream. Start at
+    // the latest user turn or explicit resume boundary so a follow-up cannot
+    // drag every previous tool card into the middle of the new conversation.
+    let turn_start = latest_user_message
+        .into_iter()
+        .chain(latest_resumed)
+        .max()
+        .unwrap_or(0);
 
-    for (index, event) in events.iter().enumerate() {
+    for (index, event) in events.iter().enumerate().skip(turn_start) {
         let id = index.to_string();
         match event {
             Event::WorktreeCreated { .. } => items.push(ActivityItem {
@@ -3204,10 +4453,13 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                         items[position].label.replacen("Thinking", "Thought", 1);
                 }
             }
+            // Terminal PRD §36: "Paused" describes runtime mechanics. The user
+            // needs to know what stopped and what they can do, so the label
+            // names the cause; the reason itself stays in the summary.
             Event::SessionPaused { reason } => items.push(ActivityItem {
                 id,
                 kind: ActivityKind::Approval,
-                label: "Paused".to_owned(),
+                label: pause_label(reason).to_owned(),
                 status: ActivityStatus::Blocked,
                 summary: Some(reason.chars().take(160).collect()),
                 detail_available: true,
@@ -3256,7 +4508,9 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     detail_available: true,
                 }),
             Event::ValidationRecorded {
-                status, evidence, ..
+                action_id,
+                status,
+                evidence,
             } => items.push(ActivityItem {
                 id,
                 kind: ActivityKind::Validation,
@@ -3266,25 +4520,33 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 } else {
                     ActivityStatus::Failed
                 },
-                summary: Some(evidence.chars().take(160).collect()),
+                // The raw evidence is a serialized record. Putting it on the
+                // checklist would show a user `{"stage":"format","status":…}`,
+                // which is the runtime noise PRD §8 and §14 keep off this
+                // surface. The structured form is read instead, and the raw
+                // record stays reachable through explicit inspection.
+                summary: validation_stage_detail(evidence).map(|detail| {
+                    format!("{}: {detail}", validation_stage_name(evidence, action_id))
+                }),
                 detail_available: !evidence.is_empty(),
             }),
-            Event::SessionCompleted => items.push(ActivityItem {
-                id,
-                kind: ActivityKind::Completion,
-                label: "Finished".to_owned(),
-                status: ActivityStatus::Done,
-                summary: None,
-                detail_available: false,
-            }),
-            Event::SessionFailed { reason } => items.push(ActivityItem {
-                id,
-                kind: ActivityKind::Completion,
-                label: "Stopped without finishing".to_owned(),
-                status: ActivityStatus::Failed,
-                summary: Some(reason.chars().take(160).collect()),
-                detail_available: true,
-            }),
+            // Completion is a turn boundary, not an activity step. Repeating
+            // it after every answer produced a misleading "Finished ×3" in
+            // an otherwise live conversation.
+            Event::SessionCompleted => {}
+            Event::SessionFailed { reason }
+                if latest_resumed.is_none_or(|resumed| index > resumed) =>
+            {
+                items.push(ActivityItem {
+                    id,
+                    kind: ActivityKind::Completion,
+                    label: "This turn stopped early".to_owned(),
+                    status: ActivityStatus::Failed,
+                    summary: Some(reason.chars().take(160).collect()),
+                    detail_available: true,
+                })
+            }
+            Event::SessionFailed { .. } => {}
             _ => {}
         }
     }
@@ -3292,8 +4554,32 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
     // A session that has reached a terminal state has nothing in flight. Leaving
     // a Running item after it would show a spinner that never stops — the same
     // class of untruth as reporting unavailable validation as passed.
+    //
+    // The unfinished model request is relabelled by *why* it ended (PRD §2.3
+    // FR-B2). A bare "Interrupted with <model>" is not evidence: it carries no
+    // reason, no remedy and no distinction between a real cancel, a provider
+    // error and a bookkeeping gap. The terminal event names the cause; the
+    // activity card says it in a sentence.
     if let Some(position) = thinking {
-        let ended = events.iter().any(|event| {
+        let turn_events = events.iter().skip(turn_start).collect::<Vec<_>>();
+        let cancel_reason = turn_events.iter().find_map(|event| match event {
+            Event::SessionCancelled { reason } => Some(reason.clone()),
+            _ => None,
+        });
+        let failed_reason = turn_events
+            .iter()
+            .find_map(|event| match event {
+                Event::SessionFailed { reason } => Some(reason.clone()),
+                _ => None,
+            })
+            .or_else(|| {
+                turn_events.iter().find_map(|event| match event {
+                    Event::RecoveryRequired { reason } => Some(reason.clone()),
+                    _ => None,
+                })
+            });
+        let explicitly_cancelled = cancel_reason.is_some();
+        let ended = turn_events.iter().any(|event| {
             matches!(
                 event,
                 Event::SessionCompleted
@@ -3303,7 +4589,21 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
         });
         if ended {
             items[position].status = ActivityStatus::Failed;
-            items[position].label = items[position].label.replacen("Thinking", "Interrupted", 1);
+            if explicitly_cancelled {
+                items[position].label = "Cancelled by you".to_owned();
+                if let Some(reason) = cancel_reason {
+                    items[position].summary = Some(reason.chars().take(160).collect());
+                    items[position].detail_available = true;
+                }
+            } else if let Some(reason) = failed_reason {
+                items[position].label = "Model request failed".to_owned();
+                items[position].summary = Some(reason.chars().take(160).collect());
+                items[position].detail_available = true;
+            } else {
+                // Terminal state with no finish event and no recorded reason:
+                // a bookkeeping gap, not a failure with a named cause.
+                items[position].label = "Model request did not complete".to_owned();
+            }
         }
     }
 
@@ -3350,6 +4650,106 @@ fn validation_outcome(status: &ValidationStatus) -> ValidationOutcome {
     }
 }
 
+/// The product name of a validation stage.
+///
+/// The durable evidence carries the real stage; a client that fell back to the
+/// action UUID would put `9e44fdf0-fef1-…` in front of a user, which PRD §14
+/// forbids. The identifier stays available through explicit inspection.
+/// What to call a pause, from the reason the runtime gave for it.
+///
+/// A pause is a mechanism; the user cares about the cause. Only the cases we
+/// can actually identify get a specific name — an unrecognised reason falls
+/// back to "Needs attention", which is true of every pause and overstates
+/// nothing.
+fn pause_label(reason: &str) -> &'static str {
+    let lower = reason.to_ascii_lowercase();
+    if lower.contains("validation") || lower.contains("check") {
+        "Validation failed"
+    } else if lower.contains("plan") && lower.contains("review") {
+        "Plan ready for review"
+    } else if lower.contains("approval") || lower.contains("permission") {
+        "Waiting for your approval"
+    } else if lower.contains("budget") || lower.contains("limit") {
+        "Budget reached"
+    } else {
+        "Needs attention"
+    }
+}
+
+fn validation_stage_name(evidence: &str, action_id: &ActionId) -> String {
+    let stage = serde_json::from_str::<serde_json::Value>(evidence)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("stage")
+                .and_then(|stage| stage.as_str().map(str::to_owned))
+        });
+    match stage.as_deref() {
+        Some("SyntaxStatic" | "syntax_static") => "Syntax and static checks".into(),
+        Some("FocusedTests" | "focused_tests") => "Focused tests".into(),
+        Some("ModuleTests" | "module_tests") => "Module tests".into(),
+        Some("FullUnitTests" | "full_unit_tests") => "Full test suite".into(),
+        Some("IntegrationTests" | "integration_tests") => "Integration tests".into(),
+        Some("Packaging" | "packaging") => "Packaging".into(),
+        Some("ProductionSmoke" | "production_smoke") => "Smoke test".into(),
+        Some("Format" | "format") => "Formatting".into(),
+        Some("Lint" | "lint") => "Lint".into(),
+        Some("TypeCheck" | "type_check") => "Type check".into(),
+        Some("TargetedTests" | "targeted_tests") => "Targeted tests".into(),
+        Some("Build" | "build") => "Build".into(),
+        Some("DiffReview" | "diff_review") => "Diff review".into(),
+        Some(other) => other.to_owned(),
+        // Evidence that predates the structured form cannot be named. PRD §27
+        // is explicit that an identifier is not a label — it tells the reader
+        // nothing about what was checked — so the stage takes a plain product
+        // name and the identifier stays in the detail, where it belongs.
+        None => {
+            let _ = action_id;
+            "Validation check".to_owned()
+        }
+    }
+}
+
+/// The one line of detail a stage card shows: the command and why it ended,
+/// not the whole captured transcript.
+fn validation_stage_detail(evidence: &str) -> Option<String> {
+    if evidence.is_empty() {
+        return None;
+    }
+    let parsed = serde_json::from_str::<serde_json::Value>(evidence).ok();
+    let detail = parsed.as_ref().and_then(|value| {
+        value
+            .get("detail")
+            .and_then(|detail| detail.as_str())
+            .filter(|detail| !detail.trim().is_empty())
+            .map(str::to_owned)
+    });
+    let command = parsed.as_ref().and_then(|value| {
+        value
+            .get("command")
+            .and_then(|command| command.get("program"))
+            .and_then(|program| program.as_str())
+            .map(str::to_owned)
+    });
+    let text = match (command, detail) {
+        (Some(command), Some(detail)) => format!("{command}: {detail}"),
+        (Some(command), None) => command,
+        (None, Some(detail)) => detail,
+        // An evidence record this build cannot read is still not something to
+        // print at a user; the bundle remains available through inspection.
+        (None, None) => return None,
+    };
+    Some(
+        text.lines()
+            .take(6)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .chars()
+            .take(400)
+            .collect(),
+    )
+}
+
 fn validation_from_events(
     events: &[purrcode_runtime_core::SessionEvent],
 ) -> purrcode_ui_contracts::ValidationSummary {
@@ -3381,10 +4781,9 @@ fn validation_from_events(
                     (outcome, _) => outcome,
                 };
                 Some(purrcode_ui_contracts::ValidationStageView {
-                    stage: action_id.0.to_string(),
+                    stage: validation_stage_name(evidence, action_id),
                     outcome,
-                    detail: (!evidence.is_empty())
-                        .then(|| evidence.chars().take(400).collect::<String>()),
+                    detail: validation_stage_detail(evidence),
                 })
             }
             _ => None,
@@ -3437,10 +4836,11 @@ async fn session_summary(
     let snapshot = RepositoryEngine::inspect(&repository).await.ok();
     let validation = validation_from_events(&events);
     let activity = activity_from_events(&events);
+    let lease_active = state.leases.lock().await.contains_key(&id);
     Ok(Json(purrcode_ui_contracts::SessionSummary {
         id: session.id.0.to_string(),
         objective: session.objective.clone().unwrap_or_default(),
-        status: format!("{:?}", session.status).to_lowercase(),
+        status: presentation_status_reconciled(&session, &activity, lease_active).into(),
         repository: snapshot
             .as_ref()
             .map(|snapshot| snapshot.name.clone())
@@ -3470,11 +4870,923 @@ async fn session_summary(
             .unwrap_or_default(),
         plan_revision: session.plan_revision,
         awaiting_plan_review: awaiting_plan_review(&session),
+        recovery_reconciled: recovery_reconciled(&session, &events),
         validation: (!validation.stages.is_empty()).then_some(validation),
         needs_attention: activity
             .iter()
             .any(|item| item.status == ActivityStatus::Blocked),
+        selected_model: session.selected_model.clone(),
+        task_mode: session.controls.task_mode.to_string().to_ascii_lowercase(),
+        permission_mode: session
+            .controls
+            .permission_mode
+            .to_string()
+            .to_ascii_lowercase()
+            .replace(' ', "_"),
+        execution_style: Some(
+            format!("{:?}", session.controls.execution_style).to_ascii_lowercase(),
+        ),
+        workflow: session
+            .workflow_plan
+            .as_ref()
+            .map(|plan| format!("{:?}", plan.profile).to_ascii_lowercase()),
+        search_policy: session
+            .workflow_plan
+            .as_ref()
+            .map(|plan| format!("{:?}", plan.search_policy).to_ascii_lowercase()),
+        budget_profile: Some(format!("{:?}", session.controls.budget_profile).to_ascii_lowercase()),
+        usage: Some(usage_summary_view(&session)),
     }))
+}
+
+fn usage_summary_view(session: &SessionState) -> purrcode_ui_contracts::UsageSummaryView {
+    let ledger =
+        purrcode_runtime_core::adaptation::UsageLedger::from_records(session.usage_records.clone());
+    let summary = ledger.summary(
+        session
+            .workflow_plan
+            .as_ref()
+            .map(|plan| {
+                plan.lanes
+                    .iter()
+                    .filter(|lane| {
+                        lane.kind == purrcode_runtime_core::adaptation::WorkflowLaneKind::Validation
+                    })
+                    .count()
+            })
+            .unwrap_or_default(),
+    );
+    purrcode_ui_contracts::UsageSummaryView {
+        total_tokens: summary.total_tokens,
+        input_tokens: summary.input_tokens,
+        output_tokens: summary.output_tokens,
+        model_call_count: summary.model_call_count,
+        search_requests: summary.search_requests,
+        mcp_calls: summary.mcp_calls,
+        estimated_total_cost: summary
+            .estimated_total_cost
+            .map(|cost| format!("{cost:.4}")),
+        cache_read_tokens: summary.cache_read_tokens,
+        cache_write_tokens: summary.cache_write_tokens,
+        total_latency_ms: summary.total_latency_ms,
+    }
+}
+
+async fn session_controls(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    Ok(Json(serde_json::json!({
+        "controls": session.controls,
+        "complexity": session.complexity_decision,
+        "workflow_plan": session.workflow_plan,
+    })))
+}
+
+async fn update_session_controls(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(controls): Json<SessionControls>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    validate_supported_controls(&controls)?;
+    require_idle(&state, id).await?;
+    let session = state.store.lock().await.load(id)?;
+    // Permission mode is a per-session, human-made decision (the "bypass all"
+    // toggle in the IDE). The agent reads `session.controls.permission_mode`
+    // at runtime, so a new value is enforced from the next spawn; the change
+    // is durable and audited via SessionControlsUpdated.
+    let objective = session
+        .objective
+        .clone()
+        .ok_or_else(|| ApiError::Conflict("session objective is missing".into()))?;
+    let evidence = TaskEvidence::from_objective(&objective);
+    let decision = classify_task(&evidence, &controls);
+    let plan = build_workflow_plan(objective, &decision).map_err(|error| {
+        ApiError::BadRequest(format!("workflow planning failed safely: {error}"))
+    })?;
+    let mut store = state.store.lock().await;
+    store.append(id, &SessionEvent::SessionControlsUpdated { controls })?;
+    store.append(id, &SessionEvent::WorkflowPlanCreated { decision, plan })?;
+    let updated = store.load(id)?;
+    Ok(Json(serde_json::json!({
+        "controls": updated.controls,
+        "complexity": updated.complexity_decision,
+        "workflow_plan": updated.workflow_plan,
+    })))
+}
+
+async fn session_usage(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<purrcode_runtime_core::adaptation::UsageSummary>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let ledger =
+        purrcode_runtime_core::adaptation::UsageLedger::from_records(session.usage_records);
+    Ok(Json(ledger.summary(0)))
+}
+
+async fn session_spec(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<purrcode_ui_contracts::PanelView<purrcode_ui_contracts::SpecBundleView>>, ApiError>
+{
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let observed_at = Utc::now().to_rfc3339();
+    let panel = match work_presentation::spec_bundle_view(&session) {
+        Some(spec) => purrcode_ui_contracts::PanelView::ready(spec, observed_at),
+        None => purrcode_ui_contracts::PanelView::empty(
+            "No durable spec has been recorded for this direct or not-yet-planned session",
+            observed_at,
+        ),
+    };
+    Ok(Json(panel))
+}
+
+async fn session_tasks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<purrcode_ui_contracts::PanelView<purrcode_ui_contracts::TaskGraphView>>, ApiError>
+{
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let (session, events) = {
+        let store = state.store.lock().await;
+        (store.load(id)?, store.events(id)?)
+    };
+    let observed_at = Utc::now().to_rfc3339();
+    let panel = match work_presentation::task_graph_view(&session, &events) {
+        Some(tasks) => purrcode_ui_contracts::PanelView::ready(tasks, observed_at),
+        None => purrcode_ui_contracts::PanelView::empty(
+            "No durable task graph has been recorded for this session",
+            observed_at,
+        ),
+    };
+    Ok(Json(panel))
+}
+
+async fn session_evidence(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<
+    Json<purrcode_ui_contracts::PanelView<Vec<purrcode_ui_contracts::EvidenceView>>>,
+    ApiError,
+> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let evidence = work_presentation::evidence_views(&session);
+    let observed_at = Utc::now().to_rfc3339();
+    let panel = if evidence.is_empty() {
+        purrcode_ui_contracts::PanelView::empty(
+            "No requirement-linked evidence has been recorded yet",
+            observed_at,
+        )
+    } else {
+        purrcode_ui_contracts::PanelView::ready(evidence, observed_at)
+    };
+    Ok(Json(panel))
+}
+
+#[derive(Deserialize, Default)]
+struct ChangeScopeQuery {
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+async fn session_changes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<ChangeScopeQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let scope = query
+        .scope
+        .as_deref()
+        .map(ChangeScope::parse)
+        .unwrap_or_default();
+    if session.worktree.is_none() {
+        // "Unavailable" and "zero" are different facts. A client that renders
+        // an unchecked repository as "0 files changed" claims it looked.
+        return Ok(Json(serde_json::json!({
+            "status": "unavailable",
+            "scope": scope.slug(),
+            "scope_label": scope.label(),
+            "files_changed": 0,
+            "additions": 0,
+            "deletions": 0,
+            "files": [],
+            "entries": [],
+        })));
+    }
+    let worktree = worktree_from_state(&session)?;
+    let changes = RepositoryEngine::changes(&worktree, scope)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "status": "ready",
+        "scope": scope.slug(),
+        "scope_label": scope.label(),
+        "files_changed": changes.files_changed(),
+        "additions": changes.additions,
+        "deletions": changes.deletions,
+        "files": changes
+            .scope_files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>(),
+        "entries": changes
+            .scope_files
+            .iter()
+            .map(|file| serde_json::json!({
+                "path": file.path,
+                "status": file.status.to_string(),
+                "additions": file.additions,
+                "deletions": file.deletions,
+            }))
+            .collect::<Vec<_>>(),
+        "worktree": {
+            "path": worktree.path,
+            "source_repository": worktree.source_repository,
+            "base_head": worktree.base_head,
+            "source_was_dirty": worktree.source_was_dirty,
+        },
+    })))
+}
+
+#[derive(Deserialize)]
+struct WorkspaceChangeQuery {
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+/// Per-file change counts for the user's own checkout, before any session
+/// exists in it.
+///
+/// Shape is identical to `session_changes` minus the `worktree` block, so the
+/// IDE's existing `parse_changes` is reused unchanged. Unlike `session_changes`
+/// this route needs no session worktree: it describes the open folder directly
+/// via `RepositoryEngine::workspace_changes`, which never applies the
+/// session-only `ensure_session_path` guard. It skips the binary patch and is
+/// polled at the workspace cadence, not the session cadence, so `git diff
+/// --numstat` over a dirty tree does not run on every 700 ms poll.
+async fn workspace_changes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<WorkspaceQuery>,
+    Query(scope_query): Query<WorkspaceChangeQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let scope = scope_query
+        .scope
+        .as_deref()
+        .map(ChangeScope::parse)
+        .unwrap_or_default();
+    // A non-Git folder has nothing to diff. Report it as unavailable so the
+    // panel says the check did not run rather than failing per poll.
+    if !git_read(&query.repository, &["rev-parse", "--is-inside-work-tree"])
+        .await
+        .is_ok_and(|value| value.trim() == "true")
+    {
+        return Ok(Json(serde_json::json!({
+            "status": "unavailable",
+            "scope": scope.slug(),
+            "scope_label": scope.label(),
+            "files_changed": 0,
+            "additions": 0,
+            "deletions": 0,
+            "files": [],
+            "entries": [],
+        })));
+    }
+    let changes = RepositoryEngine::workspace_changes(&query.repository, scope)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "status": "ready",
+        "scope": scope.slug(),
+        "scope_label": scope.label(),
+        "files_changed": changes.files_changed(),
+        "additions": changes.additions,
+        "deletions": changes.deletions,
+        "files": changes
+            .scope_files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>(),
+        "entries": changes
+            .scope_files
+            .iter()
+            .map(|file| serde_json::json!({
+                "path": file.path,
+                "status": file.status.to_string(),
+                "additions": file.additions,
+                "deletions": file.deletions,
+            }))
+            .collect::<Vec<_>>(),
+    })))
+}
+
+async fn session_artifacts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let mut artifacts = Vec::new();
+    if let Some(plan) = session.workflow_plan.as_ref() {
+        let steps = plan
+            .lanes
+            .iter()
+            .map(|lane| {
+                serde_json::json!({
+                    "label": lane.objective,
+                    "status": "pending",
+                })
+            })
+            .collect::<Vec<_>>();
+        artifacts.push(serde_json::json!({
+            "kind": "plan",
+            "title": "Workflow plan",
+            "summary": format!("{} planned stages · {} workflow", plan.lanes.len(), plan.profile),
+            "steps": steps,
+            "actions": [
+                {"label": "Build this plan", "command": "build-plan"},
+                {"label": "Revise", "command": "revise-plan"},
+                {"label": "Open plan", "command": "open-plan"}
+            ],
+        }));
+    }
+    let validation = validation_from_events(&state.store.lock().await.events(id)?);
+    if !validation.stages.is_empty() {
+        artifacts.push(serde_json::json!({
+            "kind": "validation",
+            "title": "Validation",
+            "summary": validation.headline(),
+            "status": if validation.complete { "passed" } else { "needs review" },
+        }));
+    }
+    artifacts.push(serde_json::json!({
+        "kind": "usage",
+        "title": "Usage",
+        "summary": format!("{} model calls · {} tokens · {} web searches", session.usage_records.len(), usage_summary_view(&session).total_tokens, usage_summary_view(&session).search_requests),
+    }));
+    Ok(Json(artifacts))
+}
+
+#[derive(Deserialize)]
+struct WorkspaceQuery {
+    repository: PathBuf,
+}
+
+/// What a client needs to describe the folder it has open, before any session
+/// exists in it: the branch, and whether it can publish anywhere.
+///
+/// Without this a freshly opened folder borrows the previous folder's branch
+/// and GitHub state from whatever session happened to be selected, which is
+/// simply a lie about the code on screen.
+async fn workspace_state(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<WorkspaceQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = query.repository;
+    let snapshot = RepositoryEngine::inspect(&repository).await.ok();
+    let is_git_repository = git_read(&repository, &["rev-parse", "--is-inside-work-tree"])
+        .await
+        .is_ok_and(|value| value.trim() == "true");
+    let git = workspace_git_overview(&repository).await;
+    let remote = git_read(&repository, &["remote", "get-url", "origin"])
+        .await
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    Ok(Json(serde_json::json!({
+        "repository": repository,
+        "is_git_repository": is_git_repository,
+        "branch": snapshot.as_ref().map(|snapshot| snapshot.branch.clone()),
+        "git": git,
+        "github": {
+            // A configured GitHub URL is not proof that this machine can
+            // authenticate to it. Keep the legacy field but make the claim
+            // conservative; clients should use `remote_configured` and show
+            // that authentication was not checked by this read-only route.
+            "connected": false,
+            "remote_configured": remote.as_deref().is_some_and(is_github_remote),
+            "authentication": "not_checked",
+            "remote": remote,
+            // PurrCode publishes through the folder's own Git remote using
+            // the machine's existing Git credentials. There is no PurrCode
+            // sign-in to perform, and naming one would send the user looking
+            // for a command that does not exist.
+            "how_to_connect": "add a GitHub remote to this folder",
+        },
+    })))
+}
+
+#[derive(Serialize)]
+struct WorkspaceGitCommit {
+    short_hash: String,
+    subject: String,
+    author: String,
+    authored_at: String,
+}
+
+#[derive(Serialize)]
+struct WorkspaceGitOverview {
+    /// `ready` means this is a Git repository with a readable HEAD. `empty`
+    /// intentionally covers a non-Git folder and a repository with no commit;
+    /// the remaining fields are still present so clients never infer that an
+    /// unavailable check was a clean repository.
+    status: &'static str,
+    clean: bool,
+    changed_file_count: u64,
+    recent_commits: Vec<WorkspaceGitCommit>,
+}
+
+impl WorkspaceGitOverview {
+    fn empty() -> Self {
+        Self {
+            status: "empty",
+            clean: false,
+            changed_file_count: 0,
+            recent_commits: Vec::new(),
+        }
+    }
+}
+
+async fn workspace_git_overview(repository: &Path) -> WorkspaceGitOverview {
+    let is_git = git_read(repository, &["rev-parse", "--is-inside-work-tree"])
+        .await
+        .is_ok_and(|value| value.trim() == "true");
+    if !is_git {
+        return WorkspaceGitOverview::empty();
+    }
+
+    // Porcelain output is one record per changed path. The endpoint is a
+    // bounded read-only summary, so a line count is preferable to parsing
+    // arbitrary repository content as a command or a path.
+    //
+    // `--untracked-files=all` matters: the default collapses an untracked
+    // directory into a single `?? dir/` line, so a status-bar count built here
+    // would disagree with the per-file change list over the same untracked
+    // folder.
+    let status = git_read(
+        repository,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+    )
+    .await
+    .unwrap_or_default();
+    let changed_file_count = status.lines().filter(|line| !line.is_empty()).count() as u64;
+    let has_head = git_read(repository, &["rev-parse", "--verify", "HEAD"])
+        .await
+        .is_ok();
+    let recent_commits = if has_head {
+        git_read(
+            repository,
+            &[
+                "log",
+                "-10",
+                "--date=iso-strict",
+                "--format=%h%x09%s%x09%an%x09%aI",
+            ],
+        )
+        .await
+        .map(|output| {
+            output
+                .lines()
+                .filter_map(|line| {
+                    let mut fields = line.splitn(4, '\t');
+                    Some(WorkspaceGitCommit {
+                        short_hash: fields.next()?.trim().to_owned(),
+                        subject: fields.next()?.to_owned(),
+                        author: fields.next()?.to_owned(),
+                        authored_at: fields.next()?.trim().to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    WorkspaceGitOverview {
+        status: if has_head { "ready" } else { "empty" },
+        clean: has_head && changed_file_count == 0,
+        changed_file_count,
+        recent_commits,
+    }
+}
+
+/// Whether a Git remote points at GitHub.
+///
+/// A remote alone is not a GitHub connection: plenty of repositories push to
+/// GitLab, a company host, or a bare path on disk, and claiming "connected to
+/// GitHub" for those is wrong.
+fn is_github_remote(remote: &str) -> bool {
+    let lower = remote.to_ascii_lowercase();
+    lower.contains("github.com") || lower.starts_with("git@github.com")
+}
+
+async fn session_github(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let repository = session
+        .repository
+        .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
+    let remote = git_read(&repository, &["remote", "get-url", "origin"])
+        .await
+        .ok()
+        .map(|value| value.trim().to_owned());
+    Ok(Json(serde_json::json!({
+        // Reading a remote is not an authentication check. Keep `connected`
+        // conservative for older clients and expose the truthful distinction
+        // explicitly for current ones.
+        "connected": false,
+        "remote_configured": remote.as_deref().is_some_and(is_github_remote),
+        "authentication": "not_checked",
+        "remote": remote,
+        "branch": RepositoryEngine::inspect(&repository).await.ok().map(|snapshot| snapshot.branch),
+        "publication": if remote.is_some() { "available through the configured Git remote" } else { "offline" },
+    })))
+}
+
+#[derive(Deserialize)]
+struct GitHubBranchRequest {
+    #[serde(rename = "branchName")]
+    branch_name: String,
+    #[serde(default, rename = "fromBranch")]
+    from_branch: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GitHubPullRequestRequest {
+    title: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    draft: bool,
+}
+
+#[derive(Deserialize)]
+struct GitHubMergeRequest {
+    #[serde(rename = "prNumber")]
+    pr_number: u64,
+    #[serde(default, rename = "commitMessage")]
+    commit_message: String,
+    #[serde(default)]
+    merge_method: String,
+}
+
+async fn github_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    match github_command(
+        Path::new("."),
+        &["auth", "status", "--hostname", "github.com"],
+    )
+    .await
+    {
+        Ok(_) => Ok(Json(serde_json::json!({
+            "connected": true,
+            "user": "authenticated GitHub account",
+        }))),
+        Err(error) => Ok(Json(serde_json::json!({
+            "connected": false,
+            "detail": error_message(&error),
+        }))),
+    }
+}
+
+async fn github_connect(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    Err(ApiError::Conflict(
+        "GitHub authentication is intentionally interactive; run `gh auth login --web` in a terminal, then retry GitHub status".into(),
+    ))
+}
+
+async fn github_disconnect(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    github_command(
+        Path::new("."),
+        &["auth", "logout", "--hostname", "github.com", "--yes"],
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "connected": false })))
+}
+
+async fn github_create_branch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<GitHubBranchRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    if request.branch_name.trim().is_empty() || request.branch_name.starts_with('-') {
+        return Err(ApiError::BadRequest("branch name is invalid".into()));
+    }
+    let id = parse_session_id(&id)?;
+    require_idle(&state, id).await?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let mut args = vec!["switch", "-c", request.branch_name.as_str()];
+    if let Some(from_branch) = request.from_branch.as_deref() {
+        if from_branch.starts_with('-') {
+            return Err(ApiError::BadRequest("base branch is invalid".into()));
+        }
+        args.extend(["--no-track", from_branch]);
+    }
+    github_git(&worktree.path, &args).await?;
+    let sha = git_read(&worktree.path, &["rev-parse", "HEAD"]).await?;
+    Ok(Json(
+        serde_json::json!({ "name": request.branch_name, "sha": sha.trim() }),
+    ))
+}
+
+async fn github_create_pr(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<GitHubPullRequestRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    if request.title.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "pull request title cannot be empty".into(),
+        ));
+    }
+    reject_secret_content(&request.title)?;
+    reject_secret_content(&request.body)?;
+    let id = parse_session_id(&id)?;
+    require_idle(&state, id).await?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let mut args = vec![
+        "pr",
+        "create",
+        "--title",
+        request.title.as_str(),
+        "--body",
+        request.body.as_str(),
+    ];
+    if request.draft {
+        args.push("--draft");
+    }
+    args.extend(["--json", "number,url"]);
+    let output = github_command(&worktree.path, &args).await?;
+    serde_json::from_slice(&output)
+        .map(Json)
+        .map_err(|_| ApiError::Conflict("GitHub returned an invalid pull request response".into()))
+}
+
+async fn github_checks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<GitHubRefQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let mut args = vec!["pr", "checks"];
+    if let Some(reference) = query.reference.as_deref() {
+        if reference.starts_with('-') {
+            return Err(ApiError::BadRequest(
+                "pull request reference is invalid".into(),
+            ));
+        }
+        args.push(reference);
+    }
+    args.extend(["--json", "name,state,description,link"]);
+    let output = github_command(&worktree.path, &args).await?;
+    serde_json::from_slice(&output)
+        .map(Json)
+        .map_err(|_| ApiError::Conflict("GitHub returned invalid check data".into()))
+}
+
+#[derive(Deserialize, Default)]
+struct GitHubRefQuery {
+    #[serde(default, alias = "ref")]
+    reference: Option<String>,
+}
+
+async fn github_merge_pr(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<GitHubMergeRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let method = match request.merge_method.as_str() {
+        "squash" => "--squash",
+        "rebase" => "--rebase",
+        _ => "--merge",
+    };
+    let number = request.pr_number.to_string();
+    let output = github_command(
+        &worktree.path,
+        &[
+            "pr",
+            "merge",
+            number.as_str(),
+            method,
+            "--subject",
+            request.commit_message.as_str(),
+            "--delete-branch=false",
+            "--json",
+            "merged,mergeCommit",
+        ],
+    )
+    .await?;
+    serde_json::from_slice(&output)
+        .map(Json)
+        .map_err(|_| ApiError::Conflict("GitHub returned invalid merge data".into()))
+}
+
+async fn github_issue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((id, issue)): AxumPath<(String, u64)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let issue = issue.to_string();
+    let output = github_command(
+        &worktree.path,
+        &[
+            "issue",
+            "view",
+            issue.as_str(),
+            "--json",
+            "title,body,labels,assignees",
+        ],
+    )
+    .await?;
+    serde_json::from_slice(&output)
+        .map(Json)
+        .map_err(|_| ApiError::Conflict("GitHub returned invalid issue data".into()))
+}
+
+async fn github_command(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>, ApiError> {
+    let mut command = tokio::process::Command::new("gh");
+    command
+        .args(arguments)
+        .current_dir(repository)
+        .env_clear()
+        .env("GH_PROMPT_DISABLED", "1");
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    let output = command
+        .output()
+        .await
+        .map_err(|error| ApiError::Conflict(format!("GitHub CLI is unavailable: {error}")))?;
+    if !output.status.success() {
+        return Err(ApiError::Conflict(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(output.stdout)
+}
+
+async fn github_git(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>, ApiError> {
+    let mut command = tokio::process::Command::new("git");
+    command
+        .args(arguments)
+        .current_dir(repository)
+        .env_clear()
+        .env("GIT_TERMINAL_PROMPT", "0");
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    let output = command
+        .output()
+        .await
+        .map_err(|error| ApiError::Conflict(format!("git operation failed: {error}")))?;
+    if !output.status.success() {
+        return Err(ApiError::Conflict(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(output.stdout)
+}
+
+async fn bootstrap(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config).ok();
+    let models = config
+        .as_ref()
+        .map(|config| {
+            config
+                .providers
+                .iter()
+                .flat_map(|(provider, value)| {
+                    let provider = provider.to_owned();
+                    let local = value.is_local();
+                    let models = value
+                        .configured_models()
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    models
+                        .into_iter()
+                        .map(move |model| {
+                            serde_json::json!({
+                                "id": format!("{provider}/{model}"),
+                                "provider": provider,
+                                "local": local,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(Json(serde_json::json!({
+        "daemon_version": env!("CARGO_PKG_VERSION"),
+        "daemon_api_version": DAEMON_API_VERSION,
+        "native_ide_api_version": NATIVE_IDE_API_VERSION,
+        "native_ide_build_fingerprint": NATIVE_IDE_BUILD_FINGERPRINT,
+        "native_ide_capabilities": NATIVE_IDE_CAPABILITIES,
+        "connected": true,
+        "models": models,
+        "control_capabilities": {
+            "version": 1,
+            "task_modes": ["auto", "ask", "plan", "build", "review"],
+            "permission_modes": ["ask", "auto", "full_access"],
+            "execution_styles": ["autonomous", "collaborative"],
+            "workflows": ["auto", "direct", "standard", "ultra"],
+            "routing": ["auto", "fixed"],
+            "search_policies": ["off", "auto", "always"],
+            "budget_profiles": ["economy", "balanced", "max_quality", "custom"]
+        }
+    })))
+}
+
+async fn git_read(repository: &Path, arguments: &[&str]) -> Result<String, ApiError> {
+    let output = tokio::process::Command::new("git")
+        .args(arguments)
+        .current_dir(repository)
+        .env_clear()
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .envs(
+            std::env::var_os("PATH")
+                .into_iter()
+                .map(|path| ("PATH", path)),
+        )
+        .output()
+        .await
+        .map_err(|error| ApiError::Conflict(format!("git operation failed: {error}")))?;
+    if !output.status.success() {
+        return Err(ApiError::Conflict(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|_| ApiError::Conflict("git returned non-UTF-8 output".into()))
 }
 
 #[derive(Serialize)]
@@ -3522,19 +5834,62 @@ async fn session_diff(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
+    Query(query): Query<SessionDiffQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     let session = state.store.lock().await.load(id)?;
     let worktree = worktree_from_state(&session)?;
-    let effects = RepositoryEngine::effects(&worktree)
+    let scope = query
+        .scope
+        .as_deref()
+        .map(ChangeScope::parse)
+        .unwrap_or_default();
+    let changes = RepositoryEngine::changes(&worktree, scope)
         .await
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    let patch = String::from_utf8_lossy(&changes.patch).into_owned();
+    let status_porcelain = git_status_porcelain(&worktree).await?;
+    let file_contents = if let Some(file_path) = query.file_path.as_deref() {
+        Some(
+            RepositoryEngine::file_diff_contents(&worktree, std::path::Path::new(file_path))
+                .await
+                .map_err(|error| ApiError::Conflict(error.to_string()))?,
+        )
+    } else {
+        None
+    };
     Ok(Json(serde_json::json!({
-        "patch": String::from_utf8_lossy(&effects.binary_patch),
-        "changed_files": effects.changed_files,
-        "status": effects.status_porcelain,
+        "content": patch,
+        "format": "diff",
+        "scope": scope.slug(),
+        "scope_label": scope.label(),
+        "file_path": query.file_path,
+        "changed_files": changes
+            .scope_files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>(),
+        "status": status_porcelain,
+        "before": file_contents.as_ref().and_then(|contents| contents.before.as_deref()),
+        "after": file_contents.as_ref().and_then(|contents| contents.after.as_deref()),
     })))
+}
+
+#[derive(Deserialize, Default)]
+struct SessionDiffQuery {
+    #[serde(default, alias = "filePath")]
+    file_path: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+/// The porcelain status, which the review flow uses to detect a dirty tree.
+async fn git_status_porcelain(worktree: &SessionWorktree) -> Result<String, ApiError> {
+    Ok(RepositoryEngine::effects(worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?
+        .status_porcelain)
 }
 
 #[derive(Deserialize)]
@@ -3775,6 +6130,9 @@ struct Health {
     version: &'static str,
     daemon_api_version: u32,
     studio_api_version: u32,
+    native_ide_api_version: u32,
+    native_ide_build_fingerprint: &'static str,
+    native_ide_capabilities: &'static [&'static str],
 }
 
 #[derive(Serialize)]
@@ -3792,20 +6150,74 @@ struct SessionView {
     /// so still accepts feedback that rewrites it. `paused` alone does not say
     /// this: a run paused midway through the work is also paused.
     awaiting_plan_review: bool,
+    /// Recovery has inspected the uncertain boundary and is paused for an
+    /// explicit resume. This remains durable across daemon restarts.
+    recovery_reconciled: bool,
+    /// Set only for a quarantined legacy event log. This is explicit
+    /// unavailable evidence, never a synthetic successful session state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unavailable_reason: Option<String>,
+    created_at: Option<DateTime<Utc>>,
+    updated_at: Option<DateTime<Utc>>,
 }
 
-fn status_code(status: &SessionStatus) -> &'static str {
-    match status {
+fn presentation_status(session: &SessionState) -> &'static str {
+    match &session.status {
         SessionStatus::Active => "active",
         SessionStatus::Paused => "paused",
         SessionStatus::AwaitingApproval(_) => "awaiting_approval",
         SessionStatus::AwaitingReview => "awaiting_review",
         SessionStatus::Executing(_) => "executing",
         SessionStatus::Cancelled => "cancelled",
+        // Ask is an ongoing conversation. Completing one answer leaves it
+        // ready for a follow-up rather than closing the whole session.
+        SessionStatus::Completed if session.controls.task_mode == TaskMode::Ask => "ready",
         SessionStatus::Completed => "completed",
         SessionStatus::Failed => "failed",
         SessionStatus::Uncertain => "uncertain",
     }
+}
+
+/// Reconcile the presentation status against whether anything is actually
+/// driving the session (PRD §2.3 FR-B4).
+///
+/// A session is only "working" while a daemon lease is held — a lease is the
+/// one source of truth for "something is running". Without one, an `active` or
+/// `executing` status with a failed last activity item is a bookkeeping gap
+/// (e.g. the model request was interrupted by the follow-up that starts the
+/// next turn), and showing Working would be an untruth. The header must say so.
+fn presentation_status_reconciled(
+    session: &SessionState,
+    activity: &[purrcode_ui_contracts::ActivityItem],
+    lease_active: bool,
+) -> &'static str {
+    let status = presentation_status(session);
+    if lease_active || !matches!(status, "active" | "executing") {
+        return status;
+    }
+    // No lease, yet the lifecycle says active. If the last activity item is a
+    // failure, the session is not working — say so rather than pretending.
+    if activity
+        .last()
+        .is_some_and(|item| item.status == ActivityStatus::Failed)
+    {
+        return "failed";
+    }
+    status
+}
+
+fn recovery_reconciled(session: &SessionState, events: &[SessionEvent]) -> bool {
+    session.status == SessionStatus::Paused
+        && events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                SessionEvent::SessionPaused { reason } => {
+                    Some(reason.starts_with(purrcode_runtime_core::RECOVERY_RECONCILED_PAUSE))
+                }
+                _ => None,
+            })
+            .unwrap_or(false)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -3879,7 +6291,17 @@ fn error_message(error: &ApiError) -> String {
 
 impl From<StoreError> for ApiError {
     fn from(error: StoreError) -> Self {
-        Self::Store(error)
+        match error {
+            StoreError::ReplayInconsistent {
+                session,
+                sequence,
+                reason,
+            } => Self::Conflict(format!(
+                "session {} is unavailable because its event log is inconsistent at sequence {sequence}: {reason}",
+                session.0
+            )),
+            other => Self::Store(other),
+        }
     }
 }
 
@@ -4031,6 +6453,11 @@ struct ConfigureProviderRequest {
     model: String,
     credential_name: Option<String>,
     credential_reference: Option<ProviderCredentialReference>,
+    /// When present, the secret is stored to `credentials.toml` (keyed by the
+    /// provider name) before the profile is saved. This lets the simplified IDE
+    /// form send the API key directly instead of a credential name.
+    #[serde(default)]
+    secret: Option<String>,
     #[serde(default)]
     replace: bool,
 }
@@ -4075,7 +6502,7 @@ impl ProviderCredentialReference {
 async fn configure_provider(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<ConfigureProviderRequest>,
+    Json(mut body): Json<ConfigureProviderRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
     let _config_guard = lock_model_configuration(&state).await?;
@@ -4087,6 +6514,25 @@ async fn configure_provider(
             body.name
         )));
     }
+    // A direct API key in the request is stored to `credentials.toml` before
+    // the profile is saved; the reference then points at the same entry.
+    if let Some(secret) = body.secret.take() {
+        if secret.trim().is_empty() {
+            return Err(ApiError::BadRequest("API key must not be empty".into()));
+        }
+        // Store under the same name the derived reference resolves to, so the
+        // probe and later requests find it: `test-simple` → `TEST_SIMPLE`.
+        let reference = env_style_reference(&body.name)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        let store_name = reference
+            .strip_prefix("keychain:")
+            .unwrap_or(&reference)
+            .to_owned();
+        let credentials_path = state.app_config.with_file_name("credentials.toml");
+        purrcode_provider_gateway::store_credential(&credentials_path, &store_name, &secret)
+            .map_err(|e| ApiError::BadRequest(format!("credential storage failed: {e}")))?;
+        body.credential_name = Some(store_name);
+    }
     let credential_reference = match (
         body.credential_name.as_deref(),
         body.credential_reference.as_ref(),
@@ -4094,13 +6540,39 @@ async fn configure_provider(
         (Some(_), Some(_)) => {
             return Err(ApiError::BadRequest(
                 "provide only one credential name or typed credential reference".into(),
-            ))
+            ));
         }
-        (Some(name), None) => Some(
-            keychain_reference(name).map_err(|error| ApiError::BadRequest(error.to_string()))?,
-        ),
+        (Some(name), None) => {
+            // Canonical new-write format is a plain env-style reference
+            // (e.g. `NVIDIA_API_KEY`). Names that cannot be expressed that way
+            // (kebab-case profile names from the TUI import flow) fall back to
+            // the legacy `keychain:<name>` syntax, which resolves to the same
+            // `credentials.toml` entry.
+            Some(
+                env_style_reference(name)
+                    .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+            )
+        }
         (None, Some(reference)) => Some(reference.canonical()?),
-        (None, None) => None,
+        (None, None) => {
+            // A remote provider without an explicit credential reference still
+            // needs one to exist so it can resolve at request time. Derive a
+            // plain env-style name (`NVIDIA_API_KEY`/`OPENAI_API_KEY`) that the
+            // user can satisfy with an environment variable or a
+            // `credentials.toml` entry of the same name. Local providers
+            // (ollama, lm-studio) never need one.
+            let derived = match body.provider_type.as_str() {
+                "nim" | "nvidia-nim" | "nvidia" => Some("NVIDIA_API_KEY".to_owned()),
+                "openai" => Some("OPENAI_API_KEY".to_owned()),
+                _ => None,
+            };
+            derived
+                .map(|reference| {
+                    validate_credential_reference(&reference)
+                        .map_err(|error| ApiError::BadRequest(error.to_string()))
+                })
+                .transpose()?
+        }
     };
     let mut candidate = config.clone();
     candidate
@@ -4123,7 +6595,38 @@ async fn configure_provider(
         // trapped behind an otherwise invisible local-only default.
         candidate.privacy.mode = PrivacyMode::Mixed;
     }
-    let probe = probe_provider(&candidate, &body.name).await?;
+    let probe = match probe_provider(
+        &candidate,
+        &body.name,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .await
+    {
+        Ok(probe) => probe,
+        // A save is still a valid configuration even when the live probe fails:
+        // the key may be missing, wrong, or the endpoint unreachable. The probe
+        // is a health check, not a save gate — degrade to "not available" and
+        // persist the profile so the user can fix the credential later.
+        Err(error) => ProviderProbe {
+            available: false,
+            detail: match &error {
+                ApiError::BadRequest(message) => message.clone(),
+                _ => format!("provider probe failed: {error:?}"),
+            },
+            latency_ms: 0,
+            first_token_latency_ms: 0,
+            local: candidate
+                .providers
+                .get(&body.name)
+                .is_some_and(|provider| provider.is_local()),
+            models_configured: Vec::new(),
+        },
+    };
     candidate
         .save(&state.app_config)
         .map_err(|error| ApiError::BadRequest(format!("provider save failed: {error}")))?;
@@ -4170,13 +6673,14 @@ struct ProviderProbeAnswer {
 async fn probe_provider(
     config: &AppConfig,
     provider_name: &str,
+    credential_store_path: Option<&Path>,
 ) -> Result<ProviderProbe, ApiError> {
     let provider_config = config
         .providers
         .get(provider_name)
         .ok_or_else(|| ApiError::BadRequest(format!("unknown provider `{provider_name}`")))?;
     let local = provider_config.is_local();
-    let router = ProviderRouter::from_config(config)
+    let router = ProviderRouter::from_config(config, credential_store_path)
         .map_err(|error| ApiError::BadRequest(format!("provider setup failed: {error}")))?;
     let probe_model = configured_probe_model(config, provider_name, provider_config);
     let model = ModelId {
@@ -4367,7 +6871,7 @@ async fn discover_provider_models(
         _ => {
             return Err(ApiError::BadRequest(
                 "discovery is limited to local providers".into(),
-            ))
+            ));
         }
     };
     let response = reqwest::Client::builder()
@@ -4470,7 +6974,17 @@ async fn test_provider(
     authorize(&state, &headers)?;
     let config = AppConfig::load(&state.app_config)
         .map_err(|e| ApiError::BadRequest(format!("config load failed: {e}")))?;
-    let probe = probe_provider(&config, &body.provider).await?;
+    let probe = probe_provider(
+        &config,
+        &body.provider,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .await?;
     Ok(Json(serde_json::json!({
         "available": probe.available,
         "detail": probe.detail,
@@ -4494,12 +7008,24 @@ async fn store_credential(
     Json(mut body): Json<StoreCredentialRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let stored = purrcode_provider_gateway::set_keychain_credential(&body.name, &body.secret);
+    let credentials_path = state.app_config.with_file_name("credentials.toml");
+    let stored =
+        purrcode_provider_gateway::store_credential(&credentials_path, &body.name, &body.secret);
     body.secret.zeroize();
     stored.map_err(|e| ApiError::BadRequest(format!("credential storage failed: {e}")))?;
-    let reference = purrcode_provider_gateway::keychain_reference(&body.name)
-        .map_err(|e| ApiError::BadRequest(format!("keychain reference failed: {e}")))?;
-    Ok(Json(serde_json::json!({"reference": reference})))
+    Ok(Json(serde_json::json!({"reference": body.name})))
+}
+
+async fn delete_credential(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(name): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let credentials_path = state.app_config.with_file_name("credentials.toml");
+    purrcode_provider_gateway::delete_credential(&credentials_path, &name)
+        .map_err(|e| ApiError::BadRequest(format!("credential deletion failed: {e}")))?;
+    Ok(Json(serde_json::json!({"deleted": name})))
 }
 
 async fn list_models(
@@ -4641,8 +7167,16 @@ async fn qualify_local_model(
         provider: provider_name.clone(),
         model: request.model,
     };
-    let router = ProviderRouter::from_config(&initial_config)
-        .map_err(|error| ApiError::BadRequest(format!("provider setup failed: {error}")))?;
+    let router = ProviderRouter::from_config(
+        &initial_config,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .map_err(|error| ApiError::BadRequest(format!("provider setup failed: {error}")))?;
     let provider = router
         .provider(&model)
         .map_err(|error| ApiError::BadRequest(format!("provider routing failed: {error}")))?;
@@ -4987,7 +7521,7 @@ async fn approve_local_model_pull(
         _ => {
             return Err(ApiError::Conflict(
                 "Ollama pull action is not awaiting approval".into(),
-            ))
+            ));
         }
     };
     let model = validate_pull_action(action, &constraints).map_err(ApiError::BadRequest)?;
@@ -5042,7 +7576,7 @@ async fn start_local_model_pull(
         _ => {
             return Err(ApiError::Conflict(
                 "Ollama pull action was not judged for explicit approval".into(),
-            ))
+            ));
         }
     };
     let model = validate_pull_action(&action, &constraints).map_err(ApiError::BadRequest)?;
@@ -5430,7 +7964,7 @@ fn exact_approval_context(
         _ => {
             return Err(ApiError::Conflict(format!(
                 "{purpose} is not awaiting explicit approval"
-            )))
+            )));
         }
     };
     let action_digest = persisted_action
@@ -5518,6 +8052,7 @@ async fn search_skills(
     let session = state.store.lock().await.load(session_id)?;
     let repository = session
         .repository
+        .clone()
         .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
     let query = SearchQuery {
         capability: body.capability,
@@ -5579,6 +8114,12 @@ async fn search_skills(
             "selected_skill": skill,
             "external_search_avoided": true,
         })));
+    }
+    if !session_search_policy(&session).permits_network_research() {
+        return Err(ApiError::Conflict(
+            "session search policy is Off; network skill search is unsupported for this session"
+                .into(),
+        ));
     }
     let config = AppConfig::load(&state.app_config)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -5646,6 +8187,12 @@ async fn search_skills(
                 query: query.capability.clone(),
                 sources: vec!["github".into()],
             },
+        )?;
+        reserve_search_request(
+            &mut session_store,
+            session_id,
+            "github",
+            "skill_registry_search",
         )?;
     }
     let adapters: Vec<Box<dyn purrcode_skill_registry::RegistryAdapter>> =
@@ -5893,6 +8440,11 @@ async fn download_skill(
     }
     let session_id = parse_session_id(&body.session_id)?;
     let session = state.store.lock().await.load(session_id)?;
+    if !session_search_policy(&session).permits_network_research() {
+        return Err(ApiError::Conflict(
+            "session search policy is Off; network research is unsupported for this session".into(),
+        ));
+    }
     let repository = session
         .repository
         .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
@@ -6080,6 +8632,11 @@ async fn fetch_research_page(
     }
     let session_id = parse_session_id(&body.session_id)?;
     let session = state.store.lock().await.load(session_id)?;
+    if !session_search_policy(&session).permits_network_research() {
+        return Err(ApiError::Conflict(
+            "session search policy is Off; network research is unsupported for this session".into(),
+        ));
+    }
     let repository = session
         .repository
         .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
@@ -6093,11 +8650,13 @@ async fn fetch_research_page(
     let parsed_url = reqwest::Url::parse(&body.url)
         .map_err(|_| ApiError::BadRequest("research URL is invalid".into()))?;
     let approved_domains = if body.domain_approved {
-        vec![parsed_url
-            .host_str()
-            .ok_or_else(|| ApiError::BadRequest("research URL has no DNS host".into()))?
-            .trim_end_matches('.')
-            .to_ascii_lowercase()]
+        vec![
+            parsed_url
+                .host_str()
+                .ok_or_else(|| ApiError::BadRequest("research URL has no DNS host".into()))?
+                .trim_end_matches('.')
+                .to_ascii_lowercase(),
+        ]
     } else {
         Vec::new()
     };
@@ -6156,6 +8715,7 @@ async fn fetch_research_page(
             "research fetch",
             true,
         )?;
+        reserve_search_request(&mut store, session_id, "public_web", "research_fetch")?;
     }
     let section: WebResearchSection = config
         .extensions
@@ -6471,7 +9031,7 @@ async fn propose_skill_install(
         _ => {
             return Err(ApiError::BadRequest(
                 "signature and publisher public key must be supplied together".into(),
-            ))
+            ));
         }
     }
     let skill_parent = state.database.parent().unwrap_or(Path::new("."));
@@ -6657,7 +9217,7 @@ async fn approve_skill_install(
         _ => {
             return Err(ApiError::Conflict(
                 "install action is not awaiting approval".into(),
-            ))
+            ));
         }
     };
     let ProposedAction::ExternalTool(external) = action else {
@@ -6752,7 +9312,7 @@ async fn install_skill(
         _ => {
             return Err(ApiError::Conflict(
                 "install action was not judged for approval".into(),
-            ))
+            ));
         }
     };
     let ProposedAction::ExternalTool(external) = action else {
@@ -6981,14 +9541,14 @@ async fn remove_skill(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{stream, StreamExt};
+    use futures::{StreamExt, stream};
     use purrcode_provider_gateway::{
         ModelCapabilities, ModelEvent, ModelEventStream, ProviderError, ProviderHealth,
         TokenEstimate,
     };
     use schemars::schema::RootSchema;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn validation_event(action: &str, status: ValidationStatus, evidence: &str) -> SessionEvent {
         SessionEvent::ValidationRecorded {
@@ -6996,6 +9556,148 @@ mod tests {
             status,
             evidence: format!("{action}: {evidence}"),
         }
+    }
+
+    #[test]
+    fn omitted_session_controls_resolve_to_ask_and_governed() {
+        let request = StartSessionRequest {
+            objective: "Explain this repository".into(),
+            repository: PathBuf::from("."),
+            model: None,
+            plan_only: false,
+            authority_mode: None,
+            workflow: None,
+            routing: None,
+            search_policy: None,
+            budget_profile: None,
+            execution_style: None,
+            task_mode: None,
+            permission_mode: None,
+            max_tokens: None,
+        };
+        let controls = request.controls().unwrap();
+        assert_eq!(controls.task_mode, TaskMode::Ask);
+        assert_eq!(controls.permission_mode, PermissionMode::Ask);
+        assert_eq!(request.authority_mode().unwrap(), AuthorityMode::Governed);
+
+        let mut unsupported = controls;
+        unsupported.routing = ModelRoutingControl::Economy;
+        assert!(validate_supported_controls(&unsupported).is_err());
+    }
+
+    #[test]
+    fn auto_intent_resolves_effective_modes_without_client_taxonomy() {
+        let request = |objective: &str| StartSessionRequest {
+            objective: objective.into(),
+            repository: PathBuf::from("."),
+            model: None,
+            plan_only: false,
+            authority_mode: None,
+            workflow: None,
+            routing: None,
+            search_policy: None,
+            budget_profile: None,
+            execution_style: None,
+            task_mode: Some("auto".into()),
+            permission_mode: None,
+            max_tokens: None,
+        };
+
+        let greeting = request("hello");
+        let mut controls = greeting.controls().unwrap();
+        assert!(resolve_effective_task_mode(&greeting, &mut controls));
+        assert_eq!(controls.task_mode, TaskMode::Ask);
+
+        let change = request("add a health endpoint");
+        let mut controls = change.controls().unwrap();
+        assert!(!resolve_effective_task_mode(&change, &mut controls));
+        assert_eq!(controls.task_mode, TaskMode::Build);
+
+        let plan = request("plan how to add a health endpoint");
+        let mut controls = plan.controls().unwrap();
+        assert!(!resolve_effective_task_mode(&plan, &mut controls));
+        assert_eq!(controls.task_mode, TaskMode::Plan);
+
+        let review = request("review the current diff");
+        let mut controls = review.controls().unwrap();
+        assert!(!resolve_effective_task_mode(&review, &mut controls));
+        assert_eq!(controls.task_mode, TaskMode::Review);
+    }
+
+    #[test]
+    fn external_request_budgets_are_reserved_durably_before_effects() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&directory.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "Use bounded integrations".into(),
+                    repository: directory.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionControlsUpdated {
+                    controls: SessionControls {
+                        budget_profile: BudgetProfileKind::Custom,
+                        custom_budget: Some(purrcode_runtime_core::adaptation::BudgetConstraints {
+                            maximum_search_requests: Some(1),
+                            maximum_mcp_calls: Some(1),
+                            ..Default::default()
+                        }),
+                        ..SessionControls::default()
+                    },
+                },
+            )
+            .unwrap();
+
+        reserve_search_request(&mut store, session_id, "test", "search").unwrap();
+        assert!(reserve_search_request(&mut store, session_id, "test", "search").is_err());
+        reserve_mcp_call(&mut store, session_id, "test", "tool").unwrap();
+        assert!(reserve_mcp_call(&mut store, session_id, "test", "tool").is_err());
+        let state = store.load(session_id).unwrap();
+        assert_eq!(state.usage_records.len(), 2);
+        assert_eq!(usage_summary_view(&state).search_requests, 1);
+        assert_eq!(usage_summary_view(&state).mcp_calls, 1);
+    }
+
+    #[test]
+    fn read_only_task_modes_allow_mcp_discovery_but_not_tool_effects() {
+        for mode in [TaskMode::Ask, TaskMode::Plan, TaskMode::Review] {
+            assert!(task_mode_allows_mcp(mode, "__discover__"));
+            assert!(!task_mode_allows_mcp(mode, "write_file"));
+        }
+        assert!(task_mode_allows_mcp(TaskMode::Build, "write_file"));
+    }
+
+    #[test]
+    fn rollback_requires_preview_digest_and_unattributed_effect_acknowledgement() {
+        let missing_ack = RollbackRequest {
+            expected_patch_digest: "current".into(),
+            acknowledge_unattributed_effects: false,
+        };
+        assert!(matches!(
+            validate_rollback_request(&missing_ack, "current"),
+            Err(ApiError::BadRequest(_))
+        ));
+        let stale = RollbackRequest {
+            expected_patch_digest: "old".into(),
+            acknowledge_unattributed_effects: true,
+        };
+        assert!(matches!(
+            validate_rollback_request(&stale, "current"),
+            Err(ApiError::Conflict(_))
+        ));
+        let exact = RollbackRequest {
+            expected_patch_digest: "current".into(),
+            acknowledge_unattributed_effects: true,
+        };
+        validate_rollback_request(&exact, "current").unwrap();
     }
 
     #[tokio::test]
@@ -7065,7 +9767,24 @@ mod tests {
         assert_eq!(outcomes[1], ValidationOutcome::Unavailable);
         assert_eq!(outcomes[2], ValidationOutcome::Unavailable);
         assert_eq!(outcomes[3], ValidationOutcome::Skipped);
-        assert!(summary.headline().contains("did not pass"));
+        // The headline counts what actually passed. One of four did; the
+        // unavailable and skipped stages are not folded into that number, and
+        // the line must not read as a clean run.
+        let headline = summary.headline();
+        assert_eq!(headline, "1 / 4 checks passed", "got {headline:?}");
+        assert!(!headline.starts_with("All"));
+    }
+
+    #[test]
+    fn a_github_remote_is_distinguished_from_any_other_remote() {
+        // A remote is not a GitHub connection. Claiming one for a GitLab or
+        // on-disk remote promises a pull request that cannot be opened.
+        assert!(is_github_remote("git@github.com:owner/repo.git"));
+        assert!(is_github_remote("https://github.com/owner/repo.git"));
+        assert!(!is_github_remote("git@gitlab.com:owner/repo.git"));
+        assert!(!is_github_remote("https://git.company.internal/owner/repo"));
+        assert!(!is_github_remote("/srv/git/repo.git"));
+        assert!(!is_github_remote(""));
     }
 
     #[test]
@@ -7190,6 +9909,47 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_last_activity_without_a_lease_never_reports_working() {
+        // PRD §2.3 FR-B4: the workbench must never show Working without
+        // something running. When the last activity item is failed and no lease
+        // is held, the reconciled status says failed instead of active.
+        let session = state_after(&[SessionEvent::SessionFailed {
+            reason: "provider request timed out".into(),
+        }]);
+        // The lifecycle reducer leaves the status Failed; a real run reaches the
+        // same shape through the interrupted-model-request path.
+        let activity = activity_from_events(&[
+            SessionEvent::ModelRequestStarted {
+                role: "coding_worker".into(),
+                provider: "ollama".into(),
+                model: "m".into(),
+            },
+            SessionEvent::SessionFailed {
+                reason: "provider request timed out".into(),
+            },
+        ]);
+        assert_eq!(
+            presentation_status_reconciled(&session, &activity, false),
+            "failed"
+        );
+        // With a lease held the session really is running and stays active.
+        assert_eq!(
+            presentation_status_reconciled(&session, &activity, true),
+            "failed",
+            "a failed session is failed even while a lease settles"
+        );
+
+        // An active session with nothing failed and no lease is idle, not
+        // working, but the lifecycle genuinely says active — keep it.
+        let idle = state_after(&[SessionEvent::WorktreeCreated {
+            path: PathBuf::from("/w"),
+            base_head: "abc".into(),
+            source_was_dirty: false,
+        }]);
+        assert_eq!(presentation_status_reconciled(&idle, &[], false), "active");
+    }
+
+    #[test]
     fn a_follow_up_during_plan_review_is_feedback_not_a_new_instruction() {
         // The reviewer's only options were to accept the plan or abandon the
         // session: a follow-up on a paused session was refused outright. What
@@ -7265,6 +10025,33 @@ mod tests {
     }
 
     #[test]
+    fn recovery_pause_is_exposed_as_resumable_only_after_reconciliation() {
+        let uncertain = state_after(&[SessionEvent::RecoveryRequired {
+            reason: "model response was interrupted".into(),
+        }]);
+        assert!(!recovery_reconciled(
+            &uncertain,
+            &[SessionEvent::RecoveryRequired {
+                reason: "model response was interrupted".into(),
+            }]
+        ));
+
+        let events = vec![
+            SessionEvent::RecoveryRequired {
+                reason: "model response was interrupted".into(),
+            },
+            SessionEvent::SessionPaused {
+                reason: format!(
+                    "{} 0 changed file(s)",
+                    purrcode_runtime_core::RECOVERY_RECONCILED_PAUSE
+                ),
+            },
+        ];
+        let reconciled = state_after(&events);
+        assert!(recovery_reconciled(&reconciled, &events));
+    }
+
+    #[test]
     fn a_session_that_is_working_never_reports_an_empty_activity_list() {
         // Caught by the first real run against a local model: seven durable
         // events produced zero activity items, so a session that was actively
@@ -7294,9 +10081,11 @@ mod tests {
         let activity = activity_from_events(&events);
         assert_eq!(activity.len(), 4);
         assert!(activity.iter().any(|item| item.label.contains("worktree")));
-        assert!(activity
-            .iter()
-            .any(|item| item.label == "Indexed 12 file(s), 40 symbol(s)"));
+        assert!(
+            activity
+                .iter()
+                .any(|item| item.label == "Indexed 12 file(s), 40 symbol(s)")
+        );
         // The in-flight request is the one thing the user is waiting on.
         let thinking = activity.last().unwrap();
         assert_eq!(thinking.status, ActivityStatus::Running);
@@ -7325,9 +10114,175 @@ mod tests {
                 .any(|item| item.status == ActivityStatus::Running),
             "an ended session must not report work in flight: {activity:?}"
         );
-        assert!(activity
+        assert!(
+            activity
+                .iter()
+                .any(|item| item.label == "Model request failed"),
+            "a provider timeout must be named as a failure, not a bare 'Interrupted': {activity:?}"
+        );
+        let failed = activity
             .iter()
-            .any(|item| item.label.contains("Interrupted")));
+            .find(|item| item.label == "Model request failed")
+            .unwrap();
+        assert_eq!(
+            failed.summary.as_deref(),
+            Some("provider request timed out"),
+            "the recorded failure reason must reach the activity summary"
+        );
+    }
+
+    #[test]
+    fn an_explicit_cancel_is_relabelled_cancelled_by_you_with_a_reason() {
+        let events = vec![
+            SessionEvent::ModelRequestStarted {
+                role: "coding_worker".into(),
+                provider: "ollama".into(),
+                model: "m".into(),
+            },
+            SessionEvent::SessionCancelled {
+                reason: "user pressed stop".into(),
+            },
+        ];
+        let activity = activity_from_events(&events);
+        let card = activity
+            .iter()
+            .find(|item| item.label == "Cancelled by you")
+            .expect("an explicit cancel must be named as a cancel");
+        assert_eq!(card.status, ActivityStatus::Failed);
+        assert_eq!(
+            card.summary.as_deref(),
+            Some("user pressed stop"),
+            "an explicit cancel carries the recorded reason"
+        );
+        assert!(
+            activity
+                .iter()
+                .all(|item| !item.label.contains("Interrupted with")),
+            "no transcript card may be a bare 'Interrupted with <model>'"
+        );
+    }
+
+    #[test]
+    fn a_terminal_state_without_a_finish_event_is_did_not_complete() {
+        // Bookkeeping gap: the turn window reaches a terminal state but no
+        // finish event or recorded reason exists. The card says what happened
+        // instead of pretending the request was interrupted.
+        let events = vec![
+            SessionEvent::ModelRequestStarted {
+                role: "coding_worker".into(),
+                provider: "ollama".into(),
+                model: "m".into(),
+            },
+            SessionEvent::SessionCompleted,
+        ];
+        let activity = activity_from_events(&events);
+        assert!(
+            activity
+                .iter()
+                .any(|item| item.label == "Model request did not complete")
+        );
+        assert!(
+            activity.iter().all(|item| item.label != "Cancelled by you"),
+            "a completion without a cancel must not read as a cancel"
+        );
+    }
+
+    #[test]
+    fn a_follow_up_turn_does_not_relabel_the_previous_turns_thinking() {
+        // A follow-up while the previous turn's model request is still open must
+        // not rewrite the earlier "Thinking with <model>" as an interruption of
+        // the *new* turn. The turn window starts at the latest user message, so
+        // the earlier open request belongs to a previous window and is never
+        // dragged into the new conversation's activity list at all.
+        let message = |role: &str, content: &str| ConversationMessage {
+            id: Uuid::new_v4().to_string(),
+            role: role.into(),
+            content: content.into(),
+            timestamp: Utc::now(),
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            model: None,
+        };
+        let activity = activity_from_events(&[
+            SessionEvent::ConversationMessageAdded {
+                message: message("user", "Explain this codebase"),
+            },
+            SessionEvent::ModelRequestStarted {
+                role: "coding_worker".into(),
+                provider: "ollama".into(),
+                model: "m".into(),
+            },
+            SessionEvent::ConversationMessageAdded {
+                message: message("user", "please explain"),
+            },
+        ]);
+        assert!(
+            activity
+                .iter()
+                .all(|item| !item.label.contains("Interrupted")),
+            "the previous turn's open request must never be relabelled into the follow-up turn"
+        );
+    }
+
+    #[test]
+    fn turn_boundaries_do_not_accumulate_finished_or_stale_failure_rows() {
+        let activity = activity_from_events(&[
+            SessionEvent::SessionCompleted,
+            SessionEvent::SessionResumed,
+            SessionEvent::SessionFailed {
+                reason: "old turn failed".into(),
+            },
+            SessionEvent::SessionResumed,
+            SessionEvent::SessionCompleted,
+        ]);
+        assert!(activity.iter().all(|item| item.label != "Finished"));
+        assert!(
+            activity
+                .iter()
+                .all(|item| !item.label.contains("stopped early"))
+        );
+    }
+
+    #[test]
+    fn follow_up_activity_contains_only_the_latest_turn() {
+        let message = |role: &str, content: &str| ConversationMessage {
+            id: Uuid::new_v4().to_string(),
+            role: role.into(),
+            content: content.into(),
+            timestamp: Utc::now(),
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            model: None,
+        };
+        let activity = activity_from_events(&[
+            SessionEvent::ConversationMessageAdded {
+                message: message("user", "first turn"),
+            },
+            SessionEvent::ContextIndexed {
+                files: 99,
+                symbols: 400,
+                sensitive_files: 0,
+            },
+            SessionEvent::ConversationMessageAdded {
+                message: message("assistant", "first answer"),
+            },
+            SessionEvent::SessionCompleted,
+            SessionEvent::SessionResumed,
+            SessionEvent::ConversationMessageAdded {
+                message: message("user", "follow up"),
+            },
+            SessionEvent::ContextIndexed {
+                files: 3,
+                symbols: 8,
+                sensitive_files: 0,
+            },
+        ]);
+        assert!(
+            activity
+                .iter()
+                .any(|item| item.label == "Indexed 3 file(s), 8 symbol(s)")
+        );
+        assert!(activity.iter().all(|item| !item.label.contains("99 file")));
     }
 
     #[test]
@@ -7682,9 +10637,11 @@ default = "ollama/small"
         .unwrap();
         assert_ne!(first_id, second_id);
         assert_ne!(first_digest, second_digest);
-        assert!(store
-            .consume_authorization(second_id, &second_digest)
-            .is_err());
+        assert!(
+            store
+                .consume_authorization(second_id, &second_digest)
+                .is_err()
+        );
     }
 
     #[test]
@@ -7798,10 +10755,39 @@ default = "ollama/small"
     }
 
     #[tokio::test]
+    async fn local_inference_sessions_queue_instead_of_failing_when_capacity_is_busy() {
+        let slots = Arc::new(Semaphore::new(1));
+        let first = acquire_local_inference_slot(Some(slots.clone()))
+            .await
+            .unwrap()
+            .unwrap();
+        let mut second = tokio::spawn(acquire_local_inference_slot(Some(slots.clone())));
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), &mut second)
+                .await
+                .is_err(),
+            "the second session should remain queued while capacity is occupied"
+        );
+
+        drop(first);
+        let second = tokio::time::timeout(std::time::Duration::from_secs(1), second)
+            .await
+            .expect("queued session should start after capacity is released")
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(slots.available_permits(), 0);
+        drop(second);
+        assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
     async fn concurrent_pause_and_cancel_interruptions_are_exclusive_and_generation_safe() {
         let temporary = tempfile::tempdir().unwrap();
         let state = AppState {
             store: Arc::new(Mutex::new(SessionStore::in_memory().unwrap())),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
             bearer_token: Arc::from("test-token"),
             database: temporary.path().join("sessions.db"),
             app_config: temporary.path().join("config.toml"),
@@ -7899,6 +10885,7 @@ default = "ollama/small"
         let temporary = tempfile::tempdir().unwrap();
         let state = AppState {
             store: Arc::new(Mutex::new(SessionStore::in_memory().unwrap())),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
             bearer_token: Arc::from("test-token"),
             database: temporary.path().join("sessions.db"),
             app_config: temporary.path().join("config.toml"),
@@ -8051,18 +11038,26 @@ default = "ollama/small"
             )
             .unwrap();
         let durable = events.events(session_id).unwrap();
-        assert!(durable
-            .iter()
-            .any(|event| matches!(event, SessionEvent::InstalledSkillMatched { .. })));
-        assert!(durable
-            .iter()
-            .any(|event| matches!(event, SessionEvent::InstalledSkillReused { .. })));
-        assert!(durable
-            .iter()
-            .any(|event| matches!(event, SessionEvent::ExternalSearchAvoided { .. })));
-        assert!(!durable
-            .iter()
-            .any(|event| matches!(event, SessionEvent::SkillSearchStarted { .. })));
+        assert!(
+            durable
+                .iter()
+                .any(|event| matches!(event, SessionEvent::InstalledSkillMatched { .. }))
+        );
+        assert!(
+            durable
+                .iter()
+                .any(|event| matches!(event, SessionEvent::InstalledSkillReused { .. }))
+        );
+        assert!(
+            durable
+                .iter()
+                .any(|event| matches!(event, SessionEvent::ExternalSearchAvoided { .. }))
+        );
+        assert!(
+            !durable
+                .iter()
+                .any(|event| matches!(event, SessionEvent::SkillSearchStarted { .. }))
+        );
     }
 
     #[tokio::test]
@@ -8095,6 +11090,7 @@ default = "ollama/small"
             database: temporary.path().join("sessions.db"),
             local_inference: false,
             local_inference_slots: Arc::new(Semaphore::new(1)),
+            router: None,
         };
         let report = Supervisor::new(ParallelismConfig::default())
             .unwrap()
@@ -8104,6 +11100,7 @@ default = "ollama/small"
                     id: "review".into(),
                     objective: "inspect safely".into(),
                     dependencies: Vec::new(),
+                    model: None,
                 }],
                 &worker,
             )
@@ -8156,6 +11153,7 @@ default = "ollama/small"
             database: temporary.path().join("sessions.db"),
             local_inference: true,
             local_inference_slots: Arc::new(Semaphore::new(1)),
+            router: None,
         };
         let report = Supervisor::new(ParallelismConfig {
             max_workers: 2,
@@ -8171,11 +11169,13 @@ default = "ollama/small"
                     id: "one".into(),
                     objective: "inspect one".into(),
                     dependencies: Vec::new(),
+                    model: None,
                 },
                 WorkerSpec {
                     id: "two".into(),
                     objective: "inspect two".into(),
                     dependencies: Vec::new(),
+                    model: None,
                 },
             ],
             &worker,
@@ -8183,10 +11183,12 @@ default = "ollama/small"
         .await
         .unwrap();
         assert_eq!(report.results.len(), 2);
-        assert!(report
-            .results
-            .iter()
-            .all(|result| result.status == WorkerStatus::Completed));
+        assert!(
+            report
+                .results
+                .iter()
+                .all(|result| result.status == WorkerStatus::Completed)
+        );
         assert_eq!(peak.load(Ordering::SeqCst), 1);
         assert_eq!(active.load(Ordering::SeqCst), 0);
     }
@@ -8223,6 +11225,16 @@ default = "ollama/small"
         assert_eq!(health["product"], "purrcode");
         assert_eq!(health["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(health["daemon_api_version"], DAEMON_API_VERSION);
+        assert_eq!(health["native_ide_api_version"], NATIVE_IDE_API_VERSION);
+        assert_eq!(
+            health["native_ide_build_fingerprint"],
+            NATIVE_IDE_BUILD_FINGERPRINT
+        );
+        assert!(NATIVE_IDE_CAPABILITIES.iter().all(|capability| {
+            health["native_ide_capabilities"]
+                .as_array()
+                .is_some_and(|values| values.iter().any(|value| value == capability))
+        }));
         handle.abort();
     }
 
@@ -8455,6 +11467,567 @@ default = "ollama/small"
     }
 
     #[tokio::test]
+    async fn native_ide_session_contract_filters_by_repository_and_accepts_current_payload() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        let other_repository = temporary.path().join("other-repository");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::create_dir(&other_repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        git(&other_repository, &["init", "--quiet"]);
+
+        let database = temporary.path().join("sessions.db");
+        let mut seed = SessionStore::open(&database).unwrap();
+        for (objective, source) in [("same", &repository), ("other", &other_repository)] {
+            let id = SessionId::new();
+            seed.append(
+                id,
+                &SessionEvent::SessionCreated {
+                    objective: objective.into(),
+                    repository: source.to_path_buf(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        }
+        drop(seed);
+
+        // The agent task may fail later when this intentionally unreachable
+        // provider is contacted; the HTTP contract is the point of this test.
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(
+            &app_config,
+            r#"
+schema_version = 1
+[privacy]
+mode = "local-only"
+[providers.fixture]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:9/v1/"
+local = true
+[models]
+default = "fixture/test"
+[models.roles]
+judge = "fixture/test"
+[judgment]
+allow_same_model = true
+"#,
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: database.clone(),
+            token_file: token_file.clone(),
+            app_config,
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", report.bind);
+
+        let accepted = client
+            .post(format!("{base}/v1/sessions"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "inspect this repository",
+                "repository": repository,
+                "task_mode": "ask",
+                "execution_style": "autonomous",
+                "permission_mode": "ask",
+                "plan_only": false
+            }))
+            .send()
+            .await
+            .unwrap();
+        let accepted_status = accepted.status();
+        let accepted_body: serde_json::Value = accepted.json().await.unwrap();
+        assert_eq!(
+            accepted_status,
+            StatusCode::ACCEPTED,
+            "current native IDE payload was rejected: {accepted_body}"
+        );
+        assert!(accepted_body["id"].as_str().is_some());
+
+        let scoped = client
+            .get(format!(
+                "{base}/v1/sessions?repository={}",
+                repository.to_string_lossy()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(scoped.status(), StatusCode::OK);
+        let scoped: Vec<serde_json::Value> = scoped.json().await.unwrap();
+        assert_eq!(scoped.len(), 2);
+        let repository_text = repository
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            scoped.iter().all(|session| {
+                session["repository"].as_str() == Some(repository_text.as_str())
+            }),
+            "unexpected repository-scoped response: {scoped:?}"
+        );
+        let other = client
+            .get(format!(
+                "{base}/v1/sessions?repository={}",
+                other_repository.to_string_lossy()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(other.status(), StatusCode::OK);
+        let other: Vec<serde_json::Value> = other.json().await.unwrap();
+        assert_eq!(other.len(), 1);
+        let other_repository_text = other_repository
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            other[0]["repository"].as_str(),
+            Some(other_repository_text.as_str())
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn auto_greeting_completes_without_plan_and_explain_never_drops_http() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            // The greeting never starts an agent. The explain request is
+            // intentionally pointed at a missing config: it must return a
+            // typed HTTP error after planning, never panic and drop TCP.
+            app_config: temporary.path().join("missing-config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", report.bind);
+
+        let greeting = client
+            .post(format!("{base}/v1/sessions"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "hello",
+                "repository": repository
+            }))
+            .send()
+            .await
+            .expect("greeting response must remain connected");
+        assert_eq!(greeting.status(), StatusCode::ACCEPTED);
+        let greeting: serde_json::Value = greeting.json().await.unwrap();
+        assert_eq!(greeting["status"], "completed");
+        let greeting_id = greeting["id"].as_str().unwrap();
+
+        let greeting_events: Vec<SessionEvent> = client
+            .get(format!("{base}/v1/sessions/{greeting_id}/events"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(greeting_events.iter().all(|event| !matches!(
+            event,
+            SessionEvent::WorkflowPlanCreated { .. }
+                | SessionEvent::WorktreeCreated { .. }
+                | SessionEvent::ValidationRecorded { .. }
+        )));
+        assert!(greeting_events.iter().any(|event| matches!(
+            event,
+            SessionEvent::ConversationMessageAdded { message }
+                if message.role == "assistant"
+        )));
+
+        let explain = client
+            .post(format!("{base}/v1/sessions"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "Explain how this repository is organised",
+                "repository": repository
+            }))
+            .send()
+            .await
+            .expect("explain response must remain connected despite planning failure");
+        assert_eq!(explain.status(), StatusCode::BAD_REQUEST);
+        let explain: serde_json::Value = explain.json().await.unwrap();
+        assert!(
+            explain["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("config load failed"))
+        );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn completed_ask_session_keeps_its_model_and_accepts_follow_up() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(
+            &app_config,
+            r#"
+schema_version = 1
+[providers.fixture]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:9/v1/"
+local = true
+[models]
+default = "fixture/test"
+"#,
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config,
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", report.bind);
+
+        let created: serde_json::Value = client
+            .post(format!("{base}/v1/sessions"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "hello",
+                "repository": repository,
+                "model": "fixture/test"
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let id = created["id"].as_str().unwrap();
+
+        let before: serde_json::Value = client
+            .get(format!("{base}/v1/sessions/{id}"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(before["status_code"], "ready");
+        assert_eq!(before["selected_model"], "fixture/test");
+
+        let follow_up = client
+            .post(format!("{base}/v1/sessions/{id}/messages"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({"content": "What can you do"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            follow_up.status(),
+            StatusCode::ACCEPTED,
+            "a completed turn must not make the conversation return 409"
+        );
+
+        let after: serde_json::Value = client
+            .get(format!("{base}/v1/sessions/{id}"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(after["status_code"], "ready");
+        assert_eq!(after["selected_model"], "fixture/test");
+
+        let messages: Vec<ConversationMessage> = client
+            .get(format!("{base}/v1/sessions/{id}/messages"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(messages.len(), 4);
+        assert!(messages.last().is_some_and(|message| {
+            message.role == "assistant" && message.content.contains("inspect and explain")
+        }));
+        let durable_events: Vec<SessionEvent> = client
+            .get(format!("{base}/v1/sessions/{id}/events"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            durable_events
+                .iter()
+                .all(|event| !matches!(event, SessionEvent::WorktreeCreated { .. }))
+        );
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn legacy_invalid_session_is_quarantined_without_blocking_http_or_new_sessions() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        let database = temporary.path().join("sessions.db");
+        let healthy = SessionId::new();
+        let invalid = SessionId::new();
+        {
+            let mut store = SessionStore::open(&database).unwrap();
+            store
+                .append(
+                    healthy,
+                    &SessionEvent::SessionCreated {
+                        objective: "healthy session".into(),
+                        repository: repository.clone(),
+                        authority_mode: AuthorityMode::Governed,
+                    },
+                )
+                .unwrap();
+            store
+                .append(
+                    invalid,
+                    &SessionEvent::SessionCreated {
+                        objective: "legacy broken session".into(),
+                        repository: repository.clone(),
+                        authority_mode: AuthorityMode::Governed,
+                    },
+                )
+                .unwrap();
+        }
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        let invalid_event = SessionEvent::ApprovalRecorded {
+            action_id: ActionId::new(),
+            authority: ApprovalAuthority::Human,
+            action_digest: "legacy-digest".into(),
+        };
+        connection
+            .execute(
+                "INSERT INTO session_events(session_id, sequence, event_type, payload, occurred_at)
+                 VALUES (?1, 2, 'approval_recorded', ?2, ?3)",
+                rusqlite::params![
+                    invalid.0.to_string(),
+                    serde_json::to_string(&invalid_event).unwrap(),
+                    Utc::now()
+                ],
+            )
+            .unwrap();
+
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(
+            &app_config,
+            r#"
+schema_version = 1
+[privacy]
+mode = "local-only"
+[providers.fixture]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:9/v1/"
+local = true
+[models]
+default = "fixture/test"
+[models.roles]
+judge = "fixture/test"
+[judgment]
+allow_same_model = true
+"#,
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: database.clone(),
+            token_file: token_file.clone(),
+            app_config,
+        })
+        .await
+        .expect("one invalid legacy session must not abort daemon startup");
+        assert_eq!(report.unavailable_sessions, vec![invalid.0.to_string()]);
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", report.bind);
+
+        let scoped = client
+            .get(format!(
+                "{base}/v1/sessions?repository={}",
+                repository.to_string_lossy()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(scoped.status(), StatusCode::OK);
+        let scoped: Vec<serde_json::Value> = scoped.json().await.unwrap();
+        assert_eq!(scoped.len(), 2);
+        let unavailable = scoped
+            .iter()
+            .find(|session| session["id"] == invalid.0.to_string())
+            .expect("quarantined session remains visible as unavailable");
+        assert_eq!(unavailable["status_code"], "unavailable");
+        assert!(unavailable["unavailable_reason"].as_str().is_some());
+
+        let invalid_view = client
+            .get(format!("{base}/v1/sessions/{}", invalid.0))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid_view.status(), StatusCode::CONFLICT);
+        let invalid_body: serde_json::Value = invalid_view.json().await.unwrap();
+        assert!(
+            invalid_body["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("unavailable"))
+        );
+
+        let accepted = client
+            .post(format!("{base}/v1/sessions"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "create after legacy recovery",
+                "repository": repository,
+                "task_mode": "plan",
+                "permission_mode": "ask",
+                "execution_style": "autonomous",
+                "plan_only": true
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn workspace_endpoint_reports_bounded_git_history_and_empty_states() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        let empty_git = temporary.path().join("empty-git");
+        let not_git = temporary.path().join("not-git");
+        for path in [&repository, &empty_git, &not_git] {
+            std::fs::create_dir(path).unwrap();
+        }
+        git(&repository, &["init", "--quiet"]);
+        git(
+            &repository,
+            &["config", "user.email", "fixture@example.com"],
+        );
+        git(&repository, &["config", "user.name", "Fixture Author"]);
+        std::fs::write(repository.join("README.md"), "first\n").unwrap();
+        git(&repository, &["add", "README.md"]);
+        git(&repository, &["commit", "--quiet", "-m", "initial commit"]);
+        std::fs::write(repository.join("README.md"), "changed\n").unwrap();
+        std::fs::write(repository.join("untracked.txt"), "new\n").unwrap();
+        git(&empty_git, &["init", "--quiet"]);
+
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", report.bind);
+
+        let workspace = client
+            .get(format!(
+                "{base}/v1/workspace?repository={}",
+                repository.to_string_lossy()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(workspace.status(), StatusCode::OK);
+        let workspace: serde_json::Value = workspace.json().await.unwrap();
+        assert_eq!(workspace["is_git_repository"], true);
+        assert_eq!(workspace["git"]["status"], "ready");
+        assert_eq!(workspace["git"]["clean"], false);
+        assert_eq!(workspace["git"]["changed_file_count"], 2);
+        let commits = workspace["git"]["recent_commits"].as_array().unwrap();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0]["subject"], "initial commit");
+        assert_eq!(commits[0]["author"], "Fixture Author");
+        assert!(commits[0]["short_hash"].as_str().unwrap().len() <= 12);
+        assert!(commits[0]["authored_at"].as_str().unwrap().contains('T'));
+
+        let empty = client
+            .get(format!(
+                "{base}/v1/workspace?repository={}",
+                empty_git.to_string_lossy()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        let empty: serde_json::Value = empty.json().await.unwrap();
+        assert_eq!(empty["is_git_repository"], true);
+        assert_eq!(empty["git"]["status"], "empty");
+        assert_eq!(empty["git"]["recent_commits"], serde_json::json!([]));
+
+        let absent = client
+            .get(format!(
+                "{base}/v1/workspace?repository={}",
+                not_git.to_string_lossy()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        let absent: serde_json::Value = absent.json().await.unwrap();
+        assert_eq!(absent["is_git_repository"], false);
+        assert_eq!(absent["git"]["status"], "empty");
+        assert_eq!(absent["git"]["clean"], false);
+        assert_eq!(absent["git"]["changed_file_count"], 0);
+        assert_eq!(absent["git"]["recent_commits"], serde_json::json!([]));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
     async fn provider_test_reports_real_health_and_never_accepts_inline_secrets() {
         let temporary = tempfile::tempdir().unwrap();
         let provider_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -8546,10 +12119,12 @@ local = true
         let configured_body: serde_json::Value = configured.json().await.unwrap();
         assert_eq!(configured_body["configured"], true);
         assert_eq!(configured_body["available"], true);
-        assert!(AppConfig::load(&app_config)
-            .unwrap()
-            .providers
-            .contains_key("imported"));
+        assert!(
+            AppConfig::load(&app_config)
+                .unwrap()
+                .providers
+                .contains_key("imported")
+        );
 
         let invalid_reference = client
             .post(format!("http://{}/v1/providers", report.bind))
@@ -8584,11 +12159,16 @@ local = true
             .send()
             .await
             .unwrap();
-        assert_eq!(failed_probe.status(), StatusCode::BAD_REQUEST);
+        // A probe failure (unreachable endpoint) degrades to `available: false`
+        // instead of aborting the save — the profile is still configured.
+        assert_eq!(failed_probe.status(), StatusCode::OK);
+        let failed_body: serde_json::Value = failed_probe.json().await.unwrap();
+        assert_eq!(failed_body["configured"], true);
+        assert_eq!(failed_body["available"], false);
         let persisted = std::fs::read_to_string(&app_config).unwrap();
         assert!(!persisted.contains("raw-secret"));
         assert!(!persisted.contains("must-not-be-a-reference"));
-        assert!(!persisted.contains("unhealthy"));
+        assert!(persisted.contains("unhealthy"));
 
         handle.abort();
         provider_server.abort();
@@ -8629,9 +12209,11 @@ local = true
             .unwrap();
         assert_eq!(discovery.status(), StatusCode::OK);
         let discovered: serde_json::Value = discovery.json().await.unwrap();
-        assert!(discovered["models"]
-            .as_array()
-            .is_some_and(|models| models.iter().any(|entry| entry == &model)));
+        assert!(
+            discovered["models"]
+                .as_array()
+                .is_some_and(|models| models.iter().any(|entry| entry == &model))
+        );
 
         let connected = client
             .post(format!("http://{}/v1/providers", report.bind))
@@ -8663,7 +12245,11 @@ local = true
         assert_eq!(health.status(), StatusCode::OK);
 
         let config = AppConfig::load(&app_config).unwrap();
-        let router = ProviderRouter::from_config(&config).unwrap();
+        let router = ProviderRouter::from_config(
+            &config,
+            Some(app_config.with_file_name("credentials.toml").as_path()),
+        )
+        .unwrap();
         let model_id = ModelId::parse(&format!("ollama/{model}")).unwrap();
         let provider = router.provider(&model_id).unwrap();
         let first_messages = vec![ModelMessage {
@@ -8845,7 +12431,11 @@ allow_same_model = true
             .send()
             .await
             .unwrap();
-        assert_eq!(follow_up.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            follow_up.status(),
+            StatusCode::ACCEPTED,
+            "a failed turn must not permanently close its conversation"
+        );
         let messages: Vec<ConversationMessage> = client
             .get(format!("http://{}/v1/sessions/{id}/messages", report.bind))
             .bearer_auth(token.trim())
@@ -8855,7 +12445,7 @@ allow_same_model = true
             .json()
             .await
             .unwrap();
-        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.len(), 2);
         let store = SessionStore::open(&database).unwrap();
         let session_id = SessionId(Uuid::parse_str(id).unwrap());
         assert_eq!(
@@ -8940,8 +12530,8 @@ allow_same_model = true
         permissions.set_mode(0o700);
         std::fs::set_permissions(&entrypoint, permissions).unwrap();
         let session_id = SessionId::new();
-        SessionStore::open(&database)
-            .unwrap()
+        let mut session_store = SessionStore::open(&database).unwrap();
+        session_store
             .append(
                 session_id,
                 &SessionEvent::SessionCreated {
@@ -9088,14 +12678,25 @@ allow_same_model = true
         let repository = temporary.path().join("repo");
         std::fs::create_dir(&repository).unwrap();
         let session_id = SessionId::new();
-        SessionStore::open(&database)
-            .unwrap()
+        let mut session_store = SessionStore::open(&database).unwrap();
+        session_store
             .append(
                 session_id,
                 &SessionEvent::SessionCreated {
                     objective: "find a terraform skill".into(),
                     repository,
                     authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        session_store
+            .append(
+                session_id,
+                &SessionEvent::SessionControlsUpdated {
+                    controls: SessionControls {
+                        search_policy: Some(SearchPolicy::Always),
+                        ..SessionControls::default()
+                    },
                 },
             )
             .unwrap();
@@ -9178,9 +12779,11 @@ allow_same_model = true
                 ..
             }
         )));
-        assert!(!events
-            .iter()
-            .any(|event| matches!(event, SessionEvent::ExecutionStarted { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::ExecutionStarted { .. }))
+        );
         handle.abort();
     }
 
@@ -9266,21 +12869,31 @@ allow_same_model = true
             .unwrap()
             .events(session_id)
             .unwrap();
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, SessionEvent::InstalledSkillMatched { .. })));
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, SessionEvent::InstalledSkillReused { .. })));
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, SessionEvent::ExternalSearchAvoided { .. })));
-        assert!(!events
-            .iter()
-            .any(|event| matches!(event, SessionEvent::SkillSearchStarted { .. })));
-        assert!(!events
-            .iter()
-            .any(|event| matches!(event, SessionEvent::ActionProposed { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::InstalledSkillMatched { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::InstalledSkillReused { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::ExternalSearchAvoided { .. }))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::SkillSearchStarted { .. }))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::ActionProposed { .. }))
+        );
         handle.abort();
     }
 
@@ -9317,11 +12930,10 @@ allow_same_model = true
             writer.write_all(b"escape").unwrap();
             writer.finish().unwrap();
         }
-        assert!(safe_extract_skill_archive(
-            unsafe_bytes.get_ref(),
-            &temporary.path().join("unsafe")
-        )
-        .is_err());
+        assert!(
+            safe_extract_skill_archive(unsafe_bytes.get_ref(), &temporary.path().join("unsafe"))
+                .is_err()
+        );
         assert!(!temporary.path().join("escape").exists());
     }
 
@@ -9332,5 +12944,247 @@ allow_same_model = true
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    #[test]
+    fn role_models_carry_every_configured_role_and_force_coding_worker() {
+        let config: AppConfig = toml::from_str(
+            r#"
+schema_version = 1
+[providers.ollama]
+type = "ollama"
+base_url = "http://127.0.0.1:11434/"
+[providers.openai]
+type = "openai"
+base_url = "https://api.openai.com/v1/"
+api_key_env = "OPENAI_API_KEY"
+[models.roles]
+planner = "ollama/planner-model"
+coder = "openai/coder-model"
+judge = "openai/judge-model"
+"#,
+        )
+        .unwrap();
+        let selected = ModelId::parse("ollama/session-model").unwrap();
+        let roles = resolve_role_models(&config, &selected).unwrap();
+        assert_eq!(
+            roles.get("planner").unwrap(),
+            &ModelId::parse("ollama/planner-model").unwrap()
+        );
+        assert_eq!(
+            roles.get("judge").unwrap(),
+            &ModelId::parse("openai/judge-model").unwrap()
+        );
+        // The session-selected model owns the coding worker role, overriding
+        // the static role map.
+        assert_eq!(roles.get("coding_worker").unwrap(), &selected);
+    }
+
+    #[tokio::test]
+    async fn mcp_servers_are_added_listed_deleted_and_reject_inline_secrets() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(&app_config, "schema_version = 1\n").unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: app_config.clone(),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", report.bind);
+
+        let empty: serde_json::Value = client
+            .get(format!("{base}/v1/mcp/servers"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(empty, serde_json::json!({}));
+
+        let added = client
+            .post(format!("{base}/v1/mcp/servers"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "id": "docs",
+                "program": "docs-mcp-server",
+                "arguments": ["--stdio"],
+                "working_directory": temporary.path(),
+                "network": false,
+                "timeout_seconds": 30,
+                "maximum_output_bytes": 1048576,
+                "memory_limit_bytes": 536870912,
+                "environment_from": {"DOCS_TOKEN": "DOCS_TOKEN"}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(added.status(), StatusCode::OK);
+        let added: serde_json::Value = added.json().await.unwrap();
+        assert_eq!(added["id"], "docs");
+
+        let listed: serde_json::Value = client
+            .get(format!("{base}/v1/mcp/servers"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let docs = &listed["docs"];
+        assert_eq!(docs["id"], "docs");
+        assert_eq!(docs["program"], "docs-mcp-server");
+        assert_eq!(docs["network"], serde_json::json!(false));
+        assert_eq!(docs["environment_from"]["DOCS_TOKEN"], "DOCS_TOKEN");
+        assert_eq!(docs["maximum_output_bytes"], serde_json::json!(1048576));
+        assert_eq!(docs["memory_limit_bytes"], serde_json::json!(536870912));
+
+        let secret = client
+            .post(format!("{base}/v1/mcp/servers"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "id": "leaky",
+                "program": "docs-mcp-server",
+                "working_directory": temporary.path(),
+                "environment_from": {"TOKEN": "sk-inline-secret-value123456"}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(secret.status(), StatusCode::BAD_REQUEST);
+        let secret_body = secret.text().await.unwrap();
+        assert!(secret_body.contains("secret-like content"));
+        assert!(!secret_body.contains("sk-inline-secret-value123456"));
+
+        let removed = client
+            .delete(format!("{base}/v1/mcp/servers/docs"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(removed.status(), StatusCode::OK);
+        let after: serde_json::Value = client
+            .get(format!("{base}/v1/mcp/servers"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(after, serde_json::json!({}));
+
+        // The daemon is the single writer for the file: the persisted TOML
+        // round-trips and the server survives a fresh load.
+        let reloaded = AppConfig::load(&app_config).unwrap();
+        assert_eq!(mcp_section(&reloaded).unwrap().servers.len(), 0);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn codex_get_returns_defaults_post_persists_and_doctor_names_the_binary_path() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(&app_config, "schema_version = 1\n").unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: app_config.clone(),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", report.bind);
+
+        let defaults: serde_json::Value = client
+            .get(format!("{base}/v1/codex"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(defaults["enabled"], serde_json::json!(false));
+        assert_eq!(defaults["binary"], "codex");
+        assert_eq!(defaults["execution_mode"], "worktree");
+        assert_eq!(defaults["timeout_seconds"], serde_json::json!(3600));
+        assert_eq!(
+            defaults["require_final_diff_judgment"],
+            serde_json::json!(true)
+        );
+
+        let missing_binary = temporary.path().join("does-not-exist-codex");
+        let saved = client
+            .post(format!("{base}/v1/codex"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "enabled": true,
+                "binary": missing_binary,
+                "execution_mode": "worktree",
+                "timeout_seconds": 120,
+                "inherit_auth": false,
+                "require_final_diff_judgment": true,
+                "allow_active_tree_write": false
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(saved.status(), StatusCode::OK);
+        let saved: serde_json::Value = saved.json().await.unwrap();
+        assert_eq!(saved["binary"], missing_binary.to_str().unwrap());
+        assert_eq!(saved["timeout_seconds"], serde_json::json!(120));
+
+        let doctor = client
+            .post(format!("{base}/v1/codex/doctor"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(doctor.status(), StatusCode::BAD_REQUEST);
+        let doctor_body = doctor.text().await.unwrap();
+        let binary_name = missing_binary
+            .file_name()
+            .unwrap_or(missing_binary.as_os_str())
+            .to_string_lossy();
+        assert!(
+            doctor_body.contains(&*binary_name),
+            "doctor must name the exact binary tried, got: {doctor_body}"
+        );
+
+        let unsafe_config = client
+            .post(format!("{base}/v1/codex"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "enabled": true,
+                "binary": "codex",
+                "execution_mode": "worktree",
+                "timeout_seconds": 120,
+                "inherit_auth": true,
+                "require_final_diff_judgment": true,
+                "allow_active_tree_write": true
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unsafe_config.status(), StatusCode::BAD_REQUEST);
+
+        handle.abort();
     }
 }

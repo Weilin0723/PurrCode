@@ -12,6 +12,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 portable-pty.workspace = true
+vt100.workspace = true
 libc.workspace = true
 purrcode-workspace-contracts = { path = "../workspace-contracts" }
 

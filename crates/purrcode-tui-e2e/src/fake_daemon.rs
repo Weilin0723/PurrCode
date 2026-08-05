@@ -20,7 +20,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Everything a test can script before the workbench starts.
 #[derive(Clone, Debug, Default)]
@@ -358,7 +358,10 @@ fn router(state: DaemonState) -> Router {
         .route("/v1/sessions/{id}/cancel", post(cancel))
         .route("/v1/sessions/{id}/pause", post(pause))
         .route("/v1/sessions/{id}/resume", post(resume))
-        .route("/v1/sessions/{id}/rollback", post(rollback))
+        .route(
+            "/v1/sessions/{id}/rollback",
+            get(rollback_preview).post(rollback),
+        )
         .route("/v1/terminals", get(terminals).post(start_terminal))
         .route("/v1/terminals/{id}/output", get(terminal_output))
         .route("/v1/terminals/{id}/input", post(terminal_input))
@@ -1145,6 +1148,27 @@ async fn rollback(
         ));
     }
     Ok(Json(json!({"id": id, "status": "rolled back"})))
+}
+
+async fn rollback_preview(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult {
+    guard!(state, headers);
+    record(&state, "GET", &format!("/v1/sessions/{id}/rollback"), None);
+    let script = state.script.lock().expect("script mutex");
+    if script.diff.is_none() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({"error": "session has no agent-owned worktree to roll back"})),
+        ));
+    }
+    Ok(Json(json!({
+        "changed_file_count": 1,
+        "patch_digest": "fixture-digest",
+        "requires_unattributed_effect_acknowledgement": true
+    })))
 }
 
 async fn local_models(State(state): State<DaemonState>, headers: HeaderMap) -> ApiResult {

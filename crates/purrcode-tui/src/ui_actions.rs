@@ -616,6 +616,74 @@ pub const REGISTRY: &[UiActionDefinition] = &[
         acceptance_scenarios: scenarios!["task.mode_review"],
     },
     UiActionDefinition {
+        id: UiActionId("task.budget"),
+        category: UiActionCategory::Task,
+        label: "Budget control",
+        description: "Set economy, balanced, max-quality, or custom token and call budgets",
+        commands: &["/budget"],
+        shortcuts: &[],
+        availability: AvailabilityRule::Always,
+        risk: UiRiskClass::Safe,
+        starts_execution: false,
+        handler: UiActionHandler::Command("budget"),
+        acceptance_scenarios: scenarios!["task.budget"],
+    },
+    UiActionDefinition {
+        id: UiActionId("task.workflow"),
+        category: UiActionCategory::Task,
+        label: "Workflow control",
+        description: "Choose Auto, Direct, Standard, or Ultra workflow planning",
+        commands: &["/workflow"],
+        shortcuts: &[],
+        availability: AvailabilityRule::Always,
+        risk: UiRiskClass::Safe,
+        starts_execution: false,
+        handler: UiActionHandler::Command("workflow"),
+        acceptance_scenarios: scenarios!["task.workflow"],
+    },
+    UiActionDefinition {
+        id: UiActionId("task.search"),
+        category: UiActionCategory::Task,
+        label: "Search control",
+        description: "Choose Off, Auto, or Always for governed external search",
+        commands: &["/search"],
+        shortcuts: &[],
+        availability: AvailabilityRule::Always,
+        risk: UiRiskClass::Safe,
+        starts_execution: false,
+        handler: UiActionHandler::Command("search"),
+        acceptance_scenarios: scenarios!["task.search"],
+    },
+    UiActionDefinition {
+        id: UiActionId("task.ide"),
+        category: UiActionCategory::Task,
+        label: "Open the PurrCode IDE",
+        description: "Open the native PurrCode IDE on the same repository and session",
+        commands: &["/ide"],
+        shortcuts: &[],
+        availability: AvailabilityRule::Always,
+        risk: UiRiskClass::Safe,
+        starts_execution: false,
+        handler: UiActionHandler::Command("ide"),
+        acceptance_scenarios: scenarios!["task.ide"],
+    },
+    UiActionDefinition {
+        id: UiActionId("task.usage"),
+        category: UiActionCategory::Task,
+        label: "View usage",
+        description: "Show the durable token, model, search, and MCP usage ledger",
+        commands: &["/usage"],
+        shortcuts: &[],
+        availability: AvailabilityRule::All(&[
+            AvailabilityRule::DaemonReachable,
+            AvailabilityRule::SessionPresent,
+        ]),
+        risk: UiRiskClass::Safe,
+        starts_execution: false,
+        handler: UiActionHandler::Command("usage"),
+        acceptance_scenarios: scenarios!["task.usage"],
+    },
+    UiActionDefinition {
         id: UiActionId("task.cancel_generation"),
         category: UiActionCategory::Task,
         label: "Cancel generation",
@@ -2251,6 +2319,46 @@ pub const SCENARIOS: &[AcceptanceScenario] = &[
         real_terminal_case: Some("RT-14"),
         critical: true,
     },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("task.budget"),
+        summary: "Budget control updates the durable session limits",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/startup.rs::palette_lists_grouped_actions"),
+        real_terminal_case: None,
+        critical: false,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("task.workflow"),
+        summary: "Workflow control updates the durable adaptive profile",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/startup.rs::palette_lists_grouped_actions"),
+        real_terminal_case: None,
+        critical: false,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("task.search"),
+        summary: "Search control updates the durable research policy",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/startup.rs::palette_lists_grouped_actions"),
+        real_terminal_case: None,
+        critical: false,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("task.ide"),
+        summary: "IDE companion opens through the purrcode ide command",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/startup.rs::palette_lists_grouped_actions"),
+        real_terminal_case: None,
+        critical: false,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("task.usage"),
+        summary: "Usage reports the durable session ledger",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/startup.rs::palette_lists_grouped_actions"),
+        real_terminal_case: None,
+        critical: false,
+    },
 ];
 
 // ── Query helpers used by the palette, help and footer ───────────
@@ -2585,9 +2693,11 @@ mod tests {
             approve.availability(&with_daemon).reason(),
             Some("no action is pending")
         );
-        assert!(approve
-            .availability(&context_with_everything())
-            .is_available());
+        assert!(
+            approve
+                .availability(&context_with_everything())
+                .is_available()
+        );
     }
 
     #[test]
@@ -2719,15 +2829,21 @@ mod tests {
 
     #[test]
     fn palette_query_matches_label_description_command_and_category() {
-        assert!(filtered("approve")
-            .iter()
-            .any(|action| action.id.as_str() == "approval.approve"));
-        assert!(filtered("/diff")
-            .iter()
-            .any(|action| action.id.as_str() == "review.open_diff"));
-        assert!(filtered("provider")
-            .iter()
-            .any(|action| action.category == UiActionCategory::Provider));
+        assert!(
+            filtered("approve")
+                .iter()
+                .any(|action| action.id.as_str() == "approval.approve")
+        );
+        assert!(
+            filtered("/diff")
+                .iter()
+                .any(|action| action.id.as_str() == "review.open_diff")
+        );
+        assert!(
+            filtered("provider")
+                .iter()
+                .any(|action| action.category == UiActionCategory::Provider)
+        );
         assert_eq!(filtered("").len(), REGISTRY.len());
     }
 

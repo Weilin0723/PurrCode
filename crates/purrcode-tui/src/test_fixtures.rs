@@ -1,8 +1,9 @@
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::Terminal;
 
 use crate::theme::{Palette, Theme};
+use purrcode_runtime_core::adaptation::{SearchPolicy, WorkflowControl, WorkflowProfile};
 
 /// An application state wired to a daemon URL that nothing is listening on.
 ///
@@ -16,6 +17,7 @@ pub(crate) fn offline_app() -> crate::app::App {
             daemon_url: "http://127.0.0.1:1".into(),
             token_file: std::path::PathBuf::from("/nonexistent/token"),
             repository: std::path::PathBuf::from("/tmp"),
+            session_id: None,
         },
         client: reqwest::Client::new(),
         token: String::new(),
@@ -29,6 +31,8 @@ pub(crate) fn offline_app() -> crate::app::App {
         skill_browser: None,
         diff_view: None,
         stream: crate::streaming::StreamController::new(),
+        stream_reconnect_required: false,
+        pending_stream_reconnect: false,
         reconciliation: None,
         last_refresh: std::time::Instant::now(),
         message_bar: String::new(),
@@ -117,6 +121,9 @@ pub fn render_snapshot(width: u16, height: u16) -> String {
                 repository: "owner/repo",
                 branch: "main",
                 model: "coder:7b",
+                workflow_control: WorkflowControl::Auto,
+                workflow_profile: WorkflowProfile::Direct,
+                search_policy: SearchPolicy::Off,
                 mode: "Plan",
                 permission: "Auto",
                 phase: "executing",

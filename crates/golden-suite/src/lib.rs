@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use thiserror::Error;
 use tokio::process::Command;
-use tokio::time::{timeout, Duration, Instant};
+use tokio::time::{Duration, Instant, timeout};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct GoldenCatalog {

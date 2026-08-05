@@ -1,9 +1,9 @@
 //! The workbench: conversation, activity, contextual inspector, composer.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use ratatui::Frame;
 
 use crate::activity::WaitingOn;
 use crate::app::{App, AppMode};
@@ -87,6 +87,9 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, app: &App, tokens: &Tokens<'_>
         repository: &app.workspace.repository_name,
         branch: &app.workspace.branch,
         model: &app.status_bar.model,
+        workflow_control: app.status_bar.workflow_control,
+        workflow_profile: app.status_bar.workflow_profile,
+        search_policy: app.status_bar.search_policy,
         mode: app.status_bar.task_mode.label(),
         permission: app.status_bar.permission.label(),
         phase: &app.workspace.session_phase,
@@ -258,7 +261,10 @@ fn draw_hints(frame: &mut Frame<'_>, area: Rect, app: &App, tokens: &Tokens<'_>)
             spans.push(session_chip(progress.session_state).span(tokens));
             spans.push(Span::raw("  "));
         }
-        let hints = Hints::for_context(ShortcutContext::Workbench, &context);
+        let mut hints = Hints::for_context(ShortcutContext::Workbench, &context);
+        if app.stream_reconnect_required {
+            hints = hints.with(&["R Reconnect"]);
+        }
         let used: usize = spans
             .iter()
             .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
@@ -271,7 +277,7 @@ fn draw_hints(frame: &mut Frame<'_>, area: Rect, app: &App, tokens: &Tokens<'_>)
         Paragraph::new(Line::from(spans)).render(area, frame.buffer_mut());
         return;
     }
-    let hints = if app.session_read_only {
+    let mut hints = if app.session_read_only {
         Hints::for_context(ShortcutContext::History, &context).with(&["Esc Close history"])
     } else {
         Hints {
@@ -279,6 +285,9 @@ fn draw_hints(frame: &mut Frame<'_>, area: Rect, app: &App, tokens: &Tokens<'_>)
         }
         .with(&["Tab Move focus"])
     };
+    if app.stream_reconnect_required {
+        hints = hints.with(&["R Reconnect"]);
+    }
     let mut merged = hints;
     for entry in Hints::for_context(ShortcutContext::Workbench, &context).entries {
         // Registry hints can restate a shell hint (Enter is both "new line" and a

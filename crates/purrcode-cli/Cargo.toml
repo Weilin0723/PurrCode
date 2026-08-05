@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+blake3.workspace = true
 chrono.workspace = true
 clap.workspace = true
 directories.workspace = true
@@ -22,6 +23,7 @@ purrcode-golden-suite = { path = "../golden-suite" }
 purrcode-mcp-host = { path = "../mcp-host" }
 purrcode-model-selection = { path = "../model-selection" }
 purrcode-tui = { path = "../purrcode-tui" }
+purrcode-ide = { path = "../purrcode-ide" }
 purrcode-provider-gateway = { path = "../provider-gateway" }
 purrcode-provider-import = { path = "../provider-import" }
 purrcode-repository-engine = { path = "../repository-engine" }

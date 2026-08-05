@@ -10,78 +10,74 @@
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><span class="mark">P</span><span>PurrCode</span></div>
-      <div class="header-info"><span id="repo-info">—</span><span class="sep">·</span><span id="model-info">model —</span><span class="sep">·</span><span id="mode-info">—</span></div>
-      <div class="connection"><button id="settings-open" class="link">Settings</button><span id="health-dot" class="dot"></span><span id="health-label">Connecting</span></div>
+      <div class="brand"><img src="/brand/purrcode-cat-head.svg" alt="PurrCode"><span>PurrCode</span></div>
+      <div class="top-controls">
+        <select id="composer-mode" aria-label="Task mode"><option value="build" selected>Build</option><option value="plan">Plan</option><option value="ask">Ask</option><option value="review">Review</option></select>
+        <select id="header-style" aria-label="Execution style"><option value="autonomous" selected>Autonomous</option><option value="collaborative">Collaborative</option></select>
+        <svg class="ui-icon top-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+        <svg class="ui-icon repo-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5h7l2 2h9v9H3z"/><path d="M3 7.5V5h7l2 2"/></svg><span id="repo-info" class="repo-label">—</span>
+        <svg class="ui-icon branch-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="5" r="2"/><circle cx="17" cy="19" r="2"/><path d="M7 7v4c0 3 2 4 5 4h3a2 2 0 0 0 2-2V7"/></svg><span id="branch-info" class="branch-label">main</span>
+      </div>
+      <div class="top-actions">
+        <button id="composer-model" class="top-model" aria-label="Change model">GPT-5</button>
+        <select id="composer-permission" aria-label="Permission mode"><option value="ask">Ask</option><option value="auto" selected>Auto</option><option value="full_access">Full Access</option></select>
+        <button id="notifications-open" class="top-icon" aria-label="Notifications"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></button>
+        <button id="settings-open" class="top-icon" aria-label="Settings"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1"/><circle cx="12" cy="12" r="4"/></svg></button>
+        <img class="top-avatar" src="/brand/purrcode-cat-head.svg" alt="PurrCode">
+        <span id="health-dot" class="dot"></span><span id="health-label" class="sr-only">Connecting</span>
+      </div>
     </header>
     <div class="main-layout">
+      <nav class="activity-rail" aria-label="PurrCode navigation">
+        <button class="rail-button active" data-rail="conversation" aria-label="Conversation"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg></button>
+        <button class="rail-button" data-rail="files" aria-label="Project files"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v11H3z"/></svg></button>
+        <button class="rail-button" data-rail="changes" aria-label="Changes"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="5" r="2"/><circle cx="17" cy="19" r="2"/><path d="M7 7v4c0 3 2 4 5 4h3a2 2 0 0 0 2-2V7"/></svg></button>
+        <button class="rail-button" data-rail="tools" aria-label="Tools"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="11" cy="17" r="2"/></svg></button>
+        <button class="rail-button" data-rail="tests" aria-label="Run and validate"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button>
+        <button class="rail-button" data-rail="extensions" aria-label="Extensions"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><rect x="14" y="14" width="6" height="6"/></svg></button>
+        <button class="rail-bottom" aria-label="PurrCode settings"><img src="/brand/purrcode-cat-head.svg" alt=""></button>
+      </nav>
       <aside class="sidebar" aria-label="Sessions">
-        <div class="sidebar-header">
-          <button id="new-session" class="primary">New session</button>
-        </div>
+        <div class="sidebar-header"><button id="new-session" class="primary"><span class="button-icon">+</span> New session</button><span class="shortcut">⌘N</span></div>
+        <div class="section-label"><span>SESSIONS</span><button class="sidebar-more" aria-label="Session options">•••</button></div>
         <nav id="session-list" class="session-list" aria-live="polite"></nav>
+        <section class="project-tree">
+          <div class="section-label"><span>PROJECT</span><button class="sidebar-more" aria-label="Project options">•••</button></div>
+          <div class="tree-root"><span class="tree-chevron">⌄</span><span class="tree-folder">⌁</span><strong id="project-name">PurrCode</strong><span class="tree-actions">ⓘ ⊞</span></div>
+          <div id="project-tree" class="tree-list" tabindex="0" aria-label="Project files">
+            <button class="tree-row" data-file="crates"><span class="tree-chevron">⌄</span><span class="tree-folder">□</span>crates</button>
+            <button class="tree-row nested" data-file="apps"><span class="tree-chevron">⌄</span><span class="tree-folder">□</span>apps</button>
+            <button class="tree-row nested file" data-file="runtime-core.rs"><span class="tree-file rust">●</span>runtime-core.rs</button>
+            <button class="tree-row nested file" data-file="daemon.rs"><span class="tree-file">◌</span>daemon.rs</button>
+            <button class="tree-row" data-file="docs"><span class="tree-chevron">⌄</span><span class="tree-folder">□</span>docs</button>
+            <button class="tree-row file" data-file="Cargo.toml"><span class="tree-file toml">◆</span>Cargo.toml</button>
+            <button class="tree-row file" data-file="README.md"><span class="tree-file md">◇</span>README.md</button>
+          </div>
+        </section>
       </aside>
       <main class="center">
         <section id="conversation-screen" class="center-main">
-          <div class="conversation-header">
-            <h1 id="session-objective">Select or start a session</h1>
-            <span id="session-status" class="status-chip">—</span>
-          </div>
+          <div class="conversation-header"><div class="conversation-title"><span class="plus">＋</span><h1 id="session-objective">Select or start a session</h1><span id="session-status" class="status-chip">—</span></div><button class="more-button" id="session-options" aria-label="Session options">•••</button></div>
           <div id="conversation" class="conversation" aria-live="polite"></div>
           <div id="activity-compact" class="activity-compact"></div>
         </section>
         <section class="composer-bar">
-          <textarea id="composer" rows="2" placeholder="Ask PurrCode to inspect, change, test, or explain…"></textarea>
-          <div class="composer-controls">
-            <div class="composer-meta">
-              <select id="composer-mode" aria-label="Task mode">
-                <option value="ask">Ask</option>
-                <option value="plan">Plan</option>
-                <option value="build" selected>Build</option>
-                <option value="review">Review</option>
-              </select>
-              <button id="composer-model" class="link" aria-label="Change model">—</button>
-              <select id="composer-permission" aria-label="Permission mode">
-                <option value="ask" selected>Ask</option>
-                <option value="auto">Auto</option>
-                <option value="full_access">Full Access</option>
-              </select>
-            </div>
-            <button id="send" class="primary">Send</button>
-          </div>
+          <textarea id="composer" rows="2" placeholder="Describe what you want changed, ask a question about this repository, or paste code or logs…"></textarea>
+          <div class="composer-controls"><div class="composer-meta"><button id="add-context" class="context-button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg><span>Add context</span></button><span id="mode-info">Build</span><span id="model-info">GPT-5</span><span id="permission-info">Ask</span></div><button id="send" class="primary send-button" aria-label="Send"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 4 14 8-14 8 3-8z"/><path d="M8 12h11"/></svg></button></div>
         </section>
       </main>
-      <aside id="context-drawer" class="context-drawer hidden" aria-label="Context">
-        <div class="drawer-tabs">
-          <button class="drawer-tab active" data-tab="changes">Changes</button>
-          <button class="drawer-tab" data-tab="terminal">Terminal</button>
-          <button class="drawer-tab" data-tab="tests">Tests</button>
-          <button class="drawer-tab" data-tab="evidence">Evidence</button>
-          <button class="drawer-close" id="drawer-close">✕</button>
-        </div>
-        <div id="drawer-changes" class="drawer-panel">
-          <div id="changed-files" class="changed-files"></div>
-          <pre id="diff-content" class="diff-content">No changes recorded.</pre>
-        </div>
-        <div id="drawer-terminal" class="drawer-panel hidden">
-          <div class="terminal-toolbar">
-            <div><strong id="terminal-title">No terminal</strong><span id="terminal-owner">—</span></div>
-            <div class="heading-actions" id="terminal-owner-actions" hidden><button id="take-terminal" class="secondary">Take control</button><button id="return-terminal" class="secondary">Return to agent</button><button id="stop-terminal" class="secondary">Stop</button></div>
-            <button id="new-terminal" class="secondary">New terminal</button>
-          </div>
-          <div id="terminal-empty" class="empty">No terminal attached. <button id="open-terminal-empty" class="link">Open terminal</button></div>
-          <div id="terminal-output" tabindex="0" hidden aria-label="Terminal output"></div>
-          <p class="terminal-hint">Click the terminal and type. Keystrokes go straight to the process.</p>
-        </div>
-        <div id="drawer-tests" class="drawer-panel hidden">
-          <div id="test-summary" class="empty">Test results will appear here when validation runs.</div>
-        </div>
-        <div id="drawer-evidence" class="drawer-panel hidden">
-          <div id="evidence-list" class="empty">Evidence records will appear here when actions complete.</div>
-        </div>
+      <aside id="context-drawer" class="context-drawer hidden" aria-label="Code and evidence">
+        <div class="editor-tabs"><button class="editor-tab active" data-file="README.md"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/></svg><span id="editor-file">README.md</span><span class="tab-close">×</span></button><button class="editor-tab" data-file="SearchBox.tsx"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/></svg>SearchBox.tsx <span class="modified">M</span></button><button class="editor-tab" data-file="test_search.py"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>test_search.py <span class="modified">M</span></button><button class="editor-add" id="editor-add" aria-label="Open file">+</button></div>
+        <div class="editor-toolbar"><span>⌘</span><span>−</span><span>□</span><span>⋯</span></div>
+        <div class="editor-preview" aria-label="Code preview"><div class="code-line"><span class="line-no">1</span><span class="kw">#</span> PurrCode</div><div class="code-line"><span class="line-no">2</span></div><div class="code-line"><span class="line-no">3</span><span class="kw">##</span> Durable coding agent</div><div class="code-line"><span class="line-no">4</span></div><div class="code-line"><span class="line-no">5</span><span class="str">Conversation-first development with evidence-backed validation.</span></div><div class="code-line"><span class="line-no">6</span></div><div class="code-line"><span class="line-no">7</span><span class="fn">cargo</span> test --workspace</div></div>
+        <div class="drawer-tabs"><button class="drawer-tab active" data-tab="changes">DIFF</button><button class="drawer-tab" data-tab="tests">TESTS</button><button class="drawer-tab" data-tab="terminal">TERMINAL</button><button class="drawer-tab" data-tab="evidence">PROBLEMS</button><button class="drawer-tab output-tab" data-tab="evidence">OUTPUT</button><button class="drawer-close" id="drawer-close">✕</button></div>
+        <div id="drawer-changes" class="drawer-panel"><div id="changed-files" class="changed-files"></div><pre id="diff-content" class="diff-content">No changes recorded.</pre></div>
+        <div id="drawer-terminal" class="drawer-panel hidden"><div class="terminal-toolbar"><div><strong id="terminal-title">No terminal</strong><span id="terminal-owner">—</span></div><div class="heading-actions" id="terminal-owner-actions" hidden><button id="take-terminal" class="secondary">Take control</button><button id="return-terminal" class="secondary">Return to agent</button><button id="stop-terminal" class="secondary">Stop</button></div><button id="new-terminal" class="secondary">New terminal</button></div><div id="terminal-error" class="terminal-error" role="status" aria-live="polite" hidden></div><div id="terminal-empty" class="empty">No terminal attached. <button id="open-terminal-empty" class="link">Open terminal</button></div><div id="terminal-output" tabindex="0" hidden aria-label="Terminal output"></div><p class="terminal-hint">Click the terminal and type. Keystrokes go straight to the process.</p></div>
+        <div id="drawer-tests" class="drawer-panel hidden"><div id="test-summary" class="empty">Test results will appear here when validation runs.</div></div>
+        <div id="drawer-evidence" class="drawer-panel hidden"><div id="evidence-list" class="empty">Evidence records will appear here when actions complete.</div></div>
       </aside>
     </div>
-    <footer><span id="footer-info">PurrCode Studio</span><span id="version">API —</span></footer>
+    <footer><span id="footer-info">PurrCode: Ready</span><span class="footer-center">⌘ main　 ◌ 0　↕ 0　⚠ 0</span><span id="version">API —</span><span>Ln 1, Col 1　 Spaces: 4　 UTF-8　 LF</span></footer>
   </div>
   <div id="settings-modal" class="modal hidden">
     <div class="modal-content">
@@ -91,7 +87,7 @@
         <div class="settings-model"><div><span>Active model</span><strong id="active-model">Detecting…</strong><span id="active-model-provider">—</span></div><button id="change-model" class="secondary">Change model</button></div>
         <div id="model-choices" class="model-choices"></div>
         <h4>Providers</h4>
-        <div id="provider-list" class="provider-list"><div class="empty">No providers configured.</div></div>
+        <div id="provider-list" class="provider-list"><div class="empty">Connect a model provider to begin. Local providers are discovered automatically.</div></div>
       </section>
       <section class="settings-block">
         <h3>Permissions</h3>
@@ -150,6 +146,10 @@
           Azure runtime deployment, remote resource discovery and multi-agent topology remain
           behind explicit CLI commands.</p>
       </section>
+      <div class="modal-footer">
+        <button id="settings-cancel" class="secondary">Cancel</button>
+        <button id="settings-save" class="primary">Save changes</button>
+      </div>
     </div>
   </div>
   <div id="toast" role="status" aria-live="polite"></div>

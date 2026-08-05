@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use purrcode_tui_e2e::fake_daemon::{DaemonScript, ScriptedSession};
 use purrcode_tui_e2e::fake_provider;
 use purrcode_tui_e2e::harness::with_artifacts;
-use purrcode_tui_e2e::{assertions, Harness, HarnessOptions, Key};
+use purrcode_tui_e2e::{Harness, HarnessOptions, Key, assertions};
 use serde_json::json;
 
 /// A daemon with one local provider and one default model: the state a user is in
@@ -173,7 +173,10 @@ fn palette_lists_grouped_actions() {
     with_artifacts("startup-palette", &mut harness, |harness| {
         harness.wait_for_text("Ready for a task")?;
         harness.key(Key::Ctrl('p'))?;
-        let screen = harness.wait_for_text("Commands")?;
+        // Wait for the entries, not just the frame title: a frame arrives over
+        // several PTY reads, so the palette's border can be on screen while its
+        // list is still being written.
+        let screen = harness.wait_for_all(&["Commands", "TASK", "Send task", "Search"])?;
 
         // Grouped by category, generated from the action registry.
         assertions::assert_visible(&screen, &["TASK", "Send task", "Search"]);

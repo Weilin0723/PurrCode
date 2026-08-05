@@ -13,14 +13,17 @@ fn rejected_response_preview_is_bounded_and_removes_terminal_controls() {
 }
 
 use async_trait::async_trait;
-use futures::stream;
 use futures::StreamExt;
+use futures::stream;
 use purrcode_ninelives::SessionStore;
 use purrcode_pawgate::Policy;
 use purrcode_provider_gateway::{
     ModelCapabilities, ModelEvent, ModelEventStream, ModelId, ModelProvider, ModelRequest,
     ProviderError, ProviderEventStream, ProviderHealth, ProviderStreamEvent, StreamPhase,
     TokenEstimate,
+};
+use purrcode_runtime_core::adaptation::{
+    BudgetConstraints, BudgetProfileKind, ExecutionStyle, SessionControls, TaskMode,
 };
 use purrcode_runtime_core::{
     ActionId, ApprovalAuthority, ConversationMessage, ProposedAction, SessionEvent, SessionId,
@@ -32,22 +35,32 @@ use purrcode_whisker::{
 };
 use schemars::schema::RootSchema;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::Mutex;
 
+use crate::AgentError;
 use crate::context::{
-    task_related_paths, task_tier1_request, AgentContextIndex, AgentContextIndexError,
-    AgentContextPolicy, MAX_TASK_CONTEXT_FILENAME_TERMS, MAX_TASK_CONTEXT_PATH_HINTS,
+    AgentContextIndex, AgentContextIndexError, AgentContextPolicy, MAX_TASK_CONTEXT_FILENAME_TERMS,
+    MAX_TASK_CONTEXT_PATH_HINTS, task_related_paths, task_tier1_request,
 };
 use crate::stream::{
-    bounded_agent_stream_channel, is_unsafe_terminal_control, AgentStreamEvent,
-    AgentStreamObserverError, AgentStreamReceiver, RationaleStreamExtractor, TopLevelJsonState,
-    MAX_STREAMED_RATIONALE_BYTES, MAX_STREAM_OBSERVER_CAPACITY,
+    AgentStreamEvent, AgentStreamObserverError, AgentStreamReceiver, MAX_STREAM_OBSERVER_CAPACITY,
+    MAX_STREAMED_RATIONALE_BYTES, RationaleStreamExtractor, TopLevelJsonState,
+    bounded_agent_stream_channel, is_unsafe_terminal_control,
 };
-use crate::AgentError;
 struct MockProvider {
-    responses: Mutex<Vec<Value>>,
+    responses: Arc<Mutex<Vec<Value>>>,
+}
+
+impl Clone for MockProvider {
+    fn clone(&self) -> Self {
+        Self {
+            responses: Arc::clone(&self.responses),
+        }
+    }
 }
 
 struct StreamingProvider {
@@ -158,6 +171,37 @@ fn observed_turn_json() -> String {
     .to_string()
 }
 
+fn build_controls() -> SessionControls {
+    SessionControls {
+        task_mode: TaskMode::Build,
+        permission_mode: purrcode_runtime_core::adaptation::PermissionMode::Ask,
+        ..SessionControls::default()
+    }
+}
+
+/// Build a single-route role map for tests: one provider serves every role.
+fn role_map(
+    provider: impl ModelProvider + 'static,
+) -> BTreeMap<String, (Arc<dyn ModelProvider>, ModelId)> {
+    let shared: Arc<dyn ModelProvider> = Arc::new(provider);
+    let model = ModelId::parse("local/test").unwrap();
+    let mut map = BTreeMap::new();
+    map.insert("coding_worker".to_owned(), (shared.clone(), model.clone()));
+    map.insert("planner".to_owned(), (shared.clone(), model.clone()));
+    map.insert("judge".to_owned(), (shared.clone(), model));
+    map
+}
+
+#[test]
+fn only_explicit_validation_steps_are_closed_by_the_validation_runtime() {
+    for objective in ["validate", "Run tests", "verify the build", "test API"] {
+        assert!(task_is_validation_only(objective));
+    }
+    for objective in ["implement feature", "fix tests", "write validation code"] {
+        assert!(!task_is_validation_only(objective));
+    }
+}
+
 fn successful_observed_stream(output: &str) -> Vec<Result<ProviderStreamEvent, ProviderError>> {
     let split = output.len() / 2;
     vec![
@@ -189,34 +233,40 @@ fn drain_observer(receiver: &mut AgentStreamReceiver) -> Vec<AgentStreamEvent> {
 
 fn repository() -> tempfile::TempDir {
     let repository = tempfile::tempdir().unwrap();
-    assert!(Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(repository.path())
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(repository.path())
+            .status()
+            .unwrap()
+            .success()
+    );
     std::fs::write(repository.path().join("README.md"), "base").unwrap();
-    assert!(Command::new("git")
-        .args(["add", "README.md"])
-        .current_dir(repository.path())
-        .status()
-        .unwrap()
-        .success());
-    assert!(Command::new("git")
-        .args([
-            "-c",
-            "user.name=PurrCode",
-            "-c",
-            "user.email=test@local.invalid",
-            "commit",
-            "-q",
-            "-m",
-            "base",
-        ])
-        .current_dir(repository.path())
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(repository.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .args([
+                "-c",
+                "user.name=PurrCode",
+                "-c",
+                "user.email=test@local.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "base",
+            ])
+            .current_dir(repository.path())
+            .status()
+            .unwrap()
+            .success()
+    );
     repository
 }
 
@@ -244,15 +294,19 @@ fn startup_prepares_only_tier0_then_task_indexes_relevant_paths_once() {
         context.lifecycle_stage().unwrap(),
         IndexLifecycleStage::Tier0Ready
     );
-    assert!(context
-        .retrieve("manifest_only_token", &RetrievalBudget::default())
-        .unwrap()
-        .iter()
-        .any(|hit| hit.path == Path::new("Cargo.toml")));
-    assert!(context
-        .retrieve("relevant_task_token", &RetrievalBudget::default())
-        .unwrap()
-        .is_empty());
+    assert!(
+        context
+            .retrieve("manifest_only_token", &RetrievalBudget::default())
+            .unwrap()
+            .iter()
+            .any(|hit| hit.path == Path::new("Cargo.toml"))
+    );
+    assert!(
+        context
+            .retrieve("relevant_task_token", &RetrievalBudget::default())
+            .unwrap()
+            .is_empty()
+    );
     assert!(matches!(
         context.begin_tier2(Tier2Policy::default()),
         Err(AgentContextIndexError::TaskRequiredForTier2)
@@ -266,34 +320,41 @@ fn startup_prepares_only_tier0_then_task_indexes_relevant_paths_once() {
         )
         .unwrap();
     assert!(!task.tier0_rebuilt);
-    assert!(task
-        .tier1
-        .selected_paths
-        .contains(&PathBuf::from("src/relevant.rs")));
+    assert!(
+        task.tier1
+            .selected_paths
+            .contains(&PathBuf::from("src/relevant.rs"))
+    );
     assert_eq!(
         context.lifecycle_stage().unwrap(),
         IndexLifecycleStage::TaskReady
     );
-    assert!(context
-        .retrieve("relevant_task_token", &RetrievalBudget::default())
-        .unwrap()
-        .iter()
-        .any(|hit| hit.path == Path::new("src/relevant.rs")));
-    assert!(context
-        .retrieve("unrelated_task_token", &RetrievalBudget::default())
-        .unwrap()
-        .is_empty());
+    assert!(
+        context
+            .retrieve("relevant_task_token", &RetrievalBudget::default())
+            .unwrap()
+            .iter()
+            .any(|hit| hit.path == Path::new("src/relevant.rs"))
+    );
+    assert!(
+        context
+            .retrieve("unrelated_task_token", &RetrievalBudget::default())
+            .unwrap()
+            .is_empty()
+    );
 
     drop(context);
     let mut reopened = AgentContextIndex::open(repository.path(), &database).unwrap();
     let preserved = reopened.prepare_startup(&Tier0Budget::default()).unwrap();
     assert!(!preserved.rebuilt);
     assert_eq!(preserved.stage, IndexLifecycleStage::TaskReady);
-    assert!(reopened
-        .retrieve("relevant_task_token", &RetrievalBudget::default())
-        .unwrap()
-        .iter()
-        .any(|hit| hit.path == Path::new("src/relevant.rs")));
+    assert!(
+        reopened
+            .retrieve("relevant_task_token", &RetrievalBudget::default())
+            .unwrap()
+            .iter()
+            .any(|hit| hit.path == Path::new("src/relevant.rs"))
+    );
 }
 
 #[test]
@@ -469,12 +530,9 @@ async fn real_structured_stream_observes_transport_semantics_with_bounded_backpr
         remain_pending: false,
     };
     let (observer, mut receiver) = bounded_agent_stream_channel(1).unwrap();
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    )
-    .with_stream_observer(observer);
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_stream_observer(observer);
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
 
@@ -555,7 +613,7 @@ async fn real_structured_stream_observes_transport_semantics_with_bounded_backpr
             ..
         }
     )));
-    assert!(durable.iter().any(|event| matches!(
+    assert!(!durable.iter().any(|event| matches!(
         event,
         SessionEvent::ConversationMessageAdded {
             message: ConversationMessage { content, .. }
@@ -588,13 +646,9 @@ async fn partial_provider_cancellation_preserves_delta_without_completed_or_repa
     let (observer, mut receiver) = bounded_agent_stream_channel(32).unwrap();
     let cancellation = AgentCancellation::new();
     let cancel_after_delta = cancellation.clone();
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    )
-    .with_stream_observer(observer)
-    .with_cancellation(cancellation);
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_stream_observer(observer)
+        .with_cancellation(cancellation);
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
     let session_id = SessionId::new();
@@ -657,12 +711,16 @@ async fn partial_provider_cancellation_preserves_delta_without_completed_or_repa
             .count(),
         1
     );
-    assert!(!durable
-        .iter()
-        .any(|event| matches!(event, SessionEvent::ModelRequestFinished { .. })));
-    assert!(!durable
-        .iter()
-        .any(|event| matches!(event, SessionEvent::ConversationMessageAdded { .. })));
+    assert!(
+        !durable
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ModelRequestFinished { .. }))
+    );
+    assert!(
+        !durable
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ConversationMessageAdded { .. }))
+    );
 }
 
 #[tokio::test]
@@ -682,12 +740,9 @@ async fn invalid_streamed_json_fails_closed_after_one_repair_without_completed()
         remain_pending: false,
     };
     let (observer, mut receiver) = bounded_agent_stream_channel(32).unwrap();
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    )
-    .with_stream_observer(observer);
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_stream_observer(observer);
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
     let session_id = SessionId::new();
@@ -721,12 +776,16 @@ async fn invalid_streamed_json_fails_closed_after_one_repair_without_completed()
         }
     )));
     let durable = store.events(session_id).unwrap();
-    assert!(!durable
-        .iter()
-        .any(|event| matches!(event, SessionEvent::ModelRequestFinished { .. })));
-    assert!(!durable
-        .iter()
-        .any(|event| matches!(event, SessionEvent::ConversationMessageAdded { .. })));
+    assert!(
+        !durable
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ModelRequestFinished { .. }))
+    );
+    assert!(
+        !durable
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ConversationMessageAdded { .. }))
+    );
 }
 
 #[tokio::test]
@@ -741,12 +800,9 @@ async fn terminal_escape_in_rationale_never_reaches_content_and_attempt_is_faile
         remain_pending: false,
     };
     let (observer, mut receiver) = bounded_agent_stream_channel(64).unwrap();
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    )
-    .with_stream_observer(observer);
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_stream_observer(observer);
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
 
@@ -801,7 +857,7 @@ async fn terminal_escape_in_rationale_never_reaches_content_and_attempt_is_faile
         AgentStreamEvent::Phase { .. } => true,
     }));
     let durable = store.events(session_id).unwrap();
-    assert!(durable.iter().any(|event| matches!(
+    assert!(!durable.iter().any(|event| matches!(
         event,
         SessionEvent::ConversationMessageAdded {
             message: ConversationMessage { content, .. }
@@ -837,7 +893,7 @@ fn observer_channel_rejects_unbounded_or_zero_capacity() {
 #[tokio::test]
 async fn write_action_pauses_for_durable_human_approval() {
     let provider = MockProvider {
-        responses: Mutex::new(vec![serde_json::json!({
+        responses: Arc::new(Mutex::new(vec![serde_json::json!({
             "plan": ["write isolated file", "validate"],
             "rationale": "implement objective",
             "action": {
@@ -847,13 +903,10 @@ async fn write_action_pauses_for_durable_human_approval() {
                 "expected_digest": null
             },
             "complete": false
-        })]),
+        })])),
     };
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    );
+    let agent =
+        NativeAgent::new(role_map(provider), Policy::default()).with_controls(build_controls());
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
     let outcome = agent
@@ -879,17 +932,254 @@ async fn write_action_pauses_for_durable_human_approval() {
         std::fs::read_to_string(state.worktree.unwrap().join("new.txt")).unwrap(),
         "created"
     );
-    assert!(store
-        .events(session_id)
-        .unwrap()
+    assert!(
+        store
+            .events(session_id)
+            .unwrap()
+            .iter()
+            .any(|event| matches!(
+                event,
+                SessionEvent::ApprovalRecorded {
+                    authority: ApprovalAuthority::Human,
+                    ..
+                }
+            ))
+    );
+}
+
+#[tokio::test]
+async fn only_final_answer_enters_conversation_after_read_and_completion_repair() {
+    // The provider first performs a bounded read, then incorrectly claims it
+    // is ready to answer, and finally returns the actual answer after the
+    // runtime's semantic repair prompt. Intermediate rationales are execution
+    // trace and must not be rendered as assistant messages in the transcript.
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![
+            serde_json::json!({
+                "rationale": "The repository is a Git worktree containing README.md; the current checkout has no source modules beyond that entry point.",
+                "action": null,
+                "complete": true
+            }),
+            serde_json::json!({
+                "rationale": "I have gathered sufficient evidence and can now provide the explanation. No additional reads are needed.",
+                "action": null,
+                "complete": true
+            }),
+            serde_json::json!({
+                "rationale": "Inspect the repository entry point before answering.",
+                "action": {
+                    "type": "read",
+                    "kind": "read_file",
+                    "path": "README.md",
+                    "max_bytes": 4096
+                },
+                "complete": false
+            }),
+        ])),
+    };
+    // The vector is popped: the read action is the first response, followed by
+    // the meta-only completion and the repaired final answer.
+    let agent =
+        NativeAgent::new(role_map(provider), Policy::default()).with_controls(build_controls());
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(
+            &mut store,
+            repository.path(),
+            "Explain this codebase and identify the important entry points",
+        )
+        .await
+        .unwrap();
+    let AgentOutcome::Completed { session_id, .. } = outcome else {
+        panic!("semantic completion repair did not reach a final answer");
+    };
+
+    let state = store.load(session_id).unwrap();
+    let assistant_messages = state
+        .conversation_messages
         .iter()
-        .any(|event| matches!(
-            event,
-            SessionEvent::ApprovalRecorded {
-                authority: ApprovalAuthority::Human,
-                ..
-            }
-        )));
+        .filter(|message| message.role == "assistant")
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(assistant_messages.len(), 1);
+    assert!(assistant_messages[0].starts_with("The repository is a Git worktree"));
+    assert!(
+        !assistant_messages
+            .iter()
+            .any(|message| message.contains("gathered sufficient evidence"))
+    );
+    assert_eq!(
+        store
+            .events(session_id)
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(event, SessionEvent::ModelRequestFinished { .. }))
+            .count(),
+        3,
+        "read turn plus the rejected completion and its bounded repair must all be durable"
+    );
+    assert_eq!(
+        store
+            .events(session_id)
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(event, SessionEvent::ModelRequestStarted { .. }))
+            .count(),
+        3,
+        "semantic repairs must retain balanced model request boundaries"
+    );
+}
+
+#[tokio::test]
+async fn a_worktree_less_session_answers_the_follow_up_not_the_original_objective() {
+    // PRD §2.3 FR-B1: a read-only session ("Explain this codebase") never
+    // creates a worktree, so a follow-up used to be routed to `Start`, which
+    // re-ran the original objective and threw the follow-up text away. The
+    // follow-up must travel with the operation and be answered. The worktree is
+    // initialized lazily on the first substantive turn.
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![serde_json::json!({
+            "rationale": "please explain is answered: the daemon routes a follow-up to continue_turn, which carries the user's words into the operation.",
+            "action": null,
+            "complete": true
+        })])),
+    };
+    let agent =
+        NativeAgent::new(role_map(provider), Policy::default()).with_controls(build_controls());
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let session_id = SessionId::new();
+    // A greeting session: the objective and the first user message are durable,
+    // but no worktree was ever created.
+    store
+        .append(
+            session_id,
+            &SessionEvent::SessionCreated {
+                objective: "Explain this codebase".into(),
+                repository: repository.path().to_path_buf(),
+                authority_mode: Default::default(),
+            },
+        )
+        .unwrap();
+    store
+        .append(
+            session_id,
+            &SessionEvent::ConversationMessageAdded {
+                message: ConversationMessage {
+                    id: ActionId::new().0.to_string(),
+                    role: "user".into(),
+                    content: "Explain this codebase".into(),
+                    timestamp: chrono::Utc::now(),
+                    tool_calls: Vec::new(),
+                    tool_results: Vec::new(),
+                    model: None,
+                },
+            },
+        )
+        .unwrap();
+    // The follow-up is answered: the assistant message reflects the follow-up,
+    // not a re-run of the original objective.
+    let outcome = agent
+        .continue_turn(&mut store, session_id, "please explain")
+        .await
+        .unwrap();
+    let AgentOutcome::Completed { session_id, .. } = outcome else {
+        panic!("the follow-up did not complete");
+    };
+    let state = store.load(session_id).unwrap();
+    // The worktree was created lazily by the follow-up turn.
+    assert!(state.worktree.is_some());
+    let assistant_messages = state
+        .conversation_messages
+        .iter()
+        .filter(|message| message.role == "assistant")
+        .map(|message| message.content.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(assistant_messages.len(), 1);
+    assert!(
+        assistant_messages[0].contains("please explain"),
+        "the assistant answer must address the follow-up text, not re-run the objective"
+    );
+}
+
+#[tokio::test]
+async fn escaping_read_path_gets_one_bounded_action_repair() {
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![
+            serde_json::json!({
+                "rationale": "PurrCode is a Rust workspace whose README is a primary entry point.",
+                "action": null,
+                "complete": true
+            }),
+            serde_json::json!({
+                "plan": ["List top-level directory contents"],
+                "current_step_index": 0,
+                "expected_postconditions": ["Repository root is inspected"],
+                "rationale": "Use an explicit repository-relative root.",
+                "action": {
+                    "type": "read",
+                    "kind": "list",
+                    "paths": ["."],
+                    "max_entries": 32
+                },
+                "complete": false
+            }),
+            serde_json::json!({
+                "plan": ["List top-level directory contents"],
+                "current_step_index": 0,
+                "expected_postconditions": ["Repository root is inspected"],
+                "rationale": "List the repository root before answering.",
+                "action": {
+                    "type": "read",
+                    "kind": "list",
+                    "paths": ["/"],
+                    "max_entries": 32
+                },
+                "complete": false
+            }),
+        ])),
+    };
+    let agent =
+        NativeAgent::new(role_map(provider), Policy::default()).with_controls(build_controls());
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(
+            &mut store,
+            repository.path(),
+            "Explain this codebase and identify the important entry points",
+        )
+        .await
+        .unwrap();
+    let AgentOutcome::Completed { session_id, .. } = outcome else {
+        panic!("corrected repository-relative read did not complete")
+    };
+
+    let events = store.events(session_id).unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, SessionEvent::ModelRequestStarted { .. }))
+            .count(),
+        3
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, SessionEvent::ModelRequestFinished { .. }))
+            .count(),
+        3
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        SessionEvent::ActionProposed {
+            action: ProposedAction::RepositoryRead(
+                purrcode_runtime_core::RepositoryReadAction::List { paths, .. }
+            ),
+            ..
+        } if paths == &[PathBuf::new()]
+    )));
 }
 
 #[tokio::test]
@@ -910,13 +1200,14 @@ async fn repeated_deterministic_denials_pause_before_more_provider_calls() {
         })
     };
     let provider = MockProvider {
-        responses: Mutex::new(vec![denied_turn(), denied_turn(), denied_turn()]),
+        responses: Arc::new(Mutex::new(vec![
+            denied_turn(),
+            denied_turn(),
+            denied_turn(),
+        ])),
     };
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    );
+    let agent = NativeAgent::new(role_map(provider.clone()), Policy::default())
+        .with_controls(build_controls());
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
 
@@ -946,7 +1237,7 @@ async fn repeated_deterministic_denials_pause_before_more_provider_calls() {
 #[tokio::test]
 async fn approval_then_resume_completes_full_turn_with_next_action() {
     let provider = MockProvider {
-        responses: Mutex::new(vec![
+        responses: Arc::new(Mutex::new(vec![
             serde_json::json!({
                 "plan": ["write isolated file", "validate"],
                 "rationale": "task done",
@@ -963,15 +1254,12 @@ async fn approval_then_resume_completes_full_turn_with_next_action() {
                 },
                 "complete": false
             }),
-        ]),
+        ])),
     };
     let (observer, _receiver) = bounded_agent_stream_channel(64).unwrap();
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    )
-    .with_stream_observer(observer);
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_stream_observer(observer);
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
     let session_id = SessionId::new();
@@ -1022,9 +1310,11 @@ async fn approval_then_resume_completes_full_turn_with_next_action() {
         panic!("agent did not complete after resuming");
     };
     let durable = store.events(session_id).unwrap();
-    assert!(durable
-        .iter()
-        .any(|event| matches!(event, SessionEvent::SessionCompleted)));
+    assert!(
+        durable
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SessionCompleted))
+    );
 }
 
 #[tokio::test]
@@ -1035,29 +1325,33 @@ async fn failed_validation_routes_a_repair_then_reruns_focused_and_full_checks()
         "test:\n\t@test -f repaired.marker\n",
     )
     .unwrap();
-    assert!(Command::new("git")
-        .args(["add", "Makefile"])
-        .current_dir(repository.path())
-        .status()
-        .unwrap()
-        .success());
-    assert!(Command::new("git")
-        .args([
-            "-c",
-            "user.name=PurrCode",
-            "-c",
-            "user.email=test@local.invalid",
-            "commit",
-            "-q",
-            "-m",
-            "validation fixture",
-        ])
-        .current_dir(repository.path())
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new("git")
+            .args(["add", "Makefile"])
+            .current_dir(repository.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .args([
+                "-c",
+                "user.name=PurrCode",
+                "-c",
+                "user.email=test@local.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "validation fixture",
+            ])
+            .current_dir(repository.path())
+            .status()
+            .unwrap()
+            .success()
+    );
     let provider = MockProvider {
-        responses: Mutex::new(vec![
+        responses: Arc::new(Mutex::new(vec![
             serde_json::json!({
                 "plan": ["repair the failed test", "validate"],
                 "rationale": "validation now passes",
@@ -1079,13 +1373,10 @@ async fn failed_validation_routes_a_repair_then_reruns_focused_and_full_checks()
                 "rationale": "the implementation is ready for validation",
                 "complete": true
             }),
-        ]),
+        ])),
     };
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    );
+    let agent =
+        NativeAgent::new(role_map(provider), Policy::default()).with_controls(build_controls());
     let mut store = SessionStore::in_memory().unwrap();
     let outcome = agent
         .start(
@@ -1123,19 +1414,15 @@ async fn failed_validation_routes_a_repair_then_reruns_focused_and_full_checks()
 #[tokio::test]
 async fn plan_only_session_is_durable_and_never_mutates_source_repository() {
     let provider = MockProvider {
-        responses: Mutex::new(vec![serde_json::json!({
+        responses: Arc::new(Mutex::new(vec![serde_json::json!({
             "steps": ["inspect the implementation", "make a bounded change", "run tests"],
             "assumptions": ["existing tests describe expected behavior"],
             "risks": ["avoid changing public interfaces"]
-        })]),
+        })])),
     };
     let (observer, mut receiver) = bounded_agent_stream_channel(64).unwrap();
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    )
-    .with_stream_observer(observer);
+    let agent =
+        NativeAgent::new(role_map(provider), Policy::default()).with_stream_observer(observer);
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
     let session_id = SessionId::new();
@@ -1157,10 +1444,30 @@ async fn plan_only_session_is_durable_and_never_mutates_source_repository() {
     let state = store.load(session_id).unwrap();
     assert_eq!(state.status, SessionStatus::Paused);
     assert_eq!(state.plan_steps, plan.steps);
+    assert_eq!(
+        state.spec_bundle.as_ref().map(|bundle| bundle.revision),
+        Some(1)
+    );
+    assert_eq!(
+        state.task_graph.as_ref().map(|graph| graph.revision),
+        Some(1)
+    );
+    assert_eq!(
+        state.task_graph.as_ref().map(|graph| graph.tasks.len()),
+        Some(plan.steps.len())
+    );
+    assert!(state.task_graph.as_ref().is_some_and(|graph| {
+        graph
+            .tasks
+            .iter()
+            .all(|task| task.status == purrcode_runtime_core::work::WorkTaskStatus::Ready)
+    }));
     let observations = drain_observer(&mut receiver);
-    assert!(!observations
-        .iter()
-        .any(|event| matches!(event, AgentStreamEvent::ContentDelta { .. })));
+    assert!(
+        !observations
+            .iter()
+            .any(|event| matches!(event, AgentStreamEvent::ContentDelta { .. }))
+    );
     let status = Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(repository.path())
@@ -1176,7 +1483,7 @@ async fn a_plan_can_be_revised_until_the_reviewer_is_satisfied() {
     // only answer yes is not review, so feedback has to produce a new revision
     // — and it must still change nothing on disk, however many rounds it takes.
     let provider = MockProvider {
-        responses: Mutex::new(vec![
+        responses: Arc::new(Mutex::new(vec![
             // Popped from the end: the revision answers second.
             serde_json::json!({
                 "steps": ["inspect the implementation", "add the migration", "run tests"],
@@ -1188,13 +1495,9 @@ async fn a_plan_can_be_revised_until_the_reviewer_is_satisfied() {
                 "assumptions": [],
                 "risks": []
             }),
-        ]),
+        ])),
     };
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    );
+    let agent = NativeAgent::new(role_map(provider), Policy::default());
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
     let session_id = SessionId::new();
@@ -1269,13 +1572,9 @@ async fn a_session_with_no_plan_cannot_be_revised() {
     // Routing a follow-up to a revision when there is no plan would silently
     // replace real work with a planning turn.
     let provider = MockProvider {
-        responses: Mutex::new(Vec::new()),
+        responses: Arc::new(Mutex::new(Vec::new())),
     };
-    let agent = NativeAgent::new(
-        &provider,
-        ModelId::parse("local/test").unwrap(),
-        Policy::default(),
-    );
+    let agent = NativeAgent::new(role_map(provider), Policy::default());
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
     let session_id = SessionId::new();
@@ -1294,4 +1593,162 @@ async fn a_session_with_no_plan_cannot_be_revised() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("no plan to revise"));
+}
+
+#[tokio::test]
+async fn ask_mode_refuses_a_mutating_turn_before_action_proposal() {
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![
+            serde_json::from_str(&observed_turn_json()).unwrap(),
+        ])),
+    };
+    let controls = SessionControls {
+        task_mode: TaskMode::Ask,
+        ..SessionControls::default()
+    };
+    let agent = NativeAgent::new(role_map(provider), Policy::default()).with_controls(controls);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(
+            &mut store,
+            repository.path(),
+            "answer without changing files",
+        )
+        .await
+        .unwrap();
+    let AgentOutcome::IterationLimit { session_id } = outcome else {
+        panic!("Ask mode should pause after refusing a mutating model turn");
+    };
+    let events = store.events(session_id).unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ActionProposed { .. }))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ExecutionStarted { .. }))
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        SessionEvent::SessionPaused { reason } if reason.contains("Ask mode refused")
+    )));
+}
+
+#[tokio::test]
+async fn collaborative_build_pauses_after_planning_before_first_mutation() {
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![
+            serde_json::from_str(&observed_turn_json()).unwrap(),
+        ])),
+    };
+    let agent =
+        NativeAgent::new(role_map(provider), Policy::default()).with_controls(SessionControls {
+            task_mode: TaskMode::Build,
+            execution_style: ExecutionStyle::Collaborative,
+            ..SessionControls::default()
+        });
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(
+            &mut store,
+            repository.path(),
+            "build with review between stages",
+        )
+        .await
+        .unwrap();
+    let AgentOutcome::IterationLimit { session_id } = outcome else {
+        panic!("Collaborative mode should pause after recording its plan");
+    };
+    let state = store.load(session_id).unwrap();
+    assert_eq!(state.status, SessionStatus::Paused);
+    assert!(state.task_graph.is_some());
+    assert!(state.proposed_actions.is_empty());
+    assert!(store.events(session_id).unwrap().iter().any(|event| matches!(
+        event,
+        SessionEvent::SessionPaused { reason } if reason.contains("Collaborative execution paused after planning")
+    )));
+}
+
+#[tokio::test]
+async fn plan_records_usage_and_stops_before_a_second_model_call() {
+    // The vector is popped, so malformed first response triggers the one
+    // permitted call's repair path and the budget refuses the second call.
+    let valid = serde_json::json!({
+        "steps": ["inspect the repository"],
+        "assumptions": [],
+        "risks": []
+    });
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![valid, serde_json::json!({"wrong": true})])),
+    };
+    let controls = SessionControls {
+        task_mode: TaskMode::Plan,
+        budget_profile: BudgetProfileKind::Custom,
+        custom_budget: Some(BudgetConstraints {
+            maximum_model_calls: Some(1),
+            maximum_total_tokens: Some(10_000),
+            ..BudgetConstraints::default()
+        }),
+        ..SessionControls::default()
+    };
+    let agent = NativeAgent::new(role_map(provider), Policy::default()).with_controls(controls);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let session_id = SessionId::new();
+    store
+        .append(
+            session_id,
+            &SessionEvent::SessionCreated {
+                objective: "inspect the repository".into(),
+                repository: repository.path().canonicalize().unwrap(),
+                authority_mode: Default::default(),
+            },
+        )
+        .unwrap();
+    let error = agent
+        .plan_initialized(&mut store, session_id)
+        .await
+        .expect_err("repair must be refused once the single model-call budget is used");
+    assert!(error.to_string().contains("model-call budget"));
+    let state = store.load(session_id).unwrap();
+    assert_eq!(state.usage_records.len(), 1);
+    assert!(
+        store
+            .events(session_id)
+            .unwrap()
+            .iter()
+            .any(|event| matches!(
+                event,
+                SessionEvent::UsageRecorded { record } if record.session_id == session_id
+            ))
+    );
+}
+
+#[tokio::test]
+async fn zero_wall_time_budget_fails_before_provider_call() {
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![
+            serde_json::from_str(&observed_turn_json()).unwrap(),
+        ])),
+    };
+    let controls = SessionControls {
+        budget_profile: BudgetProfileKind::Custom,
+        custom_budget: Some(BudgetConstraints {
+            maximum_wall_time_seconds: Some(0),
+            ..BudgetConstraints::default()
+        }),
+        ..SessionControls::default()
+    };
+    let agent = NativeAgent::new(role_map(provider), Policy::default()).with_controls(controls);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let error = agent
+        .start(&mut store, repository.path(), "inspect only")
+        .await
+        .expect_err("zero wall-time budget must fail closed");
+    assert!(error.to_string().contains("wall-time budget"));
 }

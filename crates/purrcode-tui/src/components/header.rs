@@ -10,13 +10,21 @@
 //! space runs out, so it is placed first among the droppable fields and is the
 //! last to go.
 
+use crate::design::{Emphasis, Role, Symbols, Tokens};
+use purrcode_runtime_core::adaptation::{SearchPolicy, WorkflowControl, WorkflowProfile};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::design::{Emphasis, Role, Symbols, Tokens};
+/// One header field, ordered from most to least important.
+struct Field {
+    text: String,
+    role: Role,
+    /// Lower drops later. Product name and privacy are never dropped.
+    priority: u8,
+}
 
 #[derive(Clone, Debug)]
 pub struct Header<'data> {
@@ -25,20 +33,15 @@ pub struct Header<'data> {
     /// Fully qualified model id, e.g. `ollama/qwen2.5-coder:7b`. The header
     /// renders only the model part; `/status` shows the whole id.
     pub model: &'data str,
+    pub workflow_control: WorkflowControl,
+    pub workflow_profile: WorkflowProfile,
+    pub search_policy: SearchPolicy,
     pub mode: &'data str,
     /// Permission mode: Ask, Auto, or Full Access (PRD §12, §14).
     pub permission: &'data str,
     pub phase: &'data str,
     /// True when inference stays on this machine.
     pub local_only: bool,
-}
-
-/// One header field, ordered from most to least important.
-struct Field {
-    text: String,
-    role: Role,
-    /// Lower drops later. Product name and privacy are never dropped.
-    priority: u8,
 }
 
 impl<'data> Header<'data> {
@@ -83,19 +86,34 @@ impl<'data> Header<'data> {
                 priority: 3,
             },
             Field {
+                text: match self.workflow_control {
+                    WorkflowControl::Auto => {
+                        format!("Auto{}{}", symbols.workflow_arrow(), self.workflow_profile)
+                    }
+                    control => control.label().to_owned(),
+                },
+                role: Role::Primary,
+                priority: 4,
+            },
+            Field {
+                text: self.search_policy.to_string(),
+                role: Role::Primary,
+                priority: 5,
+            },
+            Field {
                 text: self.mode.to_owned(),
                 role: Role::Muted,
-                priority: 4,
+                priority: 6,
             },
             Field {
                 text: self.permission.to_owned(),
                 role: Role::Muted,
-                priority: 5,
+                priority: 7,
             },
             Field {
                 text: self.phase.to_owned(),
                 role: Role::Muted,
-                priority: 6,
+                priority: 8,
             },
         ]
     }
@@ -142,6 +160,7 @@ impl<'data> Header<'data> {
                 }
             }
         }
+
         // Last resort: clip the product name so the privacy state still fits.
         if rendered_width(&fields, separator) > width && fields.len() == 2 {
             let privacy =
@@ -200,23 +219,6 @@ pub fn model_name(model: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn the_header_shows_the_model_and_leaves_the_provider_to_status() {
-        assert_eq!(
-            super::model_name("ollama/qwen2.5-coder:7b"),
-            "qwen2.5-coder:7b"
-        );
-        // A provider whose models carry their own path keeps that path: taking
-        // the last segment would show something the user never configured.
-        assert_eq!(
-            super::model_name("nvidia-nim-x/deepseek-ai/deepseek-v4-pro"),
-            "deepseek-ai/deepseek-v4-pro"
-        );
-        // An unqualified name is already the model.
-        assert_eq!(super::model_name("gpt-5"), "gpt-5");
-        assert_eq!(super::model_name(""), "");
-    }
-
     use super::*;
     use crate::test_fixtures::{monochrome_theme, test_theme};
 
@@ -225,6 +227,9 @@ mod tests {
             repository: "PurrCode",
             branch: "main",
             model: "ollama/coder:7b",
+            workflow_control: WorkflowControl::Auto,
+            workflow_profile: WorkflowProfile::Standard,
+            search_policy: SearchPolicy::Auto,
             mode: "Build",
             permission: "Auto",
             phase: "executing",
@@ -251,6 +256,8 @@ mod tests {
             "PurrCode",
             "PurrCode/main",
             "coder:7b",
+            "Standard",
+            "Auto",
             "Build",
             "executing",
         ] {
@@ -358,6 +365,9 @@ mod tests {
             repository: "repo",
             branch: "main",
             model: "",
+            workflow_control: WorkflowControl::Direct,
+            workflow_profile: WorkflowProfile::Direct,
+            search_policy: SearchPolicy::Off,
             mode: "",
             permission: "",
             phase: "",

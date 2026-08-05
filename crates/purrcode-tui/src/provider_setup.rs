@@ -1,8 +1,8 @@
 //! Provider discovery, manual setup, and script-import review state.
 
 use purrcode_provider_import::{
-    import_provider_secure, ImportedSecretState, ParsedProviderImport, ProviderImportCandidate,
-    ProviderKind, SecretReference, DEFAULT_MAX_INPUT_BYTES,
+    DEFAULT_MAX_INPUT_BYTES, ImportedSecretState, ParsedProviderImport, ProviderImportCandidate,
+    ProviderKind, SecretReference, import_provider_secure,
 };
 use zeroize::Zeroize;
 
@@ -317,7 +317,7 @@ impl ProviderSetup {
             self.error = Some("Select or enter a real model ID".into());
         } else if !self.import_auth_is_resolved() {
             self.error = Some(
-                "Authentication is unresolved. Confirm keychain storage, choose an environment reference, or enter another API key.".into(),
+                "Authentication is unresolved. Confirm credential storage, choose an environment reference, or enter another API key.".into(),
             );
         } else {
             self.complete = true;
@@ -449,17 +449,17 @@ impl ProviderSetup {
 
     pub fn auth_status(&self) -> &'static str {
         if !self.api_key.is_empty() {
-            return "new secret ready for confirmed keychain storage";
+            return "new secret ready for confirmed credential storage";
         }
         if self.keychain_storage_confirmed {
-            return "detected secret ready for confirmed keychain storage";
+            return "detected secret ready for confirmed credential storage";
         }
         match self
             .secure_import
             .as_ref()
             .map(|parsed| &parsed.secret_state)
         {
-            Some(ImportedSecretState::Stored(_)) => "stored in OS keychain",
+            Some(ImportedSecretState::Stored(_)) => "stored in credentials.toml",
             Some(ImportedSecretState::EnvironmentReference(_)) => "environment reference selected",
             Some(
                 ImportedSecretState::DetectedTransient(_)
@@ -472,7 +472,7 @@ impl ProviderSetup {
                 Some(SecretReference::Keychain(_))
             ) =>
             {
-                "stored in OS keychain"
+                "stored in credentials.toml"
             }
             None if matches!(
                 self.preserved_credential_reference,
@@ -637,10 +637,14 @@ mod tests {
         assert_eq!(setup.profile_name, "nvidia-nim");
         assert_eq!(setup.model_id, "z-ai/glm-5.2");
         assert!(setup.import_source.is_empty());
-        assert!(setup
-            .import_candidate
-            .as_ref()
-            .is_some_and(|candidate| !candidate.redacted_source.contains("nvapi-fixture-secret")));
+        assert!(
+            setup
+                .import_candidate
+                .as_ref()
+                .is_some_and(|candidate| !candidate
+                    .redacted_source
+                    .contains("nvapi-fixture-secret"))
+        );
         setup.request_test_and_save();
         assert!(!setup.complete);
         setup.choose_import_auth();
@@ -696,10 +700,12 @@ mod tests {
         let before = setup.import_source.clone();
         setup.insert_import(&"x".repeat(DEFAULT_MAX_INPUT_BYTES));
         assert_eq!(setup.import_source, before);
-        assert!(setup
-            .error
-            .as_deref()
-            .is_some_and(|error| error.contains("limited")));
+        assert!(
+            setup
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("limited"))
+        );
     }
 
     #[test]
@@ -737,7 +743,7 @@ mod tests {
             "models": ["z-ai/glm-5.2"]
         });
         let setup = ProviderSetup::from_saved(&value).unwrap();
-        assert_eq!(setup.auth_status(), "stored in OS keychain");
+        assert_eq!(setup.auth_status(), "stored in credentials.toml");
         assert_eq!(
             setup.credential_reference(),
             Some(SecretReference::Keychain("keychain:nvidia-nim".into()))

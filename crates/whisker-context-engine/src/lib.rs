@@ -1,7 +1,7 @@
 //! Bounded local repository indexing and hybrid lexical/symbol retrieval.
 
 use ignore::{Walk, WalkBuilder};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -498,7 +498,7 @@ impl ContextIndex {
         for entry in fs::read_dir(&self.root)? {
             let entry = entry?;
             let path = entry.path();
-            if is_pruned(&path) || is_index_storage(&path, &self.database) {
+            if is_pruned_relative(&self.root, &path) || is_index_storage(&path, &self.database) {
                 continue;
             }
             root_entries.push(entry);
@@ -1005,12 +1005,13 @@ impl ContextIndex {
 }
 
 fn repository_walker(root: &Path) -> Walk {
-    WalkBuilder::new(root)
+    let root = root.to_path_buf();
+    WalkBuilder::new(&root)
         .hidden(false)
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
-        .filter_entry(|entry| !is_pruned(entry.path()))
+        .filter_entry(move |entry| !is_pruned_relative(&root, entry.path()))
         .build()
 }
 
@@ -1188,14 +1189,14 @@ fn resolve_requested_path(
             Component::Normal(value) => relative.push(value),
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(ContextError::InvalidRequestedPath(requested.to_path_buf()))
+                return Err(ContextError::InvalidRequestedPath(requested.to_path_buf()));
             }
         }
     }
     let absolute = root.join(&relative);
     match absolute.canonicalize() {
         Ok(canonical) if !canonical.starts_with(root) => {
-            return Err(ContextError::PathEscape(canonical))
+            return Err(ContextError::PathEscape(canonical));
         }
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1348,6 +1349,16 @@ fn is_pruned(path: &Path) -> bool {
             Some(".git" | ".purrcode" | "node_modules" | "target" | "dist" | "build")
         )
     })
+}
+
+/// Apply repository exclusions to a path relative to the repository root.
+///
+/// Worktrees commonly live below a repository-owned `.purrcode/worktrees`
+/// directory. Testing the absolute path would see that ancestor `.purrcode`
+/// component on the root itself and prune the entire walk before it reaches a
+/// source file. Paths that cannot be made relative are rejected closed.
+fn is_pruned_relative(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root).map(is_pruned).unwrap_or(true)
 }
 
 fn is_index_storage(path: &Path, database: &Path) -> bool {
@@ -1682,17 +1693,16 @@ fn grammar(language: LanguageId) -> Option<Language> {
 }
 
 fn collect_symbols(node: Node<'_>, source: &[u8], path: &Path, output: &mut Vec<SymbolRecord>) {
-    if is_symbol_kind(node.kind()) {
-        if let Some(name_node) = node.child_by_field_name("name") {
-            if let Ok(name) = name_node.utf8_text(source) {
-                output.push(SymbolRecord {
-                    path: path.to_path_buf(),
-                    name: name.into(),
-                    kind: node.kind().into(),
-                    line: node.start_position().row + 1,
-                });
-            }
-        }
+    if is_symbol_kind(node.kind())
+        && let Some(name_node) = node.child_by_field_name("name")
+        && let Ok(name) = name_node.utf8_text(source)
+    {
+        output.push(SymbolRecord {
+            path: path.to_path_buf(),
+            name: name.into(),
+            kind: node.kind().into(),
+            line: node.start_position().row + 1,
+        });
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -1910,6 +1920,27 @@ mod tests {
     }
 
     #[test]
+    fn tier1_indexes_a_worktree_nested_under_purrcode() {
+        // Session worktrees are commonly stored below `.purrcode/worktrees`.
+        // The absolute ancestor must not make the worktree root look pruned.
+        let container = tempfile::tempdir().unwrap();
+        let repository = container.path().join(".purrcode/worktrees/session");
+        fs::create_dir_all(repository.join("src")).unwrap();
+        fs::write(
+            repository.join("src/lib.rs"),
+            "pub struct NestedWorktree;\npub fn indexed_from_nested_worktree() {}\n",
+        )
+        .unwrap();
+
+        let mut index = open_test_index(&repository);
+        let report = index.index_tier1(&Tier1Request::default()).unwrap();
+
+        assert!(report.index_report.indexed_files >= 1);
+        assert!(report.index_report.symbols >= 2);
+        assert!(report.selected_paths.contains(&PathBuf::from("src/lib.rs")));
+    }
+
+    #[test]
     fn indexes_symbols_and_excludes_sensitive_content() {
         let repository = tempfile::tempdir().unwrap();
         fs::create_dir(repository.path().join("src")).unwrap();
@@ -1996,35 +2027,45 @@ mod tests {
             .unwrap();
 
         assert!(snapshot.entries.len() <= 8);
-        assert!(snapshot
-            .entries
-            .iter()
-            .all(|entry| entry.path.components().count() == 1));
-        assert!(snapshot
-            .entries
-            .iter()
-            .any(|entry| entry.path == Path::new(".env") && entry.sensitive));
+        assert!(
+            snapshot
+                .entries
+                .iter()
+                .all(|entry| entry.path.components().count() == 1)
+        );
+        assert!(
+            snapshot
+                .entries
+                .iter()
+                .any(|entry| entry.path == Path::new(".env") && entry.sensitive)
+        );
         assert_eq!(snapshot.index_report.indexed_files, 2);
         assert_eq!(snapshot.index_report.dependency_manifests, 1);
         assert_eq!(snapshot.index_report.instruction_files, 1);
         assert_eq!(snapshot.index_report.sensitive_files, 0);
-        assert!(!index
-            .retrieve(
-                "nested_content_must_remain_lazy",
-                &RetrievalBudget::default()
-            )
-            .unwrap()
-            .iter()
-            .any(|hit| hit.content.contains("nested_content_must_remain_lazy")));
-        assert!(index
-            .retrieve("tierzero_manifest_token", &RetrievalBudget::default())
-            .unwrap()
-            .iter()
-            .any(|hit| hit.path == Path::new("Cargo.toml")));
-        assert!(index
-            .retrieve("top_level_metadata_only_token", &RetrievalBudget::default())
-            .unwrap()
-            .is_empty());
+        assert!(
+            !index
+                .retrieve(
+                    "nested_content_must_remain_lazy",
+                    &RetrievalBudget::default()
+                )
+                .unwrap()
+                .iter()
+                .any(|hit| hit.content.contains("nested_content_must_remain_lazy"))
+        );
+        assert!(
+            index
+                .retrieve("tierzero_manifest_token", &RetrievalBudget::default())
+                .unwrap()
+                .iter()
+                .any(|hit| hit.path == Path::new("Cargo.toml"))
+        );
+        assert!(
+            index
+                .retrieve("top_level_metadata_only_token", &RetrievalBudget::default())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2080,10 +2121,12 @@ mod tests {
             index.lifecycle_stage().unwrap(),
             IndexLifecycleStage::Tier0Ready
         );
-        assert!(index
-            .retrieve("task_specific_token", &RetrievalBudget::default())
-            .unwrap()
-            .is_empty());
+        assert!(
+            index
+                .retrieve("task_specific_token", &RetrievalBudget::default())
+                .unwrap()
+                .is_empty()
+        );
 
         index
             .index_tier1(&Tier1Request {
@@ -2103,11 +2146,13 @@ mod tests {
         assert!(!second.rebuilt);
         assert!(second.snapshot.is_none());
         assert_eq!(second.stage, IndexLifecycleStage::TaskReady);
-        assert!(reopened
-            .retrieve("task_specific_token", &RetrievalBudget::default())
-            .unwrap()
-            .iter()
-            .any(|hit| hit.path == Path::new("src/relevant.rs")));
+        assert!(
+            reopened
+                .retrieve("task_specific_token", &RetrievalBudget::default())
+                .unwrap()
+                .iter()
+                .any(|hit| hit.path == Path::new("src/relevant.rs"))
+        );
     }
 
     #[test]
@@ -2147,32 +2192,44 @@ mod tests {
         let report = index.index_tier1(&request).unwrap();
 
         assert_eq!(report.index_report.indexed_files, 3);
-        assert!(report
-            .selected_paths
-            .contains(&PathBuf::from("src/mentioned.rs")));
-        assert!(report
-            .selected_paths
-            .contains(&PathBuf::from("docs/task-guide.md")));
+        assert!(
+            report
+                .selected_paths
+                .contains(&PathBuf::from("src/mentioned.rs"))
+        );
+        assert!(
+            report
+                .selected_paths
+                .contains(&PathBuf::from("docs/task-guide.md"))
+        );
         assert!(report.selected_paths.contains(&PathBuf::from("worker.py")));
-        assert!(index
-            .retrieve("mentioned_only_token", &RetrievalBudget::default())
-            .unwrap()
-            .iter()
-            .any(|hit| hit.path == Path::new("src/mentioned.rs")));
-        assert!(index
-            .retrieve("guide_only_token", &RetrievalBudget::default())
-            .unwrap()
-            .iter()
-            .any(|hit| hit.path == Path::new("docs/task-guide.md")));
-        assert!(index
-            .retrieve("language_selected_token", &RetrievalBudget::default())
-            .unwrap()
-            .iter()
-            .any(|hit| hit.path == Path::new("worker.py")));
-        assert!(index
-            .retrieve("unrelated_only_token", &RetrievalBudget::default())
-            .unwrap()
-            .is_empty());
+        assert!(
+            index
+                .retrieve("mentioned_only_token", &RetrievalBudget::default())
+                .unwrap()
+                .iter()
+                .any(|hit| hit.path == Path::new("src/mentioned.rs"))
+        );
+        assert!(
+            index
+                .retrieve("guide_only_token", &RetrievalBudget::default())
+                .unwrap()
+                .iter()
+                .any(|hit| hit.path == Path::new("docs/task-guide.md"))
+        );
+        assert!(
+            index
+                .retrieve("language_selected_token", &RetrievalBudget::default())
+                .unwrap()
+                .iter()
+                .any(|hit| hit.path == Path::new("worker.py"))
+        );
+        assert!(
+            index
+                .retrieve("unrelated_only_token", &RetrievalBudget::default())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2203,14 +2260,18 @@ mod tests {
             })
             .unwrap();
         assert!(report.selected_paths.contains(&PathBuf::from("changed.rs")));
-        assert!(report
-            .selected_paths
-            .contains(&PathBuf::from("ignored.txt")));
-        assert!(index
-            .retrieve("changed_file_token", &RetrievalBudget::default())
-            .unwrap()
-            .iter()
-            .any(|hit| hit.path == Path::new("changed.rs")));
+        assert!(
+            report
+                .selected_paths
+                .contains(&PathBuf::from("ignored.txt"))
+        );
+        assert!(
+            index
+                .retrieve("changed_file_token", &RetrievalBudget::default())
+                .unwrap()
+                .iter()
+                .any(|hit| hit.path == Path::new("changed.rs"))
+        );
     }
 
     #[test]
@@ -2236,10 +2297,12 @@ mod tests {
             })
             .unwrap();
         assert_eq!(report.index_report.sensitive_files, 2);
-        assert!(index
-            .retrieve("private_material", &RetrievalBudget::default())
-            .unwrap()
-            .is_empty());
+        assert!(
+            index
+                .retrieve("private_material", &RetrievalBudget::default())
+                .unwrap()
+                .is_empty()
+        );
         let chunks: i64 = index
             .connection
             .query_row(
@@ -2359,11 +2422,13 @@ mod tests {
             .drive_tier2(&mut work, IndexingSignals::default())
             .unwrap();
         assert_eq!(resumed.status, Tier2Status::Completed);
-        assert!(index
-            .retrieve("resumable_tier_two_token", &RetrievalBudget::default())
-            .unwrap()
-            .iter()
-            .any(|hit| hit.path == Path::new("source.rs")));
+        assert!(
+            index
+                .retrieve("resumable_tier_two_token", &RetrievalBudget::default())
+                .unwrap()
+                .iter()
+                .any(|hit| hit.path == Path::new("source.rs"))
+        );
 
         let mut stopped_work = index.begin_tier2(policy).unwrap();
         let stopped = index

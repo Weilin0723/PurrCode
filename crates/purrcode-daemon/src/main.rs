@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use purrcode_daemon::{bind_and_report, DaemonConfig};
+use purrcode_daemon::{DaemonConfig, bind_and_report};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 

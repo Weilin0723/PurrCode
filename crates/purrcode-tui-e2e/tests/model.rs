@@ -9,7 +9,7 @@
 
 use purrcode_tui_e2e::fake_daemon::DaemonScript;
 use purrcode_tui_e2e::harness::with_artifacts;
-use purrcode_tui_e2e::{assertions, Harness, Key};
+use purrcode_tui_e2e::{Harness, Key, assertions};
 use serde_json::json;
 
 fn configured() -> DaemonScript {
@@ -252,9 +252,11 @@ fn unapproved_pull_never_downloads() {
             "an unapproved pull must never be approved:\n{}",
             harness.daemon().request_log()
         );
-        assert!(!harness
-            .daemon()
-            .saw("POST", "/v1/local-models/pull/pull-action/start"));
+        assert!(
+            !harness
+                .daemon()
+                .saw("POST", "/v1/local-models/pull/pull-action/start")
+        );
         Ok(())
     });
 }

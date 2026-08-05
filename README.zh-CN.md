@@ -1,41 +1,65 @@
-# PurrCode
+<p align="center">
+  <img src="brand/purrcode-logo-horizontal-dark.png" alt="PurrCode" width="320" />
+</p>
 
-[English](README.md) · [文档](docs/) · [最新版本](https://github.com/Weilin0723/PurrCode/releases/latest)
+<p align="center">
+  <b>一个本地优先、拥有独立且可审计判断运行时的编程智能体。</b>
+</p>
 
-[![CI](https://github.com/Weilin0723/PurrCode/actions/workflows/ci.yml/badge.svg)](https://github.com/Weilin0723/PurrCode/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Weilin0723/PurrCode)](https://github.com/Weilin0723/PurrCode/releases/latest)
-[![License](https://img.shields.io/github/license/Weilin0723/PurrCode)](LICENSE)
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="https://weilin0723.github.io/PurrCode/">文档</a> ·
+  <a href="https://github.com/Weilin0723/PurrCode/wiki">Wiki</a> ·
+  <a href="https://github.com/Weilin0723/PurrCode/releases/latest">最新版本</a>
+</p>
 
-**一个本地优先、拥有独立且可审计判断运行时的编程智能体。**
+<p align="center">
+  <a href="https://github.com/Weilin0723/PurrCode/actions/workflows/ci.yml"><img src="https://github.com/Weilin0723/PurrCode/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/Weilin0723/PurrCode/releases/latest"><img src="https://img.shields.io/github/v/release/Weilin0723/PurrCode" alt="Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Weilin0723/PurrCode" alt="License" /></a>
+</p>
 
 > 模型负责提议，PawGate 负责授权，Claw 负责执行，证据决定结果。
 
-PurrCode 是一个在隔离 Git worktree 中工作的终端编程智能体。每个原生操作都必须绑定到
-持久化授权，并在执行前再次校验，随后记录真实验证结果。仓库内容、模型输出和下载的技能
-始终被视为不可信数据。
+PurrCode 是一个在隔离 Git worktree 中工作的终端编程智能体。它的核心理念很简单：模型输出只是
+**提议**，而不是权威。每个原生操作都必须绑定到持久化授权，并在执行前再次校验，随后记录真实
+验证结果。仓库内容、模型输出和下载的技能始终被视为不可信数据。
 
-PurrCode v0.9.0 让终端 Workbench 成为产品本身：直接运行 `purrcode` 即在所有平台打开
-它，Studio 成为同一会话的一键图形视图，两个客户端都真正解释终端输出而不再剥离转义序列。
-任务模式（Ask / Plan / Build / Review）与权限模式（Ask / Auto / Full Access）无需编辑
-TOML 即可选择，NVIDIA NIM 成为一等提供方，daemon 提供统一的呈现契约，客户端不再各自
-解读运行事件。PawGate、Claw、隔离 worktree 与持久化证据边界仍然是唯一可信执行路径。
+PurrCode v1.0 让纯 Rust native IDE 成为图形产品本身：直接运行 `purrcode ide` 打开 PurrCode
+自己的桌面窗口，和终端 Workbench 共用 daemon 的同一会话。浏览器 portal 只通过
+`purrcode experimental portal` 用于开发和维护，不会被 native IDE 自动打开，也不依赖
+VS Code/Electron/Tauri。
 
-## 为什么选择 PurrCode
+## 界面
 
-- **可强制执行的授权：** PawGate 对序列化后的具体操作和约束进行审批；执行适配器会再次
-  校验，调用方无法绕过。
-- **保护现有工作区：** 智能体的修改保留在隔离 worktree 中，只有经过审查才会应用。现有
-  未提交内容不会被静默 stash、覆盖或删除。
-- **以证据判断完成状态：** 通过、失败、超时、不可用和跳过是不同状态；跳过的验证绝不会
-  被显示为成功。
-- **保守的故障恢复：** NineLives 从持久化事件恢复会话，并将中断后的不确定副作用标记为
-  需要审查，而不是盲目重放。
-- **模型供应商没有授权能力：** 支持 Ollama、LM Studio、OpenAI 兼容接口、企业网关和
-  Codex bridge，但模型不能批准自己的操作。
-- **受治理的技能和研究：** 技能需要经过检查、资格验证和逐次授权；公开网络访问也必须遵守
-  明确策略。
+- **终端 Workbench** — 默认界面。直接运行 `purrcode` 在所有平台上都会打开它，绝不会意外弹出
+  浏览器。
+- **原生桌面 IDE** — `purrcode ide`（或 `purrcode gui`，两者是同一命令）。纯 Rust 桌面窗口，
+  包含对话 Workbench、语法高亮编辑器，以及停靠的 Diff/Tests/Terminal/Problems/Output 面板。
+- **Studio** — `purrcode studio`。用于 daemon 健康检查、会话和环境检查的安全浏览器维护客户端。
+  它不是 v1.0 的正式 IDE，也不会有任何路径自动打开它。
 
 ## 安装
+
+### macOS — 拖拽安装 App
+
+体验原生桌面 IDE 最简单的方式：下载 **PurrCode.app**，拖入 **应用程序**，双击即可——无需终端。
+
+1. 从 [最新版本](https://github.com/Weilin0723/PurrCode/releases/latest) 下载 `PurrCode.app.zip`。
+2. 解压后把 **PurrCode.app** 拖进「应用程序」。
+3. 双击 PurrCode 打开原生桌面 IDE。首次启动会自动创建配置并启动本机 daemon，之后启动会复用。
+
+> 关于 Gatekeeper：应用暂未公证，macOS 可能提示「无法打开 PurrCode.app」。
+> 右键应用选择「打开」，再点一次「打开」即可运行。我们计划在后续版本中做公证。
+
+### macOS 和 Linux（终端）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v1.0.0/scripts/install.sh | sh
+```
+
+脚本会检测主机平台、下载发布归档，使用 `SHA256SUMS` 校验归档，并默认安装到 `~/.local/bin`。
+可通过 `PURRCODE_INSTALL_DIR` 指定其他目录。
 
 ### npm
 
@@ -43,195 +67,126 @@ TOML 即可选择，NVIDIA NIM 成为一等提供方，daemon 提供统一的呈
 npm install --global @minaovo/purrcode
 ```
 
-使用 Node.js 18 或更高版本，也可以直接从 GitHub 安装同一个已签名 launcher：
+需要 Node.js 18 或更高版本。安装包会选择正确的 macOS、Linux 或 Windows 二进制文件，校验固定的
+SHA-256 摘要，并提供 `purrcode` 和 `purrcoded` 两个命令。也可以直接从 GitHub 安装已签名 launcher：
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.9.0/purrcode-0.9.0.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/latest/download/purrcode-1.0.0.tgz
 ```
 
-安装包会选择正确的 macOS、Linux 或 Windows 二进制文件，校验固定的 SHA-256 摘要，并
-提供 `purrcode` 和 `purrcoded` 两个命令。
+### Windows
 
-### macOS 和 Linux 安装脚本
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.9.0/scripts/install.sh | sh
-```
-
-脚本会使用 `SHA256SUMS` 校验发布归档，并默认安装到 `~/.local/bin`。可通过
-`PURRCODE_INSTALL_DIR` 指定其他目录。
+从[最新发布](https://github.com/Weilin0723/PurrCode/releases/latest)下载并解压
+`purrcode-x86_64-pc-windows-msvc.zip`。
 
 ### 从源码构建
 
-需要 Rust 1.88 或更高版本：
+需要 Rust 1.88 或更高版本、Git 以及对应平台的构建工具：
 
 ```bash
-cargo install --locked --path crates/purrcode-cli
-cargo install --locked --path crates/purrcode-daemon
+# 克隆并构建全部（CLI、daemon 和原生 IDE）
+git clone https://github.com/Weilin0723/PurrCode.git
+cd PurrCode
+cargo build --release
+
+# 二进制文件位于 target/release/：
+#   purrcode        — CLI + 终端 Workbench + IDE 启动器
+#   purrcoded       — 后台 daemon
 ```
+
+开发时使用 `cargo build` 生成调试二进制文件。建议实际使用时执行 `cargo build --release`——调试模式下 IDE 启动明显更慢，因为 egui 渲染未优化。
 
 ## 三步开始使用
 
 ```bash
-# 1. 发现本地模型供应商并创建安全默认配置
+# 1. 发现本地模型供应商、创建安全默认配置并启动 daemon
 purrcode init
 
 # 2. 进入项目仓库
 cd your-project
 
-# 3. 打开图形化 Studio（或使用 `purrcode tui`）
-purrcode ui
+# 3. 打开终端 Workbench —— 或打开原生桌面 IDE
+purrcode                  # 终端 Workbench
+purrcode ide              # 原生桌面 IDE（当前目录）
+purrcode ide --repository /path/to/project   # 指定仓库路径打开 IDE
 ```
 
-在界面内使用 `/connect` 即可发现 Ollama 或 LM Studio，也可以配置远程供应商，无需手动
-编辑 TOML。凭据存储在操作系统密钥库中，不会进入模型上下文或工具进程。
+### 打开 IDE
 
-使用 `/connect import` 可粘贴 Python、JavaScript、cURL、JSON、YAML、TOML 或 dotenv
-示例。PurrCode 只解析、不执行；提取出的密钥只短暂保存在内存中，保存前必须转换为钥匙串或
-环境变量引用。
+```bash
+# 命令行
+purrcode ide                          # 在当前目录打开 IDE
+purrcode ide --repository "$PWD"      # 显式指定仓库路径
+purrcode ide --session <UUID> --repository "$PWD"  # 恢复指定会话
 
-## v0.9 更新
+# 在终端 Workbench 中
+/ide                                  # 打开 IDE 并附加到当前会话
+```
 
-- **默认进入终端：** 直接运行 `purrcode` 打开终端 Workbench，不会意外弹出浏览器。
-- **一键打开 Studio：** `purrcode studio`（`purrcode ui` 为兼容别名）；在 Workbench 内
-  按 `Ctrl+Shift+S` 或输入 `/studio` 即可打开同一会话的图形视图，不会另起会话。
-- **两个客户端都有真实终端：** Workbench 新增终端界面（`Ctrl+T`），按用途命名的标签页、
-  人工接管与交还、按键直达进程；只有 `Esc`、`Tab`、`Ctrl+W` 由界面本身占用。转义序列被
-  解释而非剥离，因此清屏、进度条与彩色测试摘要都能正常呈现。Studio 只传输自上一帧以来
-  新产生的字节，不再每秒重发十余次完整记录。
-- **可真正选择的模式：** `Ctrl+K` / `/mode` 切换 Ask、Plan、Build、Review；`/permission`
-  切换 Ask、Auto、Full Access。两者都显示在标题栏并随会话下发，因此只读模式是 daemon
-  强制执行的约束而非提示。Full Access 不会授予进程本就没有的任何权限，界面会明确说明。
-- **NVIDIA NIM 一等支持：** 初始化时自动检测 `NVIDIA_API_KEY`，从 NIM 端点枚举模型。
-- **基于证据的模型选择：** 按词元而非子串解析名称，按主机内存预算而非「越大越好」判断
-  体积，已验证的工具调用能力优先于任何名称信号，且排序完全确定。
-- **统一的呈现契约：** `GET /v1/sessions/{id}/activity`、`/validation`、`/summary`
-  使客户端不再各自解读事件日志。`Unavailable`、`Skipped`、`Cancelled` 与 `Passed`
-  严格区分，未运行的验证永远不会显示为成功。
-- **计划评审是一次对话：** Plan 模式在计划处暂停，并继续接受回复。说明要改什么，计划
-  会被改写为带编号的新修订版并再次暂停，可以往复任意多轮，任何一轮都不会写入磁盘。
-  确定之后用 `Build this plan`（或 `/resume`）在同一会话内开始执行。只能回答「是」的
-  评审不是评审：过去要改一个步骤，只能重开会话并重新描述整个任务。
-- **任务未提及文件时也有仓库上下文：** 任务索引按文件名选取，因此与任何文件都没有共同
-  词的目标——也就是绝大多数目标——什么都索引不到，模型只能凭空规划。现在当选取结果为空
-  时，会在同样的预算内退回到索引仓库源文件；明确指定了文件的任务仍然只限定在该文件。
+IDE 和终端 Workbench 共享同一个 daemon 会话，可以随时切换——TUI 中输入 `/ide` 打开桌面窗口，`purrcode resume --tui` 重新打开终端视图，任何方向都不会丢失数据。
 
-## v0.8 更新
+IDE 是纯 Rust 原生桌面应用（`eframe`/`egui`）。它不会打开浏览器，不依赖 VS Code / Electron / Tauri，并作为独立进程运行（macOS 和 Windows 要求桌面事件循环拥有主线程）。
 
-- **安全的图形化 Studio：** `purrcode ui` 启动仅绑定 loopback 的认证应用；daemon 凭据
-  始终保留在服务端，用户提交任务之前不会触发模型生成。
-- **持久化工程 Workbench：** 对话、活动、diff、验证和精确证据均从 daemon 持久状态恢复，
-  且不会展示隐藏的模型推理。
-- **真实终端工作区：** 原生 PTY／ConPTY 会话支持标签、有限转录重放、缩放、detach、停止，
-  以及带 generation 校验的人机控制权切换。
-- **基于证据的环境诊断：** 有界仓库／主机检查识别所需工具链并记录真实版本探测；缺失工具
-  会明确报告，绝不会冒充成功。
-- **自动测试修复：** 测试编排器识别主流构建系统，持久化精确授权的验证操作，分类失败并
-  路由有限修复；只有全部必要的最终证据通过后才允许完成。
-
-## v0.7 更新
-
-- **可复现的安全评估：** 版本化 benchmark 通过生产 PawGate 与 Claw 路径运行，校验预期
-  拦截操作和禁止副作用，并报告 Safe Autonomy Rate。
-- **可验证证据：** trace 与 explain 命令展示持久化决策；原子写入、脱敏的证据包可以在
-  不执行副作用的情况下离线检查、验证和重放。
-- **真实的恢复测试：** 对持久化、索引、影响收集和导出注入失败，确保中断或不确定状态
-  不会被报告为成功。
-- **更安全的 Provider 接入：** OpenAI 兼容请求示例只解析、不执行；密钥不会进入保存的
-  配置；手动设置会分别要求 Base URL、认证引用和 Model ID。
-- **资源感知的模型切换：** `/models` 提供可交互选择器并持久化选择；当内存或资格证据不
-  支持当前模型时，会明确建议更小的模型。
-- **一致且可复制的 TUI：** 明暗主题背景仅使用纯白或纯黑，语义颜色保持一致；失败后的
-  模型输出不会消失，并支持 macOS Terminal 原生拖选复制。
-
-## v0.6 更新
-
-- **类型化仓库读取：** 文件、目录、搜索和只读 Git 操作从模型 schema 到 PawGate、Claw
-  始终使用结构化操作；不安全路径和含糊的旧命令会在授权前安全拒绝。
-- **确定性会话状态：** 单一 reducer 校验所有生命周期转换，并拒绝过期或不匹配的审批，
-  不会破坏当前会话。
-- **可靠的完成输出：** 纯建议任务会将具体编号计划保存为持久输出；执行任务只依据已验证
-  的工具结果继续，并保留真实失败状态。
-- **可用的长对话：** 助手文本按时间线宽度换行，时间线支持键盘和鼠标滚动并自动跟随最新
-  活动，卡片可通过点击、Space 或 E 展开。
-- **干净的流式重试：** 重试会替换不完整尝试，不再重复拼接推理文本，也不会停留在过期
-  的流式状态。
-
-## v0.5 更新
-
-- **可靠的 Provider 路由：** 已保存的钥匙串凭据、远程 Provider 路由、低内存 Ollama
-  默认值和 NVIDIA NIM 有界生成探测都会使用正确的配置与模型。
-- **明确的会话恢复：** 启动时会先要求选择继续会话、只读查看历史或新建会话；已经结束的
-  会话不会被静默重放。
-- **审批后自动续跑：** 持久化审批边界会等待上一个 daemon lease 释放；无效审批不会破坏
-  会话状态；已批准的操作执行后，智能体会自动继续下一步。
-- **更清晰的终端工作流：** 默认使用纯黑背景和高对比度文字，始终显示当前 Provider/模型；
-  Space 或 E 可展开时间线详情，终端选择内容仍可复制。
-- **真实流式体验：** 内容增量、Provider 阶段和持久化审计使用三个独立的有界通道；重连
-  恢复快照，取消时保留 partial 输出。
-- **资源感知的本地模型：** 启动时不会生成内容或加载模型。Ollama 默认使用原生接口；推荐
-  只依据已观察的资格证据和内存状态；低内存设备默认单请求并在结束后卸载。
-- **受治理的能力发现：** 优先复用已安装且合格的 Skill。公开搜索、固定提交下载、动态资格
-  验证、安装和每次 MCP 调用都需要独立的精确 PawGate 授权。
-- **延迟上下文：** 启动时 Tier 0 只读取元数据；提交任务后才运行 Tier 1；有界 Tier 2 会在
-  生成、内存压力或响应变慢时暂停。
-
-常用界面命令：
+在 TUI 内使用 `/connect` 即可发现 Ollama 或 LM Studio，也可以配置远程供应商，无需手动编辑
+TOML。凭据存储在操作系统密钥库中，不会进入模型上下文或工具进程。
 
 ```text
-/connect import
-/model recommend
-/model qualify <model>
-/model loaded
-/model unload <model>
-/skills search <query>
-/mcp search <query>
-/capability add <description>
+/connect          发现并配置模型供应商
+/connect import   粘贴 Python、JavaScript、cURL、JSON、YAML、TOML 或 dotenv 示例
+/mode             切换任务模式：Ask、Plan、Build、Review
+/permission       切换权限模式：Ask、Auto、Full Access
+/ide              打开原生桌面 IDE 并附加到当前会话
 ```
-
-## 运行时模型
-
-```text
-模型提议
-  → PawGate 策略与独立判断
-  → 持久化的精确操作授权
-  → Claw 再次校验并隔离执行
-  → 验证证据
-  → 审查后应用或回滚
-```
-
-| 组件 | 职责 |
-|---|---|
-| **PawGate** | 确定性策略、语义审查、约束和人工审批关卡 |
-| **Claw** | 在 worktree 范围的操作系统沙箱中执行，并清理凭据环境 |
-| **Whisker** | 有界上下文检索、敏感文件过滤和风险信号 |
-| **NineLives** | 持久化事件、检查点、重启协调和回滚 |
-
-## 支持的界面
-
-- 以对话为中心的 Ratatui 终端和无界面 CLI
-- 使用服务端事件的认证回环 daemon
-- VS Code 扩展
-- TypeScript 和 Python 客户端
-- MCP 与持久化技能主机
-- Ollama、LM Studio、OpenAI 兼容接口和企业供应商
 
 ## 常用命令
 
 ```bash
-purrcode plan "为订单 API 添加分页"
+# 单次命令
+purrcode plan "为订单 API 添加分页"          # 先规划，不写任何内容
 purrcode run "实现分页并更新测试"
-purrcode sessions
-purrcode review
-purrcode approve
-purrcode resume
-purrcode rollback
+
+# 会话管理
+purrcode sessions                           # 查看活动会话
+purrcode resume                             # 恢复已暂停的会话（终端）
+purrcode ide --session <UUID> --repository "$PWD"  # 恢复已暂停的会话（IDE）
+purrcode rollback                           # 回滚隔离工作
+
+# 审查与控制
+purrcode review                             # 查看当前 diff
+purrcode approve                            # 批准提议的操作
+purrcode doctor                             # 环境诊断
+
+# IDE
+purrcode ide                          # 打开原生桌面 IDE
+purrcode gui                          # 同 purrcode ide
 ```
+
+Plan 模式在计划处暂停并继续接受回复——说明要改什么，计划会被改写为带编号的新修订版并再次暂停，
+可以往复任意多轮，任何一轮都不会写入磁盘。确定之后用 `Build this plan`（或 `/resume`）在同一
+会话内开始执行。
+
+## v1.0 亮点
+
+- **原生桌面 IDE**：对话 Workbench、artifact 卡片、语义活动、composer 控件、语法高亮编辑器，
+  以及停靠的 Diff/Tests/Terminal/Problems/Output 面板——全部由 PurrCode 自己绘制。
+- **统一的会话状态**：TUI、IDE、CLI 共享同一个由 daemon 持有的权威会话模型。
+- **可真正选择的模式**：`Ctrl+K` / `/mode` 切换 Ask、Plan、Build、Review；`/permission` 切换
+  Ask、Auto、Full Access。只读模式是 daemon 强制执行的约束而非提示。
+- **两个客户端中的真正终端**：IDE 复用 daemon 的跨平台 PTY，支持增量输出、输入、停止和
+  ownership generation。
+- **自适应工作流编排**：基于任务证据选择 Direct/Standard/Ultra 工作流。
+- **多种安全凭据**：Provider/模型/密钥路由，带预算强制与用量核算。
+- **GitHub 原生交付**：branch、commit、push、pull request 和 checks。
+- **NVIDIA NIM 一等支持**：初始化时自动检测 `NVIDIA_API_KEY`。
+- **基于证据的模型选择**：名称按词元解析、体积按主机内存判断、已验证的工具调用能力优先。
+- **统一的呈现契约**：类型化的 activity/validation/summary 端点，客户端不再各自解读持久化
+  事件日志。
 
 ## 安全与验证
 
-PurrCode 在 macOS 上使用 `sandbox-exec`，在受支持的 Linux 主机上使用 Bubblewrap。
-较弱的主机隔离能力会被如实标记，绝不会伪装成完整沙箱。在敏感仓库中使用前，请阅读
+PurrCode 在 macOS 上使用 `sandbox-exec`，在受支持的 Linux 主机上使用 Bubblewrap。较弱的主机
+隔离能力会被如实标记，绝不会伪装成完整沙箱。智能体的修改在 PurrCode 托管的独立 Git worktree
+中进行；你已有的未提交内容绝不会被静默 stash、覆盖或丢弃。在敏感仓库中使用前，请阅读
 [安全模型](docs/security.md)、[架构说明](docs/architecture.md)和
 [生产验收审计](docs/production-acceptance.md)。
 
@@ -243,7 +198,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 npm test --prefix packages/purrcode
 npm test --prefix sdk/typescript
-npm test --prefix apps/vscode-extension
 PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
 ```
 
@@ -256,13 +210,11 @@ PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests -v
 - [恢复](docs/recovery.md)
 - [故障排查](docs/troubleshooting.md)
 - [实现状态](docs/implementation-status.md)
-- [v0.5 可用性恢复证据](docs/reports/v0.5-usability-recovery.md)
-- [v0.5.2 Provider 路由修复证据](docs/reports/v0.5.2-provider-routing-hotfix.md)
-- [v0.4 重构验收](docs/product-redesign-acceptance.md)
-- [验证报告](docs/reports/)
+- [Wiki](https://github.com/Weilin0723/PurrCode/wiki) —— 指南、模式、v1.0 IDE 与发布说明
+- [PurrCode v1.0 Master PRD](docs/prd/PurrCode_v1.0_Codex_Master_PRD.md)
 
-PurrCode 仍在积极开发中。请查看实现状态和发布说明，确认已经验证的能力以及仍待完成的
-平台专项验收。
+PurrCode 仍在积极开发中。请查看实现状态和发布说明，确认已经验证的能力以及仍待完成的平台专项
+验收。
 
 ## 许可证
 

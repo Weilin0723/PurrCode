@@ -335,11 +335,18 @@ fn compute_digest(events: &[BundleEvent]) -> String {
 fn event_type_name(event: &SessionEvent) -> &'static str {
     match event {
         SessionEvent::SessionCreated { .. } => "session_created",
+        SessionEvent::SessionControlsUpdated { .. } => "session_controls_updated",
+        SessionEvent::WorkflowPlanCreated { .. } => "workflow_plan_created",
+        SessionEvent::UsageRecorded { .. } => "usage_recorded",
         SessionEvent::ConversationMessageAdded { .. } => "conversation_message_added",
         SessionEvent::WorktreeCreated { .. } => "worktree_created",
         SessionEvent::SubmodulesPrepared { .. } => "submodules_prepared",
         SessionEvent::PlanCreated { .. } => "plan_created",
         SessionEvent::PlanRevised { .. } => "plan_revised",
+        SessionEvent::SpecBundleRecorded { .. } => "spec_bundle_recorded",
+        SessionEvent::TaskGraphRecorded { .. } => "task_graph_recorded",
+        SessionEvent::TaskStatusChanged { .. } => "task_status_changed",
+        SessionEvent::EvidenceLinked { .. } => "evidence_linked",
         SessionEvent::ContextCompacted { .. } => "context_compacted",
         SessionEvent::SessionPaused { .. } => "session_paused",
         SessionEvent::SessionResumed => "session_resumed",
@@ -391,6 +398,7 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::ResearchSearchPerformed { .. } => "research_search_performed",
         SessionEvent::TerminalActionProposed { .. } => "terminal_action_proposed",
         SessionEvent::TerminalJudgmentRecorded { .. } => "terminal_judgment_recorded",
+        SessionEvent::CompletionRepairRecorded { .. } => "completion_repair_recorded",
     }
 }
 
@@ -545,14 +553,18 @@ mod tests {
         // Authoritative export: ALL events are present. State-bearing events
         // (session_created, session_completed, plan_created, etc.) are NOT
         // dropped. Sensitive FIELDS within them are redacted.
-        assert!(bundle
-            .events
-            .iter()
-            .any(|e| e.event_type == "session_created"));
-        assert!(bundle
-            .events
-            .iter()
-            .any(|e| e.event_type == "session_completed"));
+        assert!(
+            bundle
+                .events
+                .iter()
+                .any(|e| e.event_type == "session_created")
+        );
+        assert!(
+            bundle
+                .events
+                .iter()
+                .any(|e| e.event_type == "session_completed")
+        );
 
         // The session_created event must have its `repository` field redacted
         // (per the documented redaction policy for that event type).
@@ -583,28 +595,38 @@ mod tests {
             .iter()
             .find(|e| e.event_type == "action_proposed")
             .expect("action_proposed event must be present");
-        assert!(action_proposed
-            .redacted_fields
-            .iter()
-            .any(|f| f == "data.action.working_directory"));
-        assert!(action_proposed
-            .redacted_fields
-            .iter()
-            .any(|f| f == "data.action.environment"));
+        assert!(
+            action_proposed
+                .redacted_fields
+                .iter()
+                .any(|f| f == "data.action.working_directory")
+        );
+        assert!(
+            action_proposed
+                .redacted_fields
+                .iter()
+                .any(|f| f == "data.action.environment")
+        );
 
         // State-bearing execution events are preserved.
-        assert!(bundle
-            .events
-            .iter()
-            .any(|e| e.event_type == "worktree_created"));
-        assert!(bundle
-            .events
-            .iter()
-            .any(|e| e.event_type == "execution_started"));
-        assert!(bundle
-            .events
-            .iter()
-            .any(|e| e.event_type == "execution_finished"));
+        assert!(
+            bundle
+                .events
+                .iter()
+                .any(|e| e.event_type == "worktree_created")
+        );
+        assert!(
+            bundle
+                .events
+                .iter()
+                .any(|e| e.event_type == "execution_started")
+        );
+        assert!(
+            bundle
+                .events
+                .iter()
+                .any(|e| e.event_type == "execution_finished")
+        );
     }
 
     #[test]

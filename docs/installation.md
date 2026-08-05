@@ -3,7 +3,7 @@
 ## Signed release (macOS and Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v0.8.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v1.0.0/scripts/install.sh | sh
 ```
 
 The installer detects the host platform, downloads both PurrCode binaries, verifies the archive
@@ -16,7 +16,7 @@ another destination. Windows users should download and extract the
 Node.js 18 or newer can install the cross-platform launcher directly from the GitHub release:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/download/v0.8.0/purrcode-0.8.0.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/latest/download/purrcode-1.0.0.tgz
 ```
 
 The package downloads only the matching native archive, checks it against the digest pinned inside
@@ -39,7 +39,8 @@ purrcode init
 
 `purrcode init` discovers Ollama or LM Studio, writes owner-local configuration and persistence,
 creates a managed Git workspace, starts the authenticated loopback daemon, and verifies readiness.
-Run `purrcode` to open the TUI.
+Run `purrcode ide --repository PATH` to open the native PurrCode desktop IDE, or
+`purrcode` to open the terminal Workbench.
 
 ## Release packages
 

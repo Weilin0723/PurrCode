@@ -2,7 +2,7 @@
 
 use crate::activity::{self, WorkbenchProgress};
 use crate::timeline::{
-    cards_from_events, collapsed_card_from_event, pending_action_from_events, TimelineCard,
+    TimelineCard, cards_from_events, collapsed_card_from_event, pending_action_from_events,
 };
 use chrono::{DateTime, Utc};
 use purrcode_runtime_core::ConversationMode;

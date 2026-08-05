@@ -10,10 +10,10 @@
 //! surface offers refresh instead of approve, so the user cannot authorize an
 //! action the client can no longer vouch for.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
-use ratatui::Frame;
 
 use crate::approval::ApprovalRequest;
 use crate::design::{Emphasis, Role, Symbols, Tokens};

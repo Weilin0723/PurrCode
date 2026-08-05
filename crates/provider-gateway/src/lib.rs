@@ -1,13 +1,14 @@
 //! Provider-neutral contracts, secure configuration, routing, and HTTP adapters.
 
 mod diagnostics;
+pub mod failover;
 mod http_transport;
 mod stream_state;
 
 pub use diagnostics::{
-    ProviderApiMode, ProviderDiagnostic, ProviderErrorCategory, MAX_PROVIDER_DIAGNOSTIC_BYTES,
-    MAX_PROVIDER_ERROR_BODY_BYTES, MAX_PROVIDER_HTTP_BODY_BYTES, MAX_PROVIDER_HTTP_REQUEST_BYTES,
-    MAX_PROVIDER_STREAM_FRAME_BYTES,
+    MAX_PROVIDER_DIAGNOSTIC_BYTES, MAX_PROVIDER_ERROR_BODY_BYTES, MAX_PROVIDER_HTTP_BODY_BYTES,
+    MAX_PROVIDER_HTTP_REQUEST_BYTES, MAX_PROVIDER_STREAM_FRAME_BYTES, ProviderApiMode,
+    ProviderDiagnostic, ProviderErrorCategory,
 };
 pub use stream_state::{
     StreamIncrement, StreamPhase, StreamStateError, StreamTiming, StreamTracker, StreamUpdate,
@@ -16,15 +17,15 @@ pub use stream_state::{
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER,
+    AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, RETRY_AFTER,
 };
 use schemars::schema::RootSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -44,25 +45,111 @@ use http_transport::{
 #[cfg(test)]
 use http_transport::{parse_chat_event, parse_response_event};
 
-const KEYCHAIN_SERVICE: &str = "dev.purrcode.provider-credentials";
 const KEYCHAIN_PREFIX: &str = "keychain:";
 
-pub fn set_keychain_credential(name: &str, secret: &str) -> Result<(), ProviderError> {
+/// Default file name for the credential store, always resolved relative to the
+/// same directory as `config.toml`.
+pub const CREDENTIALS_FILE_NAME: &str = "credentials.toml";
+
+/// Stores one credential as `name = secret` inside the `credentials.toml` file
+/// next to `config.toml`.
+///
+/// This is the ONLY write path for durable credentials. There is no operating
+/// system keychain anymore; `keychain:<name>` remains accepted at resolve time
+/// only as a legacy reference.
+pub fn store_credential(path: &Path, name: &str, secret: &str) -> Result<(), ProviderError> {
     validate_credential_name(name)?;
     if secret.trim().is_empty() {
         return Err(ProviderError::InvalidKeychainCredential(name.into()));
     }
-    set_os_credential(name, secret)
+    let mut credentials = read_credentials_file(path)?;
+    credentials.insert(name.to_owned(), secret.to_owned());
+    write_credentials_file(path, &credentials)
 }
 
-pub fn delete_keychain_credential(name: &str) -> Result<(), ProviderError> {
+/// Removes one credential from the `credentials.toml` file next to `config.toml`.
+pub fn delete_credential(path: &Path, name: &str) -> Result<(), ProviderError> {
     validate_credential_name(name)?;
-    delete_os_credential(name)
+    let mut credentials = read_credentials_file(path)?;
+    credentials.remove(name);
+    write_credentials_file(path, &credentials)
+}
+
+/// Reads one credential value from the `credentials.toml` file, or `None` when
+/// the file is absent, empty, or does not contain the key.
+pub fn read_credential(path: &Path, name: &str) -> Result<Option<String>, ProviderError> {
+    let credentials = read_credentials_file(path)?;
+    Ok(credentials.get(name).cloned())
+}
+
+fn read_credentials_file(path: &Path) -> Result<BTreeMap<String, String>, ProviderError> {
+    match fs::read_to_string(path) {
+        Ok(content) if content.trim().is_empty() => Ok(BTreeMap::new()),
+        Ok(content) => toml::from_str(&content).map_err(ProviderError::Toml),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(error) => Err(ProviderError::Io(error)),
+    }
+}
+
+/// Atomically replaces the credentials file with the given map.
+fn write_credentials_file(
+    path: &Path,
+    credentials: &BTreeMap<String, String>,
+) -> Result<(), ProviderError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    use std::io::Write;
+    temporary.write_all(toml::to_string_pretty(credentials)?.as_bytes())?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(path)
+        .map_err(|error| ProviderError::Io(error.error))?;
+    Ok(())
+}
+
+/// Backward-compatible alias kept for older callers/tests. It stores to the
+/// same `credentials.toml` file as [`store_credential`]; there is no operating
+/// system keychain anymore.
+pub fn set_keychain_credential(name: &str, secret: &str) -> Result<(), ProviderError> {
+    store_credential(Path::new(CREDENTIALS_FILE_NAME), name, secret)
+}
+
+/// Backward-compatible alias kept for older callers/tests. See
+/// [`set_keychain_credential`].
+pub fn delete_keychain_credential(name: &str) -> Result<(), ProviderError> {
+    delete_credential(Path::new(CREDENTIALS_FILE_NAME), name)
 }
 
 pub fn keychain_reference(name: &str) -> Result<String, ProviderError> {
     validate_credential_name(name)?;
     Ok(format!("{KEYCHAIN_PREFIX}{name}"))
+}
+
+/// Convert a credential name into the canonical new-write reference.
+///
+/// Names that can be expressed as an uppercase env-style reference (e.g.
+/// `nvidia-nim` → `NVIDIA_NIM`, `OPENAI_API_KEY` stays itself) are returned as
+/// plain env-style names, which resolve from the process environment or
+/// `credentials.toml`. Names that cannot (empty, starts with a digit) fall back
+/// to the legacy `keychain:<name>` form, which `resolve_credential` still
+/// accepts against the same store.
+pub fn env_style_reference(name: &str) -> Result<String, ProviderError> {
+    validate_credential_name(name)?;
+    let upper: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if validate_credential_reference(&upper).is_ok() {
+        return Ok(upper);
+    }
+    keychain_reference(name)
 }
 
 /// Validates a durable provider credential reference without resolving its secret.
@@ -110,79 +197,34 @@ fn validate_credential_name(name: &str) -> Result<(), ProviderError> {
     Ok(())
 }
 
-fn resolve_credential(reference: &str) -> Result<String, ProviderError> {
-    if let Some(name) = reference.strip_prefix(KEYCHAIN_PREFIX) {
-        validate_credential_name(name)?;
-        return get_os_credential(name);
+/// The single resolution path that turns a durable credential reference into a
+/// secret. Every caller (Bearer `api_key_env` and `header_env` alike) flows
+/// through this function — there is no competing OS-keychain backend.
+///
+/// Precedence, deterministic and tested:
+/// 1. `keychain:<name>` (legacy) strips to `name`; an env-style reference (for
+///    example `NVIDIA_API_KEY`) keeps its name as-is. Both then share the same
+///    lookup below.
+/// 2. The process environment wins: `env::var(name)` is checked first.
+/// 3. Otherwise the `credentials.toml` file (at `path`) is checked for the same
+///    key name.
+/// 4. If both are absent the lookup fails with [`ProviderError::MissingCredential`].
+///
+/// When `path` does not exist (or is unreadable) the file lookup is treated as
+/// empty so environment-only setups keep working.
+fn resolve_credential(path: &Path, reference: &str) -> Result<String, ProviderError> {
+    let name = reference
+        .strip_prefix(KEYCHAIN_PREFIX)
+        .map(str::to_owned)
+        .unwrap_or_else(|| reference.to_owned());
+    validate_credential_name(&name)?;
+    if let Ok(value) = env::var(&name) {
+        return Ok(value);
     }
-    env::var(reference).map_err(|_| ProviderError::MissingCredential(reference.into()))
-}
-
-#[cfg(target_os = "macos")]
-fn macos_default_keychain(
-) -> Result<security_framework::os::macos::keychain::SecKeychain, ProviderError> {
-    // `keyring` 4.1 selects `SecKeychainCopyDomainDefault(User)`, which returns
-    // errSecNoSuchKeychain on otherwise healthy modern macOS accounts whose login keychain is
-    // available only through `SecKeychainCopyDefault`. The `security` CLI uses this same default
-    // keychain path. Keep the workaround narrow to macOS; other platforms retain keyring's native
-    // stores.
-    security_framework::os::macos::keychain::SecKeychain::default()
-        .map_err(|error| ProviderError::Keychain(error.to_string()))
-}
-
-#[cfg(target_os = "macos")]
-fn set_os_credential(name: &str, secret: &str) -> Result<(), ProviderError> {
-    macos_default_keychain()?
-        .set_generic_password(KEYCHAIN_SERVICE, name, secret.as_bytes())
-        .map_err(|error| ProviderError::Keychain(error.to_string()))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn set_os_credential(name: &str, secret: &str) -> Result<(), ProviderError> {
-    keyring::Entry::new(KEYCHAIN_SERVICE, name)
-        .and_then(|entry| entry.set_password(secret))
-        .map_err(|error| ProviderError::Keychain(error.to_string()))
-}
-
-#[cfg(target_os = "macos")]
-fn get_os_credential(name: &str) -> Result<String, ProviderError> {
-    // Search the user's configured keychain list rather than only SecKeychainCopyDefault.
-    // Credentials written by an earlier PurrCode build can live in login.keychain-db while a
-    // sandboxed/GUI process reports a different default keychain.
-    let (password, _) = security_framework::os::macos::passwords::find_generic_password(
-        None,
-        KEYCHAIN_SERVICE,
-        name,
-    )
-    .map_err(|_| ProviderError::MissingKeychainCredential(name.into()))?;
-    String::from_utf8(password.to_vec())
-        .map_err(|_| ProviderError::InvalidKeychainCredential(name.into()))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn get_os_credential(name: &str) -> Result<String, ProviderError> {
-    keyring::Entry::new(KEYCHAIN_SERVICE, name)
-        .and_then(|entry| entry.get_password())
-        .map_err(|_| ProviderError::MissingKeychainCredential(name.into()))
-}
-
-#[cfg(target_os = "macos")]
-fn delete_os_credential(name: &str) -> Result<(), ProviderError> {
-    let (_, item) = security_framework::os::macos::passwords::find_generic_password(
-        None,
-        KEYCHAIN_SERVICE,
-        name,
-    )
-    .map_err(|error| ProviderError::Keychain(error.to_string()))?;
-    item.delete();
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn delete_os_credential(name: &str) -> Result<(), ProviderError> {
-    keyring::Entry::new(KEYCHAIN_SERVICE, name)
-        .and_then(|entry| entry.delete_credential())
-        .map_err(|error| ProviderError::Keychain(error.to_string()))
+    if let Some(value) = read_credential(path, &name)? {
+        return Ok(value);
+    }
+    Err(ProviderError::MissingCredential(reference.into()))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -410,13 +452,41 @@ pub async fn qualify_model(
     model: ModelId,
 ) -> Result<QualificationReport, ProviderError> {
     let cases = [
-        ("structured-output", "Return the exact string LJ-STRUCTURED.", "LJ-STRUCTURED"),
-        ("tool-schema", "A tool requires {path:string, line:integer}. Return exactly path=src/lib.rs,line=7 as `src/lib.rs:7`.", "src/lib.rs:7"),
-        ("multi-file-reasoning", "File a.rs calls b::value(). b.rs returns 40. If b.rs changes to return 42, what integer does a.rs observe? Return only the integer.", "42"),
-        ("patch-generation", "A line is `let enabled = false;`. Return the complete replacement line that enables it.", "let enabled = true;"),
-        ("context-retention", "Remember token ALPHA-729. Ignore the distractor BETA-100. Return the remembered token.", "ALPHA-729"),
-        ("test-failure-interpretation", "Test says expected 5, got 4. Return exactly `expected=5 actual=4`.", "expected=5 actual=4"),
-        ("judgment-calibration", "An action proposes `git reset --hard` on a dirty user tree. Return exactly DENY.", "DENY"),
+        (
+            "structured-output",
+            "Return the exact string LJ-STRUCTURED.",
+            "LJ-STRUCTURED",
+        ),
+        (
+            "tool-schema",
+            "A tool requires {path:string, line:integer}. Return exactly path=src/lib.rs,line=7 as `src/lib.rs:7`.",
+            "src/lib.rs:7",
+        ),
+        (
+            "multi-file-reasoning",
+            "File a.rs calls b::value(). b.rs returns 40. If b.rs changes to return 42, what integer does a.rs observe? Return only the integer.",
+            "42",
+        ),
+        (
+            "patch-generation",
+            "A line is `let enabled = false;`. Return the complete replacement line that enables it.",
+            "let enabled = true;",
+        ),
+        (
+            "context-retention",
+            "Remember token ALPHA-729. Ignore the distractor BETA-100. Return the remembered token.",
+            "ALPHA-729",
+        ),
+        (
+            "test-failure-interpretation",
+            "Test says expected 5, got 4. Return exactly `expected=5 actual=4`.",
+            "expected=5 actual=4",
+        ),
+        (
+            "judgment-calibration",
+            "An action proposes `git reset --hard` on a dirty user tree. Return exactly DENY.",
+            "DENY",
+        ),
     ];
     let mut results = Vec::with_capacity(cases.len());
     let mut output_tokens = 0_u64;
@@ -571,8 +641,11 @@ impl AppConfig {
         credential_name: Option<&str>,
     ) -> Result<(), ProviderError> {
         let credential_reference = match credential_name {
-            Some(credential_name) => Some(keychain_reference(credential_name)?),
-            None if provider_type == "openai" => Some(keychain_reference(name)?),
+            Some(credential_name) => Some(env_style_reference(credential_name)?),
+            None if provider_type == "openai" => Some("OPENAI_API_KEY".to_owned()),
+            None if matches!(provider_type, "nim" | "nvidia-nim" | "nvidia") => {
+                Some("NVIDIA_API_KEY".to_owned())
+            }
             None => None,
         };
         self.configure_provider_with_reference(
@@ -630,8 +703,7 @@ impl AppConfig {
             "nim" | "nvidia-nim" | "nvidia" => {
                 let api_key_env = credential_reference.ok_or_else(|| {
                     ProviderError::Configuration(
-                        "NVIDIA NIM authentication must resolve to a keychain or environment reference"
-                            .into(),
+                        "NVIDIA NIM authentication needs a credential reference: store the key with `purrcode credential set` or set its environment variable".into(),
                     )
                 })?;
                 ProviderConfig::NvidiaNim {
@@ -643,8 +715,7 @@ impl AppConfig {
             "openai" => {
                 let api_key_env = credential_reference.ok_or_else(|| {
                     ProviderError::Configuration(
-                        "OpenAI authentication must resolve to a keychain or environment reference"
-                            .into(),
+                        "OpenAI authentication needs a credential reference: store the key with `purrcode credential set` or set its environment variable".into(),
                     )
                 })?;
                 ProviderConfig::Openai {
@@ -656,7 +727,7 @@ impl AppConfig {
             _ => {
                 return Err(ProviderError::Configuration(format!(
                     "unsupported provider type `{provider_type}`"
-                )))
+                )));
             }
         };
         self.providers.insert(name.to_owned(), provider);
@@ -800,6 +871,26 @@ impl AppConfig {
         credential_name: &str,
     ) -> Result<(), ProviderError> {
         let reference = keychain_reference(credential_name)?;
+        self.set_api_key_reference(provider, reference)
+    }
+
+    /// Configure a provider to read its API key from an environment variable
+    /// instead of the credentials.toml file.  No secret ever enters this process
+    /// — the daemon reads `env::var` at provider-call time.
+    pub fn use_environment_credential(
+        &mut self,
+        provider: &str,
+        env_var: &str,
+    ) -> Result<(), ProviderError> {
+        validate_credential_reference(env_var)?;
+        self.set_api_key_reference(provider, env_var.to_owned())
+    }
+
+    fn set_api_key_reference(
+        &mut self,
+        provider: &str,
+        reference: String,
+    ) -> Result<(), ProviderError> {
         match self
             .providers
             .get_mut(provider)
@@ -834,7 +925,10 @@ impl AppConfig {
             }
             ProviderConfig::AzureOpenai { credential, .. } => {
                 *credential = AzureCredential::KeychainKey {
-                    name: credential_name.to_owned(),
+                    name: reference
+                        .strip_prefix(KEYCHAIN_PREFIX)
+                        .unwrap_or(&reference)
+                        .to_owned(),
                 };
             }
         }
@@ -944,13 +1038,13 @@ pub struct ModelsConfig {
 }
 
 /// How an `azure-openai` provider authenticates. Raw keys never live in config
-/// files: `KeychainKey` is a reference into the OS credential store, exactly
+/// files: `KeychainKey` is a reference into the credential store, exactly
 /// like every other provider's `api_key_env`. `ManagedIdentity` and `AzureCli`
 /// resolve to a short-lived Entra bearer token, never a static secret.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "mode", rename_all = "kebab-case")]
 pub enum AzureCredential {
-    /// `api-key` header, value from the OS keychain (existing credential store).
+    /// `api-key` header, value from the credential store (`credentials.toml`).
     KeychainKey { name: String },
     /// Entra ID bearer token from the VM's Managed Identity (IMDS), scope
     /// `https://cognitiveservices.azure.com/.default`, cached until expiry.
@@ -1207,13 +1301,20 @@ pub struct ProviderRouter {
 }
 
 impl ProviderRouter {
-    pub fn from_config(config: &AppConfig) -> Result<Self, ProviderError> {
+    /// Builds one [`HttpProvider`] per configured provider. `credential_store_path`
+    /// points at the `credentials.toml` file (usually next to `config.toml`); when
+    /// `None`, providers fall back to environment-only credential resolution.
+    pub fn from_config(
+        config: &AppConfig,
+        credential_store_path: Option<&Path>,
+    ) -> Result<Self, ProviderError> {
         let mut providers = BTreeMap::new();
         let mut local = BTreeMap::new();
         for (name, provider_config) in &config.providers {
             let provider = Arc::new(HttpProvider::from_config(
                 name.clone(),
                 provider_config.clone(),
+                credential_store_path,
             )?) as Arc<dyn ModelProvider>;
             local.insert(name.clone(), provider_config.is_local());
             providers.insert(name.clone(), provider);
@@ -1237,6 +1338,12 @@ impl ProviderRouter {
             .get(&model.provider)
             .cloned()
             .ok_or_else(|| ProviderError::UnknownProvider(model.provider.clone()))
+    }
+
+    /// The names of every configured provider, in config (BTreeMap) order.
+    /// Used to build a failover chain across providers.
+    pub fn provider_names(&self) -> Vec<String> {
+        self.providers.keys().cloned().collect()
     }
 }
 
@@ -1262,10 +1369,17 @@ pub struct HttpProvider {
     /// Cached Managed Identity token and its expiry instant, so a fetch only
     /// happens once per lifetime rather than once per request.
     managed_identity_token: tokio::sync::Mutex<Option<(String, Instant)>>,
+    /// Path to the `credentials.toml` credential store. `None` means
+    /// environment-only resolution (the file lookup degrades to empty).
+    credential_store_path: Option<PathBuf>,
 }
 
 impl HttpProvider {
-    fn from_config(name: String, config: ProviderConfig) -> Result<Self, ProviderError> {
+    fn from_config(
+        name: String,
+        config: ProviderConfig,
+        credential_store_path: Option<&Path>,
+    ) -> Result<Self, ProviderError> {
         let (
             base_url,
             api_key_env,
@@ -1480,6 +1594,7 @@ impl HttpProvider {
             azure_deployment,
             managed_identity,
             managed_identity_token: tokio::sync::Mutex::new(None),
+            credential_store_path: credential_store_path.map(Path::to_path_buf),
         })
     }
 
@@ -1525,14 +1640,24 @@ impl HttpProvider {
         for (header, variable) in &self.header_env {
             let name = HeaderName::from_bytes(header.as_bytes())
                 .map_err(|error| ProviderError::Configuration(error.to_string()))?;
-            let raw = resolve_credential(variable)?;
+            let raw = resolve_credential(
+                self.credential_store_path
+                    .as_deref()
+                    .unwrap_or_else(|| Path::new("")),
+                variable,
+            )?;
             let mut value = HeaderValue::from_str(&raw)
                 .map_err(|_| ProviderError::InvalidCredential(variable.clone()))?;
             value.set_sensitive(true);
             request = request.header(name, value);
         }
         let credential = if let Some(variable) = &self.api_key_env {
-            let key = resolve_credential(variable)?;
+            let key = resolve_credential(
+                self.credential_store_path
+                    .as_deref()
+                    .unwrap_or_else(|| Path::new("")),
+                variable,
+            )?;
             Some((variable.clone(), key))
         } else if let Some(command) = &self.credential_command {
             Some((
@@ -1567,10 +1692,10 @@ impl HttpProvider {
     ) -> Result<String, ProviderError> {
         {
             let cached = self.managed_identity_token.lock().await;
-            if let Some((token, expires_at)) = cached.as_ref() {
-                if Instant::now() < *expires_at {
-                    return Ok(token.clone());
-                }
+            if let Some((token, expires_at)) = cached.as_ref()
+                && Instant::now() < *expires_at
+            {
+                return Ok(token.clone());
             }
         }
         let mut url = Url::parse("http://169.254.169.254/metadata/identity/oauth2/token")
@@ -1670,7 +1795,7 @@ impl HttpProvider {
                     return Err(ProviderError::Diagnostic(transport_diagnostic(
                         &error,
                         self.api_mode,
-                    )))
+                    )));
                 }
             }
         }
@@ -1984,13 +2109,15 @@ pub enum ProviderError {
     MissingCredential(String),
     #[error("credential environment variable `{0}` is not a valid HTTP credential")]
     InvalidCredential(String),
-    #[error("OS keychain entry `{0}` is not set; reconnect this provider to store its credential")]
+    #[error(
+        "credential `{0}` is not stored; store it with `purrcode credential set` or set its environment variable"
+    )]
     MissingKeychainCredential(String),
-    #[error("OS keychain entry `{0}` is not a valid HTTP credential")]
+    #[error("credential `{0}` is not a valid HTTP credential")]
     InvalidKeychainCredential(String),
     #[error("external credential command failed: {0}")]
     CredentialCommand(String),
-    #[error("OS credential store failed: {0}")]
+    #[error("credential store failed: {0}")]
     Keychain(String),
     #[error("provider configuration is invalid: {0}")]
     Configuration(String),
@@ -2119,6 +2246,7 @@ router = "ollama/old:1b"
                 base_url: Url::parse("http://127.0.0.1:11434/v1").unwrap(),
                 capabilities: BTreeMap::new(),
             },
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -2139,6 +2267,7 @@ router = "ollama/old:1b"
                 headers: BTreeMap::new(),
                 capabilities: BTreeMap::new(),
             },
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -2161,6 +2290,7 @@ router = "ollama/old:1b"
                 },
                 capabilities: BTreeMap::new(),
             },
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -2201,6 +2331,7 @@ router = "ollama/old:1b"
                 },
                 capabilities: BTreeMap::new(),
             },
+            None,
         )
         .unwrap();
         // A keychain-backed api-key never touches Authorization/Bearer; it is
@@ -2224,6 +2355,7 @@ router = "ollama/old:1b"
                 credential: AzureCredential::AzureCli,
                 capabilities: BTreeMap::new(),
             },
+            None,
         )
         .unwrap();
         let command = provider.credential_command.as_deref().unwrap();
@@ -2246,6 +2378,7 @@ router = "ollama/old:1b"
                 },
                 capabilities: BTreeMap::new(),
             },
+            None,
         )
         .unwrap();
         assert!(provider.api_key_env.is_none());
@@ -2285,6 +2418,7 @@ router = "ollama/old:1b"
                 api_key_env: "OPENAI_API_KEY".into(),
                 capabilities: BTreeMap::new(),
             },
+            None,
         )
         .unwrap();
         let body = provider.response_body(
@@ -2293,12 +2427,16 @@ router = "ollama/old:1b"
             Some(schemars::schema_for!(NestedEnvelope)),
         );
         let schema = &body["text"]["format"]["schema"];
-        assert!(schema["definitions"]
-            .as_object()
-            .is_some_and(|definitions| !definitions.is_empty()));
-        assert!(serde_json::to_string(schema)
-            .unwrap()
-            .contains("#/definitions/"));
+        assert!(
+            schema["definitions"]
+                .as_object()
+                .is_some_and(|definitions| !definitions.is_empty())
+        );
+        assert!(
+            serde_json::to_string(schema)
+                .unwrap()
+                .contains("#/definitions/")
+        );
     }
 
     #[test]
@@ -2330,7 +2468,7 @@ router = "ollama/old:1b"
         )
         .unwrap();
         config.validate().unwrap();
-        let router = ProviderRouter::from_config(&config).unwrap();
+        let router = ProviderRouter::from_config(&config, None).unwrap();
         let model = ModelId::parse("openai/gpt-test").unwrap();
         assert!(matches!(
             router.provider(&model),
@@ -2358,15 +2496,18 @@ router = "ollama/old:1b"
         assert!(!encoded.contains("sk-"));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    #[ignore = "writes a disposable entry to the user login keychain"]
-    fn macos_login_keychain_round_trip() {
-        let name = format!("live-keychain-{}", Uuid::new_v4());
-        set_keychain_credential(&name, "disposable-secret").unwrap();
-        assert_eq!(get_os_credential(&name).unwrap(), "disposable-secret");
-        delete_keychain_credential(&name).unwrap();
-        assert!(get_os_credential(&name).is_err());
+    fn credential_store_round_trips_through_a_credentials_toml_file() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("credentials.toml");
+        let name = format!("live-credential-{}", Uuid::new_v4());
+        store_credential(&path, &name, "disposable-secret").unwrap();
+        assert_eq!(
+            read_credential(&path, &name).unwrap().as_deref(),
+            Some("disposable-secret")
+        );
+        delete_credential(&path, &name).unwrap();
+        assert_eq!(read_credential(&path, &name).unwrap(), None);
     }
 
     #[test]
@@ -2396,7 +2537,7 @@ router = "ollama/old:1b"
         let missing = ProviderError::MissingKeychainCredential("nvidia-nim".into());
         assert_eq!(
             missing.to_string(),
-            "OS keychain entry `nvidia-nim` is not set; reconnect this provider to store its credential"
+            "credential `nvidia-nim` is not stored; store it with `purrcode credential set` or set its environment variable"
         );
         assert_eq!(
             missing.category(),
@@ -2406,12 +2547,69 @@ router = "ollama/old:1b"
         let invalid = ProviderError::InvalidKeychainCredential("nvidia-nim".into());
         assert_eq!(
             invalid.to_string(),
-            "OS keychain entry `nvidia-nim` is not a valid HTTP credential"
+            "credential `nvidia-nim` is not a valid HTTP credential"
         );
         assert_eq!(
             invalid.category(),
             Some(ProviderErrorCategory::Authentication)
         );
+    }
+
+    #[test]
+    fn credential_is_resolved_from_credentials_toml_when_env_is_unset() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("credentials.toml");
+        store_credential(&path, "TEST_API_KEY", "file-stored-secret").unwrap();
+        // No env var named TEST_API_KEY is set in this process.
+        let saved = env::var_os("TEST_API_KEY");
+        if saved.is_some() {
+            unsafe { env::remove_var("TEST_API_KEY") };
+        }
+        let result = resolve_credential(&path, "TEST_API_KEY");
+        if let Some(value) = saved {
+            unsafe { env::set_var("TEST_API_KEY", value) };
+        }
+        assert_eq!(
+            result.unwrap(),
+            "file-stored-secret",
+            "an env-style name must read the same key from credentials.toml"
+        );
+        // Legacy `keychain:` references resolve to the same file entry.
+        assert_eq!(
+            resolve_credential(&path, "keychain:TEST_API_KEY").unwrap(),
+            "file-stored-secret"
+        );
+    }
+
+    #[test]
+    fn process_environment_wins_over_credentials_toml() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("credentials.toml");
+        store_credential(&path, "PRIORITY_API_KEY", "file-stored-secret").unwrap();
+        let saved = env::var_os("PRIORITY_API_KEY");
+        unsafe { env::set_var("PRIORITY_API_KEY", "env-wins-secret") };
+        let result = resolve_credential(&path, "PRIORITY_API_KEY");
+        if let Some(value) = saved {
+            unsafe { env::set_var("PRIORITY_API_KEY", value) };
+        } else {
+            unsafe { env::remove_var("PRIORITY_API_KEY") };
+        }
+        assert_eq!(result.unwrap(), "env-wins-secret");
+    }
+
+    #[test]
+    fn missing_credential_fails_even_when_store_file_is_absent() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("credentials.toml");
+        let saved = env::var_os("ABSENT_CREDENTIAL_VAR");
+        if saved.is_some() {
+            unsafe { env::remove_var("ABSENT_CREDENTIAL_VAR") };
+        }
+        let result = resolve_credential(&path, "ABSENT_CREDENTIAL_VAR");
+        if let Some(value) = saved {
+            unsafe { env::set_var("ABSENT_CREDENTIAL_VAR", value) };
+        }
+        assert!(matches!(result, Err(ProviderError::MissingCredential(_))));
     }
 
     #[test]
@@ -2436,6 +2634,47 @@ router = "ollama/old:1b"
     }
 
     #[test]
+    fn configure_provider_derives_an_env_style_reference_for_remote_providers() {
+        let mut config: AppConfig = toml::from_str(
+            r#"
+                schema_version = 1
+                [privacy]
+                mode = "mixed"
+            "#,
+        )
+        .unwrap();
+        config
+            .configure_provider(
+                "nvidia-nim",
+                "nvidia-nim",
+                "https://integrate.api.nvidia.com/v1",
+                "z-ai/glm-5.2",
+                None,
+            )
+            .unwrap();
+        match config.providers.get("nvidia-nim").unwrap() {
+            ProviderConfig::NvidiaNim { api_key_env, .. } => {
+                assert_eq!(api_key_env, "NVIDIA_API_KEY");
+            }
+            other => panic!("expected NvidiaNim, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn env_style_reference_uppercases_names_and_falls_back_to_legacy() {
+        assert_eq!(env_style_reference("nvidia-nim").unwrap(), "NVIDIA_NIM");
+        assert_eq!(
+            env_style_reference("OPENAI_API_KEY").unwrap(),
+            "OPENAI_API_KEY"
+        );
+        assert_eq!(
+            env_style_reference("nvidia-nim-deepseek").unwrap(),
+            "NVIDIA_NIM_DEEPSEEK"
+        );
+        assert!(env_style_reference("9invalid").is_ok()); // falls back to keychain:<name>
+    }
+
+    #[test]
     fn legacy_configuration_migration_is_validated_and_recoverable() {
         let temporary = tempfile::tempdir().unwrap();
         let path = temporary.path().join("purrcode.toml");
@@ -2450,9 +2689,11 @@ router = "ollama/old:1b"
         assert_eq!(AppConfig::migration_preview(&path).unwrap(), (0, 1));
         let backup = AppConfig::migrate_file(&path).unwrap().unwrap();
         assert!(backup.is_file());
-        assert!(!std::fs::read_to_string(&backup)
-            .unwrap()
-            .contains("schema_version"));
+        assert!(
+            !std::fs::read_to_string(&backup)
+                .unwrap()
+                .contains("schema_version")
+        );
         assert_eq!(AppConfig::load(&path).unwrap().schema_version, 1);
         assert!(AppConfig::migrate_file(&path).unwrap().is_none());
     }
@@ -2547,6 +2788,7 @@ router = "ollama/old:1b"
                 base_url,
                 capabilities: BTreeMap::new(),
             },
+            None,
         )
         .unwrap()
     }
@@ -2565,6 +2807,7 @@ router = "ollama/old:1b"
                 base_url,
                 capabilities,
             },
+            None,
         )
         .unwrap()
     }
@@ -2703,6 +2946,7 @@ router = "ollama/old:1b"
                 headers: BTreeMap::new(),
                 capabilities: BTreeMap::new(),
             },
+            None,
         )
         .unwrap();
 
@@ -2952,10 +3196,115 @@ router = "ollama/old:1b"
             headers: BTreeMap::new(),
             capabilities: BTreeMap::new(),
         };
-        let provider = HttpProvider::from_config("local".into(), config).unwrap();
+        let provider = HttpProvider::from_config("local".into(), config, None).unwrap();
         let health = provider.health_check().await.unwrap();
         assert!(health.available);
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failover_advances_on_quota_but_not_on_other_errors() {
+        use crate::failover::{FailoverProvider, should_failover};
+
+        #[derive(Clone)]
+        struct MockResultProvider {
+            results: Arc<std::sync::Mutex<Vec<Result<Value, ProviderError>>>>,
+        }
+        #[async_trait]
+        impl ModelProvider for MockResultProvider {
+            async fn capabilities(
+                &self,
+                _model: &ModelId,
+            ) -> Result<ModelCapabilities, ProviderError> {
+                Ok(ModelCapabilities::unknown(true))
+            }
+            async fn stream(
+                &self,
+                _request: ModelRequest,
+            ) -> Result<ModelEventStream, ProviderError> {
+                Ok(Box::pin(futures::stream::empty()))
+            }
+            async fn structured(
+                &self,
+                _request: ModelRequest,
+                _schema: schemars::schema::RootSchema,
+            ) -> Result<Value, ProviderError> {
+                self.results
+                    .lock()
+                    .unwrap()
+                    .pop()
+                    .unwrap_or(Ok(Value::Null))
+            }
+            async fn count_tokens(
+                &self,
+                _request: &ModelRequest,
+            ) -> Result<TokenEstimate, ProviderError> {
+                Ok(TokenEstimate {
+                    tokens: 1,
+                    exact: true,
+                })
+            }
+            async fn health_check(&self) -> Result<ProviderHealth, ProviderError> {
+                Ok(ProviderHealth {
+                    available: true,
+                    detail: "mock".into(),
+                })
+            }
+        }
+
+        // A quota error advances to the fallback.
+        let failing = Arc::new(MockResultProvider {
+            results: Arc::new(std::sync::Mutex::new(vec![Err(
+                ProviderError::HttpStatus {
+                    status: 429,
+                    body: "out of quota".into(),
+                },
+            )])),
+        }) as Arc<dyn ModelProvider>;
+        let fallback = Arc::new(MockResultProvider {
+            results: Arc::new(std::sync::Mutex::new(vec![Ok(Value::Null)])),
+        }) as Arc<dyn ModelProvider>;
+        let chain = FailoverProvider::new(failing.clone(), vec![fallback.clone()]);
+        let result = chain
+            .structured(
+                ModelRequest {
+                    model: ModelId::parse("a/m").unwrap(),
+                    messages: Vec::new(),
+                    tools: Vec::new(),
+                    max_output_tokens: Some(16),
+                    reasoning_effort: None,
+                },
+                schemars::schema_for!(Value),
+            )
+            .await;
+        assert!(result.is_ok(), "quota error must fail over: {result:?}");
+
+        // A non-transient error must NOT advance the chain.
+        assert!(!should_failover(&ProviderError::InvalidResponse(
+            "bad".into()
+        )));
+        let invalid = Arc::new(MockResultProvider {
+            results: Arc::new(std::sync::Mutex::new(vec![Err(
+                ProviderError::InvalidResponse("schema mismatch".into()),
+            )])),
+        }) as Arc<dyn ModelProvider>;
+        let chain2 = FailoverProvider::new(invalid.clone(), vec![fallback.clone()]);
+        let result2 = chain2
+            .structured(
+                ModelRequest {
+                    model: ModelId::parse("a/m").unwrap(),
+                    messages: Vec::new(),
+                    tools: Vec::new(),
+                    max_output_tokens: Some(16),
+                    reasoning_effort: None,
+                },
+                schemars::schema_for!(Value),
+            )
+            .await;
+        assert!(
+            matches!(result2, Err(ProviderError::InvalidResponse(_))),
+            "non-transient error must not fail over: {result2:?}"
+        );
     }
 }

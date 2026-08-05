@@ -19,6 +19,7 @@ clap.workspace = true
 futures.workspace = true
 reqwest.workspace = true
 purrcode-agent-runtime = { path = "../agent-runtime" }
+purrcode-codex-bridge = { path = "../codex-bridge" }
 purrcode-pawgate = { path = "../pawgate-runtime" }
 purrcode-mcp-host = { path = "../mcp-host" }
 purrcode-provider-gateway = { path = "../provider-gateway" }
@@ -47,4 +48,5 @@ zeroize.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+rusqlite.workspace = true
 tempfile.workspace = true

@@ -15,7 +15,7 @@ mod parser;
 pub use parser::InputFormat;
 
 mod normalizer;
-pub use normalizer::{normalize_candidate, normalize_resolved_import, NormalizedProviderProfile};
+pub use normalizer::{NormalizedProviderProfile, normalize_candidate, normalize_resolved_import};
 
 pub const DEFAULT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const REDACTION_TOKEN: &str = "[REDACTED_SECRET]";
@@ -119,8 +119,9 @@ impl SecretReference {
             Self::Keychain(reference) => {
                 let credential_name = reference.strip_prefix("keychain:").ok_or_else(|| {
                     ImportError::AuthenticationUnresolved {
-                        message: "keychain authentication must use a validated keychain reference"
-                            .into(),
+                        message:
+                            "keychain authentication must use a validated credential reference"
+                                .into(),
                     }
                 })?;
                 let canonical = purrcode_provider_gateway::keychain_reference(credential_name)
@@ -263,7 +264,7 @@ impl ImportedSecretState {
             _ => {
                 return Err(ImportError::AuthenticationUnresolved {
                     message: "keychain storage was not awaiting confirmation".into(),
-                })
+                });
             }
         };
         secrets.single()?;
@@ -292,7 +293,7 @@ impl ImportedSecretState {
             _ => {
                 return Err(ImportError::AuthenticationUnresolved {
                     message: "environment conversion was not awaiting confirmation".into(),
-                })
+                });
             }
         };
         secrets.single()?;
@@ -487,7 +488,7 @@ pub fn import_provider_secure(
                     message:
                         "secret markers were detected but no safe static value could be extracted"
                             .into(),
-                })
+                });
             }
             Some(AuthReference::None) | None => ImportedSecretState::None,
         }
@@ -758,9 +759,11 @@ response = requests.post(invoke_url, headers=headers, json=payload)"#
             parsed.candidate.api_mode.as_ref().map(|value| value.value),
             Some(ApiMode::ChatCompletions)
         );
-        assert!(!serde_json::to_string(&parsed.candidate)
-            .unwrap()
-            .contains(secret));
+        assert!(
+            !serde_json::to_string(&parsed.candidate)
+                .unwrap()
+                .contains(secret)
+        );
     }
 
     #[test]
@@ -875,9 +878,7 @@ response = requests.post(invoke_url, headers=headers, json=payload)"#
             ),
             (
                 InputFormat::Dotenv,
-                format!(
-                    "BASE_URL=https://example.com/v1\nMODEL=fixture\nAPI_KEY={secret}"
-                ),
+                format!("BASE_URL=https://example.com/v1\nMODEL=fixture\nAPI_KEY={secret}"),
             ),
             (
                 InputFormat::Json,
@@ -887,9 +888,7 @@ response = requests.post(invoke_url, headers=headers, json=payload)"#
             ),
             (
                 InputFormat::Yaml,
-                format!(
-                    "base_url: https://example.com/v1\nmodel: fixture\napi_key: {secret}"
-                ),
+                format!("base_url: https://example.com/v1\nmodel: fixture\napi_key: {secret}"),
             ),
             (
                 InputFormat::Toml,
@@ -996,9 +995,11 @@ client.responses.create(model="test-model")
                 .expose_secret(),
             secret
         );
-        assert!(!serde_json::to_string(&parsed.candidate)
-            .unwrap()
-            .contains(secret));
+        assert!(
+            !serde_json::to_string(&parsed.candidate)
+                .unwrap()
+                .contains(secret)
+        );
         assert!(!format!("{parsed:?}").contains(secret));
     }
 
@@ -1044,16 +1045,20 @@ client.responses.create(model="test-model")
             "application/json"
         );
         assert!(parsed.candidate.extra_body.is_none());
-        assert!(parsed
-            .candidate
-            .warnings
-            .iter()
-            .any(|warning| warning.code == "url_credentials_removed"));
-        assert!(parsed
-            .candidate
-            .warnings
-            .iter()
-            .any(|warning| warning.code == "sensitive_extra_body_omitted"));
+        assert!(
+            parsed
+                .candidate
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "url_credentials_removed")
+        );
+        assert!(
+            parsed
+                .candidate
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "sensitive_extra_body_omitted")
+        );
         assert_eq!(parsed.candidate.redacted_source, REDACTION_TOKEN);
     }
 
@@ -1068,10 +1073,12 @@ client.responses.create(model="test-model")
         let mut parsed = import_provider_secure(source.into(), Some(InputFormat::Json)).unwrap();
         assert_eq!(parsed.secret_state.transient_secrets().unwrap().len(), 2);
         parsed.secret_state.begin_storage_choice().unwrap();
-        assert!(parsed
-            .secret_state
-            .confirm_environment_reference("PROVIDER_API_KEY", true)
-            .is_err());
+        assert!(
+            parsed
+                .secret_state
+                .confirm_environment_reference("PROVIDER_API_KEY", true)
+                .is_err()
+        );
         assert_eq!(parsed.secret_state.transient_secrets().unwrap().len(), 2);
         assert!(parsed.validate_auth_resolved().is_err());
     }
@@ -1098,10 +1105,12 @@ client.responses.create(model="test-model")
         let source = "BASE_URL=https://example.com/v1\nMODEL=test\nAPI_KEY=valid-secret-value";
         let mut parsed = import_provider_secure(source.into(), Some(InputFormat::Dotenv)).unwrap();
         parsed.secret_state.begin_storage_choice().unwrap();
-        assert!(parsed
-            .secret_state
-            .confirm_environment_reference("not-valid", true)
-            .is_err());
+        assert!(
+            parsed
+                .secret_state
+                .confirm_environment_reference("not-valid", true)
+                .is_err()
+        );
         assert_eq!(
             parsed
                 .secret_state

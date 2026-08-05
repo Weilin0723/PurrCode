@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use purrcode_runtime_core::QualificationStatus;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
@@ -775,14 +775,18 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].skill_id, "test-skill");
 
-        assert!(store
-            .path_for("test-skill", &SkillScope::User)
-            .join("SKILL.md")
-            .exists());
-        assert!(store
-            .path_for("test-skill", &SkillScope::User)
-            .join("tool.py")
-            .exists());
+        assert!(
+            store
+                .path_for("test-skill", &SkillScope::User)
+                .join("SKILL.md")
+                .exists()
+        );
+        assert!(
+            store
+                .path_for("test-skill", &SkillScope::User)
+                .join("tool.py")
+                .exists()
+        );
 
         store.record_use("test-skill", true).unwrap();
         let updated = store.get("test-skill").unwrap();
@@ -873,10 +877,12 @@ mod tests {
             .unwrap();
         assert!(store.is_publisher_blocked("untrusted-publisher").unwrap());
         drop(store);
-        assert!(SkillStore::open(&database, &library)
-            .unwrap()
-            .is_publisher_blocked("UNTRUSTED-PUBLISHER")
-            .unwrap());
+        assert!(
+            SkillStore::open(&database, &library)
+                .unwrap()
+                .is_publisher_blocked("UNTRUSTED-PUBLISHER")
+                .unwrap()
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use purrcode_tui_e2e::fake_daemon::{DaemonScript, ScriptedSession};
 use purrcode_tui_e2e::fake_provider;
 use purrcode_tui_e2e::harness::with_artifacts;
-use purrcode_tui_e2e::{assertions, Harness, HarnessOptions, Key};
+use purrcode_tui_e2e::{Harness, HarnessOptions, Key, assertions};
 use serde_json::json;
 
 const SESSION: &str = "modes-session";
@@ -119,6 +119,10 @@ fn a_read_only_task_mode_is_sent_as_a_constraint_not_a_hint() {
     let mut harness = open_workbench();
     with_artifacts("modes-plan-only", &mut harness, |harness| {
         new_session(harness)?;
+        // Explicit Auto is an authority choice, not permission to bypass a
+        // read-only task mode. The request must preserve both contracts.
+        harness.run_command("/permission auto")?;
+        harness.wait_for_text("Auto.")?;
         harness.run_command("/mode ask")?;
         harness.wait_for_text("Ask mode")?;
 
@@ -130,15 +134,17 @@ fn a_read_only_task_mode_is_sent_as_a_constraint_not_a_hint() {
             .find(|request| request.method == "POST" && request.path == "/v1/sessions")
             .and_then(|request| request.body.clone())
             .unwrap_or_default();
-        // The objective asks for a change; the mode forbids one. The mode wins,
-        // and the daemon is told so rather than being left to infer it.
+        // The objective asks for a change; the mode forbids one. The canonical
+        // task mode reaches the runtime directly instead of masquerading as a
+        // Plan request through the legacy plan_only compatibility field.
         assert!(
-            body.contains("\"plan_only\":true"),
-            "Ask mode must reach the daemon as plan_only: {body}"
+            body.contains("\"task_mode\":\"ask\"") && body.contains("\"plan_only\":false"),
+            "Ask mode must reach the daemon as its own read-only contract: {body}"
         );
         assert!(
-            body.contains("\"authority_mode\":\"governed\""),
-            "the permission mode must travel with the session: {body}"
+            body.contains("\"permission_mode\":\"auto\"")
+                && body.contains("\"authority_mode\":\"elevated\""),
+            "the explicit permission mode must travel with the session: {body}"
         );
         Ok(())
     });

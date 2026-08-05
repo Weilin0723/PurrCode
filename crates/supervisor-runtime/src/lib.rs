@@ -49,6 +49,11 @@ pub struct WorkerSpec {
     pub id: String,
     pub objective: String,
     pub dependencies: Vec<String>,
+    /// An optional `provider/model` override for this worker. When set, the
+    /// worker runs on that model instead of the supervisor's shared default,
+    /// letting different sub-agents use different APIs.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -342,11 +347,13 @@ mod tests {
                         id: "one".into(),
                         objective: "first".into(),
                         dependencies: Vec::new(),
+                        model: None,
                     },
                     WorkerSpec {
                         id: "two".into(),
                         objective: "second".into(),
                         dependencies: Vec::new(),
+                        model: None,
                     },
                 ],
                 &FixtureWorker,
@@ -371,6 +378,7 @@ mod tests {
     fn overlapping_worker_effects_require_conflict_resolution() {
         let result = |id: &str| WorkerResult {
             spec: WorkerSpec {
+                model: None,
                 id: id.into(),
                 objective: String::new(),
                 dependencies: Vec::new(),
@@ -396,5 +404,25 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    #[test]
+    fn worker_spec_carries_an_optional_per_worker_model() {
+        // The `model` field is optional so older requests deserialize, but a
+        // set value is carried through construction for per-worker routing.
+        let with_model = WorkerSpec {
+            id: "w".into(),
+            objective: "o".into(),
+            dependencies: Vec::new(),
+            model: Some("deepseek/deepseek-pro".into()),
+        };
+        assert_eq!(with_model.model.as_deref(), Some("deepseek/deepseek-pro"));
+        let without_model = WorkerSpec {
+            id: "w".into(),
+            objective: "o".into(),
+            dependencies: Vec::new(),
+            model: None,
+        };
+        assert_eq!(without_model.model, None);
     }
 }

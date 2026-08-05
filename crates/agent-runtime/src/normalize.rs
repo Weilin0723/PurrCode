@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use purrcode_runtime_core::adaptation::PermissionMode;
 use purrcode_runtime_core::{
-    canonicalize_repository_path, ActionConstraints, ActionId, CommandAction, DeleteFileAction,
-    JudgmentDecision, ProposedAction, RepositoryReadAction, SessionEvent, SessionState,
-    WriteFileAction,
+    ActionConstraints, ActionId, CommandAction, DeleteFileAction, JudgmentDecision, ProposedAction,
+    RepositoryReadAction, SessionEvent, SessionState, WriteFileAction,
+    canonicalize_repository_path,
 };
 
 use crate::errors::AgentError;
@@ -16,26 +17,24 @@ fn canonicalize_read_action(
     use RepositoryReadAction::*;
     let err =
         |path: &Path| AgentError::InvalidModelTurn(format!("read path escapes worktree: {path:?}"));
+    let canonicalize_paths = |paths: Vec<PathBuf>| {
+        paths
+            .into_iter()
+            .map(|path| canonicalize_repository_path(&path).ok_or_else(|| err(&path)))
+            .collect::<Result<Vec<_>, _>>()
+    };
     Ok(match read {
         Find {
             paths,
             max_depth,
             max_entries,
         } => Find {
-            paths: paths
-                .into_iter()
-                .map(|p| canonicalize_repository_path(&p))
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| err(&PathBuf::new()))?,
+            paths: canonicalize_paths(paths)?,
             max_depth,
             max_entries,
         },
         List { paths, max_entries } => List {
-            paths: paths
-                .into_iter()
-                .map(|p| canonicalize_repository_path(&p))
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| err(&PathBuf::new()))?,
+            paths: canonicalize_paths(paths)?,
             max_entries,
         },
         RepositoryGrep {
@@ -46,11 +45,7 @@ fn canonicalize_read_action(
             max_bytes,
         } => RepositoryGrep {
             pattern,
-            paths: paths
-                .into_iter()
-                .map(|p| canonicalize_repository_path(&p))
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| err(&PathBuf::new()))?,
+            paths: canonicalize_paths(paths)?,
             case_insensitive,
             max_results,
             max_bytes,
@@ -60,22 +55,14 @@ fn canonicalize_read_action(
             max_bytes,
         },
         GitDiff { paths } => GitDiff {
-            paths: paths
-                .into_iter()
-                .map(|p| canonicalize_repository_path(&p))
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| err(&PathBuf::new()))?,
+            paths: canonicalize_paths(paths)?,
         },
         GitShow { revision, path } => GitShow {
             revision,
             path: canonicalize_repository_path(&path).ok_or_else(|| err(&path))?,
         },
         GitLsFiles { pathspec } => GitLsFiles {
-            pathspec: pathspec
-                .into_iter()
-                .map(|p| canonicalize_repository_path(&p))
-                .collect::<Option<Vec<_>>>()
-                .ok_or_else(|| err(&PathBuf::new()))?,
+            pathspec: canonicalize_paths(pathspec)?,
         },
         GitStatus => GitStatus,
         GitRevParse { revision } => GitRevParse { revision },
@@ -373,6 +360,42 @@ pub(crate) fn decision_constraints(decision: &JudgmentDecision) -> Option<&Actio
     }
 }
 
+/// Apply the session's permission mode to a PawGate decision.
+///
+/// Pure by design: (mode, decision, worktree) in, decision out, so the bypass
+/// logic is reproducible and unit-testable without a provider or store.
+///
+/// * `Auto` (the default) converts a `RequireApproval` into an allow with the
+///   exact constraints PawGate computed — execution stays bounded, only the
+///   prompt is skipped. A `Deny` still stands (Auto does not override refusals).
+/// * `FullAccess` additionally converts a `Deny` into a bounded read-only
+///   allow, so the human's standing "do it" wins but the action still cannot
+///   write or reach the network.
+/// * `Ask` (Governed) leaves every decision untouched.
+/// * `ModifyAction`/`Replan`/`Allow` are never touched: they are advice about
+///   correctness, not authority.
+pub(crate) fn apply_permission_mode(
+    mode: PermissionMode,
+    decision: JudgmentDecision,
+    worktree: &Path,
+) -> JudgmentDecision {
+    use JudgmentDecision::*;
+    match mode {
+        PermissionMode::Auto => match decision {
+            RequireApproval { constraints, .. } => AllowWithConstraints(constraints),
+            other => other,
+        },
+        PermissionMode::FullAccess => match decision {
+            RequireApproval { constraints, .. } => AllowWithConstraints(constraints),
+            Deny { .. } => {
+                AllowWithConstraints(ActionConstraints::read_only(worktree.to_path_buf()))
+            }
+            other => other,
+        },
+        PermissionMode::Ask => decision,
+    }
+}
+
 /// Deterministically allowlisted repository reads are already confined to the
 /// session worktree, denied network access, prohibited from writing, and
 /// bounded by time/output limits. A semantic re-review can only make those
@@ -430,14 +453,15 @@ pub(crate) fn successful_duplicate_action(
 #[cfg(test)]
 mod action_normalization_tests {
     use super::{
-        convert_legacy_command, normalize_action, requires_contextual_judgment,
-        successful_duplicate_action,
+        apply_permission_mode, convert_legacy_command, normalize_action,
+        requires_contextual_judgment, successful_duplicate_action,
     };
     use crate::schema::AgentAction;
     use purrcode_pawgate::Policy;
+    use purrcode_runtime_core::adaptation::PermissionMode;
     use purrcode_runtime_core::{
-        ActionId, CommandAction, JudgmentDecision, ProposedAction, RepositoryReadAction,
-        SessionEvent, SessionId, SessionState,
+        ActionConstraints, ActionId, CommandAction, JudgmentDecision, ProposedAction,
+        RepositoryReadAction, SessionEvent, SessionId, SessionState,
     };
     use std::collections::BTreeMap;
     use std::path::Path;
@@ -648,6 +672,39 @@ mod action_normalization_tests {
     }
 
     #[test]
+    fn typed_list_accepts_empty_path_as_repository_root() {
+        let action = normalize_action(
+            AgentAction::Read(RepositoryReadAction::List {
+                paths: vec![PathBuf::new()],
+                max_entries: 32,
+            }),
+            Path::new("/repo/.purrcode/worktrees/session"),
+        )
+        .unwrap();
+        let ProposedAction::RepositoryRead(RepositoryReadAction::List { paths, .. }) = action
+        else {
+            panic!("expected list read")
+        };
+        assert_eq!(paths, vec![PathBuf::new()]);
+    }
+
+    #[test]
+    fn typed_read_reports_the_actual_escaping_path() {
+        let error = normalize_action(
+            AgentAction::Read(RepositoryReadAction::List {
+                paths: vec![PathBuf::from("src"), PathBuf::from("/outside")],
+                max_entries: 32,
+            }),
+            Path::new("/repo/.purrcode/worktrees/session"),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "model turn is invalid: read path escapes worktree: \"/outside\""
+        );
+    }
+
+    #[test]
     fn typed_deterministic_reads_do_not_gain_semantic_approval_prompts() {
         let worktree = std::env::temp_dir().join("purrcode-policy-read-session");
         let action = normalize_action(
@@ -687,6 +744,71 @@ mod action_normalization_tests {
             "expected write to require approval, got {decision:?}"
         );
         assert!(requires_contextual_judgment(&action, &decision));
+    }
+
+    #[test]
+    fn auto_mode_converts_approval_into_bounded_allow_but_not_denies() {
+        let worktree = Path::new("/repo/.purrcode/worktrees/session");
+        let approval = JudgmentDecision::RequireApproval {
+            reason: "policy wants a human".into(),
+            constraints: ActionConstraints::read_only(worktree.to_path_buf()),
+        };
+        let converted = apply_permission_mode(PermissionMode::Auto, approval, worktree);
+        assert!(
+            matches!(converted, JudgmentDecision::AllowWithConstraints(_)),
+            "Auto must skip the prompt but keep bounds, got {converted:?}"
+        );
+        // Auto does not override a refusal.
+        let denied = apply_permission_mode(
+            PermissionMode::Auto,
+            JudgmentDecision::Deny {
+                reason: "policy refuses".into(),
+            },
+            worktree,
+        );
+        assert!(matches!(denied, JudgmentDecision::Deny { .. }));
+    }
+
+    #[test]
+    fn full_access_overrides_even_a_deny_with_read_only_bounds() {
+        let worktree = Path::new("/repo/.purrcode/worktrees/session");
+        let denied = apply_permission_mode(
+            PermissionMode::FullAccess,
+            JudgmentDecision::Deny {
+                reason: "policy refuses".into(),
+            },
+            worktree,
+        );
+        match denied {
+            JudgmentDecision::AllowWithConstraints(constraints) => {
+                assert!(!constraints.network, "override must not add network");
+                assert!(
+                    constraints.allowed_write_globs.is_empty(),
+                    "override must not add write globs"
+                );
+            }
+            other => panic!("FullAccess must override a deny, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ask_leaves_every_decision_untouched() {
+        let worktree = Path::new("/repo/.purrcode/worktrees/session");
+        let approval = JudgmentDecision::RequireApproval {
+            reason: "policy wants a human".into(),
+            constraints: ActionConstraints::read_only(worktree.to_path_buf()),
+        };
+        assert!(matches!(
+            apply_permission_mode(PermissionMode::Ask, approval, worktree),
+            JudgmentDecision::RequireApproval { .. }
+        ));
+        let advice = JudgmentDecision::Replan {
+            reason: "plan drifted".into(),
+        };
+        assert!(matches!(
+            apply_permission_mode(PermissionMode::FullAccess, advice, worktree),
+            JudgmentDecision::Replan { .. }
+        ));
     }
 
     #[test]

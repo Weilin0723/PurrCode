@@ -771,12 +771,11 @@ fn contains_dynamic_provider_field(input: &str) -> bool {
     let regex =
         Regex::new(r#"(?m)\b(?:base_url|baseURL|model|model_id)\b\s*[:=]\s*(?P<value>[^\s,})]+)"#)
             .expect("static dynamic-field regex");
-    let dynamic = regex.captures_iter(input).any(|captures| {
+    regex.captures_iter(input).any(|captures| {
         captures
             .name("value")
             .is_some_and(|value| !value.as_str().starts_with(['\'', '"']))
-    });
-    dynamic
+    })
 }
 fn warning(code: &str, message: &str) -> ImportWarning {
     ImportWarning {
@@ -901,13 +900,17 @@ mod tests {
         let candidate = import_provider(source, Some(InputFormat::Python)).unwrap();
         assert_eq!(candidate.base_url.unwrap().value, "https://example.com/v1");
         assert!(candidate.model_id.is_none());
-        assert!(candidate
-            .warnings
-            .iter()
-            .any(|warning| warning.code == "syntax_error"));
-        assert!(candidate
-            .warnings
-            .iter()
-            .any(|warning| warning.code == "dynamic_expression"));
+        assert!(
+            candidate
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "syntax_error")
+        );
+        assert!(
+            candidate
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "dynamic_expression")
+        );
     }
 }

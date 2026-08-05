@@ -160,6 +160,85 @@ fn card_from_event(value: &Value) -> Option<TimelineCard> {
             )
             .details(numbered(steps))
         }
+        "spec_bundle_recorded" => {
+            let bundle = data.get("bundle").unwrap_or(&Value::Null);
+            let title = bundle
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("Specification");
+            let revision = bundle
+                .get("revision")
+                .map(display_scalar)
+                .unwrap_or_else(|| "?".into());
+            let requirements = bundle
+                .get("requirements")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            TimelineCard::new(
+                CardKind::Plan,
+                "Specification recorded",
+                format!("{title} · revision {revision} · {requirements} requirement(s)"),
+            )
+            .details(nonempty(vec![text("reason").to_owned()]))
+        }
+        "task_graph_recorded" => {
+            let graph = data.get("graph").unwrap_or(&Value::Null);
+            let revision = graph
+                .get("revision")
+                .map(display_scalar)
+                .unwrap_or_else(|| "?".into());
+            let tasks = graph
+                .get("tasks")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            TimelineCard::new(
+                CardKind::Plan,
+                "Task graph recorded",
+                format!("revision {revision} · {tasks} task(s)"),
+            )
+            .details(nonempty(vec![text("reason").to_owned()]))
+        }
+        "task_status_changed" => {
+            let task_id = data
+                .get("task_id")
+                .map(display_scalar)
+                .unwrap_or_else(|| "unknown".into());
+            let status = data
+                .get("status")
+                .and_then(Value::as_str)
+                .map(humanize)
+                .unwrap_or_else(|| "Unknown".into());
+            TimelineCard::new(
+                CardKind::Action,
+                "Task status changed",
+                format!("Task {} · {status}", short_id(&task_id)),
+            )
+            .details(nonempty(vec![text("reason").to_owned()]))
+        }
+        "evidence_linked" => {
+            let evidence = data.get("evidence").unwrap_or(&Value::Null);
+            let task_id = evidence
+                .get("task_id")
+                .map(display_scalar)
+                .unwrap_or_else(|| "unknown".into());
+            let coverage = evidence
+                .get("coverage")
+                .and_then(Value::as_str)
+                .map(humanize)
+                .unwrap_or_else(|| "Unknown".into());
+            TimelineCard::new(
+                CardKind::Validation,
+                "Evidence linked",
+                format!(
+                    "Task {} · {coverage} · {}",
+                    short_id(&task_id),
+                    evidence
+                        .get("summary")
+                        .and_then(Value::as_str)
+                        .unwrap_or("No summary")
+                ),
+            )
+        }
         "action_proposed" => action_card(data),
         "judgment_recorded" => {
             let decision = data.get("decision").unwrap_or(&Value::Null);
@@ -468,6 +547,36 @@ mod tests {
         assert_eq!(cards[2].kind, CardKind::PawGate);
         assert!(cards[2].summary.contains("Require approval"));
         assert_eq!(cards[5].kind, CardKind::Completion);
+    }
+
+    #[test]
+    fn work_graph_events_use_semantic_labels_and_bounded_details() {
+        let cards = cards_from_events(&[
+            json!({
+                "event": "spec_bundle_recorded",
+                "data": {
+                    "bundle": {"title": "Ship search", "revision": 2, "requirements": [{}, {}]},
+                    "reason": "accepted"
+                }
+            }),
+            json!({
+                "event": "task_status_changed",
+                "data": {"task_id": "12345678-dead-beef", "status": "needs_attention", "reason": "check logs"}
+            }),
+            json!({
+                "event": "evidence_linked",
+                "data": {"evidence": {"task_id": "12345678-dead-beef", "coverage": "covered", "summary": "tests passed"}}
+            }),
+        ]);
+        assert_eq!(cards[0].title, "Specification recorded");
+        assert!(cards[0].summary.contains("2 requirement(s)"));
+        assert!(cards[1].summary.contains("Needs attention"));
+        assert_eq!(cards[2].title, "Evidence linked");
+        assert!(
+            !cards
+                .iter()
+                .any(|card| card.summary.contains("needs_attention"))
+        );
     }
 
     #[test]

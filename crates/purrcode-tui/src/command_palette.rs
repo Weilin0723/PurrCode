@@ -5,8 +5,10 @@ use crate::provider_setup::ProviderSetup;
 use crate::skill_browser::SkillBrowser;
 use crate::status_bar::{PermissionMode, TaskMode};
 use crate::ui_actions::UiActionDefinition;
+use purrcode_runtime_core::adaptation::{BudgetProfileKind, SearchPolicy, WorkflowControl};
 use serde_json::Value;
 use std::fmt::Write as _;
+use tokio::process::Command;
 
 pub struct CommandPalette;
 
@@ -22,6 +24,7 @@ pub const DISPATCH_COMMANDS: &[&str] = &[
     "approve",
     "ask",
     "build",
+    "budget",
     "cancel",
     "capability",
     "compact",
@@ -30,6 +33,7 @@ pub const DISPATCH_COMMANDS: &[&str] = &[
     "diff",
     "help",
     "history",
+    "ide",
     "mcp",
     "model",
     "models",
@@ -46,15 +50,17 @@ pub const DISPATCH_COMMANDS: &[&str] = &[
     "review",
     "role",
     "rollback",
+    "search",
     "session",
+    "status",
     "sessions",
     "mode",
     "permission",
     "settings",
-    "status",
     "studio",
     "terminal",
     "terminal-return",
+    "usage",
     "terminal-take",
     "skill-block",
     "skill-download",
@@ -64,9 +70,8 @@ pub const DISPATCH_COMMANDS: &[&str] = &[
     "skill-search",
     "skill-search-approve",
     "skills",
+    "workflow",
 ];
-
-/// Palette entries for a query, generated from the action registry. There is no
 /// separate palette list to keep in sync.
 pub fn filtered_actions(query: &str) -> Vec<&'static UiActionDefinition> {
     crate::ui_actions::filtered(query)
@@ -907,11 +912,17 @@ impl CommandPalette {
                                 commit: commit.to_owned(),
                             }
                         });
-                        app.message_bar = format!("Download requires separate approval. Run /skill-download-approve {candidate_id} {commit}");
+                        app.message_bar = format!(
+                            "Download requires separate approval. Run /skill-download-approve {candidate_id} {commit}"
+                        );
                     }
                     Ok(value) => {
                         app.pending_skill_download = None;
-                        app.message_bar = format!("Downloaded and inspected {} v{}. Review it, then run /skill-install <scope>.", value["name"].as_str().unwrap_or("skill"), value["version"].as_str().unwrap_or("?"));
+                        app.message_bar = format!(
+                            "Downloaded and inspected {} v{}. Review it, then run /skill-install <scope>.",
+                            value["name"].as_str().unwrap_or("skill"),
+                            value["version"].as_str().unwrap_or("?")
+                        );
                         app.downloaded_skill = Some(value);
                         app.switch_mode(AppMode::Conversation);
                     }
@@ -1014,6 +1025,105 @@ impl CommandPalette {
                     app.message_bar = "No active session.".into();
                 }
             }
+            "budget" => {
+                let value = args.trim();
+                if value.is_empty() {
+                    app.message_bar = format!(
+                        "Budget: {} (use /budget economy|balanced|max-quality|custom)",
+                        app.status_bar.budget_profile.label()
+                    );
+                } else if let Some(kind) = BudgetProfileKind::parse(value) {
+                    app.status_bar.set_budget_profile(kind);
+                    update_session_control(
+                        app,
+                        "budget_profile",
+                        kind.label().to_ascii_lowercase(),
+                    )
+                    .await;
+                } else {
+                    app.message_bar = "Choose Economy, Balanced, Max Quality or Custom.".into();
+                }
+            }
+            "workflow" => {
+                let value = args.trim();
+                if value.is_empty() {
+                    app.message_bar = format!(
+                        "Workflow: {} (use /workflow auto|direct|standard|ultra)",
+                        app.status_bar.workflow_control.label()
+                    );
+                } else if let Some(control) = WorkflowControl::parse(value) {
+                    app.status_bar.set_workflow_control(control);
+                    update_session_control(app, "workflow", control.label().to_ascii_lowercase())
+                        .await;
+                } else {
+                    app.message_bar = "Choose Auto, Direct, Standard or Ultra.".into();
+                }
+            }
+            "search" => {
+                let value = args.trim();
+                if value.is_empty() {
+                    app.message_bar = format!(
+                        "Search: {} (use /search off|auto|always)",
+                        app.status_bar.search_policy
+                    );
+                } else if let Some(policy) = SearchPolicy::parse(value) {
+                    app.status_bar.set_search_policy(policy);
+                    update_session_control(
+                        app,
+                        "search_policy",
+                        policy.label().to_ascii_lowercase(),
+                    )
+                    .await;
+                } else {
+                    app.message_bar = "Choose Off, Auto or Always.".into();
+                }
+            }
+            "ide" => {
+                let Ok(executable) = std::env::current_exe() else {
+                    app.message_bar = "PurrCode IDE launcher is unavailable.".into();
+                    return;
+                };
+                let mut command = Command::new(executable);
+                command.arg("ide");
+                if let Some(session) = app.session_id.as_deref() {
+                    command.args(["--session", session]);
+                }
+                command.current_dir(&app.config.repository);
+                match command.spawn() {
+                    Ok(_) => {
+                        // The IDE is a separate process because a desktop event
+                        // loop must own its own main thread; it attaches to the
+                        // same daemon session, so nothing restarts.
+                        app.message_bar = "Opening the same session in the PurrCode IDE…".into()
+                    }
+                    Err(error) => app.message_bar = format!("IDE handoff failed: {error}"),
+                }
+            }
+            "usage" => {
+                let Some(id) = app.session_id.clone() else {
+                    app.message_bar = "No active session usage is available.".into();
+                    return;
+                };
+                match app
+                    .request(
+                        reqwest::Method::GET,
+                        &format!("/v1/sessions/{id}/usage"),
+                        None,
+                    )
+                    .await
+                {
+                    Ok(value) => {
+                        app.message_bar = format!(
+                            "Usage: {} tokens · {} model calls · {} web searches · {} MCP calls",
+                            value["total_tokens"].as_u64().unwrap_or_default(),
+                            value["model_call_count"].as_u64().unwrap_or_default(),
+                            value["search_requests"].as_u64().unwrap_or_default(),
+                            value["mcp_calls"].as_u64().unwrap_or_default(),
+                        );
+                    }
+                    Err(error) => app.message_bar = format!("Usage unavailable: {error}"),
+                }
+            }
             // Approval and rejection are the only commands that grant or refuse
             // execution authority. They never submit an action the user has not
             // been shown: from anywhere else they open the focused decision
@@ -1032,9 +1142,35 @@ impl CommandPalette {
                     app.message_bar = "No active session.".into();
                     return;
                 };
+                if cmd == "rollback" && args.trim().is_empty() {
+                    match app
+                        .request(
+                            reqwest::Method::GET,
+                            &format!("/v1/sessions/{id}/rollback"),
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(preview) => {
+                            let digest = preview["patch_digest"].as_str().unwrap_or("missing");
+                            let count = preview["changed_file_count"].as_u64().unwrap_or(0);
+                            app.message_bar = format!(
+                                "Rollback preview: {count} isolated change(s). Some provenance may be unattributed. Review /diff, then run /rollback {digest} to discard exactly this patch."
+                            );
+                        }
+                        Err(error) => app.message_bar = format!("Error: {error}"),
+                    }
+                    return;
+                }
                 let (endpoint, body) = match cmd.as_str() {
                     "resume" => ("resume", serde_json::json!({})),
-                    "rollback" => ("rollback", serde_json::json!({})),
+                    "rollback" => (
+                        "rollback",
+                        serde_json::json!({
+                            "expected_patch_digest": args.trim(),
+                            "acknowledge_unattributed_effects": true
+                        }),
+                    ),
                     _ => ("pause", serde_json::json!({"reason": "paused from TUI"})),
                 };
                 match app
@@ -1112,6 +1248,45 @@ impl CommandPalette {
                 app.message_bar = format!("Unknown command: /{cmd}. Type /help for commands.");
             }
         }
+    }
+}
+
+async fn update_session_control(app: &mut App, key: &str, value: String) {
+    let Some(id) = app.session_id.clone() else {
+        app.message_bar = format!("{key} set for the next session: {value}");
+        return;
+    };
+    let controls = match app
+        .request(
+            reqwest::Method::GET,
+            &format!("/v1/sessions/{id}/controls"),
+            None,
+        )
+        .await
+    {
+        Ok(value) => value["controls"].clone(),
+        Err(error) => {
+            app.message_bar = format!("Could not read session controls: {error}");
+            return;
+        }
+    };
+    let mut controls = controls;
+    if let Some(object) = controls.as_object_mut() {
+        object.insert(key.to_owned(), serde_json::Value::String(value.clone()));
+    } else {
+        app.message_bar = "Session controls returned an invalid shape.".into();
+        return;
+    }
+    match app
+        .request(
+            reqwest::Method::POST,
+            &format!("/v1/sessions/{id}/controls"),
+            Some(controls),
+        )
+        .await
+    {
+        Ok(_) => app.message_bar = format!("{key} set to {value} for this session."),
+        Err(error) => app.message_bar = format!("Could not update {key}: {error}"),
     }
 }
 
@@ -1496,12 +1671,16 @@ mod tests {
             filtered_actions("/model qualify")[0].label,
             "Qualify local model"
         );
-        assert!(filtered_actions("provider")
-            .iter()
-            .all(|action| action.matches("provider")));
-        assert!(filtered_actions("exact pending")
-            .iter()
-            .any(|action| action.id.as_str() == "approval.approve"));
+        assert!(
+            filtered_actions("provider")
+                .iter()
+                .all(|action| action.matches("provider"))
+        );
+        assert!(
+            filtered_actions("exact pending")
+                .iter()
+                .any(|action| action.id.as_str() == "approval.approve")
+        );
     }
 
     /// Every verb the discovery surfaces advertise must reach a real match arm.

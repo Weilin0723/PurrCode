@@ -564,36 +564,48 @@ mod tests {
     fn semantic_stall_requires_connection_then_uses_latest_semantic_event() {
         let start = Instant::now();
         let mut tracker = StreamTracker::new(start);
-        assert!(!tracker
-            .is_stalled(at(start, 60_000), Duration::from_secs(30))
-            .unwrap());
+        assert!(
+            !tracker
+                .is_stalled(at(start, 60_000), Duration::from_secs(30))
+                .unwrap()
+        );
         tracker
             .observe(at(start, 2), StreamIncrement::Connected)
             .unwrap();
 
-        assert!(!tracker
-            .is_stalled(at(start, 30_001), Duration::from_secs(30))
-            .unwrap());
-        assert!(tracker
-            .is_stalled(at(start, 30_002), Duration::from_secs(30))
-            .unwrap());
+        assert!(
+            !tracker
+                .is_stalled(at(start, 30_001), Duration::from_secs(30))
+                .unwrap()
+        );
+        assert!(
+            tracker
+                .is_stalled(at(start, 30_002), Duration::from_secs(30))
+                .unwrap()
+        );
 
         tracker
             .observe_model_event(at(start, 31_000), ModelEvent::TextDelta("ready".into()))
             .unwrap();
-        assert!(!tracker
-            .is_stalled(at(start, 60_999), Duration::from_secs(30))
-            .unwrap());
-        assert!(tracker
-            .is_stalled(at(start, 61_000), Duration::from_secs(30))
-            .unwrap());
+        assert!(
+            !tracker
+                .is_stalled(at(start, 60_999), Duration::from_secs(30))
+                .unwrap()
+        );
+        assert!(
+            tracker
+                .is_stalled(at(start, 61_000), Duration::from_secs(30))
+                .unwrap()
+        );
 
         tracker
             .observe_model_event(at(start, 61_001), ModelEvent::Finished)
             .unwrap();
-        assert!(!tracker
-            .is_stalled(at(start, 120_000), Duration::from_secs(30))
-            .unwrap());
+        assert!(
+            !tracker
+                .is_stalled(at(start, 120_000), Duration::from_secs(30))
+                .unwrap()
+        );
     }
 
     #[test]

@@ -9,15 +9,16 @@
 //! Equally load-bearing is the inverse: **the model can never mint or widen a
 //! grant.** A grant is constructed only from an authenticated human identity,
 //! carries an expiry, is revocable, and digests so its exact scope is durable
-//! evidence. `apply_human_authority` is a pure function over (grant, decision),
-//! so every bypass is reproducible from the record.
+//! evidence. The session's permission mode is applied to PawGate decisions in
+//! the agent loop (`apply_permission_mode`, agent-runtime), keeping the bypass
+//! logic next to the decision it changes.
 
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{DomainError, JudgmentDecision};
+use crate::DomainError;
 
 #[derive(
     Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
@@ -130,134 +131,17 @@ impl HumanAuthorityGrant {
     pub fn is_active(&self, now: DateTime<Utc>) -> bool {
         !self.revoked && now < self.expires_at
     }
-
-    /// Whether this grant covers running `program` for `capability`.
-    fn covers(&self, program: Option<&str>, capability: Option<GrantCapability>) -> bool {
-        match &self.mode {
-            AuthorityMode::Governed => false,
-            AuthorityMode::Unrestricted => true,
-            AuthorityMode::Elevated {
-                capabilities,
-                allowed_programs,
-            } => {
-                let capability_ok = capability.is_none_or(|needed| capabilities.contains(&needed));
-                let program_ok = program
-                    .is_none_or(|name| allowed_programs.iter().any(|allowed| allowed == name));
-                capability_ok && program_ok
-            }
-        }
-    }
-}
-
-/// The outcome of consulting a grant about a PawGate decision.
-#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
-pub struct AuthorityOutcome {
-    pub decision: JudgmentDecision,
-    /// True when the grant changed the decision. Recorded as evidence; a
-    /// bypass that is not visible in the record did not happen.
-    pub overridden: bool,
-    /// The grant consulted, when one applied.
-    pub grant_id: Option<GrantId>,
-}
-
-/// Apply a human authority grant to a PawGate decision.
-///
-/// Pure by design: (grant, decision, time) in, outcome out, so every bypass is
-/// reproducible from durable evidence. The rules:
-///
-/// * no grant, inactive grant, or Governed mode → the decision stands;
-/// * a covering grant converts `RequireApproval` into allow-with-the-same-
-///   constraints (the scope PawGate computed still bounds execution) and
-///   converts a policy `Deny` the same way under Unrestricted;
-/// * `Deny` under Elevated stands — elevation skips approvals for enumerated
-///   tools, it does not convert refusals;
-/// * `ModifyAction`/`Replan` always stand: they are advice about correctness,
-///   not authority, and overriding them would change *what* runs rather than
-///   *whether* the human's chosen action runs.
-pub fn apply_human_authority(
-    grant: Option<&HumanAuthorityGrant>,
-    decision: JudgmentDecision,
-    program: Option<&str>,
-    capability: Option<GrantCapability>,
-    now: DateTime<Utc>,
-) -> AuthorityOutcome {
-    let Some(grant) = grant else {
-        return AuthorityOutcome {
-            decision,
-            overridden: false,
-            grant_id: None,
-        };
-    };
-    if !grant.is_active(now) || !grant.covers(program, capability) {
-        return AuthorityOutcome {
-            decision,
-            overridden: false,
-            grant_id: Some(grant.grant_id),
-        };
-    }
-    let unrestricted = matches!(grant.mode, AuthorityMode::Unrestricted);
-    let (decision, overridden) = match decision {
-        JudgmentDecision::RequireApproval { constraints, .. } => (
-            // The human pre-approved this scope; the constraints PawGate
-            // computed still bound the execution.
-            JudgmentDecision::AllowWithConstraints(constraints),
-            true,
-        ),
-        JudgmentDecision::Deny { reason } if unrestricted => (
-            // Unrestricted means the human decided; PawGate's refusal is
-            // recorded via `overridden`, not enforced.
-            JudgmentDecision::Allow,
-            {
-                let _ = reason;
-                true
-            },
-        ),
-        other => (other, false),
-    };
-    AuthorityOutcome {
-        decision,
-        overridden,
-        grant_id: Some(grant.grant_id),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ActionConstraints;
-    use std::path::PathBuf;
 
     fn human() -> HumanIdentity {
         HumanIdentity {
             subject: "user@example.test".into(),
             channel: AuthenticationChannel::LocalTui,
         }
-    }
-
-    fn constraints() -> ActionConstraints {
-        ActionConstraints::read_only(PathBuf::from("/repo"))
-    }
-
-    fn require_approval() -> JudgmentDecision {
-        JudgmentDecision::RequireApproval {
-            reason: "policy requires approval".into(),
-            constraints: constraints(),
-        }
-    }
-
-    fn deny() -> JudgmentDecision {
-        JudgmentDecision::Deny {
-            reason: "policy refuses this program".into(),
-        }
-    }
-
-    fn unrestricted() -> HumanAuthorityGrant {
-        HumanAuthorityGrant::issue(
-            AuthorityMode::Unrestricted,
-            human(),
-            Utc::now(),
-            chrono::Duration::hours(8),
-        )
     }
 
     fn elevated(programs: &[&str]) -> HumanAuthorityGrant {
@@ -273,132 +157,6 @@ mod tests {
             Utc::now(),
             chrono::Duration::hours(8),
         )
-    }
-
-    #[test]
-    fn without_a_grant_pawgate_decisions_stand() {
-        let outcome =
-            apply_human_authority(None, require_approval(), Some("cargo"), None, Utc::now());
-        assert!(!outcome.overridden);
-        assert!(matches!(
-            outcome.decision,
-            JudgmentDecision::RequireApproval { .. }
-        ));
-    }
-
-    #[test]
-    fn unrestricted_never_vetoes_and_every_bypass_is_recorded() {
-        let grant = unrestricted();
-        for decision in [require_approval(), deny()] {
-            let outcome =
-                apply_human_authority(Some(&grant), decision, Some("anything"), None, Utc::now());
-            assert!(
-                outcome.overridden,
-                "the bypass must be visible in the record"
-            );
-            assert_eq!(outcome.grant_id, Some(grant.grant_id));
-            assert!(matches!(
-                outcome.decision,
-                JudgmentDecision::Allow | JudgmentDecision::AllowWithConstraints(_)
-            ));
-        }
-    }
-
-    #[test]
-    fn a_bypassed_approval_keeps_the_computed_constraints() {
-        let grant = unrestricted();
-        let outcome = apply_human_authority(
-            Some(&grant),
-            require_approval(),
-            Some("cargo"),
-            None,
-            Utc::now(),
-        );
-        match outcome.decision {
-            JudgmentDecision::AllowWithConstraints(kept) => {
-                assert_eq!(kept, constraints(), "scope still bounds execution");
-            }
-            other => panic!("expected constraints to survive the bypass, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn elevated_skips_approval_only_for_listed_programs() {
-        let grant = elevated(&["cargo", "npm"]);
-        let covered = apply_human_authority(
-            Some(&grant),
-            require_approval(),
-            Some("cargo"),
-            Some(GrantCapability::ExecuteTests),
-            Utc::now(),
-        );
-        assert!(covered.overridden);
-
-        let uncovered = apply_human_authority(
-            Some(&grant),
-            require_approval(),
-            Some("curl"),
-            Some(GrantCapability::ExecuteTests),
-            Utc::now(),
-        );
-        assert!(
-            !uncovered.overridden,
-            "an unlisted program falls back to Governed"
-        );
-    }
-
-    #[test]
-    fn elevated_never_converts_a_deny() {
-        let grant = elevated(&["cargo"]);
-        let outcome = apply_human_authority(Some(&grant), deny(), Some("cargo"), None, Utc::now());
-        assert!(!outcome.overridden);
-        assert!(matches!(outcome.decision, JudgmentDecision::Deny { .. }));
-    }
-
-    #[test]
-    fn advice_decisions_are_never_overridden() {
-        let grant = unrestricted();
-        for advice in [
-            JudgmentDecision::ModifyAction {
-                reason: "wrong file".into(),
-            },
-            JudgmentDecision::Replan {
-                reason: "plan drifted".into(),
-            },
-        ] {
-            let outcome =
-                apply_human_authority(Some(&grant), advice.clone(), None, None, Utc::now());
-            assert!(
-                !outcome.overridden,
-                "authority changes whether, not what: {advice:?}"
-            );
-            assert_eq!(outcome.decision, advice);
-        }
-    }
-
-    #[test]
-    fn expired_and_revoked_grants_never_apply() {
-        let mut expired = unrestricted();
-        expired.expires_at = Utc::now() - chrono::Duration::minutes(1);
-        let outcome = apply_human_authority(
-            Some(&expired),
-            require_approval(),
-            Some("cargo"),
-            None,
-            Utc::now(),
-        );
-        assert!(!outcome.overridden, "an expired grant is no grant");
-
-        let mut revoked = unrestricted();
-        revoked.revoked = true;
-        let outcome = apply_human_authority(
-            Some(&revoked),
-            require_approval(),
-            Some("cargo"),
-            None,
-            Utc::now(),
-        );
-        assert!(!outcome.overridden, "a revoked grant is no grant");
     }
 
     #[test]
@@ -433,23 +191,5 @@ mod tests {
         assert!(grant.expires_at > grant.granted_at);
         assert!(grant.is_active(Utc::now()));
         assert!(!grant.is_active(grant.expires_at + chrono::Duration::seconds(1)));
-    }
-
-    #[test]
-    fn governed_mode_is_a_no_op_grant() {
-        let grant = HumanAuthorityGrant::issue(
-            AuthorityMode::Governed,
-            human(),
-            Utc::now(),
-            chrono::Duration::hours(1),
-        );
-        let outcome = apply_human_authority(
-            Some(&grant),
-            require_approval(),
-            Some("cargo"),
-            None,
-            Utc::now(),
-        );
-        assert!(!outcome.overridden);
     }
 }
