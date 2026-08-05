@@ -1,0 +1,34 @@
+[package]
+name = "purrcode-ide"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PurrCode native desktop IDE — a pure-Rust egui application over the PurrCode daemon."
+
+[dependencies]
+rfd.workspace = true
+purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-terminal-runtime = { path = "../terminal-runtime" }
+purrcode-workspace-contracts = { path = "../workspace-contracts" }
+
+anyhow.workspace = true
+blake3.workspace = true
+chrono.workspace = true
+eframe = { version = "0.33", default-features = false, features = [
+  "default_fonts",
+  "glow",
+  "wayland",
+  "x11",
+] }
+egui = "0.33"
+egui_extras = { version = "0.33", features = ["image", "syntect"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+reqwest = { workspace = true, features = ["blocking"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

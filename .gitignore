@@ -9,3 +9,6 @@ node_modules/
 dist/
 __pycache__/
 *.pyc
+/docs/book/
+/.claude/
+/.codex/environments/

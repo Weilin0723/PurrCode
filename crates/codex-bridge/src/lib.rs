@@ -15,7 +15,7 @@ use std::process::Stdio;
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 const MAX_EVENT_COUNT: usize = 10_000;
 const MAX_EVENT_BYTES: usize = 8 * 1024 * 1024;
@@ -358,34 +358,40 @@ mod tests {
     async fn fake_worker_can_only_modify_isolated_worktree() {
         use std::os::unix::fs::PermissionsExt;
         let repository = tempfile::tempdir().unwrap();
-        assert!(StdCommand::new("git")
-            .args(["init", "-q"])
-            .current_dir(repository.path())
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            StdCommand::new("git")
+                .args(["init", "-q"])
+                .current_dir(repository.path())
+                .status()
+                .unwrap()
+                .success()
+        );
         std::fs::write(repository.path().join("tracked.txt"), "base").unwrap();
-        assert!(StdCommand::new("git")
-            .args(["add", "tracked.txt"])
-            .current_dir(repository.path())
-            .status()
-            .unwrap()
-            .success());
-        assert!(StdCommand::new("git")
-            .args([
-                "-c",
-                "user.name=PurrCode",
-                "-c",
-                "user.email=test@local.invalid",
-                "commit",
-                "-q",
-                "-m",
-                "base",
-            ])
-            .current_dir(repository.path())
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            StdCommand::new("git")
+                .args(["add", "tracked.txt"])
+                .current_dir(repository.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            StdCommand::new("git")
+                .args([
+                    "-c",
+                    "user.name=PurrCode",
+                    "-c",
+                    "user.email=test@local.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "base",
+                ])
+                .current_dir(repository.path())
+                .status()
+                .unwrap()
+                .success()
+        );
         let fake = repository.path().join("fake-codex");
         std::fs::write(
             &fake,

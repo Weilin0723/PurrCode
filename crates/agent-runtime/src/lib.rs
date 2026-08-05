@@ -1,5 +1,7 @@
 //! Resumable native agent orchestration.
 
+#![allow(clippy::collapsible_if)]
+
 mod agent;
 mod context;
 mod errors;
@@ -20,6 +22,6 @@ pub use crate::context::{AgentContextIndex, AgentContextPolicy};
 pub use crate::errors::AgentError;
 pub use crate::schema::{AgentAction, AgentPlan, AgentTurn};
 pub use crate::stream::{
-    bounded_agent_stream_channel, AgentStreamEvent, AgentStreamObserver, AgentStreamObserverError,
-    AgentStreamReceiver, MAX_STREAM_OBSERVER_CAPACITY,
+    AgentStreamEvent, AgentStreamObserver, AgentStreamObserverError, AgentStreamReceiver,
+    MAX_STREAM_OBSERVER_CAPACITY, bounded_agent_stream_channel,
 };

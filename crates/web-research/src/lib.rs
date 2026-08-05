@@ -233,10 +233,10 @@ impl SearchProvider for WebSearchProvider {
         if !resp.status().is_success() {
             return Err(ResearchError::HttpStatus(resp.status().as_u16()));
         }
-        if let Some(length) = resp.content_length() {
-            if length > MAX_SEARCH_RESPONSE_BYTES {
-                return Err(ResearchError::PageTooLarge(length));
-            }
+        if let Some(length) = resp.content_length()
+            && length > MAX_SEARCH_RESPONSE_BYTES
+        {
+            return Err(ResearchError::PageTooLarge(length));
         }
         let mut bytes = Vec::new();
         while let Some(chunk) = resp.chunk().await? {
@@ -543,10 +543,10 @@ fn validate_public_url(raw: &str) -> Result<String, ResearchError> {
     if host == "localhost" || host.ends_with(".localhost") {
         return Err(ResearchError::UnsafeUrl(raw.to_owned()));
     }
-    if let Ok(address) = host.parse::<IpAddr>() {
-        if !is_public_address(address) {
-            return Err(ResearchError::UnsafeUrl(raw.to_owned()));
-        }
+    if let Ok(address) = host.parse::<IpAddr>()
+        && !is_public_address(address)
+    {
+        return Err(ResearchError::UnsafeUrl(raw.to_owned()));
     }
     Ok(host)
 }
@@ -670,8 +670,8 @@ fn sanitize_external_text(input: &str, maximum_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct CountingSearchProvider {
         calls: Arc<AtomicUsize>,
@@ -804,11 +804,13 @@ mod tests {
             Utc::now() + chrono::Duration::minutes(5),
         )
         .unwrap();
-        assert!(engine
-            .search_authorized(&query, false, &authorization)
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            engine
+                .search_authorized(&query, false, &authorization)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(matches!(
             engine

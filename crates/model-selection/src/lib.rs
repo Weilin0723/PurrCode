@@ -13,7 +13,7 @@
 pub mod candidate;
 
 pub use candidate::{
-    rank, select_coder, select_judge, ModelCandidate, ModelPurpose, SelectionBudget, SizePreference,
+    ModelCandidate, ModelPurpose, SelectionBudget, SizePreference, rank, select_coder, select_judge,
 };
 
 use chrono::{DateTime, Utc};

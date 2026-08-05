@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use purrcode_tui_e2e::fake_daemon::{DaemonScript, ScriptedSession, ScriptedTerminal};
 use purrcode_tui_e2e::fake_provider;
 use purrcode_tui_e2e::harness::with_artifacts;
-use purrcode_tui_e2e::{assertions, Harness, HarnessOptions, Key};
+use purrcode_tui_e2e::{Harness, HarnessOptions, Key, assertions};
 use serde_json::json;
 
 const SESSION: &str = "terminal-session";

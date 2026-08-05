@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use purrcode_tui_e2e::fake_daemon::{DaemonScript, ScriptedSession};
 use purrcode_tui_e2e::fake_provider;
 use purrcode_tui_e2e::harness::with_artifacts;
-use purrcode_tui_e2e::{assertions, Harness, HarnessOptions, Key};
-use serde_json::{json, Value};
+use purrcode_tui_e2e::{Harness, HarnessOptions, Key, assertions};
+use serde_json::{Value, json};
 
 const SESSION: &str = "approval-session";
 const ACTION: &str = "action-under-review";

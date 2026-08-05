@@ -4,6 +4,13 @@
 //! §12 require to be changeable without editing TOML or restarting. They live
 //! in one place so the header, the composer, the command palette and the
 //! session payload read the same value and cannot contradict each other.
+//!
+//! Additionally, we now include workflow profile, search policy, and budget profile
+//! for PRD §4 controls.
+
+use purrcode_runtime_core::adaptation::{
+    BudgetProfileKind, SearchPolicy, WorkflowControl, WorkflowProfile,
+};
 
 /// What the user is asking PurrCode to do (PRD §11).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -41,10 +48,17 @@ impl TaskMode {
         }
     }
 
-    /// True when the mode must not change files. The session payload carries
-    /// this so the daemon enforces it rather than trusting the client.
+    /// True when the daemon's legacy `plan_only` boolean is required. Ask and
+    /// Review are read-only too, but their canonical task modes select the
+    /// corresponding operation and must not be paired with `plan_only=true`.
     pub const fn plan_only(self) -> bool {
-        matches!(self, Self::Ask | Self::Plan)
+        matches!(self, Self::Plan)
+    }
+
+    /// True when the mode must not change files. The canonical task mode is
+    /// sent alongside the legacy boolean so the daemon can enforce this.
+    pub const fn read_only(self) -> bool {
+        matches!(self, Self::Ask | Self::Plan | Self::Review)
     }
 
     pub fn next(self) -> Self {
@@ -109,12 +123,17 @@ impl PermissionMode {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatusBar {
     pub model: String,
     pub privacy: String,
     pub local: bool,
     pub task_mode: TaskMode,
     pub permission: PermissionMode,
+    pub workflow_control: WorkflowControl,
+    pub workflow_profile: WorkflowProfile,
+    pub search_policy: SearchPolicy,
+    pub budget_profile: BudgetProfileKind,
     pub context_info: String,
 }
 
@@ -131,7 +150,14 @@ impl StatusBar {
             privacy: "local-only".into(),
             local: true,
             task_mode: TaskMode::default(),
-            permission: PermissionMode::default(),
+            // New sessions share the daemon's safe Ask/Governed default. An
+            // authenticated user can still choose Auto or Full Access before
+            // submitting a task; those explicit choices remain in the payload.
+            permission: PermissionMode::Ask,
+            workflow_control: WorkflowControl::Auto,
+            workflow_profile: WorkflowProfile::Direct,
+            search_policy: SearchPolicy::Off,
+            budget_profile: BudgetProfileKind::Balanced,
             context_info: String::new(),
         }
     }
@@ -142,6 +168,25 @@ impl StatusBar {
 
     pub fn set_privacy(&mut self, privacy: &str) {
         self.privacy = privacy.to_string();
+    }
+
+    pub fn set_workflow_profile(&mut self, profile: WorkflowProfile) {
+        self.workflow_profile = profile;
+    }
+
+    pub fn set_workflow_control(&mut self, control: WorkflowControl) {
+        self.workflow_control = control;
+        if let Some(profile) = control.forced_profile() {
+            self.workflow_profile = profile;
+        }
+    }
+
+    pub fn set_search_policy(&mut self, policy: SearchPolicy) {
+        self.search_policy = policy;
+    }
+
+    pub fn set_budget_profile(&mut self, kind: BudgetProfileKind) {
+        self.budget_profile = kind;
     }
 }
 
@@ -160,10 +205,14 @@ mod tests {
 
     #[test]
     fn ask_and_plan_never_change_files() {
-        assert!(TaskMode::Ask.plan_only());
+        assert!(!TaskMode::Ask.plan_only());
         assert!(TaskMode::Plan.plan_only());
         assert!(!TaskMode::Build.plan_only());
         assert!(!TaskMode::Review.plan_only());
+        assert!(TaskMode::Ask.read_only());
+        assert!(TaskMode::Plan.read_only());
+        assert!(!TaskMode::Build.read_only());
+        assert!(TaskMode::Review.read_only());
     }
 
     #[test]
@@ -204,6 +253,10 @@ mod tests {
     fn the_defaults_are_the_prd_defaults() {
         let bar = StatusBar::new();
         assert_eq!(bar.task_mode, TaskMode::Build);
+        // New sessions ask before effects; Auto and Full Access are explicit choices.
         assert_eq!(bar.permission, PermissionMode::Ask);
+        assert_eq!(bar.workflow_profile, WorkflowProfile::Direct);
+        assert_eq!(bar.search_policy, SearchPolicy::Off);
+        assert_eq!(bar.budget_profile, BudgetProfileKind::Balanced);
     }
 }

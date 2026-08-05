@@ -2,7 +2,7 @@
 
 use purrcode_tui_e2e::fake_daemon::DaemonScript;
 use purrcode_tui_e2e::harness::with_artifacts;
-use purrcode_tui_e2e::{assertions, Harness, Key};
+use purrcode_tui_e2e::{Harness, Key, assertions};
 use serde_json::json;
 
 fn empty() -> DaemonScript {
@@ -35,7 +35,7 @@ fn local_provider_discovery_saves_after_real_test() {
         // headline is present even in the initial pre-check render, before the
         // real async startup round-trip (and the process's raw-mode key loop)
         // has actually settled. Typing before that settles risks a race.
-        harness.wait_for_text("No provider configured. Type /connect to set one up.")?;
+        harness.wait_for_text("Connect a model provider to begin")?;
         harness.run_command("/connect")?;
         // "Connect a model provider" is a substring of the empty-state headline
         // too ("...to begin"), which is already on screen before the command
@@ -63,7 +63,7 @@ fn local_provider_discovery_saves_after_real_test() {
 fn remote_provider_saves_credential_reference_only() {
     let mut harness = Harness::start(empty()).expect("start workbench");
     with_artifacts("provider-connect-remote", &mut harness, |harness| {
-        harness.wait_for_text("No provider configured. Type /connect to set one up.")?;
+        harness.wait_for_text("Connect a model provider to begin")?;
         harness.run_command("/connect import")?;
         harness.wait_for_text("Import provider configuration")?;
 
@@ -110,7 +110,7 @@ fn remote_provider_saves_credential_reference_only() {
 fn imported_configuration_is_parsed_not_executed() {
     let mut harness = Harness::start(empty()).expect("start workbench");
     with_artifacts("provider-import-configuration", &mut harness, |harness| {
-        harness.wait_for_text("No provider configured. Type /connect to set one up.")?;
+        harness.wait_for_text("Connect a model provider to begin")?;
         harness.run_command("/connect import")?;
         harness.wait_for_text("Import provider configuration")?;
         harness.key(Key::Paste(
@@ -135,7 +135,13 @@ fn pasted_secret_is_redacted_before_history() {
         const SECRET: &str = "sk-live-abcdefghijklmnopqrstuvwxyz012345";
         harness.key(Key::Paste(format!("OPENAI_API_KEY={SECRET}")))?;
         harness.key(Key::Ctrl('g'))?;
-        let screen = harness.wait_for_text("Sensitive content detected")?;
+        // Not `wait_for_text` then assert: a frame arrives over several PTY
+        // reads, so the guard can be on screen while the composer below it is
+        // still showing the previous frame's draft. Waiting for both conditions
+        // at once pins the assertion to one consistent render — and for a
+        // secret assertion, a flaky pass is worse than a flaky failure.
+        let screen = harness
+            .wait_for_all_and_absent(&["Sensitive content detected"], &[SECRET, "sk-live-"])?;
         assertions::assert_no_secret(&screen, &[SECRET]);
         assertions::assert_readable(&screen, "R  Redact and send");
 
@@ -163,7 +169,7 @@ fn invalid_endpoint_fails_visibly() {
     })
     .expect("start workbench");
     with_artifacts("provider-invalid-endpoint", &mut harness, |harness| {
-        harness.wait_for_text("No provider configured. Type /connect to set one up.")?;
+        harness.wait_for_text("Connect a model provider to begin")?;
         harness.run_command("/connect")?;
         harness.key(Key::Enter)?;
         harness.wait_for_text("coder:7b")?;
@@ -257,7 +263,7 @@ fn removed_profile_disappears_from_list() {
 fn unparseable_import_is_refused() {
     let mut harness = Harness::start(empty()).expect("start workbench");
     with_artifacts("provider-import-unparseable", &mut harness, |harness| {
-        harness.wait_for_text("No provider configured. Type /connect to set one up.")?;
+        harness.wait_for_text("Connect a model provider to begin")?;
         harness.run_command("/connect import")?;
         harness.wait_for_text("Import provider configuration")?;
         harness.key(Key::Paste(

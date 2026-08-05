@@ -431,7 +431,7 @@ fn unsafe_repository_read(
     read: &purrcode_runtime_core::RepositoryReadAction,
     repository: &Path,
 ) -> Option<String> {
-    use purrcode_runtime_core::{canonicalize_repository_path, RepositoryReadAction};
+    use purrcode_runtime_core::{RepositoryReadAction, canonicalize_repository_path};
     match read {
         RepositoryReadAction::GitStatus | RepositoryReadAction::GitLog { .. } => None,
         RepositoryReadAction::GitRevParse { revision } => {
@@ -562,13 +562,13 @@ fn unsafe_paths(paths: &[PathBuf], repository: &Path, verb: &str) -> Option<Stri
         // Non-existent paths are not checked here because they will be created
         // (and execution-level containment still applies), but if a symlink
         // chain redirects outside the repository it must be rejected.
-        if let Ok(canonical) = joined.canonicalize() {
-            if !canonical.starts_with(repository) {
-                return Some(format!(
-                    "{verb} path follows a symlink outside the worktree: {}",
-                    path.display()
-                ));
-            }
+        if let Ok(canonical) = joined.canonicalize()
+            && !canonical.starts_with(repository)
+        {
+            return Some(format!(
+                "{verb} path follows a symlink outside the worktree: {}",
+                path.display()
+            ));
         }
     }
     None
@@ -777,9 +777,10 @@ mod tests {
         assert!(pack.verify(&key).is_err());
         let other = SigningKey::from_bytes(&[8_u8; 32]);
         let (pack, _) = signed_pack();
-        assert!(pack
-            .verify(&hex::encode(other.verifying_key().to_bytes()))
-            .is_err());
+        assert!(
+            pack.verify(&hex::encode(other.verifying_key().to_bytes()))
+                .is_err()
+        );
     }
 
     #[test]

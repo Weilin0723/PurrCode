@@ -189,3 +189,253 @@ footer { padding: 6px 16px; border-top: 1px solid var(--line); background: var(-
 /* The action that turns a reviewed plan into work. */
 .plan-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
 .plan-hint { color: var(--muted); font-size: 12px; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   PurrCode IDE shell
+
+   The standalone Studio is deliberately a product surface, not a page that
+   resembles an admin dashboard. These rules mirror the supplied IDE reference:
+   a dark chrome, navigation rail, session/project column, conversation column,
+   and a code/evidence column that is useful before any session exists.
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  --bg: #080e17;
+  --surface: #0c1420;
+  --surface-2: #111c2b;
+  --surface-3: #172336;
+  --line: #233044;
+  --line-strong: #31445e;
+  --fg: #e8eef7;
+  --muted: #8190a6;
+  --accent: #5c8eff;
+  --accent-2: #7ca4ff;
+  --success: #57d47c;
+  --warning: #eab965;
+  --danger: #ff7185;
+  --purple: #9c82ff;
+  --teal: #57c8cf;
+  --radius: 7px;
+}
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+body { font-size: 13px; letter-spacing: .01em; }
+button, select, textarea { font-family: var(--font); }
+.app-shell { min-width: 980px; background: var(--bg); }
+
+.topbar { height: 68px; padding: 0 22px; gap: 26px; background: #09111c; border-bottom: 1px solid #1c2a3d; }
+.brand { min-width: 190px; gap: 11px; font-size: 20px; letter-spacing: -.03em; color: #f5f7fb; }
+.brand img { width: 38px; height: 38px; object-fit: contain; }
+.top-controls, .top-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.top-controls { flex: 1; }
+.top-controls select, .top-actions select, .top-model {
+  height: 34px; padding: 0 12px; border: 1px solid transparent; border-radius: 8px;
+  background: #111d2c; color: var(--fg); font: inherit; font-weight: 600; cursor: pointer;
+}
+.top-controls select:hover, .top-actions select:hover, .top-model:hover { border-color: var(--line-strong); background: #17263b; }
+.ui-icon { width: 18px; height: 18px; display: block; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.top-chevron { width: 18px; height: 18px; color: #a2b0c3; margin: 0 2px; }
+.repo-mark, .branch-mark { color: #b8c5d8; margin-left: 7px; }
+.repo-label { color: #f0f3f8; font-weight: 600; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.branch-label { color: #bfcbda; max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-actions { flex-shrink: 0; }
+.top-model { background: transparent; color: #d9e1ed; font-weight: 500; }
+.top-actions select { font-weight: 500; background: #111c2a; }
+.top-icon { color: #b9c5d5; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; line-height: 1; }
+.top-actions button.top-icon { border: 0; background: transparent; cursor: pointer; }
+.top-avatar { width: 32px; height: 32px; border: 1px solid #4b83ff; border-radius: 9px; padding: 3px; object-fit: contain; }
+.dot { width: 8px; height: 8px; margin-left: -7px; border-radius: 50%; background: var(--warning); }
+.dot.ready { background: var(--success); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+.main-layout { min-height: 0; display: grid; grid-template-columns: 68px 270px minmax(370px, 1fr) minmax(520px, 1.55fr); background: var(--bg); }
+.activity-rail { width: auto; min-height: 0; padding: 16px 0 12px; display: flex; flex-direction: column; align-items: center; gap: 20px; background: #09111c; border-right: 1px solid #1b2a3c; }
+.rail-button, .rail-bottom { width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border: 0; border-left: 2px solid transparent; color: #8190a6; background: transparent; cursor: pointer; }
+.rail-button:hover, .rail-button.active { color: #f2f5fb; border-left-color: var(--accent); background: #13233a; }
+.rail-bottom { margin-top: auto; color: var(--accent); }
+.rail-bottom img { width: 31px; height: 31px; object-fit: contain; }
+
+.sidebar { width: auto; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid #1f2d42; background: #0b1421; }
+.sidebar-header { height: 64px; padding: 15px 14px 12px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #1d2a3d; }
+.sidebar-header .primary { flex: 1; text-align: left; padding: 8px 12px; background: #244d9d; }
+.shortcut { color: #8190a6; font-size: 12px; }
+.section-label { display: flex; justify-content: space-between; align-items: center; padding: 17px 14px 8px; color: #8796aa; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.sidebar-more, .more-button { border: 0; background: transparent; color: #8796aa; cursor: pointer; letter-spacing: 2px; }
+.session-list { flex: 0 1 39%; min-height: 100px; padding: 0 9px 14px; overflow-y: auto; }
+.session-item { padding: 11px 12px; margin-bottom: 4px; border: 1px solid transparent; border-radius: 7px; color: #d6dfeb; }
+.session-item:hover, .session-item.active { background: #142238; border-color: #213552; color: #f2f5fb; }
+.session-item .session-title { font-size: 13px; font-weight: 600; }
+.session-item .session-meta { margin-top: 4px; color: #8391a6; font-size: 11px; }
+.project-tree { flex: 1 1 auto; min-height: 0; border-top: 1px solid #1d2a3d; padding-bottom: 20px; overflow-y: auto; }
+.tree-root, .tree-row { min-height: 29px; display: flex; align-items: center; gap: 8px; padding: 4px 13px; color: #b8c5d7; }
+.tree-root { color: #eef3fa; }
+.tree-row { width: 100%; border: 0; background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
+.tree-row.nested { padding-left: 31px; }
+.tree-row.file { padding-left: 48px; }
+.tree-row:hover { background: #142238; }
+.tree-chevron { width: 10px; color: #9cadc2; }
+.tree-folder { color: #75a5ff; }
+.tree-file.rust { color: #ff9f6b; }
+.tree-file.toml { color: #8b92ff; }
+.tree-file.md { color: #6cc6cb; }
+.tree-actions { margin-left: auto; color: #8c9ab0; }
+
+.center { min-width: 0; min-height: 0; background: #0b1420; border-right: 1px solid #1f2d42; }
+.center-main { min-height: 0; }
+.conversation-header { height: 58px; padding: 0 20px; background: #0d1725; border-bottom: 1px solid #1e2c40; }
+.conversation-title { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.conversation-title .plus { color: #9aacbf; font-size: 20px; }
+.conversation-header h1 { max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e8eef7; font-size: 15px; font-weight: 600; }
+.status-chip { background: transparent; color: #7e8fa6; }
+.conversation { min-height: 0; padding: 22px 20px 12px; overflow-y: auto; }
+.conversation .empty { min-height: 260px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 50px 24px; color: #77879e; }
+.message { padding: 13px 14px; margin-bottom: 13px; border: 1px solid #1e3048; border-radius: 8px; background: #111d2c; }
+.message-role { color: #aebdd0; font-weight: 600; }
+.message-role .model { color: #7e9ff2; }
+.message-content { color: #e1e8f2; line-height: 1.6; }
+.activity-compact { padding: 11px 20px; background: #0b1420; border-top: 1px solid #1d2b3f; }
+.activity-compact .activity-item { line-height: 1.6; }
+.composer-bar { padding: 13px 18px 15px; background: #0d1725; border-top: 1px solid #1f2d42; }
+.composer-bar textarea { min-height: 62px; padding: 12px 14px; background: #0a121e; border-color: #2a3d59; border-radius: 8px; color: #eef3fa; }
+.composer-controls { margin-top: 9px; }
+.composer-meta { min-width: 0; gap: 8px; color: #9cacbf; }
+.context-button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding: 5px 9px; border: 1px solid #2a3d59; border-radius: 6px; background: #111d2c; color: #c4d0df; cursor: pointer; }
+.context-button .ui-icon { width: 15px; height: 15px; }
+.send-button { min-width: 38px; height: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 4px 10px; }
+.send-button .ui-icon { width: 19px; height: 19px; }
+#mode-info, #model-info, #permission-info { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 7px; border: 1px solid #273952; border-radius: 5px; color: #b8c6d8; font-size: 11px; }
+
+.context-drawer { min-width: 0; min-height: 0; width: auto; display: flex; flex-direction: column; border-left: 0; background: #0a121e; }
+.context-drawer.hidden { display: none; }
+.editor-tabs { height: 46px; display: flex; align-items: stretch; gap: 2px; padding-left: 8px; border-bottom: 1px solid #1f2d42; background: #0c1624; overflow: hidden; }
+.editor-tab, .editor-add { flex: 0 0 auto; padding: 0 13px; border: 0; border-right: 1px solid #1a293c; background: transparent; color: #99a8bb; font: inherit; cursor: pointer; }
+.editor-tab.active { color: #e5ecf5; background: #111f31; border-top: 2px solid var(--accent); }
+.file-icon { margin-right: 7px; color: #6e9cff; }
+.tab-close { margin-left: 12px; color: #8292a8; }
+.modified { margin-left: 6px; color: #f0b35e; }
+.editor-add { font-size: 19px; color: #a5b4c7; }
+.editor-toolbar { height: 31px; display: flex; align-items: center; justify-content: flex-end; gap: 16px; padding: 0 15px; color: #8494aa; border-bottom: 1px solid #16263a; }
+.editor-preview { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 18px 18px 22px 0; background: #09111c; font-family: var(--mono); font-size: 13px; line-height: 1.85; color: #cbd6e5; }
+.code-line { white-space: pre; }
+.line-no { display: inline-block; width: 42px; padding-right: 13px; margin-right: 14px; text-align: right; color: #4d607a; user-select: none; }
+.kw { color: #b687ff; }
+.str { color: #7ed7c3; }
+.fn { color: #68b8ff; }
+.drawer-tabs { flex: 0 0 46px; padding: 0 12px; background: #0c1624; border-top: 1px solid #1f2d42; }
+.drawer-tab { padding: 0 12px; height: 46px; color: #8392a8; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.drawer-tab.active { color: #e7eef7; border-bottom-color: var(--accent); }
+.drawer-panel { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 14px 18px; background: #0b1420; }
+.drawer-panel.hidden { display: none; }
+.diff-content { max-height: 190px; margin-top: 12px; padding: 10px; overflow: auto; background: #08101a; border: 1px solid #1d2d43; color: #9db0c7; }
+.changed-file { color: #adc0d6; background: #14233a; }
+.context-drawer .drawer-close { display: none; }
+
+footer { height: 28px; padding: 0 14px; align-items: center; background: #09111c; border-top-color: #1f2d42; }
+.footer-center { margin-left: 18px; margin-right: auto; color: #8291a6; }
+
+@media (max-width: 1220px) {
+  .main-layout { grid-template-columns: 54px 230px minmax(340px, 1fr) minmax(430px, 1.2fr); }
+  .brand { min-width: 150px; }
+  .top-controls { gap: 6px; }
+  .top-actions .top-icon { display: none; }
+}
+
+/* Light theme for the complete IDE chrome. The IDE shell uses a few deliberate
+   dark surfaces for editor/terminal contrast, so the theme needs explicit
+   surface overrides in addition to the shared design tokens above. */
+:root[data-theme="light"] {
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --surface-2: #eef2f7;
+  --surface-3: #e5ebf4;
+  --line: #d5dce7;
+  --line-strong: #b7c4d6;
+  --fg: #172033;
+  --muted: #5e6c80;
+  --accent: #2868dc;
+  --accent-2: #1e56bd;
+}
+:root[data-theme="light"] body,
+:root[data-theme="light"] .app-shell { background: #f5f7fb; color: #172033; }
+:root[data-theme="light"] .topbar,
+:root[data-theme="light"] .activity-rail,
+:root[data-theme="light"] footer { background: #ffffff; border-color: #d5dce7; }
+:root[data-theme="light"] .sidebar { background: #f9fbfe; border-color: #d5dce7; }
+:root[data-theme="light"] .center { background: #ffffff; border-color: #d5dce7; }
+:root[data-theme="light"] .context-drawer { background: #fbfcff; }
+:root[data-theme="light"] .top-controls select,
+:root[data-theme="light"] .top-actions select,
+:root[data-theme="light"] .top-model { background: #eef2f7; color: #172033; border-color: #d5dce7; }
+:root[data-theme="light"] .top-model { background: transparent; }
+:root[data-theme="light"] .brand,
+:root[data-theme="light"] .repo-label,
+:root[data-theme="light"] .conversation-header h1 { color: #172033; }
+:root[data-theme="light"] .branch-label,
+:root[data-theme="light"] .top-icon,
+:root[data-theme="light"] .repo-mark,
+:root[data-theme="light"] .branch-mark { color: #5e6c80; }
+:root[data-theme="light"] .rail-button,
+:root[data-theme="light"] .rail-bottom { color: #65758a; }
+:root[data-theme="light"] .rail-button:hover,
+:root[data-theme="light"] .rail-button.active { color: #172033; background: #e9f0ff; }
+:root[data-theme="light"] .sidebar-header,
+:root[data-theme="light"] .project-tree,
+:root[data-theme="light"] .conversation-header,
+:root[data-theme="light"] .composer-bar,
+:root[data-theme="light"] .editor-tabs,
+:root[data-theme="light"] .editor-toolbar,
+:root[data-theme="light"] .drawer-tabs { border-color: #d5dce7; }
+:root[data-theme="light"] .sidebar-header,
+:root[data-theme="light"] .conversation-header,
+:root[data-theme="light"] .composer-bar,
+:root[data-theme="light"] .editor-tabs,
+:root[data-theme="light"] .editor-toolbar,
+:root[data-theme="light"] .drawer-tabs { background: #f7f9fc; }
+:root[data-theme="light"] .section-label,
+:root[data-theme="light"] .shortcut,
+:root[data-theme="light"] .session-item .session-meta,
+:root[data-theme="light"] .more-button { color: #66758a; }
+:root[data-theme="light"] .session-item { color: #29364a; }
+:root[data-theme="light"] .session-item:hover,
+:root[data-theme="light"] .session-item.active,
+:root[data-theme="light"] .tree-row:hover { background: #eaf0fb; border-color: #cedbf1; color: #172033; }
+:root[data-theme="light"] .tree-root,
+:root[data-theme="light"] .tree-row { color: #334157; }
+:root[data-theme="light"] .conversation { background: #ffffff; }
+:root[data-theme="light"] .message { background: #f5f8fc; border-color: #dce3ee; }
+:root[data-theme="light"] .message-role { color: #4d5d74; }
+:root[data-theme="light"] .message-content { color: #202c40; }
+:root[data-theme="light"] .activity-compact { background: #ffffff; border-color: #d5dce7; }
+:root[data-theme="light"] .composer-bar textarea,
+:root[data-theme="light"] .terminal-input textarea { background: #ffffff; border-color: #bdcadd; color: #172033; }
+:root[data-theme="light"] .context-button,
+:root[data-theme="light"] #mode-info,
+:root[data-theme="light"] #model-info,
+:root[data-theme="light"] #permission-info { background: #eef2f7; border-color: #d0d9e6; color: #40506a; }
+:root[data-theme="light"] .editor-tab,
+:root[data-theme="light"] .editor-add,
+:root[data-theme="light"] .drawer-tab { color: #5e6c80; }
+:root[data-theme="light"] .editor-tab.active { background: #eaf0fb; color: #172033; }
+:root[data-theme="light"] .editor-preview { background: #fbfcff; color: #334157; }
+:root[data-theme="light"] .editor-toolbar { color: #64748a; }
+:root[data-theme="light"] .line-no { color: #8b9ab0; }
+:root[data-theme="light"] .drawer-panel { background: #ffffff; }
+:root[data-theme="light"] .diff-content { background: #f7f9fc; border-color: #d5dce7; color: #52627a; }
+:root[data-theme="light"] .changed-file { background: #e8eef8; color: #3d5270; }
+:root[data-theme="light"] .modal-content { background: #ffffff; border-color: #cbd5e3; }
+:root[data-theme="light"] .modal-header { background: #ffffff; border-color: #d5dce7; }
+
+.modal-footer { position: sticky; bottom: -24px; display: flex; justify-content: flex-end; gap: 10px; margin: 20px -24px -24px; padding: 14px 24px; background: var(--surface); border-top: 1px solid var(--line); }
+
+/* Interaction and scrolling affordances. The shell itself stays fixed like an
+   IDE window; each working surface owns its own scroll position. */
+.main-layout, .center, .context-drawer { min-height: 0; }
+.tree-list { min-height: 0; }
+.sidebar-more, .more-button, .editor-add { min-width: 28px; min-height: 28px; display: inline-flex; align-items: center; justify-content: center; }
+.editor-tab { display: inline-flex; align-items: center; gap: 7px; }
+.editor-tab .ui-icon { width: 15px; height: 15px; }
+.editor-add { font-size: 18px; }
+.tree-root strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-theme="light"] .top-icon,
+:root[data-theme="light"] .top-controls .ui-icon,
+:root[data-theme="light"] .repo-mark,
+:root[data-theme="light"] .branch-mark { color: #5e6c80; }
+:root[data-theme="light"] .tree-row:hover { background: #eaf0fb; }

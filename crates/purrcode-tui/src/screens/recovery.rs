@@ -3,10 +3,10 @@
 //! Every one of these states offers concrete options and states what will *not*
 //! happen. None of them starts work as a side effect of being shown.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::components::hints::Hints;

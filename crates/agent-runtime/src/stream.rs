@@ -1,13 +1,22 @@
 //! Streaming observer and rationale extraction for live clients.
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use purrcode_provider_gateway::{StreamPhase, StreamTiming, MAX_PROVIDER_STREAM_FRAME_BYTES};
+use purrcode_provider_gateway::{MAX_PROVIDER_STREAM_FRAME_BYTES, StreamPhase, StreamTiming};
 
 /// At the provider frame limit, the largest permitted queue retains at most 16 MiB of deltas.
 pub const MAX_STREAM_OBSERVER_CAPACITY: usize = 64;
+
+/// Terminal lifecycle updates use a separate bounded lane. A single agent
+/// operation can make at most two structured calls per autonomous iteration
+/// (the initial response and one repair), and the runtime caps iterations at
+/// 32. Keeping a larger fixed terminal lane makes that upper bound explicit
+/// without allowing an unbounded observer backlog.
+const MAX_TERMINAL_OBSERVER_CAPACITY: usize = 128;
 
 pub(crate) const MAX_STREAMED_RATIONALE_BYTES: usize = MAX_PROVIDER_STREAM_FRAME_BYTES;
 const MAX_STREAM_JSON_KEY_CHARS: usize = 256;
@@ -38,15 +47,169 @@ pub enum AgentStreamEvent {
 
 /// Cloneable sending side of a bounded observer channel.
 ///
-/// Sending awaits available capacity, so a slow live client applies backpressure instead of
-/// creating an unbounded queue. Dropping the receiver disables observation without changing the
-/// authoritative agent result.
+/// Normal observations are best-effort and may be dropped when the receiver
+/// is slow. Terminal lifecycle updates use a separate bounded lane so a full
+/// normal queue can never erase `Completed`, `Failed`, or `Cancelled`.
 #[derive(Clone, Debug)]
 pub struct AgentStreamObserver {
-    pub(crate) sender: mpsc::Sender<AgentStreamEvent>,
+    normal_sender: mpsc::Sender<AgentStreamEvent>,
+    terminal_sender: mpsc::Sender<AgentStreamEvent>,
+    normal_slots: Arc<NormalSlotCounter>,
 }
 
-pub type AgentStreamReceiver = mpsc::Receiver<AgentStreamEvent>;
+/// Receiving side of a bounded observer channel.
+///
+/// The receiver keeps the normal queue's slot counter in sync, allowing a
+/// producer to keep accepting normal updates after a client drains a full
+/// queue. Terminal updates are checked after already-queued normal updates so
+/// content remains ordered ahead of the lifecycle event that closes a turn.
+#[derive(Debug)]
+pub struct AgentStreamReceiver {
+    normal_receiver: mpsc::Receiver<AgentStreamEvent>,
+    terminal_receiver: mpsc::Receiver<AgentStreamEvent>,
+    normal_slots: Arc<NormalSlotCounter>,
+    normal_closed: bool,
+    terminal_closed: bool,
+}
+
+#[derive(Debug)]
+struct NormalSlotCounter {
+    capacity: usize,
+    in_flight: std::sync::atomic::AtomicUsize,
+}
+
+impl NormalSlotCounter {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            in_flight: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn reserve(&self) -> bool {
+        self.in_flight
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < self.capacity).then_some(count + 1)
+            })
+            .is_ok()
+    }
+
+    fn release(&self) {
+        let previous = self.in_flight.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "normal observer slot released without a send");
+    }
+}
+
+impl AgentStreamObserver {
+    /// Best-effort send that never blocks the agent loop.
+    ///
+    /// A slow or aborted live client drops observations rather than stalling
+    /// the loop with the lease held; the durable session events stay
+    /// authoritative either way.
+    pub(crate) fn try_send(&self, event: AgentStreamEvent) -> bool {
+        // Normal updates are best effort; terminal updates have a dedicated
+        // bounded lane below.
+        let terminal = matches!(
+            &event,
+            AgentStreamEvent::Phase { phase, .. } if phase.is_terminal()
+        );
+        if terminal {
+            // The terminal lane is deliberately larger than the maximum
+            // number of provider attempts in one operation. Sending remains
+            // non-blocking; unlike normal updates, terminal updates never
+            // compete with a full content queue.
+            return self.terminal_sender.try_send(event).is_ok();
+        }
+        if !self.normal_slots.reserve() {
+            return false;
+        }
+        match self.normal_sender.try_send(event) {
+            Ok(()) => true,
+            Err(_) => {
+                self.normal_slots.release();
+                false
+            }
+        }
+    }
+}
+
+impl AgentStreamReceiver {
+    fn normal_received(&self) {
+        self.normal_slots.release();
+    }
+
+    /// Receive the next observation, prioritising already queued normal
+    /// content before a terminal update. This preserves the rationale/content
+    /// ordering while still making terminal delivery independent of normal
+    /// queue pressure.
+    pub async fn recv(&mut self) -> Option<AgentStreamEvent> {
+        loop {
+            if let Ok(event) = self.normal_receiver.try_recv() {
+                self.normal_received();
+                return Some(event);
+            }
+            if let Ok(event) = self.terminal_receiver.try_recv() {
+                return Some(event);
+            }
+
+            if self.normal_closed && self.terminal_closed {
+                return None;
+            }
+            tokio::select! {
+                biased;
+                event = self.normal_receiver.recv(), if !self.normal_closed => {
+                    match event {
+                        Some(event) => {
+                            self.normal_received();
+                            return Some(event);
+                        }
+                        None => self.normal_closed = true,
+                    }
+                }
+                event = self.terminal_receiver.recv(), if !self.terminal_closed => {
+                    match event {
+                        Some(event) => return Some(event),
+                        None => self.terminal_closed = true,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Non-blocking counterpart used by tests and callers draining a known
+    /// batch. It reports `Disconnected` only after both bounded lanes close.
+    pub fn try_recv(&mut self) -> Result<AgentStreamEvent, mpsc::error::TryRecvError> {
+        match self.normal_receiver.try_recv() {
+            Ok(event) => {
+                self.normal_received();
+                Ok(event)
+            }
+            Err(mpsc::error::TryRecvError::Empty) => match self.terminal_receiver.try_recv() {
+                Ok(event) => Ok(event),
+                Err(mpsc::error::TryRecvError::Empty) => Err(mpsc::error::TryRecvError::Empty),
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    self.terminal_closed = true;
+                    if self.normal_closed {
+                        Err(mpsc::error::TryRecvError::Disconnected)
+                    } else {
+                        Err(mpsc::error::TryRecvError::Empty)
+                    }
+                }
+            },
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.normal_closed = true;
+                match self.terminal_receiver.try_recv() {
+                    Ok(event) => Ok(event),
+                    Err(mpsc::error::TryRecvError::Empty) => Err(mpsc::error::TryRecvError::Empty),
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        self.terminal_closed = true;
+                        Err(mpsc::error::TryRecvError::Disconnected)
+                    }
+                }
+            }
+        }
+    }
+}
 
 pub fn bounded_agent_stream_channel(
     capacity: usize,
@@ -57,8 +220,24 @@ pub fn bounded_agent_stream_channel(
             maximum: MAX_STREAM_OBSERVER_CAPACITY,
         });
     }
-    let (sender, receiver) = mpsc::channel(capacity);
-    Ok((AgentStreamObserver { sender }, receiver))
+    let (normal_sender, normal_receiver) = mpsc::channel(capacity);
+    let (terminal_sender, terminal_receiver) = mpsc::channel(MAX_TERMINAL_OBSERVER_CAPACITY);
+    let normal_slots = Arc::new(NormalSlotCounter::new(capacity));
+    let receiver = AgentStreamReceiver {
+        normal_receiver,
+        terminal_receiver,
+        normal_slots: Arc::clone(&normal_slots),
+        normal_closed: false,
+        terminal_closed: false,
+    };
+    Ok((
+        AgentStreamObserver {
+            normal_sender,
+            terminal_sender,
+            normal_slots,
+        },
+        receiver,
+    ))
 }
 
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -502,5 +681,27 @@ mod stream_tests {
                 maximum: MAX_STREAM_OBSERVER_CAPACITY,
             }
         );
+    }
+
+    #[test]
+    fn try_send_drops_when_the_queue_is_full_without_blocking() {
+        // A live client that stops draining must not stall the agent loop.
+        // Once the bounded queue fills, further observations are dropped.
+        let (observer, mut receiver) = bounded_agent_stream_channel(2).unwrap();
+        let event = AgentStreamEvent::Phase {
+            role: "coder".into(),
+            attempt: 0,
+            sequence: 1,
+            previous_phase: StreamPhase::SendingRequest,
+            phase: StreamPhase::WaitingForFirstToken,
+            timing: StreamTiming::default(),
+        };
+        assert!(observer.try_send(event.clone()));
+        assert!(observer.try_send(event.clone()));
+        // Queue is now full; this must not panic and must not block.
+        assert!(!observer.try_send(event.clone()));
+        assert_eq!(receiver.try_recv().unwrap(), event);
+        assert_eq!(receiver.try_recv().unwrap(), event);
+        assert!(receiver.try_recv().is_err());
     }
 }

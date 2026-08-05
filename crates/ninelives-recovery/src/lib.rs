@@ -2,8 +2,9 @@
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use purrcode_runtime_core::{ActionId, Authorization, SessionEvent, SessionId, SessionState};
-use rusqlite::{params, Connection, DatabaseName, OptionalExtension, TransactionBehavior};
+use rusqlite::{Connection, DatabaseName, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use uuid::Uuid;
@@ -26,6 +27,16 @@ pub struct Automation {
 
 pub struct SessionStore {
     connection: Connection,
+}
+
+/// Result of startup reconciliation. A legacy session whose event log no
+/// longer satisfies the current state-machine invariants is isolated by ID;
+/// healthy sessions still recover normally and the daemon can serve new work.
+/// The invalid log is never rewritten or treated as valid.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RecoveryReport {
+    pub recovered: Vec<SessionId>,
+    pub unavailable: BTreeMap<SessionId, String>,
 }
 
 impl SessionStore {
@@ -62,6 +73,15 @@ impl SessionStore {
         session_id: SessionId,
         event: &SessionEvent,
     ) -> Result<u64, StoreError> {
+        // Every durable prefix must replay deterministically. Persisting an
+        // invalid event and skipping it later would make the audit log and the
+        // product state disagree.
+        let mut next = self.load(session_id)?;
+        next.reduce_event(event)
+            .map_err(|error| StoreError::InvalidEvent {
+                session: session_id,
+                reason: error.to_string(),
+            })?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -87,6 +107,25 @@ impl SessionStore {
 
     /// Persists the judgment event and exact authorization in one durable transaction.
     pub fn authorize(&mut self, authorization: &Authorization) -> Result<(), StoreError> {
+        let mut next = self.load(authorization.session_id)?;
+        if authorization.approved_by == purrcode_runtime_core::ApprovalAuthority::Human {
+            next.reduce_event(&SessionEvent::ApprovalRecorded {
+                action_id: authorization.action_id,
+                authority: authorization.approved_by.clone(),
+                action_digest: authorization.action_digest.clone(),
+            })
+            .map_err(|error| StoreError::InvalidEvent {
+                session: authorization.session_id,
+                reason: error.to_string(),
+            })?;
+        }
+        next.reduce_event(&SessionEvent::AuthorizationPersisted {
+            authorization: authorization.clone(),
+        })
+        .map_err(|error| StoreError::InvalidEvent {
+            session: authorization.session_id,
+            reason: error.to_string(),
+        })?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -98,9 +137,7 @@ impl SessionStore {
             [authorization.session_id.0.to_string()],
             |row| row.get(0),
         )?;
-        if authorization.approved_by
-            != purrcode_runtime_core::ApprovalAuthority::DeterministicPolicy
-        {
+        if authorization.approved_by == purrcode_runtime_core::ApprovalAuthority::Human {
             let approval = SessionEvent::ApprovalRecorded {
                 action_id: authorization.action_id,
                 authority: authorization.approved_by.clone(),
@@ -189,19 +226,16 @@ impl SessionStore {
     pub fn load(&self, session_id: SessionId) -> Result<SessionState, StoreError> {
         let events = self.events(session_id)?;
         let mut state = SessionState::empty(session_id);
-        for event in events {
-            // Recovery semantics: replay whatever was persisted. Skip events
-            // that would otherwise violate the current reducer's invariants
-            // rather than corrupting the loaded state.
-            if let Err(error) = state.reduce_event(&event) {
-                Self::log_skipped_event(session_id, error);
-            }
+        for (index, event) in events.into_iter().enumerate() {
+            state
+                .reduce_event(&event)
+                .map_err(|error| StoreError::ReplayInconsistent {
+                    session: session_id,
+                    sequence: index as u64 + 1,
+                    reason: error.to_string(),
+                })?;
         }
         Ok(state)
-    }
-
-    fn log_skipped_event(session_id: SessionId, error: purrcode_runtime_core::DomainError) {
-        eprintln!("purrcode-ninelives: session {session_id:?} skipped invalid event: {error}");
     }
 
     pub fn events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>, StoreError> {
@@ -392,10 +426,32 @@ impl SessionStore {
     /// This method is idempotent: once an uncertainty event is recorded, replay no longer
     /// reconstructs the session as executing.
     pub fn recover_uncertain_sessions(&mut self) -> Result<Vec<SessionId>, StoreError> {
+        Ok(self.recover_uncertain_sessions_with_quarantine()?.recovered)
+    }
+
+    /// Reconcile healthy sessions while quarantining only legacy event logs
+    /// that cannot be replayed under today's state machine. Database/I/O
+    /// failures still abort startup; this is not a general error suppression
+    /// path. Appending to a quarantined session continues to fail closed via
+    /// [`SessionStore::append`] and [`SessionStore::load`].
+    pub fn recover_uncertain_sessions_with_quarantine(
+        &mut self,
+    ) -> Result<RecoveryReport, StoreError> {
         let session_ids = self.list_session_ids()?;
-        let mut recovered = Vec::new();
+        let mut report = RecoveryReport::default();
         for session_id in session_ids {
-            let state = self.load(session_id)?;
+            let state = match self.load(session_id) {
+                Ok(state) => state,
+                Err(
+                    error @ (StoreError::ReplayInconsistent { .. }
+                    | StoreError::Serialization(_)
+                    | StoreError::Identifier(_)),
+                ) => {
+                    report.unavailable.insert(session_id, error.to_string());
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             if let purrcode_runtime_core::SessionStatus::Executing(action_id) = state.status {
                 self.append(
                     session_id,
@@ -405,29 +461,48 @@ impl SessionStore {
                         evidence: "process state was uncertain after runtime restart; action will not be retried automatically".into(),
                     },
                 )?;
-                recovered.push(session_id);
+                report.recovered.push(session_id);
             } else if state.status == purrcode_runtime_core::SessionStatus::Active {
                 let events = self.events(session_id)?;
                 let mut model_requests = 0_i64;
+                let mut has_run_activity = false;
                 for event in events {
                     match event {
-                        SessionEvent::ModelRequestStarted { .. } => model_requests += 1,
+                        SessionEvent::ModelRequestStarted { .. } => {
+                            model_requests += 1;
+                            has_run_activity = true;
+                        }
                         SessionEvent::ModelRequestFinished { .. } => model_requests -= 1,
+                        SessionEvent::ExecutionStarted { .. }
+                        | SessionEvent::PlanCreated { .. } => {
+                            has_run_activity = true;
+                        }
                         _ => {}
                     }
                 }
-                if model_requests > 0 {
+                // A mid-run crash is not always visible as an outstanding model
+                // request: the daemon can die between a finished request and the
+                // next one (during a tool execution, or while appending a
+                // non-model event). If any run work began, treat the orphaned
+                // `Active` session as uncertain so it can be recovered. A fresh
+                // session that was created and never started stays untouched.
+                if model_requests > 0 || (has_run_activity && model_requests == 0) {
+                    let reason = if model_requests > 0 {
+                        "model request was interrupted before its response was durably recorded; review the worktree before resume"
+                    } else {
+                        "runtime restart interrupted this session after work had begun; review the worktree before resume"
+                    };
                     self.append(
                         session_id,
                         &SessionEvent::RecoveryRequired {
-                            reason: "model request was interrupted before its response was durably recorded; review the worktree before resume".into(),
+                            reason: reason.into(),
                         },
                     )?;
-                    recovered.push(session_id);
+                    report.recovered.push(session_id);
                 }
             }
         }
-        Ok(recovered)
+        Ok(report)
     }
 }
 
@@ -470,10 +545,17 @@ fn automation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Automation> 
 fn event_name(event: &SessionEvent) -> &'static str {
     match event {
         SessionEvent::SessionCreated { .. } => "session_created",
+        SessionEvent::SessionControlsUpdated { .. } => "session_controls_updated",
+        SessionEvent::WorkflowPlanCreated { .. } => "workflow_plan_created",
+        SessionEvent::UsageRecorded { .. } => "usage_recorded",
         SessionEvent::WorktreeCreated { .. } => "worktree_created",
         SessionEvent::SubmodulesPrepared { .. } => "submodules_prepared",
         SessionEvent::PlanCreated { .. } => "plan_created",
         SessionEvent::PlanRevised { .. } => "plan_revised",
+        SessionEvent::SpecBundleRecorded { .. } => "spec_bundle_recorded",
+        SessionEvent::TaskGraphRecorded { .. } => "task_graph_recorded",
+        SessionEvent::TaskStatusChanged { .. } => "task_status_changed",
+        SessionEvent::EvidenceLinked { .. } => "evidence_linked",
         SessionEvent::ContextCompacted { .. } => "context_compacted",
         SessionEvent::SessionPaused { .. } => "session_paused",
         SessionEvent::SessionResumed => "session_resumed",
@@ -528,6 +610,14 @@ pub enum StoreError {
     InvalidAutomation(String),
     #[error("automation `{0}` was not found")]
     AutomationNotFound(Uuid),
+    #[error("session {session:?} rejected invalid event: {reason}")]
+    InvalidEvent { session: SessionId, reason: String },
+    #[error("session {session:?} event log is inconsistent at sequence {sequence}: {reason}")]
+    ReplayInconsistent {
+        session: SessionId,
+        sequence: u64,
+        reason: String,
+    },
 }
 
 #[cfg(test)]
@@ -535,6 +625,117 @@ mod tests {
     use super::*;
     use purrcode_runtime_core::{ActionConstraints, ApprovalAuthority};
     use std::path::PathBuf;
+
+    #[test]
+    fn invalid_events_are_rejected_before_they_enter_the_log() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        let error = store
+            .append(
+                session,
+                &SessionEvent::ApprovalRecorded {
+                    action_id: ActionId::new(),
+                    authority: ApprovalAuthority::Human,
+                    action_digest: "not-proposed".into(),
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(error, StoreError::InvalidEvent { .. }));
+        assert!(store.events(session).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_inconsistent_persisted_log_fails_loudly_at_its_sequence() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        let created = SessionEvent::SessionCreated {
+            objective: "preserve replay integrity".into(),
+            repository: PathBuf::from("/repo"),
+            authority_mode: Default::default(),
+        };
+        store.append(session, &created).unwrap();
+        store
+            .connection
+            .execute(
+                "INSERT INTO session_events(session_id, sequence, event_type, payload, occurred_at)
+                 VALUES (?1, 2, 'session_created', ?2, ?3)",
+                params![
+                    session.0.to_string(),
+                    serde_json::to_string(&created).unwrap(),
+                    Utc::now()
+                ],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            store.load(session),
+            Err(StoreError::ReplayInconsistent { sequence: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn startup_recovery_quarantines_one_invalid_session_and_keeps_healthy_sessions() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let healthy = SessionId::new();
+        store
+            .append(
+                healthy,
+                &SessionEvent::SessionCreated {
+                    objective: "healthy".into(),
+                    repository: PathBuf::from("/healthy"),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+
+        let invalid = SessionId::new();
+        store
+            .append(
+                invalid,
+                &SessionEvent::SessionCreated {
+                    objective: "legacy approval".into(),
+                    repository: PathBuf::from("/legacy"),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        let invalid_event = SessionEvent::ApprovalRecorded {
+            action_id: ActionId::new(),
+            authority: ApprovalAuthority::Human,
+            action_digest: "legacy-digest".into(),
+        };
+        store
+            .connection
+            .execute(
+                "INSERT INTO session_events(session_id, sequence, event_type, payload, occurred_at)
+                 VALUES (?1, 2, 'approval_recorded', ?2, ?3)",
+                params![
+                    invalid.0.to_string(),
+                    serde_json::to_string(&invalid_event).unwrap(),
+                    Utc::now()
+                ],
+            )
+            .unwrap();
+
+        let report = store.recover_uncertain_sessions_with_quarantine().unwrap();
+        assert!(report.recovered.is_empty());
+        assert!(report.unavailable.contains_key(&invalid));
+        assert!(!report.unavailable.contains_key(&healthy));
+        assert_eq!(store.load(healthy).unwrap().event_count, 1);
+        assert!(matches!(
+            store.load(invalid),
+            Err(StoreError::ReplayInconsistent { session, .. }) if session == invalid
+        ));
+        assert!(matches!(
+            store.append(
+                invalid,
+                &SessionEvent::SessionFailed {
+                    reason: "must remain fail-closed".into(),
+                }
+            ),
+            Err(StoreError::ReplayInconsistent { session, .. }) if session == invalid
+        ));
+    }
 
     #[test]
     fn automations_are_durable_and_claimed_before_execution() {
@@ -585,6 +786,34 @@ mod tests {
             store.consume_authorization(auth.action_id, "digest"),
             Err(StoreError::AuthorizationUnavailable)
         ));
+    }
+
+    #[test]
+    fn signed_policy_authorization_does_not_fabricate_a_human_approval() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let session_id = SessionId::new();
+        let auth = Authorization {
+            action_id: ActionId::new(),
+            session_id,
+            action_digest: "signed-digest".into(),
+            constraints: ActionConstraints::read_only(PathBuf::from("/repo")),
+            authorized_at: Utc::now(),
+            approved_by: ApprovalAuthority::SignedPolicy {
+                policy_id: "validation-runtime".into(),
+            },
+        };
+        store.authorize(&auth).unwrap();
+        let events = store.events(session_id).unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::AuthorizationPersisted { .. }))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::ApprovalRecorded { .. }))
+        );
     }
 
     #[test]
@@ -679,5 +908,90 @@ mod tests {
             purrcode_runtime_core::SessionStatus::Uncertain
         );
         assert!(store.recover_uncertain_sessions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn restart_marks_active_session_with_run_activity_for_review() {
+        // The daemon can die between a finished model request and the next one
+        // (during a tool execution). The session is `Active` with zero
+        // outstanding model requests, but work had begun — it must not be
+        // left orphaned as `running` forever.
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        store
+            .append(
+                session,
+                &SessionEvent::SessionCreated {
+                    objective: "recover mid-run".into(),
+                    repository: PathBuf::from("/repo"),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::ModelRequestStarted {
+                    role: "coder".into(),
+                    provider: "fixture".into(),
+                    model: "model".into(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::ModelRequestFinished {
+                    role: "coder".into(),
+                    input_tokens: None,
+                    output_tokens: None,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::PlanCreated {
+                    steps: vec!["Do the work".into()],
+                },
+            )
+            .unwrap();
+        assert_eq!(store.recover_uncertain_sessions().unwrap(), vec![session]);
+        assert_eq!(
+            store.load(session).unwrap().status,
+            purrcode_runtime_core::SessionStatus::Uncertain
+        );
+    }
+
+    #[test]
+    fn restart_leaves_fresh_active_session_untouched() {
+        // A session that was created and never began running (no worktree,
+        // no plan, no model request) stays `Active` so the user's first
+        // follow-up starts it normally.
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        store
+            .append(
+                session,
+                &SessionEvent::SessionCreated {
+                    objective: "fresh".into(),
+                    repository: PathBuf::from("/repo"),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::SessionControlsUpdated {
+                    controls: Default::default(),
+                },
+            )
+            .unwrap();
+        assert!(store.recover_uncertain_sessions().unwrap().is_empty());
+        assert_eq!(
+            store.load(session).unwrap().status,
+            purrcode_runtime_core::SessionStatus::Active
+        );
     }
 }

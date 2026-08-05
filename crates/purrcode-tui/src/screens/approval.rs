@@ -5,8 +5,8 @@
 //! must not compete for attention — and because at 60 columns a shared layout
 //! cannot show the paths, scope and digest the user needs.
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::app::App;
 use crate::components::approval_card::ApprovalCard;
@@ -30,8 +30,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         repository: &app.workspace.repository_name,
         branch: &app.workspace.branch,
         model: &app.status_bar.model,
+        workflow_control: app.status_bar.workflow_control,
+        workflow_profile: app.status_bar.workflow_profile,
+        search_policy: app.status_bar.search_policy,
         mode: app.status_bar.task_mode.label(),
-        permission: "Ask",
+        permission: app.status_bar.permission.label(),
         phase: "awaiting approval",
         local_only: app.status_bar.privacy == "local-only",
     }

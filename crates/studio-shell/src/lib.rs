@@ -5,7 +5,8 @@
 //! `/api/v1/*` requests to the daemon with the bearer token attached.  The
 //! daemon remains the only execution path.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, State};
@@ -16,7 +17,6 @@ use axum::http::header::{
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{any, get};
-use axum::Router;
 use chrono::{DateTime, Utc};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,7 @@ const INDEX_HTML: &str = include_str!("../assets/index.html");
 const APP_CSS: &str = include_str!("../assets/app.css");
 const APP_JS: &str = include_str!("../assets/app.js");
 const TERM_JS: &str = include_str!("../assets/term.js");
+const BRAND_SVG: &str = include_str!("../../../brand/purrcode-cat-head.svg");
 const SESSION_COOKIE: &str = "purrcode_studio";
 
 /// Configuration for one Studio shell process.
@@ -147,6 +148,7 @@ fn router(state: Arc<StudioState>) -> Router {
         .route("/app.css", get(styles))
         .route("/app.js", get(script))
         .route("/term.js", get(terminal_script))
+        .route("/brand/purrcode-cat-head.svg", get(brand_svg))
         .route("/studio/config", get(browser_config))
         .route("/studio/terminals/{id}/stream", get(terminal_socket))
         .route("/api/{*path}", any(proxy))
@@ -384,6 +386,13 @@ async fn terminal_script(State(state): State<Arc<StudioState>>, headers: HeaderM
     )
 }
 
+async fn brand_svg(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
+    if !authorized(&state, &headers) {
+        return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
+    }
+    secured_asset(StatusCode::OK, "image/svg+xml; charset=utf-8", BRAND_SVG)
+}
+
 async fn browser_config(State(state): State<Arc<StudioState>>, headers: HeaderMap) -> Response {
     if !authorized(&state, &headers) {
         return secured_text(StatusCode::UNAUTHORIZED, "Studio authentication required");
@@ -446,7 +455,7 @@ async fn proxy(
             return secured_text(
                 StatusCode::BAD_GATEWAY,
                 "PurrCode daemon is unavailable; the run remains durable",
-            )
+            );
         }
     };
     let status = upstream.status();
@@ -869,9 +878,10 @@ mod tests {
         }
         // Ask and Plan must reach the daemon as a constraint, not as a hint it
         // might infer from the objective's wording.
-        assert!(APP_JS.contains(r#"READ_ONLY_MODES = ["ask", "plan"]"#));
+        assert!(APP_JS.contains(r#"READ_ONLY_MODES = ["plan"]"#));
         assert!(APP_JS.contains("plan_only: READ_ONLY_MODES.includes(state.taskMode)"));
         assert!(APP_JS.contains("authority_mode: AUTHORITY_MODES[state.permission]"));
+        assert!(APP_JS.contains(r##"execution_style: $("#header-style").value"##));
         // Full Access invites a larger reading than it deserves, so the text
         // states what it does not grant.
         assert!(APP_JS.contains("It grants no new ones"));
@@ -1032,10 +1042,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
-        assert!(response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .is_some_and(|value| value.to_str().unwrap_or_default().contains("text/html")));
+        assert!(
+            response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .is_some_and(|value| value.to_str().unwrap_or_default().contains("text/html"))
+        );
         let body = response.text().await.unwrap();
         // It explains, and it says exactly what to run.
         assert!(body.contains("single-use"));

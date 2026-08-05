@@ -485,17 +485,17 @@ impl CandidateWorkflow {
             };
             return Err(error);
         }
-        if let ImmutableSourcePin::ReleaseAsset { sha256, .. } = &self.immutable_source {
-            if !sha256.eq_ignore_ascii_case(observed_archive_sha256) {
-                let error = RegistryError::DigestMismatch {
-                    expected: sha256.clone(),
-                    observed: observed_archive_sha256.to_owned(),
-                };
-                self.stage = CandidateWorkflowStage::IntegrityBlocked {
-                    status: QualificationStatus::Blocked,
-                };
-                return Err(error);
-            }
+        if let ImmutableSourcePin::ReleaseAsset { sha256, .. } = &self.immutable_source
+            && !sha256.eq_ignore_ascii_case(observed_archive_sha256)
+        {
+            let error = RegistryError::DigestMismatch {
+                expected: sha256.clone(),
+                observed: observed_archive_sha256.to_owned(),
+            };
+            self.stage = CandidateWorkflowStage::IntegrityBlocked {
+                status: QualificationStatus::Blocked,
+            };
+            return Err(error);
         }
         self.stage = CandidateWorkflowStage::Downloaded {
             archive_digest: observed_archive_sha256.to_ascii_lowercase(),
@@ -1149,10 +1149,10 @@ impl Qualifier {
             return QualificationStatus::Incompatible;
         }
 
-        if let Some(min_ver) = &manifest.min_purrcode_version {
-            if min_ver.as_str() > purrcode_version {
-                return QualificationStatus::Incompatible;
-            }
+        if let Some(min_ver) = &manifest.min_purrcode_version
+            && min_ver.as_str() > purrcode_version
+        {
+            return QualificationStatus::Incompatible;
         }
 
         if manifest
@@ -1506,8 +1506,8 @@ mod tests {
     use super::*;
     use purrcode_skill_store::{SkillRecord, SkillScope};
     use std::future::Future;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::{Context, Poll, Waker};
 
     fn block_on<F: Future>(future: F) -> F::Output {
@@ -1771,10 +1771,10 @@ mod tests {
                 .is_err()
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert!(block_on(
-            engine.fetch_manifest_authorized("github:example/skill", &authorization,)
-        )
-        .is_ok());
+        assert!(
+            block_on(engine.fetch_manifest_authorized("github:example/skill", &authorization,))
+                .is_ok()
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
@@ -1848,16 +1848,20 @@ mod tests {
             review.risk.level,
             RiskLevel::High | RiskLevel::Critical
         ));
-        assert!(review
-            .risk
-            .findings
-            .iter()
-            .any(|finding| finding.code == "permissions_unknown"));
-        assert!(review
-            .risk
-            .findings
-            .iter()
-            .any(|finding| finding.code == "mutable_source"));
+        assert!(
+            review
+                .risk
+                .findings
+                .iter()
+                .any(|finding| finding.code == "permissions_unknown")
+        );
+        assert!(
+            review
+                .risk
+                .findings
+                .iter()
+                .any(|finding| finding.code == "mutable_source")
+        );
     }
 
     #[test]

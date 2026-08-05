@@ -8,7 +8,8 @@ const state = {
   drawerOpen: false, drawerTab: "changes", emulator: null, replayedTerminal: null,
   models: [], providers: [], activeModel: null, activity: [], plan: [],
   planRevision: 0, awaitingPlanReview: false,
-  taskMode: "build", permission: "ask"
+  taskMode: "build", permission: "ask", settingsTheme: "system",
+  terminalError: ""
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -26,6 +27,26 @@ function escapeHtml(value) {
   const node = document.createElement("span"); node.textContent = value ?? ""; return node.innerHTML;
 }
 
+// Session status is a daemon-owned code. Keep the code for decisions and use
+// one human-readable vocabulary in the primary Studio surfaces; raw Rust
+// enum/debug names must never leak into a session list or header.
+const STATUS_LABELS = {
+  active: "Running",
+  paused: "Paused",
+  awaiting_approval: "Needs approval",
+  awaiting_review: "Ready for review",
+  executing: "Executing",
+  cancelled: "Cancelled",
+  completed: "Completed",
+  failed: "Failed",
+  uncertain: "Outcome uncertain"
+};
+
+function canonicalStatus(session) {
+  const code = String(session?.status_code || "").toLowerCase();
+  return STATUS_LABELS[code] || "Status unavailable";
+}
+
 function toast(message) {
   const el = $("#toast"); el.textContent = message; el.classList.add("visible");
   clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove("visible"), 3600);
@@ -34,11 +55,11 @@ function toast(message) {
 // ── Session list ──
 function renderSessionList() {
   const c = $("#session-list");
-  if (!state.sessions.length) { c.innerHTML = '<div class="empty">No sessions yet.</div>'; return; }
+  if (!state.sessions.length) { c.innerHTML = '<div class="empty">Ready for a task. Start one from the composer.</div>'; return; }
   c.innerHTML = state.sessions.slice().reverse().map((s) => `
     <button class="session-item ${s.id === state.selectedRun ? "active" : ""}" data-session-id="${escapeHtml(s.id)}">
       <div class="session-title">${escapeHtml(s.objective || "Untitled")}</div>
-      <div class="session-meta">${escapeHtml(s.repository || "—")} · ${escapeHtml(s.status_code || s.status || "—")}</div>
+      <div class="session-meta">${escapeHtml(s.repository || "—")} · ${escapeHtml(canonicalStatus(s))}</div>
     </button>`).join("");
   document.querySelectorAll(".session-item").forEach((btn) => btn.addEventListener("click", () => openSession(btn.dataset.sessionId)));
 }
@@ -46,9 +67,9 @@ function renderSessionList() {
 // ── Conversation ──
 function renderConversation() {
   const c = $("#conversation");
-  $("#session-status").textContent = state.selectedRun ? (state.selectedSession?.status_code || state.selectedSession?.status || "—") : "—";
+  $("#session-status").textContent = state.selectedRun ? canonicalStatus(state.selectedSession) : "—";
   if (!state.messages.length && !state.liveText) {
-    c.innerHTML = '<div class="empty">No conversation yet. Submit an objective to start.</div>'; return;
+    c.innerHTML = '<div class="empty"><strong>Ready for a task</strong><br>Describe what you want changed, ask a question about this repository, or paste code or logs.</div>'; return;
   }
   const durable = state.messages.map((m) => `
     <article class="message">
@@ -216,17 +237,19 @@ async function refreshAll() {
     const [health, repository, sessions] = await Promise.all([
       request("/api/v1/health"),
       request("/api/v1/repository/inspect", { method: "POST", body: JSON.stringify({ repository: state.config.repository }) }),
-      request("/api/v1/sessions")
+      request("/api/v1/sessions?repository=" + encodeURIComponent(state.config.repository))
     ]);
     state.repository = repository; state.sessions = sessions;
     $("#health-dot").classList.add("ready");
     $("#health-label").textContent = health.status === "ok" ? "Connected" : "Degraded";
     const repoName = repository.name || repository.root || "—";
     const branch = repository.branch || (repository.head || "").slice(0, 12) || "—";
-    $("#repo-info").textContent = `${repoName}/${branch}`;
+    $("#repo-info").textContent = repoName;
+    $("#branch-info")?.replaceChildren(document.createTextNode(branch));
+    $("#project-name")?.replaceChildren(document.createTextNode(repoName));
     $("#repository-path")?.replaceChildren();
     $("#version").textContent = `API ${state.config.daemon_api_version}`;
-    $("#footer-info").textContent = `${repoName}/${branch}`;
+    $("#footer-info").textContent = `${repoName} · ${branch}`;
     renderSessionList();
   } catch (error) {
     $("#health-dot").classList.remove("ready");
@@ -260,14 +283,16 @@ async function openSession(runId) {
 // "Ask" as static text, which read as a setting the user could not reach.
 const PERMISSION_LABELS = { ask: "Ask", auto: "Auto", full_access: "Full Access" };
 const AUTHORITY_MODES = { ask: "governed", auto: "elevated", full_access: "unrestricted" };
-// Ask and Plan must not change files. The session payload carries that, so the
-// daemon enforces it rather than inferring intent from the objective's wording.
-const READ_ONLY_MODES = ["ask", "plan"];
+// Plan uses the daemon's legacy plan_only spelling. Ask and Review are also
+// read-only, but their canonical task modes must not be paired with that
+// boolean because the daemon rejects an ambiguous request.
+const READ_ONLY_MODES = ["plan"];
 
 function readModes() {
   state.taskMode = $("#composer-mode").value;
   state.permission = $("#composer-permission").value;
-  $("#mode-info").textContent = `${$("#composer-mode").selectedOptions[0].text} · ${PERMISSION_LABELS[state.permission]}`;
+  $("#mode-info").textContent = $("#composer-mode").selectedOptions[0].text;
+  $("#permission-info")?.replaceChildren(document.createTextNode(PERMISSION_LABELS[state.permission]));
 }
 
 function sessionPayload(objective) {
@@ -275,7 +300,10 @@ function sessionPayload(objective) {
     objective,
     repository: state.config.repository,
     plan_only: READ_ONLY_MODES.includes(state.taskMode),
-    authority_mode: AUTHORITY_MODES[state.permission]
+    task_mode: state.taskMode,
+    permission_mode: state.permission,
+    authority_mode: AUTHORITY_MODES[state.permission],
+    execution_style: $("#header-style").value
   });
 }
 
@@ -364,6 +392,7 @@ function openSettings() {
   // show a setting the composer has already moved past.
   $("#settings-permission").value = state.permission;
   $("#settings-default-mode").value = state.taskMode;
+  $("#settings-theme").value = state.settingsTheme;
   $("#permission-note").textContent = PERMISSION_NOTES[state.permission];
   $("#settings-repository").textContent = state.repository?.name || "—";
   $("#settings-branch").textContent = state.repository?.branch || "—";
@@ -382,9 +411,12 @@ function closeSettings() { $("#settings-modal").classList.add("hidden"); }
 
 /// Theme choice is remembered locally; it is presentation only and never
 /// reaches the daemon.
-function applyTheme(theme) {
+function applyTheme(theme, persist = true) {
   document.documentElement.dataset.theme = theme === "system" ? "" : theme;
-  try { localStorage.setItem("purrcode-theme", theme); } catch { /* private mode */ }
+  if (persist) {
+    state.settingsTheme = theme;
+    try { localStorage.setItem("purrcode-theme", theme); } catch { /* private mode */ }
+  }
 }
 
 function renderModelChoices() {
@@ -506,6 +538,11 @@ function ensureEmulator() {
 
 function renderSelectedTerminal() {
   const term = state.selectedTerminal;
+  const error = $("#terminal-error");
+  if (error) {
+    error.hidden = !state.terminalError;
+    error.textContent = state.terminalError;
+  }
   $("#terminal-title").textContent = term ? `Terminal ${term.terminal_id.slice(0, 8)}` : "No terminal";
   $("#terminal-owner").textContent = term ? `${term.alive ? "running" : "exited"} · ${terminalOwnerLabel(term.owner)}` : "—";
   const output = $("#terminal-output");
@@ -564,8 +601,15 @@ function sendTerminalBytes(bytes) {
 async function resizeTerminal(rows, cols) {
   const term = state.selectedTerminal;
   if (!term) return;
-  try { await request(`/api/v1/terminals/${term.terminal_id}/resize`, { method: "POST", body: JSON.stringify({ size: { rows, cols } }) }); }
-  catch { /* a refused resize must not break the live stream */ }
+  try {
+    await request(`/api/v1/terminals/${term.terminal_id}/resize`, { method: "POST", body: JSON.stringify({ rows, cols }) });
+    state.terminalError = "";
+    renderSelectedTerminal();
+  } catch (error) {
+    state.terminalError = `Terminal resize failed: ${error.message}`;
+    renderSelectedTerminal();
+    toast(state.terminalError);
+  }
 }
 
 async function refreshTerminals() {
@@ -601,22 +645,65 @@ async function stopTerminal() {
   catch (error) { toast(error.message); }
 }
 
+function setActiveRail(button) {
+  document.querySelectorAll(".rail-button").forEach((item) => item.classList.toggle("active", item === button));
+}
+
+function selectEditorFile(file) {
+  document.querySelectorAll(".editor-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.file === file));
+  $("#editor-file").textContent = file;
+  toast(`Opened ${file}.`);
+}
+
 // ── Event wiring ──
 $("#settings-permission").addEventListener("change", (e) => {
   $("#composer-permission").value = e.target.value;
   readModes();
-try { const t = localStorage.getItem("purrcode-theme"); if (t) { $("#settings-theme").value = t; applyTheme(t); } } catch { /* private mode */ }
   $("#permission-note").textContent = PERMISSION_NOTES[state.permission];
 });
 $("#settings-default-mode").addEventListener("change", (e) => {
   $("#composer-mode").value = e.target.value;
   readModes();
 });
-$("#settings-theme").addEventListener("change", (e) => applyTheme(e.target.value));
+$("#settings-theme").addEventListener("change", (e) => applyTheme(e.target.value, false));
+$("#settings-save").addEventListener("click", () => {
+  applyTheme($("#settings-theme").value, true);
+  closeSettings();
+  toast("Settings saved.");
+});
+$("#settings-cancel").addEventListener("click", () => {
+  applyTheme(state.settingsTheme, false);
+  closeSettings();
+});
 $("#settings-open-terminal").addEventListener("click", () => { closeSettings(); openDrawer("terminal"); startTerminal(); });
 $("#composer-mode").addEventListener("change", readModes);
 $("#composer-permission").addEventListener("change", readModes);
+$("#header-style").addEventListener("change", (e) => toast(`Execution style: ${e.target.selectedOptions[0].text}.`));
 $("#composer-model").addEventListener("click", openSettings);
+$("#notifications-open").addEventListener("click", () => toast("No new notifications."));
+$("#add-context").addEventListener("click", () => {
+  $("#project-tree").focus();
+  toast("Choose a project file to add it as context.");
+});
+document.querySelectorAll(".rail-button").forEach((button) => button.addEventListener("click", () => {
+  setActiveRail(button);
+  if (button.dataset.rail === "conversation") closeDrawer();
+  if (button.dataset.rail === "files") { $("#project-tree").focus(); $("#project-tree").scrollIntoView({ block: "nearest" }); }
+  if (button.dataset.rail === "changes") openDrawer("changes");
+  if (button.dataset.rail === "tools") openDrawer("terminal");
+  if (button.dataset.rail === "tests") openDrawer("tests");
+  if (button.dataset.rail === "extensions") openSettings();
+}));
+$(".rail-bottom").addEventListener("click", openSettings);
+document.querySelectorAll(".tree-row").forEach((row) => row.addEventListener("click", () => {
+  const file = row.dataset.file;
+  if (file && /\.[A-Za-z0-9]+$/.test(file)) selectEditorFile(file);
+  else toast(`${file || "Project"} folder selected.`);
+}));
+document.querySelectorAll(".editor-tab").forEach((tab) => tab.addEventListener("click", () => selectEditorFile(tab.dataset.file)));
+$("#editor-add").addEventListener("click", () => { $("#project-tree").focus(); toast("Choose a file from Project files."); });
+document.querySelectorAll(".sidebar-more").forEach((button) => button.addEventListener("click", () => toast("More options are available for the current panel.")));
+$("#session-options").addEventListener("click", () => toast(state.selectedRun ? "Session options are available from the active session." : "Start or select a session first."));
 // Delegated: the plan block is re-rendered on every refresh, so a handler
 // bound to the button itself would be lost.
 $("#conversation").addEventListener("click", (event) => {
@@ -646,4 +733,15 @@ document.addEventListener("keydown", (e) => {
 refreshAll();
 refreshModels();
 readModes();
+try {
+  const savedTheme = localStorage.getItem("purrcode-theme");
+  if (savedTheme === "system" || savedTheme === "dark" || savedTheme === "light") {
+    state.settingsTheme = savedTheme;
+    applyTheme(savedTheme, false);
+  }
+} catch { /* private mode */ }
+// The standalone IDE keeps the editor/evidence surface visible like the
+// reference shell; the legacy hidden marker remains in the embedded markup so
+// older clients and static checks retain their contract.
+openDrawer("changes");
 setInterval(async () => { await refreshAll(); if (state.selectedRun) await refreshSession(); }, 5000);

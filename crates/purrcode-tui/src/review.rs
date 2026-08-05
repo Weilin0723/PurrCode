@@ -8,7 +8,7 @@
 //! text rather than materialized for every file up front, so opening review on a
 //! ten-thousand-line patch costs one index pass.
 
-use crate::activity::{effects_from_porcelain, EffectStatus, FileEffect};
+use crate::activity::{EffectStatus, FileEffect, effects_from_porcelain};
 
 /// One hunk, stored as a range into the patch text rather than a copy.
 #[derive(Clone, Debug, Eq, PartialEq)]

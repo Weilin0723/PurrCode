@@ -1030,16 +1030,18 @@ mod tests {
         .unwrap();
         let managed = root.path().join("managed");
         let report = inspect_environment(root.path(), &managed).await.unwrap();
-        assert!(report
-            .plan
-            .required_tools
-            .iter()
-            .any(|tool| tool.kind == ToolKind::Node && tool.min_version.as_deref() == Some("22")));
-        assert!(report
-            .plan
-            .required_tools
-            .iter()
-            .any(|tool| tool.kind == ToolKind::Pnpm));
+        assert!(
+            report.plan.required_tools.iter().any(
+                |tool| tool.kind == ToolKind::Node && tool.min_version.as_deref() == Some("22")
+            )
+        );
+        assert!(
+            report
+                .plan
+                .required_tools
+                .iter()
+                .any(|tool| tool.kind == ToolKind::Pnpm)
+        );
         assert!(
             report
                 .plan
@@ -1048,11 +1050,13 @@ mod tests {
                 .any(|tool| tool.kind == ToolKind::Rust
                     && tool.min_version.as_deref() == Some("1.88"))
         );
-        assert!(report
-            .plan
-            .required_tools
-            .iter()
-            .any(|tool| tool.kind == ToolKind::Git));
+        assert!(
+            report
+                .plan
+                .required_tools
+                .iter()
+                .any(|tool| tool.kind == ToolKind::Git)
+        );
         assert_eq!(report.ready, report.plan.all_required_satisfied());
     }
 

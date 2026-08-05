@@ -5,9 +5,9 @@ use crate::diagnostics::{
     response_too_large_diagnostic, schema_diagnostic, stream_diagnostic, transport_diagnostic,
 };
 use crate::{
-    ModelEvent, ModelEventStream, ProviderApiMode, ProviderError, ProviderEventStream,
-    ProviderStreamEvent, MAX_PROVIDER_DIAGNOSTIC_BYTES, MAX_PROVIDER_ERROR_BODY_BYTES,
-    MAX_PROVIDER_HTTP_BODY_BYTES, MAX_PROVIDER_HTTP_REQUEST_BYTES, MAX_PROVIDER_STREAM_FRAME_BYTES,
+    MAX_PROVIDER_DIAGNOSTIC_BYTES, MAX_PROVIDER_ERROR_BODY_BYTES, MAX_PROVIDER_HTTP_BODY_BYTES,
+    MAX_PROVIDER_HTTP_REQUEST_BYTES, MAX_PROVIDER_STREAM_FRAME_BYTES, ModelEvent, ModelEventStream,
+    ProviderApiMode, ProviderError, ProviderEventStream, ProviderStreamEvent,
 };
 use async_stream::try_stream;
 use futures::StreamExt;
@@ -230,16 +230,15 @@ pub(crate) fn ollama_provider_stream(
                 break;
             }
         }
-        if !finished {
-            if let Some(line) = decoder.finish() {
-                if !line.iter().all(u8::is_ascii_whitespace) {
-                    for event in parse_ollama_stream_frame(&line, api_mode)? {
-                        let terminal = event == ModelEvent::Finished;
-                        yield ProviderStreamEvent::Model(event);
-                        if terminal {
-                            finished = true;
-                        }
-                    }
+        if !finished
+            && let Some(line) = decoder.finish()
+            && !line.iter().all(u8::is_ascii_whitespace)
+        {
+            for event in parse_ollama_stream_frame(&line, api_mode)? {
+                let terminal = event == ModelEvent::Finished;
+                yield ProviderStreamEvent::Model(event);
+                if terminal {
+                    finished = true;
                 }
             }
         }
@@ -424,10 +423,10 @@ fn parse_chat_events(data: &str) -> Result<Vec<ModelEvent>, ProviderError> {
     let finish_reason = choices.and_then(|choice| choice["finish_reason"].as_str());
     let mut events = Vec::new();
     if let Some(delta) = delta {
-        if let Some(content) = delta.get("content").and_then(Value::as_str) {
-            if !content.is_empty() {
-                events.push(ModelEvent::TextDelta(content.into()));
-            }
+        if let Some(content) = delta.get("content").and_then(Value::as_str)
+            && !content.is_empty()
+        {
+            events.push(ModelEvent::TextDelta(content.into()));
         }
         if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
             for (index, call) in calls.iter().enumerate() {
@@ -486,10 +485,10 @@ fn parse_ollama_stream_frame(
         )));
     }
     let mut events = Vec::new();
-    if let Some(content) = value.pointer("/message/content").and_then(Value::as_str) {
-        if !content.is_empty() {
-            events.push(ModelEvent::TextDelta(content.into()));
-        }
+    if let Some(content) = value.pointer("/message/content").and_then(Value::as_str)
+        && !content.is_empty()
+    {
+        events.push(ModelEvent::TextDelta(content.into()));
     }
     if let Some(calls) = value
         .pointer("/message/tool_calls")

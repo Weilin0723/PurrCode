@@ -410,9 +410,11 @@ mod tests {
         assert!(request.scope_summary().contains("src/**"));
         assert!(request.scope_summary().contains("no network"));
         assert!(request.limits_summary().contains("120 s timeout"));
-        assert!(request
-            .limits_summary()
-            .contains("at most 3 changed file(s)"));
+        assert!(
+            request
+                .limits_summary()
+                .contains("at most 3 changed file(s)")
+        );
         assert!(request.can_decide());
     }
 
@@ -502,11 +504,13 @@ mod tests {
             .verified_digest("0000000000000000000000000000000000000000000000000000000000000000");
         assert_eq!(request.staleness, Staleness::DigestMismatch);
         assert!(!request.can_decide());
-        assert!(request
-            .staleness
-            .warning()
-            .unwrap()
-            .contains("does not match"));
+        assert!(
+            request
+                .staleness
+                .warning()
+                .unwrap()
+                .contains("does not match")
+        );
     }
 
     #[test]

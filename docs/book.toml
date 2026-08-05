@@ -1,0 +1,11 @@
+[book]
+title = "PurrCode"
+language = "en"
+authors = ["PurrCode"]
+description = "Local-first coding agent with an independent, auditable judgment runtime"
+
+[output.html]
+site-url = "/PurrCode/"
+git-repository-url = "https://github.com/Weilin0723/PurrCode"
+default-theme = "light"
+preferred-dark-theme = "ayu"

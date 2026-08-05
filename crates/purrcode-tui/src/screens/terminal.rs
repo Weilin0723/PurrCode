@@ -5,10 +5,10 @@
 //! running — the process keeps running whoever is typing, so "where does my
 //! typing go" is the one question this surface must never leave ambiguous.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::components::hints::Hints;
@@ -54,7 +54,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             // Show the active region: trailing blank rows carry no information,
             // and the emulated screen is usually taller than the drawn area, so
             // slicing the raw bottom would hide the output entirely.
-            let mut lines = tab.screen.lines();
+            let mut lines = tab.lines();
             while lines
                 .last()
                 .is_some_and(|line| line.spans.iter().all(|span| span.content.trim().is_empty()))

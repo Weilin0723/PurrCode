@@ -1,5 +1,7 @@
 //! Isolated skill discovery and judgment-bound MCP JSON-RPC execution.
 
+#![allow(clippy::collapsible_if)]
+
 use purrcode_ninelives::{SessionStore, StoreError};
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, Authorization, CommandAction,
@@ -7,14 +9,14 @@ use purrcode_runtime_core::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SkillManifest {
@@ -1257,7 +1259,9 @@ mod tests {
     #[cfg(unix)]
     use chrono::Utc;
     #[cfg(unix)]
-    use purrcode_runtime_core::{ApprovalAuthority, Authorization, SessionId};
+    use purrcode_runtime_core::{
+        ApprovalAuthority, Authorization, JudgmentDecision, SessionEvent, SessionId,
+    };
 
     #[test]
     fn skill_discovery_rejects_traversing_entrypoints() {
@@ -1386,10 +1390,12 @@ mod tests {
                 report.status,
                 QualificationStatus::Qualified | QualificationStatus::QualifiedWithConstraints
             ));
-            assert!(report
-                .cases
-                .iter()
-                .any(|case| case.name == "dynamic_claw" && case.passed));
+            assert!(
+                report
+                    .cases
+                    .iter()
+                    .any(|case| case.name == "dynamic_claw" && case.passed)
+            );
         } else {
             assert_eq!(report.status, QualificationStatus::Unverified);
         }
@@ -1441,10 +1447,12 @@ mod tests {
         .await;
         if purrcode_claw::sandbox_capability().network_isolation {
             assert_eq!(schema_mismatch.status, QualificationStatus::Failed);
-            assert!(schema_mismatch
-                .cases
-                .iter()
-                .any(|case| case.name == "output_schema" && !case.passed));
+            assert!(
+                schema_mismatch
+                    .cases
+                    .iter()
+                    .any(|case| case.name == "output_schema" && !case.passed)
+            );
         } else {
             assert_eq!(schema_mismatch.status, QualificationStatus::Unverified);
         }
@@ -1491,31 +1499,97 @@ mod tests {
         ));
 
         let mut mismatch_store = SessionStore::in_memory().unwrap();
+        let mismatch_session_id = SessionId::new();
+        mismatch_store
+            .append(
+                mismatch_session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "test mismatched MCP authorization".into(),
+                    repository: repository.path().to_path_buf(),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        mismatch_store
+            .append(
+                mismatch_session_id,
+                &SessionEvent::ActionProposed {
+                    action_id,
+                    action: action.clone(),
+                },
+            )
+            .unwrap();
+        mismatch_store
+            .append(
+                mismatch_session_id,
+                &SessionEvent::JudgmentRecorded {
+                    action_id,
+                    decision: JudgmentDecision::RequireApproval {
+                        reason: "test exact MCP authorization".into(),
+                        constraints: constraints.clone(),
+                    },
+                },
+            )
+            .unwrap();
         mismatch_store
             .authorize(&Authorization {
                 action_id,
-                session_id: SessionId::new(),
+                session_id: mismatch_session_id,
                 action_digest: "not-the-serialized-action-digest".into(),
                 constraints: constraints.clone(),
                 authorized_at: Utc::now(),
                 approved_by: ApprovalAuthority::Human,
             })
             .unwrap();
-        assert!(McpHost::call(
-            &mut mismatch_store,
-            action_id,
-            &action,
-            &constraints,
-            &server
-        )
-        .await
-        .is_err());
+        assert!(
+            McpHost::call(
+                &mut mismatch_store,
+                action_id,
+                &action,
+                &constraints,
+                &server
+            )
+            .await
+            .is_err()
+        );
 
         let mut store = SessionStore::in_memory().unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "test exact MCP authorization consumption".into(),
+                    repository: repository.path().to_path_buf(),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::ActionProposed {
+                    action_id,
+                    action: action.clone(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::JudgmentRecorded {
+                    action_id,
+                    decision: JudgmentDecision::RequireApproval {
+                        reason: "test exact MCP authorization".into(),
+                        constraints: constraints.clone(),
+                    },
+                },
+            )
+            .unwrap();
         store
             .authorize(&Authorization {
                 action_id,
-                session_id: SessionId::new(),
+                session_id,
                 action_digest: action.digest(&constraints).unwrap(),
                 constraints: constraints.clone(),
                 authorized_at: Utc::now(),

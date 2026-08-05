@@ -18,12 +18,12 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 
 const APPROVED_EXECUTABLE_DIGEST: &str = "PURRCODE_APPROVED_EXECUTABLE_BLAKE3";
 const MAX_EXECUTABLE_BYTES: u64 = 256 * 1024 * 1024;

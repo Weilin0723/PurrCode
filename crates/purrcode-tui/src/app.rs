@@ -19,11 +19,11 @@ use anyhow::Result;
 use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use futures::StreamExt;
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use serde_json::Value;
 use std::io;
 use std::path::PathBuf;
@@ -40,6 +40,9 @@ pub struct TuiConfig {
     pub daemon_url: String,
     pub token_file: PathBuf,
     pub repository: PathBuf,
+    /// Attach directly to an existing daemon session when launched from the
+    /// IDE or `purrcode resume --tui`.
+    pub session_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -119,6 +122,11 @@ pub struct App {
     pub skill_browser: Option<SkillBrowser>,
     pub diff_view: Option<DiffView>,
     pub stream: StreamController,
+    /// Set when the live transport ended before the daemon emitted a verified
+    /// terminal state. Durable output remains visible until the user chooses
+    /// to reconnect explicitly.
+    pub stream_reconnect_required: bool,
+    pub pending_stream_reconnect: bool,
     pub(crate) reconciliation: Option<tokio::task::JoinHandle<ReconciliationSnapshot>>,
     pub last_refresh: Instant,
     pub message_bar: String,
@@ -200,6 +208,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
 
     let workspace = WorkspaceContext::inspect(&config.repository);
     let recovery = UiState::load(&config.repository);
+    let requested_session = config.session_id.clone();
     let mut app = App {
         config,
         client,
@@ -214,6 +223,8 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         skill_browser: None,
         diff_view: None,
         stream: StreamController::new(),
+        stream_reconnect_required: false,
+        pending_stream_reconnect: false,
         reconciliation: None,
         last_refresh: Instant::now(),
         message_bar: String::new(),
@@ -255,7 +266,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         terminal: crate::terminal::TerminalPane::default(),
         pending_terminal_input: None,
     };
-    app.session_id = recovery.restore(&mut app.composer);
+    app.session_id = requested_session.or_else(|| recovery.restore(&mut app.composer));
 
     app.check_provider().await;
     app.check_workspace().await;
@@ -332,6 +343,11 @@ async fn event_loop(
             if app.quit_requested {
                 return Ok(());
             }
+        }
+
+        if app.pending_stream_reconnect {
+            app.pending_stream_reconnect = false;
+            app.reconnect_live_stream();
         }
 
         // Process pending user message
@@ -515,6 +531,7 @@ impl App {
             return;
         };
         self.cancel_reconciliation();
+        self.stream_reconnect_required = false;
         let tx = self.stream.start(model, Instant::now());
         let daemon_url = self.daemon_url().to_string();
         let token = self.token.clone();
@@ -579,6 +596,24 @@ impl App {
                 }
             }
         });
+    }
+
+    /// Reattach to the current session's durable event stream without starting
+    /// another model operation. The conversation already retained any partial
+    /// answer, so the new stream resumes after its last durable audit sequence.
+    pub(crate) fn reconnect_live_stream(&mut self) {
+        let Some(session_id) = self.session_id.clone() else {
+            self.message_bar = "No active session to reconnect.".into();
+            self.stream_reconnect_required = false;
+            return;
+        };
+        let after = self.conversation.last_durable_sequence();
+        let model = self.status_bar.model.clone();
+        self.conversation.start_streaming(Some(model.clone()));
+        self.start_session_stream(after, Some(model));
+        self.message_bar = format!(
+            "Reconnecting live stream from durable event {after} for session {session_id}…"
+        );
     }
 
     pub fn persist_ui_state(&self) {
@@ -659,7 +694,7 @@ impl App {
                 self.has_provider = arr.is_some_and(|a| !a.is_empty());
                 if !self.has_provider {
                     self.message_bar =
-                        "No provider configured. Type /connect to set one up.".into();
+                        "Connect a model provider to begin. Local providers are discovered automatically. Run /connect to set one up.".into();
                 } else if let Ok(models) =
                     self.request(reqwest::Method::GET, "/v1/models", None).await
                 {
@@ -699,7 +734,8 @@ impl App {
             Err(_) => {
                 self.workspace.daemon_health = "unreachable".into();
                 self.has_provider = false;
-                self.message_bar = "Daemon unreachable. Type /connect to set up.".into();
+                self.message_bar =
+                    "PurrCode cannot reach its local daemon. Start `purrcode serve`, then reconnect.".into();
             }
         }
     }
@@ -776,10 +812,14 @@ impl App {
                 StreamOutput::TransportError(error) => {
                     self.conversation.cancel_streaming();
                     self.stream.stop();
-                    self.message_bar =
-                        format!("Live stream interrupted; partial output was preserved: {error}");
+                    self.stream_reconnect_required = true;
+                    let after = self.conversation.last_durable_sequence();
+                    self.message_bar = format!(
+                        "Live stream interrupted; partial output was preserved. Press R to reconnect from durable event {after}: {error}"
+                    );
                 }
                 StreamOutput::VerifiedEnd(end) => {
+                    self.stream_reconnect_required = false;
                     self.conversation.finalize_streaming();
                     self.message_bar = match end {
                         VerifiedStreamEnd::Completed => "Done.".into(),
@@ -987,14 +1027,29 @@ impl App {
             self.conversation.add_user_message(&objective);
             self.workspace.session_phase = "new".into();
         }
+        // `plan_only` is the daemon's legacy spelling for canonical Plan mode.
+        // Ask and Review are read-only through their task modes, but pairing
+        // either with plan_only=true is rejected as an ambiguous request.
+        let task_mode = if self.status_bar.task_mode == crate::status_bar::TaskMode::Build
+            && explicit_plan_only_intent(&objective)
+        {
+            crate::status_bar::TaskMode::Plan
+        } else {
+            self.status_bar.task_mode
+        };
         let body = serde_json::json!({
             "objective": objective,
             "repository": self.config.repository,
             // A read-only task mode is a hard constraint, not a hint, so it wins
             // over whatever the objective's wording suggests.
-            "plan_only": self.status_bar.task_mode.plan_only()
-                || explicit_plan_only_intent(&objective),
+            "plan_only": task_mode.plan_only(),
+            "task_mode": task_mode.label().to_ascii_lowercase(),
+            "permission_mode": self.status_bar.permission.label().to_ascii_lowercase(),
             "authority_mode": self.status_bar.permission.authority_mode(),
+            "workflow": self.status_bar.workflow_control.label().to_ascii_lowercase(),
+            "search_policy": self.status_bar.search_policy.label().to_ascii_lowercase(),
+            "budget_profile": self.status_bar.budget_profile.label().to_ascii_lowercase(),
+            "execution_style": "autonomous",
         });
         match self
             .request(reqwest::Method::POST, "/v1/sessions", Some(body))

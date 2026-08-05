@@ -5,10 +5,10 @@
 //! border, and a bounded height enforced by the layout. Selecting an entry opens
 //! its detail in the inspector rather than expanding it in place.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use ratatui::Frame;
 
 use crate::activity::{ActivityEntry, ActivityState};
 use crate::design::{Emphasis, Role, Symbols, Tokens};
@@ -164,13 +164,17 @@ mod tests {
         let tokens = Tokens::new(&theme);
         let entries = entries();
         let rendered = text(&ActivityRail::new(&entries).lines(&tokens, 10));
-        assert!(rendered
-            .iter()
-            .any(|line| line.contains("Context prepared")));
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("Context prepared"))
+        );
         assert!(rendered.iter().any(|line| line.contains("Plan created")));
-        assert!(rendered
-            .iter()
-            .any(|line| line.contains("Editing src/runtime.rs")));
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("Editing src/runtime.rs"))
+        );
         assert!(
             rendered.iter().all(|line| !line.contains('{')),
             "no raw JSON may reach the rail: {rendered:?}"

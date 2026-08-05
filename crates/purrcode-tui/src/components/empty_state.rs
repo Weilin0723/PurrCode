@@ -4,10 +4,10 @@
 //! single most useful next action for the current state, so a new user can start
 //! without consulting documentation or source code.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
-use ratatui::Frame;
 
 use crate::design::{Emphasis, Role, Tokens};
 
@@ -138,9 +138,11 @@ mod tests {
 
     #[test]
     fn the_provider_state_names_the_command_a_new_user_needs() {
-        assert!(EmptyState::new(EmptyReason::NoProvider)
-            .next_action()
-            .contains("/connect"));
+        assert!(
+            EmptyState::new(EmptyReason::NoProvider)
+                .next_action()
+                .contains("/connect")
+        );
     }
 
     #[test]
@@ -152,9 +154,11 @@ mod tests {
 
     #[test]
     fn history_states_promise_not_to_start_work() {
-        assert!(EmptyState::new(EmptyReason::NoHistory)
-            .body()
-            .contains("never starts work"));
+        assert!(
+            EmptyState::new(EmptyReason::NoHistory)
+                .body()
+                .contains("never starts work")
+        );
     }
 
     #[test]

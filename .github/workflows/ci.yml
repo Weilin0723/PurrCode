@@ -42,11 +42,8 @@ jobs:
           cache: npm
           cache-dependency-path: |
             sdk/typescript/package-lock.json
-            apps/vscode-extension/package-lock.json
       - run: npm ci --prefix sdk/typescript
       - run: npm test --prefix sdk/typescript
-      - run: npm ci --prefix apps/vscode-extension
-      - run: npm test --prefix apps/vscode-extension
       - run: npm test --prefix packages/purrcode
       - run: npm pack ./packages/purrcode --ignore-scripts --dry-run
       - uses: actions/setup-python@v5

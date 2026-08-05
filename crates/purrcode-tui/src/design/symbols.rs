@@ -16,29 +16,17 @@ impl Symbols {
 
     /// Separator between header fields.
     pub const fn field_separator(self) -> &'static str {
-        if self.unicode {
-            " · "
-        } else {
-            " | "
-        }
+        if self.unicode { " · " } else { " | " }
     }
 
     /// Horizontal rule used as the single separator between major regions.
     pub const fn horizontal_rule(self) -> &'static str {
-        if self.unicode {
-            "─"
-        } else {
-            "-"
-        }
+        if self.unicode { "─" } else { "-" }
     }
 
     /// Marker for the selected row.
     pub const fn selection(self) -> &'static str {
-        if self.unicode {
-            "▸"
-        } else {
-            ">"
-        }
+        if self.unicode { "▸" } else { ">" }
     }
 
     /// Marker for a row that is not selected. Same display width as
@@ -49,53 +37,38 @@ impl Symbols {
 
     /// Local-only inference.
     pub const fn local(self) -> &'static str {
-        if self.unicode {
-            "⌂"
-        } else {
-            "[local]"
-        }
+        if self.unicode { "⌂" } else { "[local]" }
     }
 
     /// Network-reachable inference.
     pub const fn remote(self) -> &'static str {
-        if self.unicode {
-            "↗"
-        } else {
-            "[remote]"
-        }
+        if self.unicode { "↗" } else { "[remote]" }
     }
 
     /// Attention marker used by decision surfaces.
     pub const fn attention(self) -> &'static str {
-        if self.unicode {
-            "▲"
-        } else {
-            "!"
-        }
+        if self.unicode { "▲" } else { "!" }
     }
 
     pub const fn ellipsis(self) -> &'static str {
-        if self.unicode {
-            "…"
-        } else {
-            "..."
-        }
+        if self.unicode { "…" } else { "..." }
     }
 
     /// Dash used before an explanatory clause.
     pub const fn dash(self) -> &'static str {
-        if self.unicode {
-            "—"
-        } else {
-            "-"
-        }
+        if self.unicode { "—" } else { "-" }
+    }
+
+    /// Arrow used when the automatic workflow resolves to a profile.
+    pub const fn workflow_arrow(self) -> &'static str {
+        if self.unicode { "→" } else { "->" }
     }
 
     /// Border character set for blocks and modals.
     ///
     /// A terminal without Unicode support renders box-drawing characters as
     /// mojibake, so borders need the same fallback as status glyphs.
-    pub const fn border_set(self) -> ratatui::symbols::border::Set {
+    pub const fn border_set(self) -> ratatui::symbols::border::Set<'static> {
         if self.unicode {
             ratatui::symbols::border::PLAIN
         } else {

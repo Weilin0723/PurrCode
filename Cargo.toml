@@ -19,6 +19,7 @@ members = [
   "crates/purrcode-cli",
   "crates/purrcode-tui",
   "crates/purrcode-tui-e2e",
+  "crates/purrcode-ide",
   "crates/skill-store",
   "crates/skill-registry",
   "crates/web-research",
@@ -35,8 +36,8 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.9.0"
-edition = "2021"
+version = "1.0.0"
+edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/Weilin0723/PurrCode"
 rust-version = "1.88"
@@ -64,11 +65,13 @@ portable-pty = "0.9"
 hex = "0.4"
 security-framework = "3.7"
 rusqlite = { version = "0.32", features = ["backup", "bundled", "chrono", "uuid"] }
+rfd = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-ratatui = "0.29"
+ratatui = "0.30"
 regex = "1"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+vt100 = "0.16"
 rpassword = "7.5.4"
 schemars = { version = "0.8", features = ["uuid1", "chrono"] }
 serde = { version = "1", features = ["derive"] }

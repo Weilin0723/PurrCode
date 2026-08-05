@@ -1,5 +1,7 @@
 //! Conversation-first daemon-backed terminal interface.
 
+#![allow(clippy::collapsible_if)]
+
 pub mod activity;
 mod app;
 pub mod approval;
@@ -27,9 +29,9 @@ pub mod ui_actions;
 mod ui_state;
 mod workspace;
 
-pub use app::{run, TuiConfig};
+pub use app::{TuiConfig, run};
 pub use ui_actions::{
-    coverage, orphan_commands, Availability, AvailabilityRule, CoverageRow, CoverageStatus,
-    ScenarioKind, Shortcut, ShortcutContext, UiActionCategory, UiActionDefinition, UiActionHandler,
-    UiActionId, UiContext, UiRiskClass, REGISTRY, SCENARIOS,
+    Availability, AvailabilityRule, CoverageRow, CoverageStatus, REGISTRY, SCENARIOS, ScenarioKind,
+    Shortcut, ShortcutContext, UiActionCategory, UiActionDefinition, UiActionHandler, UiActionId,
+    UiContext, UiRiskClass, coverage, orphan_commands,
 };

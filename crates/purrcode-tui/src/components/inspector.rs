@@ -8,10 +8,10 @@
 //! The inspector renders nothing when hidden, so a closed inspector costs no
 //! layout work and no formatting work.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
-use ratatui::Frame;
 
 use crate::activity::{ActivityEntry, ValidationSummary};
 use crate::approval::ApprovalRequest;

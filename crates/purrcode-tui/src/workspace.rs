@@ -171,10 +171,12 @@ mod tests {
         let context = WorkspaceContext::inspect(temporary.path());
         assert_eq!(context.branch, "feature/ui");
         assert!(context.paths.iter().any(|path| path.display == "README.md"));
-        assert!(context
-            .paths
-            .iter()
-            .any(|path| path.display == ".env" && path.sensitive));
+        assert!(
+            context
+                .paths
+                .iter()
+                .any(|path| path.display == ".env" && path.sensitive)
+        );
         assert!(context.paths.len() <= MAX_VISIBLE_PATHS);
         assert!(!format!("{context:?}").contains("NEVER_READ"));
     }
@@ -186,10 +188,12 @@ mod tests {
         std::fs::write(temporary.path().join("src/nested/large.rs"), "ignored").unwrap();
         let context = WorkspaceContext::inspect(temporary.path());
         assert!(context.paths.iter().any(|path| path.display == "src"));
-        assert!(!context
-            .paths
-            .iter()
-            .any(|path| path.display.contains("large.rs")));
+        assert!(
+            !context
+                .paths
+                .iter()
+                .any(|path| path.display.contains("large.rs"))
+        );
     }
 
     #[test]
@@ -204,10 +208,12 @@ mod tests {
         }
         let context = WorkspaceContext::inspect(temporary.path());
         assert_eq!(context.paths.len(), MAX_VISIBLE_PATHS);
-        assert!(context
-            .paths
-            .windows(2)
-            .all(|pair| pair[0].display <= pair[1].display));
+        assert!(
+            context
+                .paths
+                .windows(2)
+                .all(|pair| pair[0].display <= pair[1].display)
+        );
         assert_eq!(context.paths[0].display, "file-0000.txt");
         assert_eq!(
             context.paths[MAX_VISIBLE_PATHS - 1].display,

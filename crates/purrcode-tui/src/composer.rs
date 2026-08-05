@@ -544,10 +544,18 @@ mod tests {
             elapsed
         }
 
+        fn fastest_paste(bytes: usize) -> std::time::Duration {
+            // A single wall-clock sample can be descheduled while the rest of
+            // the workspace test suite is running in parallel. The minimum of
+            // three bounded samples measures the implementation cost without
+            // turning scheduler contention into a false complexity failure.
+            (0..3).map(|_| paste(bytes)).min().unwrap()
+        }
+
         // Warm the allocator so the first measurement is not the slow one.
         paste(4 * 1024);
-        let small = paste(64 * 1024).max(std::time::Duration::from_micros(1));
-        let large = paste(256 * 1024);
+        let small = fastest_paste(64 * 1024).max(std::time::Duration::from_micros(1));
+        let large = fastest_paste(256 * 1024);
         let ratio = large.as_secs_f64() / small.as_secs_f64();
         assert!(
             ratio < 10.0,

@@ -62,7 +62,13 @@ fn handle_terminal_key(app: &mut App, key: KeyEvent) -> bool {
         }
         _ => {}
     }
-    if let Some(bytes) = crate::terminal::key_bytes(key) {
+    // Ask the active terminal which arrow encoding its program wants: an
+    // editor in application-cursor mode reads CSI arrows as literal text.
+    let application_cursor = app
+        .terminal
+        .active()
+        .is_some_and(|tab| tab.screen.application_cursor());
+    if let Some(bytes) = crate::terminal::key_bytes_for(key, application_cursor) {
         app.pending_terminal_input = Some(bytes);
     }
     true
@@ -216,6 +222,12 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
 
     match key.code {
         KeyCode::Char('q') if app.composer.buffer.is_empty() => return false,
+        KeyCode::Char('r' | 'R')
+            if app.composer.buffer.is_empty() && app.stream_reconnect_required =>
+        {
+            app.pending_stream_reconnect = true;
+            app.message_bar = "Reconnect requested; durable state will be refreshed…".into();
+        }
         // Opening the decision surface, not approving: authority is only granted
         // from a screen that showed the exact action.
         KeyCode::Char('a' | 'A')
@@ -254,6 +266,24 @@ fn handle_conversation_key(app: &mut App, key: KeyEvent) -> bool {
                 app.message_bar =
                     "This session does not require recovery. Nothing needs to be restored.".into();
             }
+        }
+        // Native IDE handoff. Some terminals encode Ctrl+Shift+I as a Tab
+        // event, so accept both representations before ordinary focus motion.
+        KeyCode::Char('i' | 'I')
+            if key
+                .modifiers
+                .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+                && app.composer.buffer.is_empty() =>
+        {
+            app.pending_command = Some("/ide".into())
+        }
+        KeyCode::Tab
+            if key
+                .modifiers
+                .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+                && app.composer.buffer.is_empty() =>
+        {
+            app.pending_command = Some("/ide".into())
         }
         // Focus moves explicitly, and only onto regions this frame actually drew.
         KeyCode::Tab if app.composer.buffer.is_empty() => {
@@ -1009,10 +1039,10 @@ fn handle_approval_key(app: &mut App, key: KeyEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        bare_approval_command, bare_approval_word, is_active_pull_cancel_key,
-        is_active_stream_cancel_key, is_bare_resume_message, is_submit_key, model_pull_shortcut,
-        session_choice_action, session_resume_behavior, BareApprovalDecision, SessionChoiceAction,
-        SessionResumeBehavior,
+        BareApprovalDecision, SessionChoiceAction, SessionResumeBehavior, bare_approval_command,
+        bare_approval_word, handle_key, is_active_pull_cancel_key, is_active_stream_cancel_key,
+        is_bare_resume_message, is_submit_key, model_pull_shortcut, session_choice_action,
+        session_resume_behavior,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -1066,6 +1096,25 @@ mod tests {
         let control_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(is_active_stream_cancel_key(control_c, true));
         assert!(!is_active_stream_cancel_key(control_c, false));
+    }
+
+    #[test]
+    fn reconnect_shortcut_is_offered_only_after_a_transport_interruption() {
+        let mut app = crate::test_fixtures::offline_app();
+        app.stream_reconnect_required = true;
+        assert!(handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE)
+        ));
+        assert!(app.pending_stream_reconnect);
+        assert!(app.message_bar.contains("Reconnect requested"));
+
+        let mut idle = crate::test_fixtures::offline_app();
+        assert!(handle_key(
+            &mut idle,
+            KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE)
+        ));
+        assert!(!idle.pending_stream_reconnect);
     }
 
     #[test]

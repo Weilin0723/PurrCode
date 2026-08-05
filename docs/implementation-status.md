@@ -1,11 +1,38 @@
 # Implementation status
 
-Updated: 2026-07-31 (v1.0 feat-adding-IDE in progress)
+Updated: 2026-08-02 (UX trust/task/evidence implementation integrated locally; user and external qualification gates remain)
 
-## v1.0 feat-adding-IDE (in progress)
+## v1.0 UX optimization — implemented locally, awaiting user acceptance
 
-- Implemented conversation-first VS Code Workbench webview with session title, state, conversation, artifact cards, semantic activity, and composer with mode/permission/workflow controls
-- Added daemon HTTP client in TypeScript matching the presentation API contracts (GET /v1/sessions/{id}/summary, /activity, /artifacts, /changes, /validation, /github, /conversation)
+- Daemon-owned Ask/Plan/Build/Review, permission, execution-style, workflow, search, routing-capability, and budget contracts now reach the native runtime. New sessions default to Ask/Governed; read-only modes refuse mutation, Collaborative pauses at real boundaries, unsupported routing fails preflight, and external search/MCP usage is reserved durably before effects.
+- Durable Spec Bundle, task graph, task retries, and requirement-linked evidence replay through NineLives. A command exit code never passes a task; final validation can close only executed work and explicit validation-only tasks. Required work without closing evidence blocks completion.
+- Spec, Tasks, and Evidence have typed daemon presentation endpoints. The IDE consumes them through four bounded query workers plus dedicated ordinary/urgent control workers; Stop, approval, and terminal ownership bypass snapshot and mutation queues.
+- IDE/Studio/TUI/CLI safe defaults and payloads are aligned. Studio execution style is no longer a toast-only control, TUI SSE reconnect preserves partial output, CLI skill installation uses the daemon lifecycle, and terminal resize/session filtering use the canonical contract.
+- Recovery reconciliation never replays or discards effects automatically. Rollback in daemon/TUI/CLI requires an exact preview digest and explicit unattributed-effect acknowledgement. Invalid event append/replay fails loudly.
+- Verification evidence and the user walkthrough were recorded in the v1.0 product-review cycle. Live provider/platform/accessibility and 30-task dogfood gates remain unperformed and explicitly external.
+
+## v1.0 feat-adding-IDE — native desktop IDE (implemented locally)
+
+- **`crates/purrcode-ide` is the v1.0 visual product**: a pure-Rust `eframe`/`egui` desktop application with no browser, no loopback portal and no dependency on a third-party editor. It draws the application bar, icon rail, session navigation, project tree, conversation Workbench, composer, syntax-highlighted editor, and the docked Diff/Tests/Terminal/Problems/Output panel itself.
+- `purrcode ide --repository PATH` starts or reuses a compatible authenticated local daemon and opens the repository with no session selected. It never resumes a latest session implicitly; only an explicit `--session UUID --repository PATH` is accepted, after canonical repository ownership is verified. `crates/purrcode-cli` carries tests for that boundary and for never launching a browser or third-party editor.
+- The VS Code extension has been **removed** from the repository together with its CI job and documentation.
+- The IDE owns no session store, no model state, no permission state and no execution path. All HTTP runs on a worker thread and reaches the UI through channels, so an unreachable daemon reports itself as disconnected instead of freezing the window (covered by a test).
+- The IDE enforces the canonical vocabulary at the boundary: an unknown runtime status resolves to a canonical label rather than reaching the screen, a plan awaiting review reads `Plan ready`, a repository with no worktree reports "no changes yet" rather than "0 files changed", and only `passed` validation renders as success.
+- Three appearances (dark, light, high contrast) share one token set; every foreground/background pair is unit-tested against WCAG contrast floors.
+- Native settings apply the selected appearance without writing repository state and expose explicit Apply/Reset actions; the window opens with the editor and artifact column visible rather than an empty right pane.
+- Native IDE usability remediation now opens with Agent work and a persistent code/artifact column, uses the supplied blue-eyed longhair mascot consistently for every small product mark, and presents searchable responsive settings grouped around appearance, models/providers, authority, agent behavior, context/skills, terminal/Git, privacy/recovery, and diagnostics. A compact semantic type scale is shared across the workbench chrome and settings.
+- Historical session loads are generation-bound bounded panel batches: every successful, empty, unavailable, failed, or queue-rejected panel completes one slot, the typed view model updates as each panel arrives, and a later selection cannot be overwritten by stale history. Background refreshes preserve the populated transcript and cannot overlap, so they no longer replace the visible session with a loading skeleton or cause periodic flashing.
+- The Agent surface has one universal composer per frame: the ordinary right-panel toggle opens the read-only Changes/Source view, while an explicit Split is the only route that moves Agent into the auxiliary column. Routine tool/context activity is grouped into a collapsed, height-bounded Work log between the request and final answer; failed and blocked activity remains directly visible.
+- Intermediate model rationale remains in durable execution/activity evidence instead of entering the user conversation. A `complete=true` turn that only inventories reads or says it is ready to answer receives at most two semantic repair attempts; repeated meta-completion fails closed rather than recording `SessionCompleted`, while a valid final answer is the only assistant message promoted into the transcript.
+- New sessions use daemon-resolved `auto` task mode. Failed initial or follow-up messages restore the exact draft instead of discarding it. Settings can select a configured model for the current session, make one the daemon default role, and test/add provider profiles using keychain references only; the IDE never accepts a provider secret.
+- The IDE consumes `/v1/models` defensively across array, `models`, `data`, `items`, and `results` envelopes, shows a configured model before a session exists, groups sessions by Today/Yesterday/date, and marks unread activity with a dot.
+- New IDE sessions use an agent-directed strategy: the user describes the outcome and keeps permission explicit, while the daemon resolves direct conversation, read-only inspection, planning, review, or Build. A simple greeting completes without a workflow plan, worktree, or validation; explicit Plan/Review constraints remain available through intent/API contracts rather than an obligatory IDE mode picker.
+- The workspace source-control rail is available without a selected session and shows branch, dirty-file count, and ten bounded recent commits. A GitHub remote is labeled as configured only; authentication and network reachability are never inferred from its URL.
+- Legacy sessions whose event logs cannot replay are quarantined individually. Healthy repositories and new sessions remain usable, explicitly quarantined legacy rows are omitted from the IDE working list, older audit history is collapsed by default, and access/append to damaged sessions remains fail-closed without deleting durable records.
+- Editor tabs show file-type colour icons, a bounded minimap, and cursor position; the dock is open by default with DIFF/TESTS/TERMINAL/PROBLEMS/OUTPUT available.
+- The native terminal uses the daemon's typed PTY routes and the shared ANSI screen buffer for incremental output, input, stop, reconnect-safe offsets, and ownership generations. Diff review exposes daemon hunk digest plus Apply/Reject actions.
+- Workspace continuity value objects cover canonical workspace identity, Auto/Ask/Off recall ranking, a bounded continuity capsule, and deterministic 60%/85% context compaction with same-session searchable-history retention.
+- Added authenticated daemon presentation/control routes for summary, conversation, artifacts, changes, validation, usage, workflow controls, bootstrap, GitHub state, and file-diff content; all state remains daemon-owned
 - Added Rust domain types for v1.0 adaptive orchestration:
   - TaskComplexity (Simple, Moderate, Complex, Unknown) with evidence-based classification
   - WorkflowProfile (Direct, Standard, Ultra) with bounded parallel specialist lanes
@@ -15,16 +42,15 @@ Updated: 2026-07-31 (v1.0 feat-adding-IDE in progress)
   - CredentialProfile/CredentialPool with secure reference storage and selection strategies
   - ModelRouteDecision with privacy-boundary enforcement and fallback policies
   - MCPServerProfile with transport/scope/trust and output limits
-- Added VS Code extension configuration surface for workflow/search/budget/defaults
 - Added production brand assets: icons (16/24/32/48/64/128/256/512px), monochrome cat-head SVGs, wordmark
+- `purrcode studio` remains a secure browser maintenance/development client. It is not the v1.0 release IDE and nothing routes to it automatically.
 - Updated README with v1.0 overview and development instructions
 - Copied v1.0 PRD and reference assets into repo under docs/prd/ and brand/
-- Workbench webview uses native VS Code theming via CSS variables, no hardcoded colors
-- Preserves existing TUI as primary interface; Workbench is secondary synchronized view
 - No second runtime or session store - all state flows through the daemon
-- GitHub-native completion scaffolded (connect, PR creation) - to be implemented in PR7
-- TUI canonical state language and workflow/search/budget controls pending (PR4/PR1)
-- IDE engineering integration (native diff, diagnostics, tests, terminal, handoff) in progress (PR6)
+- GitHub-native delivery is wired through explicit `git`/`gh` argument vectors for status, branch, pull request, checks, merge, and issue inspection; authentication remains intentionally interactive and never claims success when unavailable
+- TUI workflow/search/budget controls update durable `SessionControls`; `/usage` exposes the recorded ledger and the header shows Auto/Direct/Standard/Ultra plus search policy
+- `purrcode ide`, `/ide` from the TUI, and `purrcode resume --tui` all attach to the same daemon session in both directions; the IDE runs as its own process because a desktop event loop must own its main thread
+- IDE problems/tests are sourced from the daemon's truthful validation artifacts; missing or skipped evidence renders as unavailable/pending, never as passing
 
 ## v0.8 PR6 — Test orchestration (complete locally)
 

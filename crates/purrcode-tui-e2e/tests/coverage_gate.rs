@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use purrcode_tui::{ScenarioKind, SCENARIOS};
+use purrcode_tui::{SCENARIOS, ScenarioKind};
 
 fn tests_directory() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests")
@@ -48,10 +48,10 @@ fn test_names(path: &Path) -> Vec<String> {
     for line in source.lines() {
         let trimmed = line.trim();
         if previous_was_test_attribute {
-            if let Some(rest) = trimmed.strip_prefix("fn ") {
-                if let Some(name) = rest.split('(').next() {
-                    names.push(name.trim().to_owned());
-                }
+            if let Some(rest) = trimmed.strip_prefix("fn ")
+                && let Some(name) = rest.split('(').next()
+            {
+                names.push(name.trim().to_owned());
             }
             previous_was_test_attribute = trimmed.starts_with("#[");
             continue;

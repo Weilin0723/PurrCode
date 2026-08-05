@@ -1,29 +1,33 @@
-use anyhow::{bail, Context, Result};
+#![allow(clippy::collapsible_if)]
+
+use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use directories::ProjectDirs;
 use futures::future::join_all;
-use purrcode_claw::{sandbox_capability, ToolRuntime};
+use purrcode_claw::{ToolRuntime, sandbox_capability};
 use purrcode_codex_bridge::{CodexBridge, CodexBridgeConfig};
-use purrcode_daemon::{bind_and_report, DaemonConfig, DAEMON_API_VERSION};
+use purrcode_daemon::{
+    DAEMON_API_VERSION, DaemonConfig, NATIVE_IDE_API_VERSION, NATIVE_IDE_BUILD_FINGERPRINT,
+    NATIVE_IDE_CAPABILITIES, bind_and_report,
+};
 use purrcode_evaluation_runtime::{
-    aggregate_metrics, BenchmarkCategory, BenchmarkResult, BenchmarkStatus, EvaluationMetrics,
+    BenchmarkCategory, BenchmarkResult, BenchmarkStatus, EvaluationMetrics, aggregate_metrics,
 };
 use purrcode_evidence_bundle::{
-    export_bundle, inspect_bundle, replay_bundle, verify_bundle, EvidenceBundle,
+    EvidenceBundle, export_bundle, inspect_bundle, replay_bundle, verify_bundle,
 };
 use purrcode_golden_suite::GoldenCatalog;
 use purrcode_mcp_host::{
-    discover_skills, install_skill, uninstall_skill, verify_installed_skill, McpHost,
-    McpServerConfig,
+    McpHost, McpServerConfig, discover_skills, uninstall_skill, verify_installed_skill,
 };
-use purrcode_model_selection::{select_coder, select_judge, ModelCandidate, SelectionBudget};
+use purrcode_model_selection::{ModelCandidate, SelectionBudget, select_coder, select_judge};
 use purrcode_ninelives::SessionStore;
-use purrcode_pawgate::{resolve_policy_path, Policy};
+use purrcode_pawgate::{Policy, resolve_policy_path};
 use purrcode_provider_gateway::{
-    delete_keychain_credential, qualify_model, set_keychain_credential, AppConfig,
-    JudgmentRuntimeConfig, ModelCapabilities, ModelId, ModelsConfig, PrivacyConfig, PrivacyMode,
-    ProviderConfig, ProviderRouter,
+    AppConfig, JudgmentRuntimeConfig, ModelCapabilities, ModelId, ModelsConfig, PrivacyConfig,
+    PrivacyMode, ProviderConfig, ProviderRouter, delete_credential, qualify_model,
+    store_credential,
 };
 use purrcode_repository_engine::{ApplicationStrategy, RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
@@ -86,10 +90,8 @@ enum Command {
     },
     /// Launch the authenticated graphical PurrCode Studio (browser shell).
     ///
-    /// Studio attaches to the same daemon, repository, session, conversation,
-    /// model, permission mode, terminal sessions, diff and validation state as
-    /// the TUI Workbench; it is a graphical view of the same session, not a
-    /// second session.
+    /// Studio is a maintenance/development client. The release IDE path is
+    /// `purrcode ide`.
     Studio {
         /// Attach Studio to an existing local or remote daemon.
         #[arg(long)]
@@ -104,7 +106,9 @@ enum Command {
         #[arg(long)]
         repository: Option<PathBuf>,
     },
-    /// Launch the authenticated graphical PurrCode Studio (backward-compatible alias of `studio`).
+    /// Launch the browser portal. Development and maintenance only (PRD §3.4);
+    /// `purrcode experimental portal` is the supported spelling.
+    #[command(alias = "experimental-portal")]
     Ui {
         /// Attach Studio to an existing local or remote daemon.
         #[arg(long)]
@@ -124,17 +128,48 @@ enum Command {
         #[arg(long)]
         repository: Option<PathBuf>,
     },
+    /// Open the native PurrCode desktop application on this repository.
+    ///
+    /// `purrcode gui` and `purrcode ide` are the same command (PRD §3.2). Neither
+    /// ever opens a browser.
+    #[command(alias = "ide")]
+    Gui {
+        /// Attach to an existing daemon session. This is never inferred from
+        /// the repository's history; pass it explicitly when reopening work.
+        #[arg(long)]
+        session: Option<String>,
+        /// Open this folder straight away. Without it the window opens on its
+        /// start screen so the folder is chosen deliberately.
+        #[arg(long)]
+        repository: Option<PathBuf>,
+    },
     /// Start an isolated, resumable native-agent session.
     Run {
         objective: String,
         #[arg(long)]
         repository: Option<PathBuf>,
+        #[arg(long)]
+        workflow: Option<String>,
+        #[arg(long)]
+        search: Option<String>,
+        #[arg(long)]
+        budget: Option<String>,
+        #[arg(long)]
+        max_tokens: Option<u64>,
     },
     /// Create a durable repository-aware plan without executing or modifying files.
     Plan {
         objective: String,
         #[arg(long)]
         repository: Option<PathBuf>,
+        #[arg(long)]
+        workflow: Option<String>,
+        #[arg(long)]
+        search: Option<String>,
+        #[arg(long)]
+        budget: Option<String>,
+        #[arg(long)]
+        max_tokens: Option<u64>,
     },
     /// Run a bounded, noninteractive CI agent and emit a complete evidence report.
     Ci {
@@ -168,7 +203,12 @@ enum Command {
         repository: Option<PathBuf>,
     },
     /// Resume the latest or selected session.
-    Resume { session: Option<String> },
+    Resume {
+        session: Option<String>,
+        /// Attach the TUI to the selected daemon session instead of only resuming it.
+        #[arg(long)]
+        tui: bool,
+    },
     /// List durable sessions.
     Sessions,
     /// Approve the pending action in the latest or selected session.
@@ -196,8 +236,14 @@ enum Command {
     },
     /// Explicitly apply the isolated patch to the active working tree.
     Apply { session: Option<String> },
-    /// Roll back all agent-owned changes inside the isolated worktree.
-    Rollback { session: Option<String> },
+    /// Preview, then roll back all changes inside the isolated worktree.
+    Rollback {
+        session: Option<String>,
+        #[arg(long)]
+        expected_patch_digest: Option<String>,
+        #[arg(long)]
+        acknowledge_unattributed_effects: bool,
+    },
     /// Inspect or select configured models.
     Model {
         #[command(subcommand)]
@@ -208,7 +254,7 @@ enum Command {
         #[command(subcommand)]
         command: ProviderCommand,
     },
-    /// Store or remove provider secrets in the operating-system credential store.
+    /// Store or remove provider secrets in the credentials.toml file.
     Credential {
         #[command(subcommand)]
         command: CredentialCommand,
@@ -355,13 +401,21 @@ enum ProviderCommand {
 
 #[derive(Subcommand)]
 enum CredentialCommand {
-    /// Prompt securely for a provider API key and configure that provider to use it.
+    /// Prompt securely for a provider API key and store it in credentials.toml.
     Set {
         provider: String,
         #[arg(long)]
         name: Option<String>,
     },
-    /// Remove a named secret from the operating-system credential store.
+    /// Store a provider credential as an environment variable reference instead of
+    /// credentials.toml (e.g. `OPENAI_API_KEY`). The CLI will never prompt for
+    /// the secret — set it in your shell or .env file instead.
+    SetEnv {
+        provider: String,
+        /// Environment variable name (e.g. `OPENAI_API_KEY`).
+        env_var: String,
+    },
+    /// Remove a named secret from the credentials.toml file.
     Delete { name: String },
 }
 
@@ -591,8 +645,7 @@ enum BenchmarkCommand {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
@@ -600,6 +653,90 @@ async fn main() -> Result<()> {
         .without_time()
         .init();
     let cli = Cli::parse();
+    // `purrcode ide` opens a native desktop window. macOS and Windows both
+    // require that event loop to own the *bare* main thread: started from
+    // inside a Tokio runtime it is handed a run loop that is not the
+    // application's, and the window closes again the moment it appears. So the
+    // IDE is dispatched here, before any runtime exists, and does its async
+    // preparation on a runtime that is dropped before the window opens.
+    if matches!(cli.command, Some(Command::Gui { .. })) {
+        return open_ide(cli);
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("start the async runtime")?
+        .block_on(dispatch(cli))
+}
+
+/// Prepare the daemon and the session, then hand the main thread to the IDE.
+fn open_ide(cli: Cli) -> Result<()> {
+    let Some(Command::Gui {
+        session,
+        repository,
+    }) = cli.command
+    else {
+        unreachable!("open_ide is only reached for the gui command");
+    };
+    let config_path = cli.config.unwrap_or(default_config_path()?);
+    if !config_path.is_file() {
+        bail!("PurrCode is not initialized; run `purrcode init` before opening the IDE");
+    }
+    let daemon_token = cli.daemon_token.unwrap_or(default_daemon_token_path()?);
+    let daemon_url = cli.daemon_url;
+    let database = cli.database.unwrap_or(default_database_path()?);
+    // A named folder is an instruction; no folder is a question, and the window
+    // asks it on its start screen rather than silently adopting whatever
+    // directory the shell happened to be in.
+    let repository = match repository {
+        Some(path) => Some(canonical_repository(Some(path))?),
+        None => None,
+    };
+    if let Some(session) = session.as_deref() {
+        uuid::Uuid::parse_str(session).context("session ID is not a UUID")?;
+    }
+
+    let session = {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("start the async runtime")?;
+        let resolved = runtime.block_on(async {
+            ensure_daemon_started(&config_path, &database, &daemon_url, &daemon_token, false)
+                .await?;
+            let resolved = match (repository.as_deref(), session.as_deref()) {
+                (Some(repository), Some(session)) => {
+                    let store = SessionStore::open(&database)
+                        .with_context(|| format!("open session store {}", database.display()))?;
+                    validate_ide_session(&store, session, repository)?;
+                    Some(session.to_owned())
+                }
+                (Some(_), None) => None,
+                (None, Some(_)) => {
+                    bail!(
+                        "--session requires --repository so PurrCode can verify workspace ownership"
+                    )
+                }
+                // Without a folder there is no session to resume into.
+                (None, None) => None,
+            };
+            Ok::<_, anyhow::Error>(resolved)
+        })?;
+        // The runtime is dropped here on purpose: the window must not open
+        // inside it.
+        runtime.shutdown_background();
+        resolved
+    };
+
+    launch_ide(
+        repository.as_deref(),
+        session.as_deref(),
+        &daemon_url,
+        &daemon_token,
+    )
+}
+
+async fn dispatch(cli: Cli) -> Result<()> {
     let config_path = cli.config.unwrap_or(default_config_path()?);
     let daemon_url = cli.daemon_url;
     let daemon_token = cli.daemon_token.unwrap_or(default_daemon_token_path()?);
@@ -724,28 +861,22 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        // Handled by `open_ide` before the runtime starts, so that the desktop
+        // event loop owns the bare main thread.
+        Command::Gui { .. } => unreachable!("the gui command is dispatched from main"),
         Command::Run {
             objective,
             repository,
+            workflow,
+            search,
+            budget,
+            max_tokens,
         } => {
-            let repository = canonical_repository(repository)?;
-            let result = daemon_json(
-                reqwest::Method::POST,
-                &daemon_url,
-                "/v1/sessions",
-                Some(serde_json::json!({
-                    "objective": objective,
-                    "repository": repository
-                })),
-                &daemon_token,
-            )
-            .await?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
-        }
-        Command::Plan {
-            objective,
-            repository,
-        } => {
+            if !config_path.is_file() {
+                bail!("PurrCode is not initialized; run `purrcode init` before `purrcode run`");
+            }
+            ensure_daemon_started(&config_path, &database, &daemon_url, &daemon_token, false)
+                .await?;
             let repository = canonical_repository(repository)?;
             let result = daemon_json(
                 reqwest::Method::POST,
@@ -754,12 +885,54 @@ async fn main() -> Result<()> {
                 Some(serde_json::json!({
                     "objective": objective,
                     "repository": repository,
-                    "plan_only": true
+                    "task_mode": "build",
+                    "permission_mode": "ask",
+                    "authority_mode": "governed",
+                    "plan_only": false,
+                    "workflow": workflow,
+                    "search_policy": search,
+                    "budget_profile": budget,
+                    "max_tokens": max_tokens,
                 })),
                 &daemon_token,
             )
             .await?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            print_accepted_session(&result)?;
+        }
+        Command::Plan {
+            objective,
+            repository,
+            workflow,
+            search,
+            budget,
+            max_tokens,
+        } => {
+            if !config_path.is_file() {
+                bail!("PurrCode is not initialized; run `purrcode init` before `purrcode plan`");
+            }
+            ensure_daemon_started(&config_path, &database, &daemon_url, &daemon_token, false)
+                .await?;
+            let repository = canonical_repository(repository)?;
+            let result = daemon_json(
+                reqwest::Method::POST,
+                &daemon_url,
+                "/v1/sessions",
+                Some(serde_json::json!({
+                    "objective": objective,
+                    "repository": repository,
+                    "task_mode": "plan",
+                    "permission_mode": "ask",
+                    "authority_mode": "governed",
+                    "plan_only": true,
+                    "workflow": workflow,
+                    "search_policy": search,
+                    "budget_profile": budget,
+                    "max_tokens": max_tokens,
+                })),
+                &daemon_token,
+            )
+            .await?;
+            print_accepted_session(&result)?;
         }
         Command::Ci {
             objective,
@@ -1006,8 +1179,33 @@ async fn main() -> Result<()> {
             );
             println!("{}", serde_json::to_string_pretty(&environment)?);
         }
-        Command::Resume { session } => {
+        Command::Resume { session, tui } => {
             let session = resolve_daemon_session(&daemon_url, &daemon_token, session).await?;
+            if tui {
+                let view = daemon_json(
+                    reqwest::Method::GET,
+                    &daemon_url,
+                    &format!("/v1/sessions/{session}"),
+                    None,
+                    &daemon_token,
+                )
+                .await?;
+                let repository = view["worktree"]
+                    .as_str()
+                    .or_else(|| view["repository"].as_str())
+                    .map(PathBuf::from)
+                    .context("daemon session has no repository")?
+                    .canonicalize()
+                    .context("resolve daemon session repository")?;
+                purrcode_tui::run(TuiConfig {
+                    daemon_url,
+                    token_file: daemon_token,
+                    repository,
+                    session_id: Some(session),
+                })
+                .await?;
+                return Ok(());
+            }
             let result = daemon_json(
                 reqwest::Method::POST,
                 &daemon_url,
@@ -1115,15 +1313,49 @@ async fn main() -> Result<()> {
             )?;
             println!("{}", result.detail);
         }
-        Command::Rollback { session } => {
+        Command::Rollback {
+            session,
+            expected_patch_digest,
+            acknowledge_unattributed_effects,
+        } => {
             let session_id = resolve_session_id(&store, session)?;
             let worktree = session_worktree_from_store(&store, session_id)?;
+            let effects = RepositoryEngine::effects(&worktree).await?;
+            let digest = blake3::hash(&effects.binary_patch).to_hex().to_string();
+            let Some(expected) = expected_patch_digest else {
+                println!("session: {}", session_id.0);
+                println!("status: rollback preview only");
+                println!("changed_files: {}", effects.changed_files.len());
+                for path in &effects.changed_files {
+                    println!("file: {}", path.display());
+                }
+                println!("patch_digest: {digest}");
+                println!(
+                    "warning: provenance of every isolated hunk cannot be proven; inspect the diff before discarding it"
+                );
+                println!(
+                    "confirm: purrcode rollback {} --expected-patch-digest {} --acknowledge-unattributed-effects",
+                    session_id.0, digest
+                );
+                return Ok(());
+            };
+            if !acknowledge_unattributed_effects {
+                bail!("rollback confirmation requires --acknowledge-unattributed-effects");
+            }
+            if expected != digest {
+                bail!(
+                    "isolated changes changed after preview; run rollback again to inspect the new digest"
+                );
+            }
             RepositoryEngine::rollback_all(&worktree).await?;
             store.append(
                 session_id,
                 &SessionEvent::WorktreeDispositionRecorded {
                     strategy: "rollback_all".into(),
-                    detail: "agent-owned worktree changes rolled back".into(),
+                    detail: format!(
+                        "{} previewed isolated-worktree change(s) rolled back after exact patch-digest confirmation",
+                        effects.changed_files.len()
+                    ),
                 },
             )?;
             println!("session: {}", session_id.0);
@@ -1170,7 +1402,10 @@ async fn main() -> Result<()> {
                 }
                 ModelCommand::Qualify { model } => {
                     let model = ModelId::parse(&model)?;
-                    let router = ProviderRouter::from_config(&config)?;
+                    let router = ProviderRouter::from_config(
+                        &config,
+                        Some(config_path.with_file_name("credentials.toml").as_path()),
+                    )?;
                     let provider = router.provider(&model)?;
                     let report = qualify_model(provider.as_ref(), model).await?;
                     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1202,7 +1437,10 @@ async fn main() -> Result<()> {
             }
             ProviderCommand::Doctor => {
                 let config = load_app_config(&config_path)?;
-                let router = ProviderRouter::from_config(&config)?;
+                let router = ProviderRouter::from_config(
+                    &config,
+                    Some(config_path.with_file_name("credentials.toml").as_path()),
+                )?;
                 let checks = config.providers.iter().map(|(name, configured)| {
                     let name = name.clone();
                     let model = ModelId {
@@ -1254,20 +1492,32 @@ async fn main() -> Result<()> {
                 }
                 let mut config = load_app_config(&config_path)?;
                 config.use_keychain_credential(&provider, &credential_name)?;
-                let stored = set_keychain_credential(&credential_name, &secret);
+                let credentials_path = config_path.with_file_name("credentials.toml");
+                let stored = store_credential(&credentials_path, &credential_name, &secret);
                 secret.zeroize();
                 stored?;
                 if let Err(error) = config.save(&config_path) {
-                    let _ = delete_keychain_credential(&credential_name);
+                    let _ = delete_credential(&credentials_path, &credential_name);
                     return Err(error.into());
                 }
-                println!("credential stored in the operating-system credential store");
+                println!("credential stored in credentials.toml next to config.toml");
                 println!("provider: {provider}");
                 println!("config: {}", config_path.display());
             }
+            CredentialCommand::SetEnv { provider, env_var } => {
+                let mut config = load_app_config(&config_path)?;
+                config.use_environment_credential(&provider, &env_var)?;
+                config.save(&config_path)?;
+                println!("provider `{provider}` will use the `{env_var}` environment variable");
+                println!(
+                    "set it in your shell profile or .env file — the daemon reads it at startup"
+                );
+                println!("config: {}", config_path.display());
+            }
             CredentialCommand::Delete { name } => {
-                delete_keychain_credential(&name)?;
-                println!("credential `{name}` removed from the operating-system credential store");
+                let credentials_path = config_path.with_file_name("credentials.toml");
+                delete_credential(&credentials_path, &name)?;
+                println!("credential `{name}` removed from credentials.toml next to config.toml");
             }
         },
         Command::Config { command } => match command {
@@ -1513,14 +1763,10 @@ async fn main() -> Result<()> {
                 println!("skills: {count}");
             }
             SkillCommand::Install { source, repository } => {
-                let repository = canonical_repository(repository)?;
-                let root = repository.join(".purrcode/skills");
-                let source = source
-                    .canonicalize()
-                    .with_context(|| format!("resolve skill package {}", source.display()))?;
-                let installed = install_skill(&source, &root)?;
-                println!("{}", serde_json::to_string_pretty(&installed)?);
-                println!("installation: {}", root.join(&installed.name).display());
+                let _ = (source, repository);
+                bail!(
+                    "direct skill installation is disabled because it bypasses daemon qualification and approval. Run `purrcode tui`, then `/skill-download <candidate_id> <40-character-commit>`, `/skill-download-approve <candidate_id> <40-character-commit>`, `/skill-install <user|repository|session>`, and `/skill-install-approve`; no files were changed"
+                );
             }
             SkillCommand::Verify { name, repository } => {
                 let repository = canonical_repository(repository)?;
@@ -1965,6 +2211,7 @@ async fn main() -> Result<()> {
                 daemon_url: daemon_url.clone(),
                 token_file,
                 repository,
+                session_id: None,
             })
             .await?;
             return Ok(());
@@ -3312,6 +3559,7 @@ async fn run_tui(
         daemon_url,
         token_file: daemon_token,
         repository,
+        session_id: None,
     })
     .await
 }
@@ -3398,6 +3646,58 @@ fn open_browser(url: &str) -> bool {
     status.is_ok_and(|status| status.success())
 }
 
+/// Open the native PurrCode IDE on this repository and session.
+///
+/// PurrCode v1.0 ships its own desktop application: there is no browser portal
+/// to launch and no third-party editor to detect. The window runs on the
+/// calling thread because macOS and Windows both require the event loop to own
+/// the main thread.
+fn launch_ide(
+    repository: Option<&Path>,
+    session: Option<&str>,
+    daemon_url: &str,
+    token_path: &Path,
+) -> Result<()> {
+    let token = fs::read_to_string(token_path)
+        .with_context(|| format!("read daemon token from {}", token_path.display()))?
+        .trim()
+        .to_owned();
+    if token.len() < 32 {
+        bail!("the daemon token is missing or invalid; run `purrcode init`");
+    }
+    purrcode_ide::run(purrcode_ide::Config {
+        repository: repository.map(Path::to_path_buf),
+        base_url: daemon_url.to_owned(),
+        token,
+        initial_session: session.map(str::to_owned),
+    })
+}
+
+fn validate_ide_session(store: &SessionStore, session: &str, repository: &Path) -> Result<()> {
+    let id = uuid::Uuid::parse_str(session).context("session ID is not a UUID")?;
+    let state = store.load(SessionId(id))?;
+    if state.event_count == 0 {
+        bail!("session {session} was not found in the daemon store");
+    }
+    let session_repository = state
+        .repository
+        .as_deref()
+        .context("session has no source repository")?
+        .canonicalize()
+        .context("resolve session source repository")?;
+    let repository = repository
+        .canonicalize()
+        .unwrap_or_else(|_| repository.to_path_buf());
+    if session_repository != repository {
+        bail!(
+            "session {session} belongs to {}, not {}",
+            session_repository.display(),
+            repository.display()
+        );
+    }
+    Ok(())
+}
+
 fn default_golden_catalog_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../integration-tests/golden/catalog.toml")
 }
@@ -3469,7 +3769,7 @@ async fn initialize_product(
         }
     }
     // If no local provider was discovered, check for a NVIDIA_API_KEY env var
-    // or keychain entry and auto-configure NVIDIA NIM (PRD §9, §9.1).
+    // or credentials.toml entry and auto-configure NVIDIA NIM (PRD §9, §9.1).
     if provider_config.is_none()
         && (std::env::var_os("NVIDIA_API_KEY").is_some()
             || std::env::var("NVIDIA_API_KEY").is_ok_and(|v| !v.is_empty()))
@@ -3501,7 +3801,7 @@ async fn initialize_product(
         }
     }
     let (provider_name, mut provider_config) = provider_name.zip(provider_config).context(
-        "no local model server or NVIDIA NIM credential was discovered; start Ollama or LM          Studio, or set NVIDIA_API_KEY in your environment or keychain",
+        "no local model server or NVIDIA NIM credential was discovered; start Ollama or LM          Studio, or set NVIDIA_API_KEY in your environment or credentials.toml",
     )?;
     discovered_models.sort();
     discovered_models.dedup();
@@ -3717,6 +4017,44 @@ fn assess_daemon_health(health: &serde_json::Value) -> DaemonCompatibility {
             DAEMON_API_VERSION
         ));
     }
+    let native_ide_api_version = health["native_ide_api_version"].as_u64();
+    if native_ide_api_version != Some(u64::from(NATIVE_IDE_API_VERSION)) {
+        return DaemonCompatibility::Incompatible(format!(
+            "native IDE API version was {}, expected {}",
+            native_ide_api_version
+                .map(|version| version.to_string())
+                .unwrap_or_else(|| "missing (legacy daemon)".into()),
+            NATIVE_IDE_API_VERSION
+        ));
+    }
+    let build_fingerprint = health["native_ide_build_fingerprint"].as_str();
+    if build_fingerprint != Some(NATIVE_IDE_BUILD_FINGERPRINT) {
+        return DaemonCompatibility::Incompatible(format!(
+            "native IDE build fingerprint was {}, expected {}",
+            build_fingerprint
+                .map(str::to_owned)
+                .unwrap_or_else(|| "missing (legacy daemon)".into()),
+            NATIVE_IDE_BUILD_FINGERPRINT
+        ));
+    }
+    let capabilities = health["native_ide_capabilities"].as_array();
+    let missing = NATIVE_IDE_CAPABILITIES
+        .iter()
+        .filter(|required| {
+            !capabilities.is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|value| value.as_str() == Some(**required))
+            })
+        })
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return DaemonCompatibility::Incompatible(format!(
+            "native IDE capabilities missing: {}",
+            missing.join(", ")
+        ));
+    }
     DaemonCompatibility::Compatible
 }
 
@@ -3855,11 +4193,18 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
     use SessionEvent::*;
     match event {
         SessionCreated { .. } => "session_created",
+        SessionControlsUpdated { .. } => "session_controls_updated",
+        WorkflowPlanCreated { .. } => "workflow_plan_created",
+        UsageRecorded { .. } => "usage_recorded",
         ConversationMessageAdded { .. } => "conversation_message_added",
         WorktreeCreated { .. } => "worktree_created",
         SubmodulesPrepared { .. } => "submodules_prepared",
         PlanCreated { .. } => "plan_created",
         PlanRevised { .. } => "plan_revised",
+        SpecBundleRecorded { .. } => "spec_bundle_recorded",
+        TaskGraphRecorded { .. } => "task_graph_recorded",
+        TaskStatusChanged { .. } => "task_status_changed",
+        EvidenceLinked { .. } => "evidence_linked",
         ContextCompacted { .. } => "context_compacted",
         SessionPaused { .. } => "session_paused",
         SessionResumed => "session_resumed",
@@ -3911,6 +4256,7 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         ResearchSearchPerformed { .. } => "research_search_performed",
         TerminalActionProposed { .. } => "terminal_action_proposed",
         TerminalJudgmentRecorded { .. } => "terminal_judgment_recorded",
+        CompletionRepairRecorded { .. } => "completion_repair_recorded",
     }
 }
 
@@ -3956,10 +4302,47 @@ fn event_summary(event: &SessionEvent) -> String {
         } => {
             format!("{status:?}: {evidence}")
         }
+        SpecBundleRecorded { bundle, reason } => format!(
+            "Specification recorded: {} (revision {}, {} requirement(s)); {}",
+            bundle.title,
+            bundle.revision,
+            bundle.requirements.len(),
+            reason
+        ),
+        TaskGraphRecorded { graph, reason } => format!(
+            "Task graph recorded: revision {}, {} task(s); {}",
+            graph.revision,
+            graph.tasks.len(),
+            reason
+        ),
+        TaskStatusChanged {
+            task_id,
+            status,
+            reason,
+        } => format!(
+            "Task {} is {}; {}",
+            task_id.0,
+            humanize_event_label(&format!("{status:?}")),
+            reason
+        ),
+        EvidenceLinked { evidence } => format!(
+            "Evidence linked for task {}: {} ({})",
+            evidence.task_id.0,
+            evidence.summary,
+            humanize_event_label(&format!("{:?}", evidence.coverage))
+        ),
         SessionFailed { reason } => format!("failed: {reason}"),
         SessionCancelled { reason } => format!("cancelled: {reason}"),
         _ => String::new(),
     }
+}
+
+fn humanize_event_label(value: &str) -> String {
+    let mut label = value.replace('_', " ").to_ascii_lowercase();
+    if let Some(first) = label.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    label
 }
 
 #[derive(serde::Serialize)]
@@ -4033,6 +4416,16 @@ fn write_new_atomic_with(
     temporary
         .persist_noclobber(path)
         .map_err(|error| anyhow::anyhow!("persist {}: {}", path.display(), error.error))?;
+    Ok(())
+}
+
+fn print_accepted_session(result: &serde_json::Value) -> Result<()> {
+    let session_id = result["id"]
+        .as_str()
+        .context("daemon response omitted session ID")?;
+    println!("session: {session_id}");
+    println!("follow-up: purrcode gui --session {session_id}");
+    println!("{}", serde_json::to_string_pretty(result)?);
     Ok(())
 }
 
@@ -4118,6 +4511,81 @@ fn session_worktree_from_store(
 #[cfg(test)]
 mod cli_tests {
     use super::*;
+    use purrcode_runtime_core::AuthorityMode;
+
+    #[test]
+    fn the_ide_command_never_reaches_for_a_browser_or_a_third_party_editor() {
+        // PRD §22.1/§29.1: `purrcode ide` opens PurrCode's own window. This
+        // guards the whole dispatch path against a regression that shells out
+        // to a browser opener or to somebody else's editor CLI.
+        let source = include_str!("main.rs");
+        let launcher = source
+            .split("fn launch_ide(")
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn ").next())
+            .expect("launch_ide must exist");
+        for forbidden in [
+            "open_browser",
+            "xdg-open",
+            "rundll32",
+            "--reuse-window",
+            "vscode://",
+            "code-insiders",
+            "codium",
+            "http://",
+        ] {
+            assert!(
+                !launcher.contains(forbidden),
+                "`purrcode ide` must not reference {forbidden}"
+            );
+        }
+        assert!(
+            launcher.contains("purrcode_ide::run"),
+            "`purrcode ide` must open the native PurrCode window"
+        );
+    }
+
+    #[test]
+    fn ide_does_not_resume_a_repository_session_implicitly_or_cross_workspaces() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        let other_repository = temporary.path().join("other");
+        fs::create_dir(&repository).unwrap();
+        fs::create_dir(&other_repository).unwrap();
+        let mut store = SessionStore::in_memory().unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "fixture".into(),
+                    repository: repository.clone(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+
+        validate_ide_session(&store, &session_id.0.to_string(), &repository).unwrap();
+        let mismatch = validate_ide_session(&store, &session_id.0.to_string(), &other_repository)
+            .unwrap_err()
+            .to_string();
+        assert!(mismatch.contains("belongs to"));
+        let missing = validate_ide_session(&store, &SessionId::new().0.to_string(), &repository)
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("was not found"));
+
+        // Keep the launcher policy explicit in source: opening a folder never
+        // calls a latest-session resolver. Only `--session` reaches the
+        // ownership check above.
+        let source = include_str!("main.rs");
+        let open_ide = source
+            .split("fn open_ide(")
+            .nth(1)
+            .and_then(|rest| rest.split("\nasync fn dispatch").next())
+            .expect("open_ide must exist");
+        assert!(!open_ide.contains("latest_safe_session"));
+    }
 
     #[test]
     fn live_benchmark_uses_the_requested_whole_task_timeout() {
@@ -4149,7 +4617,10 @@ mod cli_tests {
         assert!(matches!(
             assess_daemon_health(&serde_json::json!({
                 "product": "purrcode",
-                "daemon_api_version": DAEMON_API_VERSION
+                "daemon_api_version": DAEMON_API_VERSION,
+                "native_ide_api_version": NATIVE_IDE_API_VERSION,
+                "native_ide_build_fingerprint": NATIVE_IDE_BUILD_FINGERPRINT,
+                "native_ide_capabilities": NATIVE_IDE_CAPABILITIES
             })),
             DaemonCompatibility::Compatible
         ));
@@ -4171,10 +4642,43 @@ mod cli_tests {
         assert!(matches!(
             assess_daemon_health(&serde_json::json!({
                 "product": "purrcode",
-                "daemon_api_version": DAEMON_API_VERSION + 1
+                "daemon_api_version": DAEMON_API_VERSION
+            })),
+            DaemonCompatibility::Incompatible(detail)
+                if detail.contains("native IDE API version")
+        ));
+        assert!(matches!(
+            assess_daemon_health(&serde_json::json!({
+                "product": "purrcode",
+                "daemon_api_version": DAEMON_API_VERSION + 1,
+                "native_ide_api_version": NATIVE_IDE_API_VERSION,
+                "native_ide_build_fingerprint": NATIVE_IDE_BUILD_FINGERPRINT,
+                "native_ide_capabilities": NATIVE_IDE_CAPABILITIES
             })),
             DaemonCompatibility::Incompatible(detail)
                 if detail.contains("daemon API version")
+        ));
+        assert!(matches!(
+            assess_daemon_health(&serde_json::json!({
+                "product": "purrcode",
+                "daemon_api_version": DAEMON_API_VERSION,
+                "native_ide_api_version": NATIVE_IDE_API_VERSION,
+                "native_ide_build_fingerprint": NATIVE_IDE_BUILD_FINGERPRINT,
+                "native_ide_capabilities": ["sessions.start"]
+            })),
+            DaemonCompatibility::Incompatible(detail)
+                if detail.contains("native IDE capabilities missing")
+        ));
+        assert!(matches!(
+            assess_daemon_health(&serde_json::json!({
+                "product": "purrcode",
+                "daemon_api_version": DAEMON_API_VERSION,
+                "native_ide_api_version": NATIVE_IDE_API_VERSION,
+                "native_ide_build_fingerprint": "old-native-ide-build",
+                "native_ide_capabilities": NATIVE_IDE_CAPABILITIES
+            })),
+            DaemonCompatibility::Incompatible(detail)
+                if detail.contains("native IDE build fingerprint")
         ));
     }
 
@@ -4268,8 +4772,10 @@ mod cli_tests {
         });
         assert!(result.is_err());
         assert!(!destination.exists());
-        assert!(std::fs::read_dir(temporary.path())
-            .unwrap()
-            .all(|entry| entry.unwrap().path() != destination));
+        assert!(
+            std::fs::read_dir(temporary.path())
+                .unwrap()
+                .all(|entry| entry.unwrap().path() != destination)
+        );
     }
 }

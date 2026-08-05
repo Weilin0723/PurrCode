@@ -9,6 +9,4 @@ or failed external gates are never converted into passes.
 - [Provider qualification](provider-qualification.md)
 - [Recovery validation](recovery-validation.md)
 - [Release pipeline](release-pipeline.md)
-- [Issue #1 end-to-end demo](../issue-1-demo.md)
 - [Production acceptance audit](../production-acceptance.md)
-- [v0.6.0 typed actions and terminal reliability](v0.6.0-typed-actions.md)

@@ -5,10 +5,10 @@
 //! actions stay visible with the reason they are unavailable, so the palette
 //! never presents a silent dead end.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
-use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::design::{Emphasis, Role, Symbols, Tokens};

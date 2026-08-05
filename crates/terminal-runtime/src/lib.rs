@@ -22,6 +22,12 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod emulator;
+
+pub use emulator::{
+    CellAttrs, CursorShape, CursorState, GridPoint, KeyInput, KeyModifiers, Selection,
+    TerminalCell, TerminalColor, TerminalContextSummary, TerminalEmulator, TerminalKey,
+};
 pub use purrcode_workspace_contracts::{TerminalId, WorkspaceId};
 
 /// Monotonically increasing ownership generation.
@@ -379,6 +385,22 @@ pub struct TerminalSnapshot {
     pub transcript_tail: Vec<u8>,
     #[serde(default)]
     pub last_seen_at: Option<DateTime<Utc>>,
+    /// The directory the process was started in.
+    ///
+    /// PurrCode runs sessions in isolated worktrees, so a client that cannot
+    /// name this cannot tell the user whether `git status` describes their
+    /// checkout or the agent's (PRD §14).
+    #[serde(default)]
+    pub working_directory: Option<PathBuf>,
+    /// The program behind the terminal, so a client can say "zsh" rather than
+    /// "a shell" and offer a useful action when it is missing.
+    #[serde(default)]
+    pub shell: Option<PathBuf>,
+    /// Set once the process is gone. `Some(0)` is a clean exit, which is a
+    /// different thing to report than a crash, and both differ from "still
+    /// running" (PRD §4).
+    #[serde(default)]
+    pub exit_code: Option<i32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +525,8 @@ pub struct TerminalChunk {
 
 struct TerminalSession {
     workspace_id: WorkspaceId,
+    working_directory: PathBuf,
+    program: PathBuf,
     owner: TerminalOwner,
     generation: OwnershipGeneration,
     master: Box<dyn portable_pty::MasterPty + Send>,
@@ -613,15 +637,22 @@ impl TerminalRuntime {
         let pair = portable_pty::native_pty_system()
             .openpty(to_pty_size(size))
             .map_err(backend)?;
-        let program = match action.program.as_ref() {
+        let (program, arguments) = match action.program.as_ref() {
             Some(program) if program.as_os_str().is_empty() => {
-                return Err(TerminalError::EmptyProgram)
+                return Err(TerminalError::EmptyProgram);
             }
-            Some(program) => program.clone(),
-            None => default_shell(),
+            Some(program) => (program.clone(), action.arguments.clone()),
+            // No program means "the user's shell", which must be started
+            // interactively — see `interactive_shell_arguments`.
+            None if action.arguments.is_empty() => {
+                let shell = default_shell();
+                let arguments = interactive_shell_arguments(&shell);
+                (shell, arguments)
+            }
+            None => (default_shell(), action.arguments.clone()),
         };
-        let mut command = portable_pty::CommandBuilder::new(program);
-        command.args(&action.arguments);
+        let mut command = portable_pty::CommandBuilder::new(&program);
+        command.args(&arguments);
         command.cwd(&action.working_directory);
         apply_safe_environment(&mut command, &action.environment)?;
         let reader = pair.master.try_clone_reader().map_err(backend)?;
@@ -658,6 +689,9 @@ impl TerminalRuntime {
             process_group,
             transcript_tail: Vec::new(),
             last_seen_at: Some(Utc::now()),
+            working_directory: Some(action.working_directory.clone()),
+            shell: Some(program.clone()),
+            exit_code: None,
         };
         self.sessions
             .lock()
@@ -666,6 +700,8 @@ impl TerminalRuntime {
                 terminal_id,
                 TerminalSession {
                     workspace_id,
+                    working_directory: action.working_directory.clone(),
+                    program,
                     owner,
                     generation: OwnershipGeneration::INITIAL,
                     master: pair.master,
@@ -881,6 +917,9 @@ fn snapshot(
         process_group: process_group(&*session.master, &*session.child),
         transcript_tail: transcript.tail(replay_bytes),
         last_seen_at: Some(transcript.last_seen_at),
+        working_directory: Some(session.working_directory.clone()),
+        shell: Some(session.program.clone()),
+        exit_code: session.exit_code,
     })
 }
 
@@ -992,6 +1031,30 @@ fn to_pty_size(size: TerminalSize) -> portable_pty::PtySize {
     }
 }
 
+/// The arguments that make a shell an *interactive* shell.
+///
+/// This is not cosmetic. An interactive shell turns on job control, which puts
+/// each command it runs into its own process group. Without it the command and
+/// the shell share a group, so the `SIGINT` that a terminal delivers on Ctrl+C
+/// reaches both — the user interrupts a build and their shell exits with it.
+/// Terminal PRD §47 lists "Ctrl+C kills wrong process" as a release blocker.
+///
+/// Shells decide interactivity from their arguments as much as from whether
+/// stdin is a terminal, and the ones that infer it do not all enable job
+/// control when they do, so the flag is passed explicitly.
+fn interactive_shell_arguments(shell: &std::path::Path) -> Vec<String> {
+    let name = shell
+        .file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match name.trim_end_matches(".exe") {
+        // cmd and PowerShell are interactive when attached to a console and
+        // have no equivalent flag; ConPTY handles the signal routing.
+        "cmd" | "powershell" | "pwsh" => Vec::new(),
+        _ => vec!["-i".to_owned()],
+    }
+}
+
 fn default_shell() -> PathBuf {
     #[cfg(windows)]
     {
@@ -1036,10 +1099,10 @@ fn terminate_process_group(session: &mut TerminalSession) -> Result<(), Terminal
 
 fn kill_process_group(session: &mut TerminalSession) -> Result<(), TerminalError> {
     #[cfg(unix)]
-    if let Some(group) = session.master.process_group_leader() {
-        if unsafe { libc::kill(-group, libc::SIGKILL) } == 0 {
-            return Ok(());
-        }
+    if let Some(group) = session.master.process_group_leader()
+        && unsafe { libc::kill(-group, libc::SIGKILL) } == 0
+    {
+        return Ok(());
     }
     session.child.kill().map_err(backend)
 }
@@ -1200,6 +1263,53 @@ mod tests {
     }
 
     #[test]
+    fn a_user_shell_is_started_interactively() {
+        // Job control is what puts a command in its own process group, which is
+        // what makes Ctrl+C interrupt the command rather than the shell.
+        assert_eq!(
+            interactive_shell_arguments(std::path::Path::new("/bin/zsh")),
+            vec!["-i".to_owned()]
+        );
+        assert_eq!(
+            interactive_shell_arguments(std::path::Path::new("/usr/local/bin/fish")),
+            vec!["-i".to_owned()]
+        );
+        assert!(
+            interactive_shell_arguments(std::path::Path::new("cmd.exe")).is_empty(),
+            "cmd has no such flag and ConPTY routes the signal itself"
+        );
+        assert!(interactive_shell_arguments(std::path::Path::new("pwsh")).is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_explicit_program_is_run_exactly_as_asked() {
+        // The interactive default applies to "give me a shell", never to a
+        // command the caller named: adding `-i` to `pytest` would be absurd.
+        let directory = tempfile::tempdir().expect("temp dir");
+        let runtime = TerminalRuntime::default();
+        let started = runtime
+            .start(
+                WorkspaceId::new(),
+                StartTerminalAction {
+                    program: Some(PathBuf::from("/bin/cat")),
+                    arguments: vec!["-u".to_owned()],
+                    working_directory: directory.path().to_path_buf(),
+                    environment: Default::default(),
+                    initial_size: TerminalSize::default(),
+                    owner: None,
+                    background: None,
+                },
+            )
+            .expect("start");
+        assert_eq!(started.shell, Some(PathBuf::from("/bin/cat")));
+        let _ = runtime.stop(StopProcessAction {
+            terminal_id: started.terminal_id,
+            grace: Some(Duration::from_millis(200).into()),
+        });
+    }
+
+    #[test]
     fn terminal_snapshot_has_workspace_and_owner() {
         let snap = TerminalSnapshot {
             terminal_id: TerminalId::new(),
@@ -1212,9 +1322,47 @@ mod tests {
             process_group: Some(4242),
             transcript_tail: vec![],
             last_seen_at: None,
+            working_directory: Some(PathBuf::from("/tmp/worktree")),
+            shell: Some(PathBuf::from("/bin/zsh")),
+            exit_code: None,
         };
         assert!(matches!(snap.owner, TerminalOwner::Agent { .. }));
         assert_eq!(snap.generation, OwnershipGeneration(2));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_snapshot_names_the_directory_and_shell_it_started_in() {
+        // PRD §14: a client that cannot say which tree the terminal sees cannot
+        // stop the user from misreading `git status`.
+        let directory = tempfile::tempdir().expect("temp dir");
+        let runtime = TerminalRuntime::default();
+        let started = runtime
+            .start(
+                WorkspaceId::new(),
+                cat_action(directory.path(), TerminalOwner::Human),
+            )
+            .expect("start");
+        assert_eq!(
+            started.working_directory.as_deref(),
+            Some(directory.path()),
+            "the terminal must report where it actually is"
+        );
+        assert_eq!(started.shell, Some(PathBuf::from("/bin/cat")));
+        assert_eq!(started.exit_code, None, "a live process has not exited");
+
+        runtime
+            .stop(StopProcessAction {
+                terminal_id: started.terminal_id,
+                grace: Some(Duration::from_millis(200).into()),
+            })
+            .expect("stop");
+        let after = runtime.inspect(started.terminal_id, 0).expect("inspect");
+        assert!(!after.alive);
+        assert!(
+            after.exit_code.is_some(),
+            "a dead process must report how it died, not just that it is gone"
+        );
     }
 
     #[cfg(unix)]

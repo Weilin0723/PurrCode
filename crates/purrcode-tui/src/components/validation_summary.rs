@@ -5,10 +5,10 @@
 //! pass, so the state word is always printed and the recommended next action is
 //! always shown beside it.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
-use ratatui::Frame;
 
 use crate::activity::{ValidationState, ValidationSummary as Summary};
 use crate::design::{Emphasis, Role, Symbols, Tokens};

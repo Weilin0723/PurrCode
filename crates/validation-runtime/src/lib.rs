@@ -1107,9 +1107,10 @@ mod tests {
             .commands
             .iter()
             .all(|command| command.environment.get("CARGO_NET_OFFLINE") == Some(&"true".into())));
-        assert!(plan
-            .undetected_stages
-            .contains(&ValidationStage::IntegrationTests));
+        assert!(
+            plan.undetected_stages
+                .contains(&ValidationStage::IntegrationTests)
+        );
     }
 
     #[test]
@@ -1118,9 +1119,11 @@ mod tests {
         let plan = ValidationDetector::detect(repository.path()).unwrap();
         let evidence = missing_evidence(&plan);
         assert!(!evidence.is_empty());
-        assert!(evidence
-            .iter()
-            .all(|item| item.status == EvidenceStatus::NotDetected));
+        assert!(
+            evidence
+                .iter()
+                .all(|item| item.status == EvidenceStatus::NotDetected)
+        );
     }
 
     #[tokio::test]
@@ -1143,22 +1146,26 @@ mod tests {
             .await
             .unwrap();
         assert!(report.completion_allowed());
-        assert!(report
-            .evidence
-            .iter()
-            .any(|item| item.stage == ValidationStage::Build
-                && item.status == EvidenceStatus::Passed));
-        assert!(store
-            .events(session_id)
-            .unwrap()
-            .iter()
-            .any(|event| matches!(
-                event,
-                SessionEvent::ValidationRecorded {
-                    status: ValidationStatus::Passed,
-                    ..
-                }
-            )));
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|item| item.stage == ValidationStage::Build
+                    && item.status == EvidenceStatus::Passed)
+        );
+        assert!(
+            store
+                .events(session_id)
+                .unwrap()
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    SessionEvent::ValidationRecorded {
+                        status: ValidationStatus::Passed,
+                        ..
+                    }
+                ))
+        );
         assert!(store.events(session_id).unwrap().iter().any(|event| {
             matches!(
                 event,
@@ -1259,18 +1266,21 @@ mod tests {
         .unwrap();
         std::fs::write(repository.path().join("build.gradle.kts"), "plugins {}\n").unwrap();
         let plan = ValidationDetector::detect(repository.path()).unwrap();
-        assert!(plan
-            .commands
-            .iter()
-            .any(|command| { command.program == "bun" && command.arguments == ["run", "test"] }));
-        assert!(plan
-            .commands
-            .iter()
-            .any(|command| { command.program == "make" && command.arguments == ["test"] }));
-        assert!(plan
-            .commands
-            .iter()
-            .any(|command| command.program == "gradle"));
+        assert!(
+            plan.commands.iter().any(|command| {
+                command.program == "bun" && command.arguments == ["run", "test"]
+            })
+        );
+        assert!(
+            plan.commands
+                .iter()
+                .any(|command| { command.program == "make" && command.arguments == ["test"] })
+        );
+        assert!(
+            plan.commands
+                .iter()
+                .any(|command| command.program == "gradle")
+        );
     }
 
     #[test]
@@ -1300,10 +1310,11 @@ mod tests {
                 && command.arguments == ["ci"]
                 && command.stage == ValidationStage::IntegrationTests
         }));
-        assert!(plan
-            .commands
-            .windows(2)
-            .all(|pair| progressive_rank(pair[0].stage) <= progressive_rank(pair[1].stage)));
+        assert!(
+            plan.commands
+                .windows(2)
+                .all(|pair| progressive_rank(pair[0].stage) <= progressive_rank(pair[1].stage))
+        );
     }
 
     #[cfg(unix)]

@@ -3,15 +3,15 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+use crate::DEFAULT_TIMEOUT;
 use crate::fake_daemon::{DaemonScript, FakeDaemon, RecordedRequest};
-use crate::fixtures::{purrcode_binary, Workspace};
+use crate::fixtures::{Workspace, purrcode_binary};
 use crate::keys::{self, Key};
 use crate::pty::PtySession;
 use crate::screen::Screen;
-use crate::DEFAULT_TIMEOUT;
 
 #[derive(Clone, Debug)]
 pub struct HarnessOptions {
