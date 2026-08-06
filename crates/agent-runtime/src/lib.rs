@@ -25,3 +25,13 @@ pub use crate::stream::{
     AgentStreamEvent, AgentStreamObserver, AgentStreamObserverError, AgentStreamReceiver,
     MAX_STREAM_OBSERVER_CAPACITY, bounded_agent_stream_channel,
 };
+
+// P1-10: Re-export NativeAgent::compaction_window for daemon use in /compact.
+// The function is a pub(crate) associated fn on NativeAgent; re-export via a
+// thin wrapper since associated fns can't be re-exported directly.
+pub fn compaction_window(
+    messages: &[purrcode_runtime_core::ConversationMessage],
+    max_tokens: u64,
+) -> usize {
+    crate::agent::compaction_window(messages, max_tokens)
+}

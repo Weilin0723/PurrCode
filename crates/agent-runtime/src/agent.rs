@@ -2943,37 +2943,6 @@ impl<'a> NativeAgent<'a> {
     }
 
     // ── Compaction helpers (P0-1/P0-2/P0-10) ────────────────────────
-
-    /// P0-10: Compute the index into `conversation_messages` where the retained
-    /// window should start. Walks backwards from the most recent message,
-    /// accumulating estimated tokens, and stops at the last **user** message
-    /// boundary before the budget is exceeded. Returns `0` (keep everything) when
-    /// the total is within budget.
-    fn compaction_window(messages: &[ConversationMessage], max_tokens: u64) -> usize {
-        if messages.is_empty() {
-            return 0;
-        }
-        let mut accumulated = 0u64;
-        let mut last_user_boundary = 0usize;
-        for (i, msg) in messages.iter().enumerate().rev() {
-            let token_est = (msg.content.chars().count() as u64).div_ceil(4);
-            if accumulated + token_est > max_tokens {
-                // Stop at the last user-message turn boundary we passed, or at
-                // this index if we haven't seen a user message yet.
-                return if last_user_boundary > 0 {
-                    last_user_boundary
-                } else {
-                    i.saturating_add(1).min(messages.len())
-                };
-            }
-            accumulated += token_est;
-            if msg.role.eq_ignore_ascii_case("user") {
-                last_user_boundary = i;
-            }
-        }
-        0
-    }
-
     /// Perform one compaction cycle: prune actions, build a semantic checkpoint,
     /// and record durable events. Called from `run_until_pause`'s preflight guard
     /// so that compaction never repeats against a stale ledger.
@@ -3093,7 +3062,7 @@ impl<'a> NativeAgent<'a> {
         // count. Walk backwards through conversation_messages and stop at the
         // last user-message turn boundary within the token budget.
         let conversation_messages_retained_from =
-            Self::compaction_window(&state.conversation_messages, COMPACTION_RETAINED_TOKEN_BUDGET);
+            compaction_window(&state.conversation_messages, COMPACTION_RETAINED_TOKEN_BUDGET);
         let checkpoint = SemanticCheckpoint {
             checkpoint_id: CheckpointId::new(),
             turn_id,
@@ -3187,6 +3156,37 @@ impl<'a> NativeAgent<'a> {
         )?;
         Ok(())
     }
+}
+
+/// P1-10: Compute the index into `conversation_messages` where the retained
+/// window should start. Walks backwards from the most recent message,
+/// accumulating estimated tokens, and stops at the last **user** message
+/// boundary before the budget is exceeded. Returns `0` (keep everything) when
+/// the total is within budget.
+pub(crate) fn compaction_window(
+    messages: &[ConversationMessage],
+    max_tokens: u64,
+) -> usize {
+    if messages.is_empty() {
+        return 0;
+    }
+    let mut accumulated = 0u64;
+    let mut last_user_boundary = 0usize;
+    for (i, msg) in messages.iter().enumerate().rev() {
+        let token_est = (msg.content.chars().count() as u64).div_ceil(4);
+        if accumulated + token_est > max_tokens {
+            return if last_user_boundary > 0 {
+                last_user_boundary
+            } else {
+                i.saturating_add(1).min(messages.len())
+            };
+        }
+        accumulated += token_est;
+        if msg.role.eq_ignore_ascii_case("user") {
+            last_user_boundary = i;
+        }
+    }
+    0
 }
 
 /// Extract paths touched by a typed repository read action.

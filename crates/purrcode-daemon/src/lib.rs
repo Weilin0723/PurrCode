@@ -2643,24 +2643,47 @@ async fn compact_session(
     let id = parse_session_id(&id)?;
     require_idle(&state, id).await?;
     let session = state.store.lock().await.load(id)?;
+    // P1-10: Use the same token-based window as automatic compaction so
+    // manual /compact is consistent with the agent's own preflight path.
+    let conversation_messages_retained_from = purrcode_agent_runtime::compaction_window(
+        &session.conversation_messages,
+        8192, // COMPACTION_RETAINED_TOKEN_BUDGET
+    );
     let retained_action_ids = session
         .proposed_actions
         .keys()
         .rev()
-        .take(6)
+        .take(6) // keep the fixed action-count bound as a safety floor
         .copied()
         .collect::<Vec<_>>();
-    let archived = session
+    let _archived = session
         .proposed_actions
         .len()
         .saturating_sub(retained_action_ids.len());
     state.store.lock().await.append(
         id,
-        &SessionEvent::ContextCompacted {
-            summary: format!(
-                "Manual compaction archived {archived} older action contexts. Objective, current plan, recent actions, approvals, validation evidence, and the complete audit log remain durable."
-            ),
-            retained_action_ids,
+        &SessionEvent::CheckpointCompacted {
+            checkpoint: purrcode_runtime_core::SemanticCheckpoint {
+                checkpoint_id: purrcode_runtime_core::CheckpointId::new(),
+                turn_id: purrcode_runtime_core::TurnId::new(),
+                superseded_checkpoint_id: session.checkpoint.as_ref().map(|c| c.checkpoint_id),
+                objective: session.objective.clone().unwrap_or_default(),
+                accepted_requirements: vec![],
+                user_constraints: vec![],
+                decisions: vec![],
+                files_inspected: vec![],
+                files_modified: vec![],
+                important_symbols: vec![],
+                validated_facts: vec![],
+                failed_attempts: vec![],
+                test_results: vec![],
+                unresolved_questions: vec![],
+                current_hypothesis: None,
+                next_actions: vec![],
+                pinned_context: vec![],
+            },
+            retained_action_ids: retained_action_ids.iter().copied().collect(),
+            conversation_messages_retained_from,
         },
     )?;
     Ok(Json(AcceptedSession {
