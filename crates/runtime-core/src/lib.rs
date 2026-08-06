@@ -1,4 +1,7 @@
 //! Provider-independent domain contracts for the trusted runtime.
+//!
+//! These types are shared across PawGate, Claw, and NineLives so the trusted
+//! path stays provider-independent.
 
 pub mod adaptation;
 pub mod authority;
