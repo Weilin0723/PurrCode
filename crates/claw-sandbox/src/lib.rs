@@ -218,7 +218,7 @@ async fn execute_typed_read(
                 stdout,
                 stderr: Vec::new(),
                 truncated,
-                affected_paths: Vec::new(),
+                affected_paths: vec![path.clone()],
                 sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                 sandbox_backend: "cap-std".into(),
             })
@@ -277,7 +277,7 @@ async fn execute_typed_read(
                 stdout: output,
                 stderr: Vec::new(),
                 truncated: entries > max_entries,
-                affected_paths: Vec::new(),
+                affected_paths: paths.clone(),
                 sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                 sandbox_backend: "cap-std".into(),
             })
@@ -315,7 +315,7 @@ async fn execute_typed_read(
                 stdout: output,
                 stderr: Vec::new(),
                 truncated: false,
-                affected_paths: Vec::new(),
+                affected_paths: paths.clone(),
                 sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                 sandbox_backend: "cap-std".into(),
             })
@@ -364,7 +364,7 @@ async fn execute_typed_read(
                 stdout: output,
                 stderr: Vec::new(),
                 truncated: results >= max_results || output_bytes >= max_bytes,
-                affected_paths: Vec::new(),
+                affected_paths: search_paths.clone(),
                 sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                 sandbox_backend: "cap-std".into(),
             })

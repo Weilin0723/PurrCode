@@ -61,4 +61,14 @@ impl AgentError {
                 if error.category() == Some(ProviderErrorCategory::Cancelled)
         ) || matches!(self, Self::Cancelled(_))
     }
+
+    /// True when the provider rejected the request because the context
+    /// exceeded the model's input limit. The caller should compact and retry.
+    pub fn is_context_too_large(&self) -> bool {
+        matches!(
+            self,
+            Self::Provider(error)
+                if error.category() == Some(ProviderErrorCategory::ContextTooLarge)
+        )
+    }
 }

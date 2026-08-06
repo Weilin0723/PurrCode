@@ -53,6 +53,7 @@ use purrcode_whisker::RetrievalBudget;
 use schemars::schema_for;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -198,6 +199,10 @@ pub struct NativeAgent<'a> {
     /// these from `[models.roles]` so different stages (planner, coder, …) can
     /// use different providers. `coding_worker` is always present.
     models: BTreeMap<String, (Arc<dyn ModelProvider>, ModelId)>,
+    /// P0: Cached context window from provider capabilities, resolved once
+    /// before the first capacity decision. `None` means not yet resolved.
+    /// `Some(None)` means the provider returned no context_window.
+    cached_context_window: Cell<Option<Option<usize>>>,
     policy: Policy,
     controls: SessionControls,
     usage_ledger: Mutex<UsageLedger>,
@@ -215,6 +220,7 @@ impl<'a> NativeAgent<'a> {
     ) -> Self {
         Self {
             models,
+            cached_context_window: Cell::new(None),
             policy,
             controls: SessionControls::default(),
             usage_ledger: Mutex::new(UsageLedger::default()),
@@ -300,13 +306,40 @@ impl<'a> NativeAgent<'a> {
     }
 
     /// P0: Use the model's actual context window when available.
-    /// The provider exposes capabilities per model; the daemon passes them
-    /// through the models map. Falls back to the user budget or default.
+    /// The provider exposes capabilities per model; cached on first resolve.
+    /// Falls back to the user budget, then a generous default.
     fn model_capability_context_limit(&self) -> u64 {
         const DEFAULT_CONTEXT_LIMIT: u64 = 200_000;
+        // If provider capabilities have been resolved, use the actual window.
+        if let Some(window_opt) = self.cached_context_window.get() {
+            if let Some(window) = window_opt {
+                let budget_limit = self
+                    .budget()
+                    .maximum_input_tokens
+                    .unwrap_or(DEFAULT_CONTEXT_LIMIT);
+                // Respect both: the model's actual limit and the user's budget.
+                return (window as u64).min(budget_limit);
+            }
+        }
+        // Provider hasn't been queried yet — fall back to user budget or default.
         self.budget()
             .maximum_input_tokens
             .unwrap_or(DEFAULT_CONTEXT_LIMIT)
+    }
+
+    /// P0: Resolve the model's actual context window from provider capabilities.
+    /// Called once during request preparation so all subsequent capacity
+    /// decisions use the real limit.
+    async fn ensure_context_capacity(&self, role: &str) {
+        if self.cached_context_window.get().is_some() {
+            return;
+        }
+        let (provider, model) = self.model_for(role);
+        let context_window = match provider.capabilities(model).await {
+            Ok(caps) => caps.context_window,
+            Err(_) => None,
+        };
+        self.cached_context_window.set(Some(context_window));
     }
 
     /// P0: Wired provider context-overflow recovery. Called from the
@@ -1434,7 +1467,7 @@ impl<'a> NativeAgent<'a> {
             // loop boundary. A model turn can return a batch; truncate to
             // the remaining budget.
             let remaining = request.max_actions.saturating_sub(action_count) as usize;
-            let mut actions = if actions.len() > remaining {
+            let actions = if actions.len() > remaining {
                 let mut truncated = actions;
                 truncated.truncate(remaining);
                 truncated
@@ -1517,19 +1550,29 @@ impl<'a> NativeAgent<'a> {
                 )
                 .await?;
 
-                // P0-8: Collect evidence with real line ranges.
-                let stdout = String::from_utf8_lossy(&execution.stdout).to_string();
-                if let ProposedAction::RepositoryRead(ref read) = proposed {
-                    let paths = read_paths(read);
-                    // P0-8: Compute actual line count for each path.
-                    let line_count = stdout.lines().count().max(1) as u32;
-                    for path in paths {
-                        evidence.push(EvidenceRef {
-                            path,
-                            line_range: (1, line_count),
-                            excerpt: stdout.chars().take(2048).collect(),
-                        });
+                // P0: Collect evidence from the execution result's actual
+                // affected_paths instead of naively parsing stdout. For
+                // ReadFile this gives the exact file; for list/find/grep it
+                // gives the explored directories. The read_paths() fallback
+                // is only used when affected_paths is empty (git subprocess).
+                let stdout_str = String::from_utf8_lossy(&execution.stdout).to_string();
+                let evidence_paths: Vec<PathBuf> = if execution.affected_paths.is_empty() {
+                    // Git subprocess actions — use the action's declared paths.
+                    if let ProposedAction::RepositoryRead(ref read) = proposed {
+                        read_paths(read)
+                    } else {
+                        vec![]
                     }
+                } else {
+                    execution.affected_paths.clone()
+                };
+                let line_count = stdout_str.lines().count().max(1) as u32;
+                for path in evidence_paths {
+                    evidence.push(EvidenceRef {
+                        path,
+                        line_range: (1, line_count),
+                        excerpt: stdout_str.chars().take(2048).collect(),
+                    });
                 }
                 action_results.push(format!(
                     "Action result ({}):\n{}",
@@ -1851,6 +1894,57 @@ impl<'a> NativeAgent<'a> {
         Ok(())
     }
 
+    /// Inject runtime messages (daemon contract, step-limit warning) into the
+    /// final ModelRequest and update the context ledger to match. Internally
+    /// recomputes insertion positions so callers never pass a stale index —
+    /// critical for correctness after compaction rebuilds messages.
+    fn inject_runtime_messages(
+        mut messages: Vec<ModelMessage>,
+        mut ledger: ContextLedgerEntry,
+        contract: &ModelMessage,
+        contract_chars: u64,
+        contract_len: usize,
+        step_limit_warning: Option<&ModelMessage>,
+        warning_chars: u64,
+        warning_len: usize,
+    ) -> (Vec<ModelMessage>, ContextLedgerEntry) {
+        // 1. Insert contract before last user message
+        let idx = messages
+            .iter()
+            .rposition(|m| m.role == "user")
+            .unwrap_or(messages.len());
+        messages.insert(idx, contract.clone());
+        ledger.total_estimated_tokens =
+            ledger.total_estimated_tokens.saturating_add(contract_chars.div_ceil(4));
+        ledger.sections.push(ContextLedgerSection {
+            class: ContextClass::Instructions,
+            label: "daemon_contract".into(),
+            estimated_tokens: contract_chars.div_ceil(4),
+            byte_len: contract_len,
+            why_included: WhyIncluded::AlwaysPresent,
+        });
+
+        // 2. Insert warning after last user message (recompute idx!)
+        if let Some(warning) = step_limit_warning {
+            let idx = messages
+                .iter()
+                .rposition(|m| m.role == "user")
+                .unwrap_or(messages.len());
+            messages.insert(idx + 1, warning.clone());
+            ledger.total_estimated_tokens =
+                ledger.total_estimated_tokens.saturating_add(warning_chars.div_ceil(4));
+            ledger.sections.push(ContextLedgerSection {
+                class: ContextClass::Instructions,
+                label: "step_limit_warning".into(),
+                estimated_tokens: warning_chars.div_ceil(4),
+                byte_len: warning_len,
+                why_included: WhyIncluded::AlwaysPresent,
+            });
+        }
+
+        (messages, ledger)
+    }
+
     async fn run_until_pause(
         &self,
         store: &mut SessionStore,
@@ -1882,6 +1976,10 @@ impl<'a> NativeAgent<'a> {
             // cheap and does not need a round-trip estimate. The token guard
             // is evaluated AFTER `build_messages()` assembles the current
             // request so it operates on live context, not a stale ledger.
+            // P0: Resolve the model's actual context window from provider
+            // capabilities before any capacity decision is made, so the
+            // token-pressure preflight uses the real limit, not a fallback.
+            self.ensure_context_capacity("coding_worker").await;
             let mut compaction_cycles: u8 = 0;
             loop {
                 if state.proposed_actions.len() > MAX_ACTIONS_IN_PROMPT {
@@ -2034,21 +2132,6 @@ impl<'a> NativeAgent<'a> {
                 role: "system".into(),
                 content: contract_content,
             };
-            let user_idx = messages
-                .iter()
-                .rposition(|m| m.role == "user")
-                .unwrap_or(messages.len());
-            messages.insert(user_idx, contract.clone());
-            // Account for the daemon contract in the ledger (P0-3).
-            context_ledger_entry.total_estimated_tokens =
-                context_ledger_entry.total_estimated_tokens.saturating_add(contract_chars.div_ceil(4));
-            context_ledger_entry.sections.push(ContextLedgerSection {
-                class: ContextClass::Instructions,
-                label: "daemon_contract".into(),
-                estimated_tokens: contract_chars.div_ceil(4),
-                byte_len: contract_len,
-                why_included: WhyIncluded::AlwaysPresent,
-            });
 
             let step_limit_warning = if iteration >= MAX_AUTONOMOUS_ITERATIONS - 1 {
                 let warning_content: String =
@@ -2060,29 +2143,33 @@ impl<'a> NativeAgent<'a> {
                         .into();
                 let warning_chars = warning_content.chars().count() as u64;
                 let warning_len = warning_content.len();
-                let limit_warning = ModelMessage {
+                Some((ModelMessage {
                     role: "user".into(),
                     content: warning_content,
-                };
-                let user_idx = messages
-                    .iter()
-                    .rposition(|m| m.role == "user")
-                    .unwrap_or(messages.len());
-                messages.insert(user_idx + 1, limit_warning.clone());
-                // Account for the step limit warning in the ledger (P0-3).
-                context_ledger_entry.total_estimated_tokens =
-                    context_ledger_entry.total_estimated_tokens.saturating_add(warning_chars.div_ceil(4));
-                context_ledger_entry.sections.push(ContextLedgerSection {
-                    class: ContextClass::Instructions,
-                    label: "step_limit_warning".into(),
-                    estimated_tokens: warning_chars.div_ceil(4),
-                    byte_len: warning_len,
-                    why_included: WhyIncluded::AlwaysPresent,
-                });
-                Some(limit_warning)
+                }, warning_chars, warning_len))
             } else {
                 None
             };
+
+            // P0: Use inject_runtime_messages helper so both the normal path
+            // and the compaction-rebuilt path share the same index-recomputation
+            // and ledger-update logic — no stale user_idx, no ledger drift.
+            let (warning_ref, warning_chars, warning_len) = step_limit_warning
+                .as_ref()
+                .map(|(msg, chars, len)| (Some(msg), *chars, *len))
+                .unwrap_or((None, 0u64, 0usize));
+            (messages, context_ledger_entry) = Self::inject_runtime_messages(
+                messages,
+                context_ledger_entry,
+                &contract,
+                contract_chars,
+                contract_len,
+                warning_ref,
+                warning_chars,
+                warning_len,
+            );
+            let step_limit_warning: Option<ModelMessage> =
+                step_limit_warning.map(|(msg, _, _)| msg);
 
             // ── Token-pressure preflight (P0-1/P0-2) on FINAL request ─
             let messages_char_count: usize =
@@ -2103,12 +2190,24 @@ impl<'a> NativeAgent<'a> {
                     &context_hits,
                     &session_events,
                 );
-                let (mut rebuilt_msgs, mut rebuilt_ledger) = rebuilt;
-                // Re-inject contract and warning into rebuilt messages
-                rebuilt_msgs.insert(user_idx, contract.clone());
-                if let Some(ref rebuilt_warning) = step_limit_warning {
-                    rebuilt_msgs.insert(user_idx + 1, rebuilt_warning.clone());
-                }
+                let (rebuilt_msgs, rebuilt_ledger) = rebuilt;
+                // P0: Re-inject contract+warning with freshly computed
+                // indices via inject_runtime_messages — no stale user_idx,
+                // and the rebuilt ledger includes both sections.
+                let (reb_warning_ref, reb_warning_chars, reb_warning_len) = step_limit_warning
+                    .as_ref()
+                    .map(|msg| (Some(msg), msg.content.chars().count() as u64, msg.content.len()))
+                    .unwrap_or((None, 0u64, 0usize));
+                let (rebuilt_msgs, rebuilt_ledger) = Self::inject_runtime_messages(
+                    rebuilt_msgs,
+                    rebuilt_ledger,
+                    &contract,
+                    contract_chars,
+                    contract_len,
+                    reb_warning_ref,
+                    reb_warning_chars,
+                    reb_warning_len,
+                );
                 // P0: Re-estimate after compaction — fail if still too large.
                 let rebuilt_char_count: usize =
                     rebuilt_msgs.iter().map(|m| m.content.chars().count()).sum();
@@ -2155,26 +2254,82 @@ impl<'a> NativeAgent<'a> {
                 Ok(result) => result,
                 Err(first_error) if first_error.is_cancelled() => return Err(first_error),
                 Err(first_error) => {
-                    let mut repair = request.clone();
-                    repair.messages.push(ModelMessage {
-                        role: "user".into(),
-                        content: format!(
-                            "Your previous response was rejected: {first_error}\n\n\
-                            Return EXACTLY ONE corrected response matching the JSON schema. \
-                            No markdown, no extra text outside the JSON. \
-                            This is the only schema repair attempt."
-                        ),
-                    });
-                    self.structured_observed(
-                        store,
-                        session_id,
-                        "coding_worker",
-                        2,
-                        repair,
-                        schema_for!(AgentTurn),
-                        validate_turn,
-                    )
-                    .await?
+                    // P0: If the provider rejected the request because context
+                    // is too large, trigger compaction+rebuild instead of
+                    // pushing a repair message that would make it worse.
+                    if first_error.is_context_too_large()
+                        && compaction_cycles < MAX_COMPACTION_CYCLES_PER_ITERATION
+                    {
+                        let (rebuilt_msgs, rebuilt_ledger) = self
+                            .recover_context_overflow(
+                                store, session_id, &state, turn_id, compaction_cycles,
+                            )
+                            .await?;
+                        compaction_cycles += 1;
+                        // Re-inject contract and warning into rebuilt messages
+                        let (reb_w, reb_wc, reb_wl) = step_limit_warning
+                            .as_ref()
+                            .map(|msg| {
+                                let c = msg.content.chars().count() as u64;
+                                (Some(msg), c, msg.content.len())
+                            })
+                            .unwrap_or((None, 0u64, 0usize));
+                        let (rebuilt_msgs, rebuilt_ledger) = Self::inject_runtime_messages(
+                            rebuilt_msgs,
+                            rebuilt_ledger,
+                            &contract,
+                            contract_chars,
+                            contract_len,
+                            reb_w,
+                            reb_wc,
+                            reb_wl,
+                        );
+                        context_ledger_entry = rebuilt_ledger;
+                        store.append(
+                            session_id,
+                            &SessionEvent::ContextAssembled {
+                                entry: context_ledger_entry.clone(),
+                            },
+                        )?;
+                        let retry_request = ModelRequest {
+                            model: self.model_for("coding_worker").1.clone(),
+                            messages: rebuilt_msgs,
+                            tools: Vec::new(),
+                            max_output_tokens: Some(4096),
+                            reasoning_effort: None,
+                        };
+                        self.structured_observed(
+                            store,
+                            session_id,
+                            "coding_worker",
+                            1,
+                            retry_request,
+                            schema_for!(AgentTurn),
+                            validate_turn,
+                        )
+                        .await?
+                    } else {
+                        let mut repair = request.clone();
+                        repair.messages.push(ModelMessage {
+                            role: "user".into(),
+                            content: format!(
+                                "Your previous response was rejected: {first_error}\n\n\
+                                Return EXACTLY ONE corrected response matching the JSON schema. \
+                                No markdown, no extra text outside the JSON. \
+                                This is the only schema repair attempt."
+                            ),
+                        });
+                        self.structured_observed(
+                            store,
+                            session_id,
+                            "coding_worker",
+                            2,
+                            repair,
+                            schema_for!(AgentTurn),
+                            validate_turn,
+                        )
+                        .await?
+                    }
                 }
             };
 
@@ -2288,10 +2443,13 @@ impl<'a> NativeAgent<'a> {
             // bounded opportunity to express the same action with a safe,
             // repository-relative path instead of failing the whole session.
             let mut proposed_action = None;
-            if !turn.actions.is_empty() {
+            if turn.actions.len() > 1 {
                 // ── Batch (multi-read) path ──────────────────────────────
                 // Normalize every action, then propose, judge, authorize, and
                 // execute them as a batch through execute_batch.
+                // Only multi-action batches enter here; single actions in
+                // actions[] route through the scalar path below so mutations
+                // flow through ToolRuntime::execute() instead of execute_batch().
                 let mut normalized = Vec::with_capacity(turn.actions.len());
                 for a in &turn.actions {
                     normalized.push(normalize_action(a.clone(), &worktree)?);
@@ -2388,13 +2546,20 @@ impl<'a> NativeAgent<'a> {
                 }
                 continue;
             }
+            // Single action in unified actions[] schema — route through the
+            // scalar execution path (ToolRuntime::execute) which handles all
+            // action types: read, write, delete, command.
             if !turn.complete {
                 let mut action_repair_attempts = 0_usize;
                 loop {
-                    let action = turn
-                        .action
-                        .clone()
-                        .ok_or_else(|| AgentError::InvalidModelTurn("action is required".into()))?;
+                    // Read action from the CURRENT turn (after repair, turn
+                    // is updated to the model's corrected response).
+                    let action = if turn.actions.len() == 1 {
+                        turn.actions.first().cloned()
+                    } else {
+                        turn.action.clone()
+                    }
+                    .ok_or_else(|| AgentError::InvalidModelTurn("action is required".into()))?;
                     match normalize_action(action, &worktree) {
                         Ok(action) => {
                             proposed_action = Some(action);
