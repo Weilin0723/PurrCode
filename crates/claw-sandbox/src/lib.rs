@@ -68,6 +68,16 @@ pub struct ExecutionResult {
     pub sandbox_backend: String,
 }
 
+/// An action authorized for batch execution with its own per-action
+/// PawGate constraints (P0 — restore batch concurrency with per-action
+/// authorization safety).
+#[derive(Clone, Debug)]
+pub struct AuthorizedRead {
+    pub action_id: ActionId,
+    pub action: ProposedAction,
+    pub constraints: purrcode_runtime_core::ActionConstraints,
+}
+
 pub struct ToolRuntime;
 
 impl ToolRuntime {
@@ -117,33 +127,27 @@ impl ToolRuntime {
 
     /// Execute multiple read-only actions in a single batch.
     ///
-    /// All authorizations are consumed up front (serial, single-use semantics)
-    /// and the read-only actions are executed concurrently.  The results are
-    /// returned in the same order as `actions`.
+    /// Each `AuthorizedRead` carries its exact PawGate-approved constraints;
+    /// authorization is consumed serially (single-use semantic), then reads
+    /// execute concurrently. Results are returned in the same order as input.
     pub async fn execute_batch(
         store: &mut SessionStore,
-        action_ids: &[ActionId],
-        actions: &[ProposedAction],
-        constraints: &purrcode_runtime_core::ActionConstraints,
+        batch: &[AuthorizedRead],
     ) -> Result<Vec<ExecutionResult>, ExecutionError> {
-        if action_ids.len() != actions.len() {
-            return Err(ExecutionError::UnsupportedConstraint(
-                "action_ids and actions must have the same length".into(),
-            ));
-        }
-        // Consume all authorizations up front — serial, single-use semantics.
-        for (id, action) in action_ids.iter().zip(actions.iter()) {
-            let digest = action.digest(constraints)?;
-            let authorization = store.consume_authorization(*id, &digest)?;
-            if authorization.constraints != *constraints {
+        // Consume all authorizations up front — serial, single-use semantics,
+        // each with its own PawGate-approved constraints.
+        for item in batch {
+            let digest = item.action.digest(&item.constraints)?;
+            let authorization = store.consume_authorization(item.action_id, &digest)?;
+            if authorization.constraints != item.constraints {
                 return Err(ExecutionError::ConstraintMismatch);
             }
         }
         // Execute every action concurrently.  Only RepositoryRead is allowed;
         // anything else is rejected before any execution starts.
-        let mut futures = Vec::with_capacity(actions.len());
-        for (i, action) in actions.iter().enumerate() {
-            let read = match action {
+        let mut futures = Vec::with_capacity(batch.len());
+        for (i, item) in batch.iter().enumerate() {
+            let read = match &item.action {
                 ProposedAction::RepositoryRead(read) => read.clone(),
                 other => {
                     return Err(ExecutionError::UnsupportedConstraint(format!(
@@ -151,8 +155,9 @@ impl ToolRuntime {
                     )));
                 }
             };
+            let constraints = item.constraints.clone();
             futures.push(async move {
-                let result = execute_typed_read(&read, constraints).await;
+                let result = execute_typed_read(&read, &constraints).await;
                 (i, result)
             });
         }
@@ -166,7 +171,7 @@ impl ToolRuntime {
                 sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                 sandbox_backend: "cap-std".into(),
             };
-            actions.len()
+            batch.len()
         ];
         let joined = futures::future::join_all(futures).await;
         for (i, result) in joined {

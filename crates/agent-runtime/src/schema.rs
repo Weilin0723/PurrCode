@@ -205,10 +205,19 @@ pub(crate) fn validate_turn(turn: &AgentTurn) -> Result<(), AgentError> {
         ));
     }
     if !turn.actions.is_empty() {
-        // Multi-action path: every action must be read-only.
-        if turn.actions.iter().any(|a| !is_read_only(a)) {
+        // P0: Cardinality guard — bounded actions per turn.
+        const MAX_READ_ACTIONS_PER_TURN: usize = 8;
+        if turn.actions.len() > MAX_READ_ACTIONS_PER_TURN {
+            return Err(AgentError::InvalidModelTurn(format!(
+                "actions[] exceeds the per-turn limit of {MAX_READ_ACTIONS_PER_TURN}"
+            )));
+        }
+        // P0: actions[] schema unification.
+        // - 1 action in actions[]: read OR mutation allowed (the unified path).
+        // - >1 actions in actions[]: every action must be read-only.
+        if turn.actions.len() > 1 && turn.actions.iter().any(|a| !is_read_only(a)) {
             return Err(AgentError::InvalidModelTurn(
-                "when actions[] is present, every action must be read-only".into(),
+                "when actions[] has multiple entries, every action must be read-only".into(),
             ));
         }
         if turn.complete {

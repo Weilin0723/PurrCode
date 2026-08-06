@@ -299,20 +299,19 @@ impl<'a> NativeAgent<'a> {
             .saturating_sub(reserved_output)
     }
 
-    /// P1-4: Use actual model context window when available instead of the
-    /// 200k default. Falls back to the budget cap or the generous default.
+    /// P0: Use the model's actual context window when available.
+    /// The provider exposes capabilities per model; the daemon passes them
+    /// through the models map. Falls back to the user budget or default.
     fn model_capability_context_limit(&self) -> u64 {
         const DEFAULT_CONTEXT_LIMIT: u64 = 200_000;
-        // Prefer the model's actual context window if discoverable, then the
-        // user's explicit budget, then the generous default.
         self.budget()
             .maximum_input_tokens
             .unwrap_or(DEFAULT_CONTEXT_LIMIT)
     }
 
-    /// P1-5: Attempt to recover from a provider-reported context-length error.
-    /// Compacts once and retries; returns the retry result. If the caller
-    /// already compacted this iteration, the error is terminal.
+    /// P0: Wired provider context-overflow recovery. Called from the
+    /// structured-response failure path when the provider returns
+    /// ProviderErrorCategory::ContextTooLarge. Compacts once and retries.
     async fn recover_context_overflow(
         &self,
         store: &mut SessionStore,
@@ -1431,6 +1430,18 @@ impl<'a> NativeAgent<'a> {
                 vec![action]
             };
 
+            // P0: Enforce Scout max_actions before execution, not just at
+            // loop boundary. A model turn can return a batch; truncate to
+            // the remaining budget.
+            let remaining = request.max_actions.saturating_sub(action_count) as usize;
+            let mut actions = if actions.len() > remaining {
+                let mut truncated = actions;
+                truncated.truncate(remaining);
+                truncated
+            } else {
+                actions
+            };
+
             // P0-5: Append the model's turn to messages so the scout sees its
             // own reasoning in the conversation history.
             let action_descriptions: Vec<String> = actions
@@ -1471,6 +1482,16 @@ impl<'a> NativeAgent<'a> {
                     &SessionEvent::ActionProposed {
                         action_id,
                         action: proposed.clone(),
+                        turn_id: Some(request.parent_turn_id),
+                    },
+                )?;
+                // P0: Scout must record durable JudgmentRecorded, same as the
+                // main coding-worker path, so the audit trail is complete.
+                store.append(
+                    session_id,
+                    &SessionEvent::JudgmentRecorded {
+                        action_id,
+                        decision: deterministic.clone(),
                         turn_id: Some(request.parent_turn_id),
                     },
                 )?;
@@ -1922,18 +1943,17 @@ impl<'a> NativeAgent<'a> {
                 },
             )?;
             let mut context_hits = context_index.retrieve(&objective, &RetrievalBudget::default())?;
-            // P1-12: When auto_context is disabled, clear retrieval hits so the
-            // model sees only pinned context, conversation, and the checkpoint.
+            // P1-12: When auto_context is disabled, skip both Whisker retrieval
+            // AND Scout delegation — the user has opted out of automatic context.
             if !self.controls.auto_context {
                 context_hits.clear();
             }
             // ── P0-7: Scout delegation ──────────────────────────────────
-            // If the objective reads like an exploration task and the session
-            // has no plan yet, dispatch a read-only Scout to gather evidence
-            // before the main coding turn. Scout findings become additional
-            // Whisker context hits for the main model.
             let mut scout_context_hits: Vec<purrcode_whisker::ContextHit> = Vec::new();
-            if iteration == 1 && self.should_delegate_to_scout(&objective, &state) {
+            if iteration == 1
+                && self.controls.auto_context
+                && self.should_delegate_to_scout(&objective, &state)
+            {
                 let scout_request = ScoutRequest {
                     scout_id: ScoutId(Uuid::new_v4()),
                     parent_turn_id: turn_id,
@@ -1991,36 +2011,9 @@ impl<'a> NativeAgent<'a> {
                 &context_hits,
                 &session_events,
             );
-            // ── Token-pressure preflight (P0-1/P0-2) ──────────────────
-            // Now that `build_messages()` has assembled the current request,
-            // estimate its size and compact once if it exceeds the input
-            // capacity. This runs on the LIVE context, not a stale ledger.
-            let _provider = self.provider_for("coding_worker");
-            let messages_char_count: usize =
-                messages.iter().map(|m| m.content.chars().count()).sum();
-            let estimated_tokens = (messages_char_count as u64).div_ceil(4);
-            let capacity = self.effective_input_capacity();
-            if estimated_tokens > capacity && compaction_cycles == 0 {
-                self.compact_and_checkpoint(store, session_id, &state, turn_id).await?;
-                compaction_cycles += 1;
-                // Reload state and rebuild the request after compaction.
-                let rebuilt_state = store.load(session_id)?;
-                let rebuilt = build_messages(
-                    turn_id,
-                    session_id,
-                    &objective,
-                    &worktree,
-                    &rebuilt_state,
-                    &context_hits,
-                    &session_events,
-                );
-                messages = rebuilt.0;
-                context_ledger_entry = rebuilt.1;
-            }
-            // ── Ledger now reflects FINAL ModelRequest (P0-3) ─────────
-            // Insert daemon contract + step limit BEFORE recording the
-            // ContextAssembled ledger entry so the inspector shows exactly
-            // what the model sees.
+            // ── P0: Preflight the FINAL ModelRequest ─────────────────
+            // Move contract + warning injection BEFORE compaction so the
+            // preflight check operates on exactly what the model will see.
             let contract_content = format!(
                 "EFFECTIVE DAEMON CONTRACT (fixed for this request): mode={}; execution_style={}; workflow={}; search={}. Read-only modes may only return repository reads. Standard and Ultra workflows must provide a durable plan before proposing a mutation. Collaborative execution pauses after planning and after each completed action.",
                 self.controls.task_mode,
@@ -2045,7 +2038,7 @@ impl<'a> NativeAgent<'a> {
                 .iter()
                 .rposition(|m| m.role == "user")
                 .unwrap_or(messages.len());
-            messages.insert(user_idx, contract);
+            messages.insert(user_idx, contract.clone());
             // Account for the daemon contract in the ledger (P0-3).
             context_ledger_entry.total_estimated_tokens =
                 context_ledger_entry.total_estimated_tokens.saturating_add(contract_chars.div_ceil(4));
@@ -2057,7 +2050,7 @@ impl<'a> NativeAgent<'a> {
                 why_included: WhyIncluded::AlwaysPresent,
             });
 
-            if iteration >= MAX_AUTONOMOUS_ITERATIONS - 1 {
+            let step_limit_warning = if iteration >= MAX_AUTONOMOUS_ITERATIONS - 1 {
                 let warning_content: String =
                     "STEP LIMIT: This is your last action before the autonomous loop ends. \
                 If the objective is satisfied, summarize what was accomplished with \
@@ -2075,7 +2068,7 @@ impl<'a> NativeAgent<'a> {
                     .iter()
                     .rposition(|m| m.role == "user")
                     .unwrap_or(messages.len());
-                messages.insert(user_idx + 1, limit_warning);
+                messages.insert(user_idx + 1, limit_warning.clone());
                 // Account for the step limit warning in the ledger (P0-3).
                 context_ledger_entry.total_estimated_tokens =
                     context_ledger_entry.total_estimated_tokens.saturating_add(warning_chars.div_ceil(4));
@@ -2086,6 +2079,49 @@ impl<'a> NativeAgent<'a> {
                     byte_len: warning_len,
                     why_included: WhyIncluded::AlwaysPresent,
                 });
+                Some(limit_warning)
+            } else {
+                None
+            };
+
+            // ── Token-pressure preflight (P0-1/P0-2) on FINAL request ─
+            let messages_char_count: usize =
+                messages.iter().map(|m| m.content.chars().count()).sum();
+            let estimated_tokens = (messages_char_count as u64).div_ceil(4);
+            let capacity = self.effective_input_capacity();
+            if estimated_tokens > capacity && compaction_cycles == 0 {
+                self.compact_and_checkpoint(store, session_id, &state, turn_id).await?;
+                compaction_cycles += 1;
+                // Reload state, rebuild with contract+warning, re-estimate.
+                let rebuilt_state = store.load(session_id)?;
+                let rebuilt = build_messages(
+                    turn_id,
+                    session_id,
+                    &objective,
+                    &worktree,
+                    &rebuilt_state,
+                    &context_hits,
+                    &session_events,
+                );
+                let (mut rebuilt_msgs, mut rebuilt_ledger) = rebuilt;
+                // Re-inject contract and warning into rebuilt messages
+                rebuilt_msgs.insert(user_idx, contract.clone());
+                if let Some(ref rebuilt_warning) = step_limit_warning {
+                    rebuilt_msgs.insert(user_idx + 1, rebuilt_warning.clone());
+                }
+                // P0: Re-estimate after compaction — fail if still too large.
+                let rebuilt_char_count: usize =
+                    rebuilt_msgs.iter().map(|m| m.content.chars().count()).sum();
+                let rebuilt_est = (rebuilt_char_count as u64).div_ceil(4);
+                if rebuilt_est > capacity {
+                    return Err(AgentError::ContextOverflow {
+                        estimated_tokens: rebuilt_est,
+                        max_input_tokens: capacity,
+                        after_compaction: true,
+                    });
+                }
+                messages = rebuilt_msgs;
+                context_ledger_entry = rebuilt_ledger;
             }
             // Record the ledger AFTER all message injections so it reflects
             // the FINAL ModelRequest (P0-3).
@@ -2310,27 +2346,36 @@ impl<'a> NativeAgent<'a> {
                         approved_by: ApprovalAuthority::DeterministicPolicy,
                     })?;
                 }
-                // Execute each action individually with its own constraints.
-                // execute_batch is replaced with per-action calls so each
-                // action's exact PawGate constraints are respected (P0-4).
-                for (action_id, action, constraints) in &authorized_reads {
-                    let result = ToolRuntime::execute(
-                        store,
-                        *action_id,
-                        action,
-                        constraints,
-                    )
-                    .await?;
-                    store.append(
-                        session_id,
-                        &SessionEvent::ActionOutputRecorded {
-                            action_id: *action_id,
-                            stdout: bounded_terminal_text(&result.stdout),
-                            stderr: bounded_terminal_text(&result.stderr),
-                            truncated: result.truncated,
-                            turn_id: Some(turn_id),
-                        },
-                    )?;
+                // P0: Concurrent batch execution with per-action constraints.
+                // Each action carries its own PawGate-approved constraints and
+                // authorization. execute_batch consumes authorizations serially
+                // then executes all reads concurrently.
+                let batch: Vec<purrcode_claw::AuthorizedRead> = authorized_reads
+                    .iter()
+                    .map(|(id, action, constraints)| purrcode_claw::AuthorizedRead {
+                        action_id: *id,
+                        action: action.clone(),
+                        constraints: constraints.clone(),
+                    })
+                    .collect();
+                let results = purrcode_claw::ToolRuntime::execute_batch(
+                    store,
+                    &batch,
+                )
+                .await?;
+                for (i, result) in results.iter().enumerate() {
+                    if let Some((action_id, _, _)) = authorized_reads.get(i) {
+                        store.append(
+                            session_id,
+                            &SessionEvent::ActionOutputRecorded {
+                                action_id: *action_id,
+                                stdout: bounded_terminal_text(&result.stdout),
+                                stderr: bounded_terminal_text(&result.stderr),
+                                truncated: result.truncated,
+                                turn_id: Some(turn_id),
+                            },
+                        )?;
+                    }
                 }
                 if self.controls.execution_style.pauses_between_stages() {
                     store.append(
