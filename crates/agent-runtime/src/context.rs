@@ -986,6 +986,7 @@ exploration, a set of read-only actions like grep, read, list, git-log in the \
         session_id,
         sections,
         total_estimated_tokens,
+        estimator: purrcode_runtime_core::TokenEstimator::CharDiv4,
         recorded_at: Utc::now(),
     };
 

@@ -817,12 +817,28 @@ pub struct ContextLedgerSection {
 
 /// One turn's full context-assembly accounting, durably recorded via
 /// [`SessionEvent::ContextAssembled`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+///
+/// How the token count was computed is tracked in [`TokenEstimator`].
+///
+/// The enum distinguishes provider-counted (authoritative) from the char/4 heuristic.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum TokenEstimator {
+    /// Provider's native tokenizer — the authoritative count.
+    ProviderCounted,
+    /// chars().count().div_ceil(4) fallback — structurally matches the default
+    /// ProviderRouter::count_tokens but may diverge from real tokenizers.
+    #[default]
+    CharDiv4,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ContextLedgerEntry {
     pub turn_id: TurnId,
     pub session_id: SessionId,
     pub sections: Vec<ContextLedgerSection>,
     pub total_estimated_tokens: u64,
+    #[serde(default)]
+    pub estimator: TokenEstimator,
     pub recorded_at: DateTime<Utc>,
 }
 

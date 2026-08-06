@@ -1034,6 +1034,7 @@ mod tests {
                 },
             ],
             total_estimated_tokens: 162,
+            estimator: TokenEstimator::CharDiv4,
             recorded_at: Utc::now(),
         };
 

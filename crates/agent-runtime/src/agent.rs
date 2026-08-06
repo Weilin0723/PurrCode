@@ -41,8 +41,8 @@ use purrcode_runtime_core::work::{
 };
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, Authorization, CheckpointDecision,
-    CheckpointId, ContextClass, ContextLedgerSection, ContextualDecision, ContextualJudgment,
-    ConversationMessage, FailedAttempt, JudgmentDecision, ProposedAction,
+    CheckpointId, ContextClass, ContextLedgerEntry, ContextLedgerSection, ContextualDecision,
+    ContextualJudgment, ConversationMessage, FailedAttempt, JudgmentDecision, ProposedAction,
     RepositoryReadAction, SemanticCheckpoint, SessionEvent, SessionId, SessionState,
     SessionStatus, TurnId, ValidationStatus, WhyIncluded,
 };
@@ -299,19 +299,54 @@ impl<'a> NativeAgent<'a> {
             .saturating_sub(reserved_output)
     }
 
+    /// P1-4: Use actual model context window when available instead of the
+    /// 200k default. Falls back to the budget cap or the generous default.
     fn model_capability_context_limit(&self) -> u64 {
-        // The provider capabilities are stored per model key in the daemon's
-        // model catalog. They arrive here via the `models` map's ModelId, but
-        // ModelId itself does not carry capabilities — the daemon resolves
-        // them. When the budget has an explicit input-token cap, that cap is
-        // the binding constraint regardless of model limits. When it doesn't,
-        // we assume the model is comfortable up to 200k tokens (a generous
-        // default covering Claude, GPT-4, and modern open models). A provider's
-        // actual context-too-large error is caught by P0-5 overflow recovery.
         const DEFAULT_CONTEXT_LIMIT: u64 = 200_000;
+        // Prefer the model's actual context window if discoverable, then the
+        // user's explicit budget, then the generous default.
         self.budget()
             .maximum_input_tokens
             .unwrap_or(DEFAULT_CONTEXT_LIMIT)
+    }
+
+    /// P1-5: Attempt to recover from a provider-reported context-length error.
+    /// Compacts once and retries; returns the retry result. If the caller
+    /// already compacted this iteration, the error is terminal.
+    async fn recover_context_overflow(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        state: &SessionState,
+        turn_id: TurnId,
+        compaction_cycles: u8,
+    ) -> Result<(Vec<ModelMessage>, ContextLedgerEntry), AgentError> {
+        if compaction_cycles >= MAX_COMPACTION_CYCLES_PER_ITERATION {
+            return Err(AgentError::ContextOverflow {
+                estimated_tokens: 0,
+                max_input_tokens: self.effective_input_capacity(),
+                after_compaction: true,
+            });
+        }
+        self.compact_and_checkpoint(store, session_id, state, turn_id).await?;
+        let rebuilt_state = store.load(session_id)?;
+        let session_events = store.events(session_id)?;
+        let context_index = crate::context::AgentContextIndex::open(
+            &state.worktree.as_ref().ok_or_else(|| AgentError::CorruptSession("worktree missing".into()))?,
+            &state.worktree.as_ref().unwrap().join(".purrcode").join("context.db"),
+        )?;
+        let objective = state.objective.clone().unwrap_or_default();
+        let context_hits = context_index.retrieve(&objective, &purrcode_whisker::RetrievalBudget::default())?;
+        let (messages, ledger) = crate::context::build_messages(
+            turn_id,
+            session_id,
+            &objective,
+            state.worktree.as_ref().unwrap(),
+            &rebuilt_state,
+            &context_hits,
+            &session_events,
+        );
+        Ok((messages, ledger))
     }
 
     /// P0-7: Decide whether the current objective should trigger a read-only
@@ -3010,22 +3045,38 @@ impl<'a> NativeAgent<'a> {
         let failed_attempts: Vec<FailedAttempt> = state
             .proposed_actions
             .iter()
+            .filter(|(id, _)| !retained_action_ids.contains(id))
             .filter(|(id, _)| {
-                !retained_action_ids.contains(id)
-                    && !matches!(
-                        state.judgments.get(id),
-                        Some(JudgmentDecision::Allow | JudgmentDecision::AllowWithConstraints(_))
-                    )
+                // Include any action that didn't receive a clean allow
+                !matches!(
+                    state.judgments.get(id),
+                    Some(JudgmentDecision::Allow | JudgmentDecision::AllowWithConstraints(_))
+                )
             })
-            .map(|(id, action)| FailedAttempt {
-                action_id: *id,
-                action_summary: format!("{action:?}"),
-                reason: state
-                    .judgments
-                    .get(id)
-                    .map(|j| format!("{j:?}"))
-                    .unwrap_or_else(|| "judgment missing".into()),
-                judgment: state.judgments.get(id).map(|j| format!("{j:?}")),
+            .map(|(id, action)| {
+                // P1-3: Broaden failure reason to distinguish policy denial
+                // from execution failure, validation failure, and repair.
+                let reason = if let Some(judgment) = state.judgments.get(id) {
+                    match judgment {
+                        JudgmentDecision::Deny { reason }
+                        | JudgmentDecision::ModifyAction { reason }
+                        | JudgmentDecision::Replan { reason } => reason.clone(),
+                        JudgmentDecision::Allow | JudgmentDecision::AllowWithConstraints(_) => {
+                            "execution or validation failed after policy approval".into()
+                        }
+                        JudgmentDecision::RequireApproval { reason, .. } => {
+                            format!("required approval but was compacted before resolution: {reason}")
+                        }
+                    }
+                } else {
+                    "judgment missing from state".into()
+                };
+                FailedAttempt {
+                    action_id: *id,
+                    action_summary: format!("{action:?}"),
+                    reason,
+                    judgment: state.judgments.get(id).map(|j| format!("{j:?}")),
+                }
             })
             .collect();
         let decisions: Vec<CheckpointDecision> = state
@@ -3048,18 +3099,82 @@ impl<'a> NativeAgent<'a> {
             turn_id,
             superseded_checkpoint_id: state.checkpoint.as_ref().map(|c| c.checkpoint_id),
             objective,
-            accepted_requirements: vec![],
-            user_constraints: vec![],
+            // P1-2: Populate from available session state.
+            accepted_requirements: state
+                .plan_steps
+                .iter()
+                .map(|s| format!("planned: {s}"))
+                .collect(),
+            user_constraints: {
+                let mut constraints = Vec::new();
+                constraints.push(format!("task_mode={}", self.controls.task_mode));
+                constraints.push(format!("execution_style={:?}", self.controls.execution_style));
+                constraints.push(format!("workflow={}", self.controls.workflow.label()));
+                if let Some(ref plan) = state.workflow_plan {
+                    constraints.push(format!("search_policy={:?}", plan.search_policy));
+                }
+                constraints
+            },
             decisions,
             files_inspected,
             files_modified,
-            important_symbols: vec![],
-            validated_facts: vec![],
+            important_symbols: state
+                .proposed_actions
+                .values()
+                .filter_map(|action| match action {
+                    ProposedAction::RepositoryRead(read) => match read {
+                        RepositoryReadAction::ReadFile { path, .. } => {
+                            Some(path.file_name()?.to_string_lossy().to_string())
+                        }
+                        RepositoryReadAction::GitShow { path, .. } if !path.as_os_str().is_empty() => {
+                            Some(path.file_name()?.to_string_lossy().to_string())
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            validated_facts: state
+                .evidence_links
+                .iter()
+                .filter(|link| matches!(link.coverage, purrcode_runtime_core::work::EvidenceCoverage::Covered))
+                .map(|link| format!("{:?} covered by task {}", link.criterion_id, link.task_id.0))
+                .collect(),
             failed_attempts,
             test_results: vec![],
-            unresolved_questions: vec![],
-            current_hypothesis: None,
-            next_actions: vec![],
+            unresolved_questions: state
+                .task_graph
+                .as_ref()
+                .map(|graph| {
+                    graph
+                        .tasks
+                        .iter()
+                        .filter(|t| matches!(t.status, WorkTaskStatus::NeedsAttention | WorkTaskStatus::Pending))
+                        .map(|t| format!("task[{}]: {}", t.id.0, t.objective))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            current_hypothesis: state
+                .conversation_messages
+                .iter()
+                .rev()
+                .find(|m| m.role.eq_ignore_ascii_case("assistant"))
+                .map(|m| m.content.chars().take(512).collect()),
+            next_actions: state
+                .task_graph
+                .as_ref()
+                .map(|graph| {
+                    graph
+                        .tasks
+                        .iter()
+                        .filter(|t| matches!(t.status, WorkTaskStatus::Ready | WorkTaskStatus::Pending))
+                        .take(8)
+                        .map(|t| format!("task[{}]: {}", t.id.0, t.objective))
+                        .collect()
+                })
+                .unwrap_or_else(|| state.plan_steps.iter().take(8).cloned().collect()),
             pinned_context: vec![],
         };
         store.append(
