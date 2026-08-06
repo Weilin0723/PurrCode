@@ -45,6 +45,12 @@ pub enum AgentError {
     SessionNotAwaitingApproval,
     #[error("unconstrained allow is forbidden")]
     UnsafeUnconstrainedAllow,
+    #[error("context overflow: estimated {estimated_tokens} tokens exceeds input capacity of {max_input_tokens} (after compaction: {after_compaction})")]
+    ContextOverflow {
+        estimated_tokens: u64,
+        max_input_tokens: u64,
+        after_compaction: bool,
+    },
 }
 
 impl AgentError {
