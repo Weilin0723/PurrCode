@@ -847,25 +847,40 @@ Return EXACTLY the JSON structure specified. No markdown wrappers, no extra text
     let compacted_block = format!("## COMPACTED PRIOR CONTEXT:\n{compacted_context}\n\n");
     let output_format_and_schema = "## OUTPUT FORMAT — Respond with EXACTLY this JSON structure, filling in values:\n\
 {\n  \"rationale\": \"reason for action OR the complete user-facing answer if complete=true\",\n  \
-\"action\": null or one of the typed read/write/delete actions below,\n  \
 \"complete\": false,\n  \
 \"plan\": null or [\"step1\",\"step2\"],\n  \
 \"current_step_index\": null or 0,\n  \
 \"expected_postconditions\": []\n}\n\n\
+Use the `actions` array for EVERY tool call (P1-1 — unified schema). The legacy `action` \
+singleton field is still accepted for backward compatibility but deprecated in prompts.\n\
+\n\
+For read-only exploration, provide multiple typed read actions in `actions`:\n\
+  {\"rationale\":\"...\",\"complete\":false,\"actions\":[{\"type\":\"list\",\"paths\":[\".\"]},\
+{\"type\":\"repository_grep\",\"pattern\":\"TODO\",\"paths\":[\"src\"]}]}\n\
+\n\
+For a single mutating action, provide exactly one entry in `actions`:\n\
+  {\"rationale\":\"...\",\"complete\":false,\"actions\":[{\"type\":\"write_file\",\"path\":\"...\",\
+\"content\":\"...\",\"expected_digest\":null}]}\n\
+\n\
+When the objective is fully satisfied, set `complete: true` with an empty `actions` array \
+and your full user-facing answer in `rationale`.\n\n\
 Typed read actions (pick the closest variant for the evidence you need):\n  \
-- git_status: working-tree status\n  \
-- git_log {max_count, oneline}: commit history\n  \
-- git_diff {paths}: pending diff\n  \
-- git_show {revision, path}: file at revision\n  \
-- git_ls_files {pathspec}: tracked paths\n  \
-- repository_grep {pattern, paths, case_insensitive}: code search\n  \
-- find {paths}: filesystem walk\n  \
-- list {paths}: directory listing\n\n\
+- {\"type\":\"git_status\"}: working-tree status\n  \
+- {\"type\":\"git_log\",\"max_count\":10,\"oneline\":true}: commit history\n  \
+- {\"type\":\"git_diff\",\"paths\":[]}: pending diff\n  \
+- {\"type\":\"git_show\",\"revision\":\"HEAD\",\"path\":\"\"}: file at revision\n  \
+- {\"type\":\"git_ls_files\",\"pathspec\":[]}: tracked paths\n  \
+- {\"type\":\"repository_grep\",\"pattern\":\"...\",\"paths\":[],\"case_insensitive\":false}: code search\n  \
+- {\"type\":\"find\",\"paths\":[],\"max_depth\":3,\"max_entries\":200}: filesystem walk\n  \
+- {\"type\":\"list\",\"paths\":[],\"max_entries\":200}: directory listing\n  \
+- {\"type\":\"read_file\",\"path\":\"...\",\"max_bytes\":8192}: file contents\n\n\
 Write action: {\"type\":\"write_file\",\"path\":\"...\",\"content\":\"...\",\"expected_digest\":null}\n\
 Delete action: {\"type\":\"delete_file\",\"path\":\"...\",\"expected_digest\":\"...\"}\n\n\
-CRITICAL: If complete=false, provide exactly one action (or, for read-only \
-exploration, a set of read-only actions like grep, read, list, git-log in the \
-\"actions\" array). A mutating action (write, delete) must always be alone.";
+CRITICAL RULES:\n\
+- `complete: false` → `actions` must contain at least 1 action\n\
+- `complete: true` → `actions` must be empty; `rationale` IS the user-facing answer\n\
+- A mutating action (write_file, delete_file) must be the ONLY action in `actions`\n\
+- Read-only actions may be batched together in `actions` for parallel exploration";
     let final_user_content = format!(
         "{request_and_worktree}{plan_block}{recent_actions_block}{validation_block}\
 {retrieved_block}{compacted_block}{output_format_and_schema}"
@@ -1210,6 +1225,7 @@ mod tests {
             content: "fn retry() { loop { attempt(); } }".into(),
             score_millis: 1000,
             sensitive: false,
+            reason: purrcode_whisker::HitReason::default(),
         }];
 
         let (messages, entry) = build_messages(

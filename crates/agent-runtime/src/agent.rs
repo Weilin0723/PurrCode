@@ -408,6 +408,9 @@ impl<'a> NativeAgent<'a> {
                     ScoutConfidence::Low => 300,
                 },
                 sensitive: false,
+                reason: purrcode_whisker::HitReason::MatchedQuery {
+                    term: ev.path.to_string_lossy().to_string(),
+                },
             })
             .collect()
     }
@@ -1919,6 +1922,11 @@ impl<'a> NativeAgent<'a> {
                 },
             )?;
             let mut context_hits = context_index.retrieve(&objective, &RetrievalBudget::default())?;
+            // P1-12: When auto_context is disabled, clear retrieval hits so the
+            // model sees only pinned context, conversation, and the checkpoint.
+            if !self.controls.auto_context {
+                context_hits.clear();
+            }
             // ── P0-7: Scout delegation ──────────────────────────────────
             // If the objective reads like an exploration task and the session
             // has no plan yet, dispatch a read-only Scout to gather evidence

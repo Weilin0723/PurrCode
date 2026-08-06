@@ -371,7 +371,31 @@ impl fmt::Debug for Tier2Work {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// P1-11: Why a context hit was included in the retrieved set.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HitReason {
+    /// Matched the FTS5 query — the primary retrieval signal.
+    MatchedQuery {
+        term: String,
+    },
+    /// Included because it is imported by another matched hit.
+    ImportProximity {
+        imported_by: PathBuf,
+    },
+    /// Historically changed together with a matched hit.
+    Cochange {
+        changed_with: PathBuf,
+    },
+    /// Test file for a source hit (or vice versa).
+    TestRelation {
+        tests: PathBuf,
+    },
+    /// Fallback — included through generic retrieval with no specific signal.
+    #[default]
+    Unspecified,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextHit {
     pub path: PathBuf,
     pub start_line: usize,
@@ -379,6 +403,9 @@ pub struct ContextHit {
     pub content: String,
     pub score_millis: i64,
     pub sensitive: bool,
+    /// P1-11: Why this hit was included.
+    #[serde(default)]
+    pub reason: HitReason,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -940,9 +967,9 @@ impl ContextIndex {
         }
         let query_terms: Vec<String> = query
             .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .filter(|t| t.len() >= 2)
-            .take(3)
-            .map(|t| t.to_ascii_lowercase())
+            .filter(|t| t.len() >= 2 && !is_query_stopword(t))
+            .take(5) // P1-13: increased from 3 to capture more terms after filtering
+            .map(|t| normalize_code_identifier(t))
             .collect();
 
         // --- candidate pool keyed by (path, start_line) ---
@@ -973,6 +1000,7 @@ impl ContextIndex {
                         content: row.get(3)?,
                         score_millis: row.get(4)?,
                         sensitive: false,
+                        reason: HitReason::default(),
                     })
                 },
             )?;
@@ -1081,6 +1109,7 @@ impl ContextIndex {
                                 content,
                                 score_millis: score,
                                 sensitive: false,
+                                reason: HitReason::default(),
                             },
                         );
                     }
@@ -1933,11 +1962,76 @@ fn is_definition_node_kind(kind: &str) -> bool {
 fn fts_query(query: &str) -> String {
     query
         .split(|character: char| !character.is_alphanumeric() && character != '_')
-        .filter(|token| token.len() >= 2)
+        .filter(|token| token.len() >= 2 && !is_query_stopword(token))
         .take(12)
+        .flat_map(|token| normalize_code_identifier(&token).split('|').map(|s| s.to_owned()).collect::<Vec<_>>())
         .map(|token| format!("\"{}\"", token.replace('"', "")))
         .collect::<Vec<_>>()
         .join(" OR ")
+}
+
+/// P1-13: Remove common English stopwords that don't help code search.
+fn is_query_stopword(token: &str) -> bool {
+    matches!(
+        token.to_ascii_lowercase().as_str(),
+        "the" | "a" | "an" | "is" | "are" | "was" | "were"
+            | "be" | "been" | "being" | "have" | "has" | "had"
+            | "do" | "does" | "did" | "will" | "would" | "could"
+            | "should" | "may" | "might" | "can" | "shall" | "must"
+            | "in" | "to" | "for" | "on" | "at" | "by" | "of" | "with"
+            | "from" | "as" | "into" | "through" | "during" | "before"
+            | "after" | "above" | "below" | "between" | "under"
+            | "and" | "or" | "not" | "but" | "if" | "then" | "else"
+            | "when" | "where" | "why" | "how" | "all" | "each"
+            | "every" | "both" | "few" | "more" | "most" | "other"
+            | "some" | "such" | "no" | "nor" | "only" | "own" | "same"
+            | "so" | "than" | "too" | "very" | "just" | "about"
+            | "also" | "here" | "there" | "this" | "that" | "these"
+            | "those" | "what" | "which" | "who" | "whom"
+            | "it" | "its" | "i" | "me" | "my" | "we" | "our" | "you" | "your"
+            | "he" | "she" | "they" | "them" | "their" | "his" | "her"
+            | "please" | "need" | "want" | "like" | "find" | "get"
+            | "make" | "use" | "using" | "show" | "tell" | "explain"
+    )
+}
+
+/// P1-13: Split camelCase/PascalCase and snake_case identifiers into component
+/// terms for better FTS matching. Returns a pipe-separated string so callers can
+/// split it into multiple FTS query tokens.
+fn normalize_code_identifier(token: &str) -> String {
+    let lower = token.to_ascii_lowercase();
+    // Snake case: "session_store" → "session|store|session_store"
+    if lower.contains('_') {
+        let parts: Vec<&str> = lower.split('_').filter(|p| !p.is_empty()).collect();
+        if parts.len() > 1 {
+            let mut result = parts.join("|");
+            result.push('|');
+            result.push_str(&lower);
+            return result;
+        }
+    }
+    // Camel/Pascal case: "SessionStore" → "session|store|sessionstore"
+    let has_camel = lower.chars().any(|c| c.is_uppercase());
+    if has_camel && lower.len() > 2 {
+        let mut parts = Vec::new();
+        let mut start = 0;
+        let chars: Vec<char> = lower.chars().collect();
+        for i in 1..chars.len() {
+            if chars[i].is_uppercase() {
+                parts.push(chars[start..i].iter().collect::<String>());
+                start = i;
+            }
+        }
+        parts.push(chars[start..].iter().collect::<String>());
+        let parts: Vec<&str> = parts.iter().map(|s| s.as_str()).filter(|s| s.len() >= 2).collect();
+        if parts.len() > 1 {
+            let mut result = parts.join("|");
+            result.push('|');
+            result.push_str(&lower);
+            return result;
+        }
+    }
+    lower
 }
 
 fn extract_symbols(
