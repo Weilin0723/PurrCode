@@ -1051,6 +1051,20 @@ pub enum SessionEvent {
         symbols: usize,
         sensitive_files: usize,
     },
+    /// A read-only Scout subagent completed its repository exploration and
+    /// returned structured evidence (PRD v1.1 §Phase 5, P0-7).
+    ScoutCompleted {
+        scout_id: String,
+        parent_turn_id: TurnId,
+        evidence_count: u32,
+        conclusions: Vec<String>,
+        confidence: String,
+    },
+    /// A Scout subagent failed — its findings are not available but the main
+    /// agent loop continues without them.
+    ScoutFailed {
+        reason: String,
+    },
     ModelRequestStarted {
         role: String,
         provider: String,

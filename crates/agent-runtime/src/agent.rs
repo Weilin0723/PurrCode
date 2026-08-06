@@ -82,6 +82,11 @@ const MAX_AUTONOMOUS_ITERATIONS: usize = 32;
 const MAX_CONSECUTIVE_POLICY_REJECTIONS: usize = 3;
 const MAX_ACTIONS_IN_PROMPT: usize = 12;
 const RETAINED_ACTIONS_AFTER_COMPACTION: usize = 6;
+/// P0-10: Target token budget for the retained conversation window after
+/// compaction — keep roughly the last 8K tokens of complete turns, aligned
+/// at user-message boundaries. The window always includes the checkpoint,
+/// which is accounted for separately.
+const COMPACTION_RETAINED_TOKEN_BUDGET: u64 = 8_192;
 /// Maximum number of compaction cycles per `run_until_pause` iteration.
 /// One preflight compaction is the norm; a second is only allowed as a
 /// provider-overflow recovery (P0-5). More than that fails closed.
@@ -307,6 +312,69 @@ impl<'a> NativeAgent<'a> {
         self.budget()
             .maximum_input_tokens
             .unwrap_or(DEFAULT_CONTEXT_LIMIT)
+    }
+
+    /// P0-7: Decide whether the current objective should trigger a read-only
+    /// Scout exploration before the main coding turn.
+    ///
+    /// Delegation is appropriate when:
+    /// - The objective contains exploration markers ("find", "explore", etc.)
+    /// - The session has no plan yet (no `plan_steps`)
+    /// - A scout model is configured or `fast_router` is available
+    fn should_delegate_to_scout(&self, objective: &str, state: &SessionState) -> bool {
+        if !state.plan_steps.is_empty() {
+            return false;
+        }
+        let has_scout_model = self.models.contains_key("scout")
+            || self.models.contains_key("fast_router");
+        if !has_scout_model {
+            return false;
+        }
+        let lower = objective.to_ascii_lowercase();
+        let exploration_markers = [
+            "find ",
+            "explore",
+            "investigate",
+            "understand",
+            "how does",
+            "what is",
+            "where is",
+            "locate",
+            "search for",
+            "look for",
+            "audit",
+            "trace",
+            "map out",
+            "diagram",
+            "overview",
+            "summarize the",
+            "explain the",
+            "describe the",
+        ];
+        exploration_markers
+            .iter()
+            .any(|marker| lower.contains(marker))
+    }
+
+    /// Convert Scout evidence into Whisker-compatible context hits for injection
+    /// into the main turn's context window.
+    fn scout_finding_to_hits(finding: &ScoutFinding) -> Vec<purrcode_whisker::ContextHit> {
+        finding
+            .evidence
+            .iter()
+            .map(|ev| purrcode_whisker::ContextHit {
+                path: ev.path.clone(),
+                start_line: ev.line_range.0 as usize,
+                end_line: ev.line_range.1 as usize,
+                content: ev.excerpt.clone(),
+                score_millis: match finding.confidence {
+                    ScoutConfidence::High => 900,
+                    ScoutConfidence::Medium => 600,
+                    ScoutConfidence::Low => 300,
+                },
+                sensitive: false,
+            })
+            .collect()
     }
 
     fn remaining_wall_time(&self) -> Result<Option<std::time::Duration>, AgentError> {
@@ -1736,8 +1804,20 @@ impl<'a> NativeAgent<'a> {
         let mut iteration = 0_usize;
         for _ in 0..MAX_AUTONOMOUS_ITERATIONS {
             iteration += 1;
-            let turn_id = TurnId::new();
             let mut state = store.load(session_id)?;
+            // P0-9: TurnId originates at daemon user-message admission
+            // (ConversationMessage.turn_id now set to Some(…) in the daemon).
+            // Read it from the most recent user message so all actions,
+            // judgments, and assistant messages in this turn share the same id.
+            // Falls back to a new TurnId when replaying sessions recorded
+            // before P0-9 shipped (turn_id was None).
+            let turn_id = state
+                .conversation_messages
+                .iter()
+                .rev()
+                .find(|m| m.role.eq_ignore_ascii_case("user"))
+                .and_then(|m| m.turn_id)
+                .unwrap_or_else(TurnId::new);
             // ── Preflight compaction (P0-1/P0-2) ─────────────────────────
             // The action-count guard (hard cap) is checked first — it is
             // cheap and does not need a round-trip estimate. The token guard
@@ -1803,7 +1883,53 @@ impl<'a> NativeAgent<'a> {
                     sensitive_files: index_report.summary.sensitive_files,
                 },
             )?;
-            let context_hits = context_index.retrieve(&objective, &RetrievalBudget::default())?;
+            let mut context_hits = context_index.retrieve(&objective, &RetrievalBudget::default())?;
+            // ── P0-7: Scout delegation ──────────────────────────────────
+            // If the objective reads like an exploration task and the session
+            // has no plan yet, dispatch a read-only Scout to gather evidence
+            // before the main coding turn. Scout findings become additional
+            // Whisker context hits for the main model.
+            let mut scout_context_hits: Vec<purrcode_whisker::ContextHit> = Vec::new();
+            if iteration == 1 && self.should_delegate_to_scout(&objective, &state) {
+                let scout_request = ScoutRequest {
+                    scout_id: ScoutId(Uuid::new_v4()),
+                    parent_turn_id: turn_id,
+                    objective: objective.clone(),
+                    max_actions: 8,
+                    max_tokens: 32_768,
+                    allowed_action_kinds: vec!["read".into()],
+                };
+                match self.run_scout(store, session_id, scout_request).await {
+                    Ok(finding) => {
+                        store.append(
+                            session_id,
+                            &SessionEvent::ScoutCompleted {
+                                scout_id: finding.scout_id.0.to_string(),
+                                parent_turn_id: turn_id,
+                                evidence_count: finding.evidence.len() as u32,
+                                conclusions: finding.conclusions.clone(),
+                                confidence: format!("{:?}", finding.confidence),
+                            },
+                        )?;
+                        scout_context_hits = Self::scout_finding_to_hits(&finding);
+                    }
+                    Err(scout_error) => {
+                        store.append(
+                            session_id,
+                            &SessionEvent::ScoutFailed {
+                                reason: scout_error.to_string(),
+                            },
+                        )?;
+                    }
+                }
+            }
+            // Merge scout hits into the context hits for the main turn.
+            if !scout_context_hits.is_empty() {
+                context_hits = scout_context_hits
+                    .into_iter()
+                    .chain(context_hits)
+                    .collect();
+            }
             store.append(
                 session_id,
                 &SessionEvent::ModelRequestStarted {
@@ -2781,7 +2907,38 @@ impl<'a> NativeAgent<'a> {
         Ok(AgentOutcome::IterationLimit { session_id })
     }
 
-    // ── Compaction helper (P0-1/P0-2) ────────────────────────────────
+    // ── Compaction helpers (P0-1/P0-2/P0-10) ────────────────────────
+
+    /// P0-10: Compute the index into `conversation_messages` where the retained
+    /// window should start. Walks backwards from the most recent message,
+    /// accumulating estimated tokens, and stops at the last **user** message
+    /// boundary before the budget is exceeded. Returns `0` (keep everything) when
+    /// the total is within budget.
+    fn compaction_window(messages: &[ConversationMessage], max_tokens: u64) -> usize {
+        if messages.is_empty() {
+            return 0;
+        }
+        let mut accumulated = 0u64;
+        let mut last_user_boundary = 0usize;
+        for (i, msg) in messages.iter().enumerate().rev() {
+            let token_est = (msg.content.chars().count() as u64).div_ceil(4);
+            if accumulated + token_est > max_tokens {
+                // Stop at the last user-message turn boundary we passed, or at
+                // this index if we haven't seen a user message yet.
+                return if last_user_boundary > 0 {
+                    last_user_boundary
+                } else {
+                    i.saturating_add(1).min(messages.len())
+                };
+            }
+            accumulated += token_est;
+            if msg.role.eq_ignore_ascii_case("user") {
+                last_user_boundary = i;
+            }
+        }
+        0
+    }
+
     /// Perform one compaction cycle: prune actions, build a semantic checkpoint,
     /// and record durable events. Called from `run_until_pause`'s preflight guard
     /// so that compaction never repeats against a stale ledger.
@@ -2881,11 +3038,11 @@ impl<'a> NativeAgent<'a> {
             })
             .collect();
         let retained: BTreeSet<ActionId> = retained_action_ids.iter().copied().collect();
-        let conversation_messages_retained_from = state
-            .conversation_messages
-            .len()
-            .saturating_sub(RETAINED_ACTIONS_AFTER_COMPACTION)
-            .min(state.conversation_messages.len());
+        // P0-10: Token-based conversation retention instead of fixed message
+        // count. Walk backwards through conversation_messages and stop at the
+        // last user-message turn boundary within the token budget.
+        let conversation_messages_retained_from =
+            Self::compaction_window(&state.conversation_messages, COMPACTION_RETAINED_TOKEN_BUDGET);
         let checkpoint = SemanticCheckpoint {
             checkpoint_id: CheckpointId::new(),
             turn_id,

@@ -357,6 +357,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::WorkerFinished { .. } => "worker_finished",
         SessionEvent::SupervisorReviewRequired { .. } => "supervisor_review_required",
         SessionEvent::ContextIndexed { .. } => "context_indexed",
+        SessionEvent::ScoutCompleted { .. } => "scout_completed",
+        SessionEvent::ScoutFailed { .. } => "scout_failed",
         SessionEvent::ModelRequestStarted { .. } => "model_request_started",
         SessionEvent::ModelRequestFinished { .. } => "model_request_finished",
         SessionEvent::ActionProposed { .. } => "action_proposed",

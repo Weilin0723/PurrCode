@@ -69,7 +69,8 @@ use purrcode_runtime_core::adaptation::{
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, AuthorityMode, Authorization,
     ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
-    SessionEvent, SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
+    SessionEvent, SessionId, SessionState, SessionStatus, TurnId, ValidationStatus,
+    WriteFileAction,
 };
 use purrcode_skill_registry::{
     ExternalSearchAuthorization, GitHubRegistryAdapter, Qualifier as RegistryQualifier,
@@ -1914,7 +1915,11 @@ async fn start_session(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: None,
-                turn_id: None, // user-typed message, outside run_until_pause
+                // P0-9: TurnId originates at daemon user-message admission so
+                // all actions, judgments, and assistant messages in the same
+                // turn share the same id. The agent reads this back rather than
+                // creating its own inside run_until_pause.
+                turn_id: Some(TurnId::new()),
             },
         },
     )?;
@@ -2045,7 +2050,9 @@ async fn append_message(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: None,
-                turn_id: None, // user-typed follow-up, outside run_until_pause
+                // P0-9: TurnId at admission for follow-ups too — each user
+                // message starts a new turn that propagates through all events.
+                turn_id: Some(TurnId::new()),
             },
         },
     )?;
