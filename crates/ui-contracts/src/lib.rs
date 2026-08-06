@@ -364,6 +364,11 @@ pub struct ActivityItem {
     /// True when expanding this entry would show something more — the command,
     /// the affected files, the test output, the authorization decision.
     pub detail_available: bool,
+    /// The turn that produced this activity item (PRD v1.1 §6.3). `None` when
+    /// the activity is derived from an aggregation (e.g. "Inspected 12 file(s)")
+    /// rather than from a single event with a known turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
 }
 
 /// Truthful validation outcome (PRD §21.3).

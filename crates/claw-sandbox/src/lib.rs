@@ -114,6 +114,66 @@ impl ToolRuntime {
             )),
         }
     }
+
+    /// Execute multiple read-only actions in a single batch.
+    ///
+    /// All authorizations are consumed up front (serial, single-use semantics)
+    /// and the read-only actions are executed concurrently.  The results are
+    /// returned in the same order as `actions`.
+    pub async fn execute_batch(
+        store: &mut SessionStore,
+        action_ids: &[ActionId],
+        actions: &[ProposedAction],
+        constraints: &purrcode_runtime_core::ActionConstraints,
+    ) -> Result<Vec<ExecutionResult>, ExecutionError> {
+        if action_ids.len() != actions.len() {
+            return Err(ExecutionError::UnsupportedConstraint(
+                "action_ids and actions must have the same length".into(),
+            ));
+        }
+        // Consume all authorizations up front — serial, single-use semantics.
+        for (id, action) in action_ids.iter().zip(actions.iter()) {
+            let digest = action.digest(constraints)?;
+            let authorization = store.consume_authorization(*id, &digest)?;
+            if authorization.constraints != *constraints {
+                return Err(ExecutionError::ConstraintMismatch);
+            }
+        }
+        // Execute every action concurrently.  Only RepositoryRead is allowed;
+        // anything else is rejected before any execution starts.
+        let mut futures = Vec::with_capacity(actions.len());
+        for (i, action) in actions.iter().enumerate() {
+            let read = match action {
+                ProposedAction::RepositoryRead(read) => read.clone(),
+                other => {
+                    return Err(ExecutionError::UnsupportedConstraint(format!(
+                        "execute_batch only accepts RepositoryRead actions, got {other:?}"
+                    )));
+                }
+            };
+            futures.push(async move {
+                let result = execute_typed_read(&read, constraints).await;
+                (i, result)
+            });
+        }
+        let mut results = vec![
+            ExecutionResult {
+                exit_code: None,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                truncated: false,
+                affected_paths: Vec::new(),
+                sandbox_level: SandboxLevel::WorktreeWriteNoShell,
+                sandbox_backend: "cap-std".into(),
+            };
+            actions.len()
+        ];
+        let joined = futures::future::join_all(futures).await;
+        for (i, result) in joined {
+            results[i] = result?;
+        }
+        Ok(results)
+    }
 }
 
 async fn execute_typed_read(
@@ -850,6 +910,7 @@ mod tests {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -862,6 +923,7 @@ mod tests {
                         reason: "test requires explicit human approval".into(),
                         constraints: constraints.clone(),
                     },
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -925,6 +987,7 @@ mod tests {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -937,6 +1000,7 @@ mod tests {
                         reason: "test requires explicit human approval".into(),
                         constraints: constraints.clone(),
                     },
+                    turn_id: None,
                 },
             )
             .unwrap();

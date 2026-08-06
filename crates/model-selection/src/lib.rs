@@ -38,6 +38,7 @@ pub enum ModelRole {
     Summarizer,
     Embedding,
     FastRouter,
+    Scout,
 }
 
 impl ModelRole {
@@ -53,6 +54,7 @@ impl ModelRole {
             ModelRole::Summarizer => "summarizer",
             ModelRole::Embedding => "embedding",
             ModelRole::FastRouter => "fast_router",
+            ModelRole::Scout => "scout",
         }
     }
 }
@@ -398,6 +400,7 @@ pub fn select_models(
         ModelRole::Summarizer,
         ModelRole::FastRouter,
         ModelRole::Embedding,
+        ModelRole::Scout,
     ] {
         let chosen = deployments
             .iter()

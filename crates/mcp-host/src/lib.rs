@@ -1057,6 +1057,9 @@ impl Qualifier {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    // MCP skill qualification runs outside `run_until_pause`'s
+                    // main turn loop (PRD v1.1 §6.3).
+                    turn_id: None,
                 },
             )
             .and_then(|_| {
@@ -1065,6 +1068,7 @@ impl Qualifier {
                     &SessionEvent::JudgmentRecorded {
                         action_id,
                         decision: JudgmentDecision::AllowWithConstraints(constraints.clone()),
+                        turn_id: None,
                     },
                 )
             })
@@ -1516,6 +1520,7 @@ mod tests {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -1528,6 +1533,7 @@ mod tests {
                         reason: "test exact MCP authorization".into(),
                         constraints: constraints.clone(),
                     },
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -1571,6 +1577,7 @@ mod tests {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -1583,6 +1590,7 @@ mod tests {
                         reason: "test exact MCP authorization".into(),
                         constraints: constraints.clone(),
                     },
+                    turn_id: None,
                 },
             )
             .unwrap();

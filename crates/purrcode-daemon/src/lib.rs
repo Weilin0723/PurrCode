@@ -341,6 +341,7 @@ async fn preserve_live_partial(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: Some(model),
+                turn_id: None, // recorded outside run_until_pause
             },
         },
     )?;
@@ -438,6 +439,10 @@ pub async fn bind_and_report(
         .route("/v1/sessions/{id}/changes", get(session_changes))
         .route("/v1/sessions/{id}/github", get(session_github))
         .route("/v1/sessions/{id}/usage", get(session_usage))
+        .route(
+            "/v1/sessions/{id}/context-ledger/{turn_id}",
+            get(session_context_ledger),
+        )
         .route("/v1/sessions/{id}/spec", get(session_spec))
         .route("/v1/sessions/{id}/tasks", get(session_tasks))
         .route("/v1/sessions/{id}/evidence", get(session_evidence))
@@ -1188,6 +1193,10 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    // Supervisor-worker actions run in their own isolated
+                    // worktree/conversation, outside `run_until_pause`'s main
+                    // turn loop (PRD v1.1 §6.3).
+                    turn_id: None,
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -1198,6 +1207,7 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: decision.clone(),
+                    turn_id: None,
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -1904,6 +1914,7 @@ async fn start_session(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: None,
+                turn_id: None, // user-typed message, outside run_until_pause
             },
         },
     )?;
@@ -1919,6 +1930,7 @@ async fn start_session(
                     tool_calls: Vec::new(),
                     tool_results: Vec::new(),
                     model: None,
+                    turn_id: None, // direct reply, outside run_until_pause
                 },
             },
         )?;
@@ -2033,6 +2045,7 @@ async fn append_message(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: None,
+                turn_id: None, // user-typed follow-up, outside run_until_pause
             },
         },
     )?;
@@ -2054,6 +2067,7 @@ async fn append_message(
                     tool_calls: Vec::new(),
                     tool_results: Vec::new(),
                     model: None,
+                    turn_id: None, // direct reply, outside run_until_pause
                 },
             },
         )?;
@@ -2761,6 +2775,10 @@ async fn replace_action(
         &SessionEvent::ActionProposed {
             action_id: replacement_action_id,
             action: request.action,
+            // A human-edited replacement is submitted through this endpoint
+            // outside `run_until_pause`'s loop, so there is no current
+            // TurnId to stamp it with (PRD v1.1 §6.3).
+            turn_id: None,
         },
     )?;
     store.append(
@@ -2768,6 +2786,7 @@ async fn replace_action(
         &SessionEvent::JudgmentRecorded {
             action_id: replacement_action_id,
             decision,
+            turn_id: None,
         },
     )?;
     Ok(Json(AcceptedSession {
@@ -2900,6 +2919,9 @@ async fn invoke_mcp(
             &SessionEvent::ActionProposed {
                 action_id,
                 action: action.clone(),
+                // Direct MCP invocations submitted through this endpoint run
+                // outside `run_until_pause`'s main turn loop (PRD v1.1 §6.3).
+                turn_id: None,
             },
         )?;
         store.append(
@@ -2907,6 +2929,7 @@ async fn invoke_mcp(
             &SessionEvent::JudgmentRecorded {
                 action_id,
                 decision: decision.clone(),
+                turn_id: None,
             },
         )?;
         return match decision {
@@ -4377,6 +4400,21 @@ async fn ui_status(
 // what a person reads.
 
 /// Derive the user-facing activity list from durable events.
+/// Extract the `TurnId` that [`SessionEvent`] variants carry — the identity
+/// `run_until_pause` stamps on every `ActionProposed`/`ActionOutputRecorded`/
+/// `JudgmentRecorded` it emits (PRD v1.1 §6.3). Events created outside the
+/// main loop (user messages, supervisor workers, MCP invocations) carry
+/// `turn_id: None` and project the same here.
+fn event_turn_id(event: &purrcode_runtime_core::SessionEvent) -> Option<purrcode_runtime_core::TurnId> {
+    use purrcode_runtime_core::SessionEvent as Event;
+    match event {
+        Event::ActionProposed { turn_id, .. }
+        | Event::ActionOutputRecorded { turn_id, .. }
+        | Event::JudgmentRecorded { turn_id, .. } => *turn_id,
+        _ => None,
+    }
+}
+
 fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<ActivityItem> {
     use purrcode_runtime_core::SessionEvent as Event;
     let mut items: Vec<ActivityItem> = Vec::new();
@@ -4408,6 +4446,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
 
     for (index, event) in events.iter().enumerate().skip(turn_start) {
         let id = index.to_string();
+        let turn = event_turn_id(event).map(|t| t.0.to_string());
         match event {
             Event::WorktreeCreated { .. } => items.push(ActivityItem {
                 id,
@@ -4416,6 +4455,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Done,
                 summary: None,
                 detail_available: false,
+                turn_id: turn.clone(),
             }),
             Event::ContextIndexed { files, symbols, .. } => items.push(ActivityItem {
                 id,
@@ -4424,6 +4464,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Done,
                 summary: None,
                 detail_available: false,
+                turn_id: turn.clone(),
             }),
             Event::CheckpointCreated { label, .. } => items.push(ActivityItem {
                 id,
@@ -4432,6 +4473,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Done,
                 summary: None,
                 detail_available: true,
+                turn_id: turn.clone(),
             }),
             Event::ModelRequestStarted { model, .. } => {
                 thinking = Some(items.len());
@@ -4442,6 +4484,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Running,
                     summary: None,
                     detail_available: false,
+                    turn_id: turn.clone(),
                 });
             }
             // Pair the request with its completion rather than adding a second
@@ -4463,6 +4506,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Blocked,
                 summary: Some(reason.chars().take(160).collect()),
                 detail_available: true,
+                turn_id: turn.clone(),
             }),
             Event::RecoveryRequired { reason } => items.push(ActivityItem {
                 id,
@@ -4471,6 +4515,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Blocked,
                 summary: Some(reason.chars().take(160).collect()),
                 detail_available: true,
+                turn_id: turn.clone(),
             }),
             Event::PlanCreated { steps } | Event::PlanRevised { steps, .. } => {
                 items.push(ActivityItem {
@@ -4480,6 +4525,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Done,
                     summary: steps.first().cloned(),
                     detail_available: !steps.is_empty(),
+                    turn_id: turn.clone(),
                 })
             }
             Event::ActionProposed { action, .. } => {
@@ -4495,6 +4541,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                         status: ActivityStatus::Done,
                         summary: None,
                         detail_available: true,
+                        turn_id: turn.clone(),
                     }),
                 }
             }
@@ -4506,6 +4553,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Blocked,
                     summary: None,
                     detail_available: true,
+                    turn_id: turn.clone(),
                 }),
             Event::ValidationRecorded {
                 action_id,
@@ -4529,6 +4577,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     format!("{}: {detail}", validation_stage_name(evidence, action_id))
                 }),
                 detail_available: !evidence.is_empty(),
+                turn_id: turn.clone(),
             }),
             // Completion is a turn boundary, not an activity step. Repeating
             // it after every answer produced a misleading "Finished ×3" in
@@ -4544,6 +4593,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Failed,
                     summary: Some(reason.chars().take(160).collect()),
                     detail_available: true,
+                    turn_id: turn.clone(),
                 })
             }
             Event::SessionFailed { .. } => {}
@@ -4616,6 +4666,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
             status: ActivityStatus::Done,
             summary: None,
             detail_available: true,
+            turn_id: None, // aggregated count, not a single event
         });
     }
     if edited > 0 {
@@ -4626,6 +4677,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
             status: ActivityStatus::Done,
             summary: None,
             detail_available: true,
+            turn_id: None, // aggregated count, not a single event
         });
     }
     derived.extend(items);
@@ -4993,6 +5045,34 @@ async fn session_usage(
     let ledger =
         purrcode_runtime_core::adaptation::UsageLedger::from_records(session.usage_records);
     Ok(Json(ledger.summary(0)))
+}
+
+fn parse_turn_id(value: &str) -> Result<purrcode_runtime_core::TurnId, ApiError> {
+    Uuid::parse_str(value)
+        .map(purrcode_runtime_core::TurnId)
+        .map_err(|_| ApiError::BadRequest("turn ID is not a UUID".into()))
+}
+
+/// Presentation endpoint for Phase 1's context ledger (PRD v1.1 §6.3): returns
+/// the durable, section-by-section token/byte accounting `build_messages()`
+/// recorded for one turn, read from the bounded in-memory
+/// `SessionState.recent_context_ledger` projection.
+async fn session_context_ledger(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((id, turn_id)): AxumPath<(String, String)>,
+) -> Result<Json<purrcode_runtime_core::ContextLedgerEntry>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let turn_id = parse_turn_id(&turn_id)?;
+    let session = state.store.lock().await.load(id)?;
+    session
+        .recent_context_ledger
+        .iter()
+        .find(|entry| entry.turn_id == turn_id)
+        .cloned()
+        .map(Json)
+        .ok_or(ApiError::NotFound)
 }
 
 async fn session_spec(
@@ -7478,7 +7558,13 @@ async fn propose_local_model_pull(
     let mut store = state.store.lock().await;
     store.append(
         session_id,
-        &SessionEvent::ActionProposed { action_id, action },
+        &SessionEvent::ActionProposed {
+            action_id,
+            action,
+            // A direct model-pull request submitted through this endpoint
+            // runs outside `run_until_pause`'s main turn loop (PRD v1.1 §6.3).
+            turn_id: None,
+        },
     )?;
     store.append(
         session_id,
@@ -7491,6 +7577,7 @@ async fn propose_local_model_pull(
                 ),
                 constraints,
             },
+            turn_id: None,
         },
     )?;
     Ok(Json(serde_json::json!({
@@ -7929,7 +8016,14 @@ fn append_exact_approval_proposal(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     store.append(
         session_id,
-        &SessionEvent::ActionProposed { action_id, action },
+        &SessionEvent::ActionProposed {
+            action_id,
+            action,
+            // This helper backs several daemon-triggered proposals (e.g.
+            // GitHub merge review) that run outside `run_until_pause`'s main
+            // turn loop (PRD v1.1 §6.3).
+            turn_id: None,
+        },
     )?;
     store.append(
         session_id,
@@ -7939,6 +8033,7 @@ fn append_exact_approval_proposal(
                 reason: reason.into(),
                 constraints,
             },
+            turn_id: None,
         },
     )?;
     Ok((action_id, action_digest))
@@ -9827,6 +9922,7 @@ mod tests {
             action: ProposedAction::RepositoryRead(
                 purrcode_runtime_core::RepositoryReadAction::GitStatus,
             ),
+        turn_id: None,
         };
         let events = vec![read(), read(), read()];
         let activity = activity_from_events(&events);
@@ -10008,6 +10104,7 @@ mod tests {
                     content: "pub fn parse() {}\n".into(),
                     expected_digest: None,
                 }),
+            turn_id: None,
             },
             SessionEvent::SessionPaused {
                 reason: "validation could not run".into(),
@@ -10202,6 +10299,7 @@ mod tests {
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
             model: None,
+            turn_id: None,
         };
         let activity = activity_from_events(&[
             SessionEvent::ConversationMessageAdded {
@@ -10253,6 +10351,7 @@ mod tests {
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
             model: None,
+            turn_id: None,
         };
         let activity = activity_from_events(&[
             SessionEvent::ConversationMessageAdded {

@@ -10,9 +10,10 @@
 //! *interpret* the label the daemon already chose.
 
 use chrono::{DateTime, Utc};
-use purrcode_runtime_core::{ProductState, ProductStateView};
+use purrcode_runtime_core::{ProductState, ProductStateView, SpanId, TurnId};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 use crate::daemon::{PanelAvailability, PanelKind, PanelResult};
 
@@ -32,11 +33,20 @@ pub struct SessionRow {
 }
 
 /// One conversation turn.
-#[derive(Clone, Debug)]
+///
+/// `turn_id` correlates this message with the `run_until_pause` iteration
+/// that produced it (PRD v1.1 §6.3), replacing the position-based "last user
+/// message" guess `work_log_anchor` used to make. `span_id`/`parent_span_id`
+/// are reserved for the nested-work-unit identity later phases add (e.g. a
+/// Scout exploration step); Phase 1 does not populate them.
+#[derive(Clone, Debug, Default)]
 pub struct Message {
     pub role: String,
     pub content: String,
     pub timestamp: String,
+    pub turn_id: TurnId,
+    pub span_id: Option<SpanId>,
+    pub parent_span_id: Option<SpanId>,
 }
 
 impl Message {
@@ -46,11 +56,18 @@ impl Message {
 }
 
 /// One line of semantic progress.
-#[derive(Clone, Debug)]
+///
+/// Carries the same `turn_id`/`span_id`/`parent_span_id` triple as [`Message`]
+/// so the Work Log can be anchored to the request that produced it by exact
+/// identity rather than by scanning for the most recent user message.
+#[derive(Clone, Debug, Default)]
 pub struct ActivityLine {
     pub label: String,
     pub status: String,
     pub summary: Option<String>,
+    pub turn_id: TurnId,
+    pub span_id: Option<SpanId>,
+    pub parent_span_id: Option<SpanId>,
 }
 
 impl ActivityLine {
@@ -628,6 +645,36 @@ fn number(value: &Value, key: &str) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
 
+/// Parse a `TurnId` the daemon stamped onto this record.
+///
+/// The daemon does not yet serialize `turn_id` on conversation messages or
+/// activity items (PR1 threaded `TurnId` through `SessionEvent`, but the
+/// `/conversation` and `/activity` read models have not been updated to
+/// project it onto the wire yet). Until that lands, this degrades to a fresh,
+/// per-record id — which correctly fails to correlate with anything, rather
+/// than falsely claiming a turn it was never told. `work_log_anchor` treats
+/// that as "no anchor" and renders the work log at the end of the transcript,
+/// the same honest fallback used for a transcript with no request in it.
+fn turn_id(value: &Value, key: &str) -> TurnId {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .map(TurnId)
+        .unwrap_or_default()
+}
+
+/// Parse an optional `SpanId` the daemon stamped onto this record. Absent
+/// today for the same reason `turn_id` is (see [`turn_id`]); `None` here is
+/// simply "not available", not a guess.
+fn span_id(value: &Value, key: &str) -> Option<SpanId> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .map(SpanId)
+}
+
 /// Map whatever status word the daemon uses onto a canonical state.
 ///
 /// The daemon owns the vocabulary; this only recognises it. An unknown word
@@ -762,6 +809,9 @@ fn parse_activity(raw: &[Value]) -> Vec<ActivityLine> {
             label: text(value, "label").unwrap_or_else(|| "Working".to_owned()),
             status: text(value, "status").unwrap_or_else(|| "pending".to_owned()),
             summary: text(value, "summary").or_else(|| text(value, "detail")),
+            turn_id: turn_id(value, "turn_id"),
+            span_id: span_id(value, "span_id"),
+            parent_span_id: span_id(value, "parent_span_id"),
         })
         .collect()
 }
@@ -957,6 +1007,9 @@ fn parse_controls(raw: &Value) -> Controls {
                     label: text(lane, "objective").unwrap_or_else(|| "Lane".to_owned()),
                     status: text(lane, "status").unwrap_or_else(|| "pending".to_owned()),
                     summary: text(lane, "kind"),
+                    turn_id: turn_id(lane, "turn_id"),
+                    span_id: span_id(lane, "span_id"),
+                    parent_span_id: span_id(lane, "parent_span_id"),
                 })
                 .collect()
         })
@@ -1112,6 +1165,9 @@ pub fn parse_session(id: &str, snapshot: &crate::daemon::SessionSnapshot) -> Ses
                     role: text(value, "role")?,
                     content: text(value, "content").unwrap_or_default(),
                     timestamp: text(value, "timestamp").unwrap_or_default(),
+                    turn_id: turn_id(value, "turn_id"),
+                    span_id: span_id(value, "span_id"),
+                    parent_span_id: span_id(value, "parent_span_id"),
                 })
             })
             .collect(),
@@ -1360,6 +1416,7 @@ mod tests {
                 label: (*label).to_owned(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             })
             .collect();
         let folded = condense(&raw);
@@ -1370,6 +1427,7 @@ mod tests {
                 label: "Validation failed".into(),
                 status: "failed".into(),
                 summary: None,
+                ..Default::default()
             })
             .collect();
         let folded = condense(&same);
@@ -1384,11 +1442,13 @@ mod tests {
                 label: "Testing".into(),
                 status: "failed".into(),
                 summary: Some("first".into()),
+                ..Default::default()
             },
             ActivityLine {
                 label: "Testing".into(),
                 status: "failed".into(),
                 summary: Some("latest".into()),
+                ..Default::default()
             },
         ];
         let folded = condense(&lines);
@@ -1402,21 +1462,25 @@ mod tests {
                 label: "Indexed 0 file(s), 0 symbol(s)".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
             ActivityLine {
                 label: "Read repository manifest".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
             ActivityLine {
                 label: "Indexed 0 file(s), 0 symbol(s)".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
             ActivityLine {
                 label: "Indexed 12 file(s), 34 symbol(s)".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
         ];
         let folded = condense(&lines);

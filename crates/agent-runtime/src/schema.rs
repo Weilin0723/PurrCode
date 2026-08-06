@@ -25,6 +25,8 @@ pub struct AgentTurn {
     pub expected_postconditions: Vec<String>,
     pub rationale: String,
     pub action: Option<AgentAction>,
+    #[serde(default)]
+    pub actions: Vec<AgentAction>,
     pub complete: bool,
 }
 
@@ -96,6 +98,11 @@ pub enum AgentAction {
         path: PathBuf,
         expected_digest: String,
     },
+}
+
+/// Returns true when an action is read-only (does not mutate the repository).
+pub fn is_read_only(action: &AgentAction) -> bool {
+    matches!(action, AgentAction::Read(_) | AgentAction::ReadCommand(_))
 }
 
 #[derive(Deserialize)]
@@ -197,7 +204,26 @@ pub(crate) fn validate_turn(turn: &AgentTurn) -> Result<(), AgentError> {
             "model-visible text contains unsafe terminal control characters".into(),
         ));
     }
-    if turn.complete == turn.action.is_some() {
+    if !turn.actions.is_empty() {
+        // Multi-action path: every action must be read-only.
+        if turn.actions.iter().any(|a| !is_read_only(a)) {
+            return Err(AgentError::InvalidModelTurn(
+                "when actions[] is present, every action must be read-only".into(),
+            ));
+        }
+        if turn.complete {
+            return Err(AgentError::InvalidModelTurn(
+                "complete=true cannot accompany a non-empty actions[] array".into(),
+            ));
+        }
+        if turn.action.is_some() {
+            return Err(AgentError::InvalidModelTurn(
+                "actions[] and action are mutually exclusive".into(),
+            ));
+        }
+    } else if turn.complete == turn.action.is_some() {
+        // Single-action backward-compat path: exactly one of complete=true or
+        // action must be supplied.
         return Err(AgentError::InvalidModelTurn(
             "exactly one of complete=true or action must be supplied".into(),
         ));
@@ -869,6 +895,7 @@ mod advice_only_tests {
                     max_bytes: 4096,
                 },
             ),
+            turn_id: None,
         }];
         let rationale = "The daemon owns session state while the IDE renders the conversation.";
         // The blocklist alone accepts this (no progress marker fires).
@@ -892,6 +919,7 @@ mod advice_only_tests {
                     max_bytes: 4096,
                 },
             ),
+            turn_id: None,
         }];
         let rationale = "src/main.rs is the CLI entry point: it parses the subcommands and \
             dispatches each to the daemon routes.";

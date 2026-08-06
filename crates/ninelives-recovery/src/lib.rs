@@ -557,6 +557,7 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::TaskStatusChanged { .. } => "task_status_changed",
         SessionEvent::EvidenceLinked { .. } => "evidence_linked",
         SessionEvent::ContextCompacted { .. } => "context_compacted",
+        SessionEvent::ContextAssembled { .. } => "context_assembled",
         SessionEvent::SessionPaused { .. } => "session_paused",
         SessionEvent::SessionResumed => "session_resumed",
         SessionEvent::ModelSelected { .. } => "model_selected",
@@ -993,5 +994,90 @@ mod tests {
             store.load(session).unwrap().status,
             purrcode_runtime_core::SessionStatus::Active
         );
+    }
+
+    /// PRD v1.1 §14.1: replaying a session's durable event log must
+    /// reconstruct the exact same `ContextLedgerEntry` values that were
+    /// appended — the same durability/replay parity every other
+    /// `SessionEvent` variant already gets from `append`/`load`/`events`
+    /// (PRD §6.4, §11.3: `ContextAssembled` is "one more `SessionEvent`
+    /// variant flowing through the exact same path").
+    #[test]
+    fn replay_reconstructs_identical_context_ledger_entries() {
+        use purrcode_runtime_core::{
+            ContextClass, ContextLedgerEntry, ContextLedgerSection, TurnId, WhyIncluded,
+        };
+
+        let temporary = tempfile::tempdir().unwrap();
+        let database = temporary.path().join("sessions.db");
+        let session_id = SessionId::new();
+        let turn_id = TurnId::new();
+        let entry = ContextLedgerEntry {
+            turn_id,
+            session_id,
+            sections: vec![
+                ContextLedgerSection {
+                    class: ContextClass::Instructions,
+                    label: "developer_instructions".into(),
+                    estimated_tokens: 120,
+                    byte_len: 480,
+                    why_included: WhyIncluded::AlwaysPresent,
+                },
+                ContextLedgerSection {
+                    class: ContextClass::RetrievedContext,
+                    label: "retrieved_context".into(),
+                    estimated_tokens: 42,
+                    byte_len: 168,
+                    why_included: WhyIncluded::MatchedQuery {
+                        term: "replay integrity".into(),
+                    },
+                },
+            ],
+            total_estimated_tokens: 162,
+            recorded_at: Utc::now(),
+        };
+
+        {
+            let mut store = SessionStore::open(&database).unwrap();
+            store
+                .append(
+                    session_id,
+                    &SessionEvent::SessionCreated {
+                        objective: "preserve context ledger replay".into(),
+                        repository: PathBuf::from("/repo"),
+                        authority_mode: Default::default(),
+                    },
+                )
+                .unwrap();
+            store
+                .append(
+                    session_id,
+                    &SessionEvent::ContextAssembled {
+                        entry: entry.clone(),
+                    },
+                )
+                .unwrap();
+            // Loading before reopening the store must already reflect the
+            // entry — replay parity is not only about surviving a restart.
+            let state = store.load(session_id).unwrap();
+            assert_eq!(state.recent_context_ledger.back(), Some(&entry));
+        }
+
+        // Reopen the store fresh so `load`/`events` reconstruct the session
+        // purely by replaying the persisted event log from scratch.
+        let reopened = SessionStore::open(&database).unwrap();
+        let replayed_state = reopened.load(session_id).unwrap();
+        assert_eq!(replayed_state.recent_context_ledger.len(), 1);
+        assert_eq!(replayed_state.recent_context_ledger.back(), Some(&entry));
+
+        let replayed_events = reopened.events(session_id).unwrap();
+        let replayed_entry = replayed_events
+            .iter()
+            .find_map(|event| match event {
+                SessionEvent::ContextAssembled { entry } => Some(entry.clone()),
+                _ => None,
+            })
+            .expect("a ContextAssembled event survives replay");
+        assert_eq!(replayed_entry, entry);
     }
 }

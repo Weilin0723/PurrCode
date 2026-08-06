@@ -353,6 +353,10 @@ impl ValidationRunner {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    // Validation-repair actions run outside `run_until_pause`'s
+                    // main turn loop, so there is no TurnId to stamp them with
+                    // (PRD v1.1 §6.3).
+                    turn_id: None,
                 },
             )?;
             store.append(
@@ -360,6 +364,7 @@ impl ValidationRunner {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: JudgmentDecision::AllowWithConstraints(constraints.clone()),
+                    turn_id: None,
                 },
             )?;
             store.authorize(&Authorization {

@@ -40,9 +40,10 @@ use purrcode_runtime_core::work::{
     WorkPriority, WorkRisk, WorkTask, WorkTaskId, WorkTaskStatus,
 };
 use purrcode_runtime_core::{
-    ActionId, ApprovalAuthority, Authorization, ContextualDecision, ContextualJudgment,
-    ConversationMessage, JudgmentDecision, ProposedAction, SessionEvent, SessionId, SessionStatus,
-    ValidationStatus,
+    ActionConstraints, ActionId, ApprovalAuthority, Authorization, CheckpointDecision,
+    CheckpointId, ContextualDecision, ContextualJudgment, ConversationMessage, FailedAttempt,
+    JudgmentDecision, PinnedContextRef, ProposedAction, RepositoryReadAction, SemanticCheckpoint,
+    SessionEvent, SessionId, SessionStatus, TurnId, ValidationStatus,
 };
 use purrcode_validation_runtime::{
     EvidenceStatus, ValidationDetector, ValidationPlan, ValidationRunner, ValidationStage,
@@ -50,13 +51,15 @@ use purrcode_validation_runtime::{
 use purrcode_whisker::RetrievalBudget;
 use schemars::schema_for;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Instant;
 use tokio::sync::Notify;
+use uuid::Uuid;
 
 use crate::context::{
     AgentContextIndex, AgentContextPolicy, ContextualRequestInput, PlanRevision,
@@ -78,10 +81,49 @@ const MAX_AUTONOMOUS_ITERATIONS: usize = 32;
 const MAX_CONSECUTIVE_POLICY_REJECTIONS: usize = 3;
 const MAX_ACTIONS_IN_PROMPT: usize = 12;
 const RETAINED_ACTIONS_AFTER_COMPACTION: usize = 6;
+/// When the prompt's estimated tokens exceed this fraction of the input budget,
+/// compaction fires even if the action count is below `MAX_ACTIONS_IN_PROMPT`
+/// (PRD v1.1 §7.3).
+const COMPACTION_INPUT_TOKEN_THRESHOLD_RATIO: f64 = 0.7;
 const MAX_REJECTED_RESPONSE_PREVIEW_CHARS: usize = 4_096;
 const MAX_VALIDATION_REPAIR_CYCLES: usize = 3;
 const MAX_COMPLETION_REPAIR_ATTEMPTS: usize = 2;
 const MAX_ACTION_REPAIR_ATTEMPTS: usize = 1;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct ScoutId(pub Uuid);
+
+#[derive(Clone, Debug)]
+pub struct ScoutRequest {
+    pub scout_id: ScoutId,
+    pub parent_turn_id: TurnId,
+    pub objective: String,
+    pub max_actions: u32,
+    pub max_tokens: u64,
+    pub allowed_action_kinds: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScoutFinding {
+    pub scout_id: ScoutId,
+    pub evidence: Vec<EvidenceRef>,
+    pub conclusions: Vec<String>,
+    pub confidence: ScoutConfidence,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EvidenceRef {
+    pub path: PathBuf,
+    pub line_range: (u32, u32),
+    pub excerpt: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ScoutConfidence {
+    High,
+    Medium,
+    Low,
+}
 
 fn safe_rejected_response_preview(output: &str, attempt: u8) -> String {
     let preview = output
@@ -951,7 +993,14 @@ impl<'a> NativeAgent<'a> {
             },
         )?;
         let plan = self
-            .run_planner(store, session_id, &objective, &worktree.path, None)
+            .run_planner(
+                store,
+                session_id,
+                TurnId::new(),
+                &objective,
+                &worktree.path,
+                None,
+            )
             .await?;
         store.append(
             session_id,
@@ -1016,6 +1065,7 @@ impl<'a> NativeAgent<'a> {
             .run_planner(
                 store,
                 session_id,
+                TurnId::new(),
                 &objective,
                 &worktree,
                 Some(PlanRevision {
@@ -1054,6 +1104,13 @@ impl<'a> NativeAgent<'a> {
         &self,
         store: &mut SessionStore,
         session_id: SessionId,
+        // Threaded per PRD v1.1 §6.3 for correlation with the caller's turn.
+        // `run_planner` does not itself emit any ProposedAction/
+        // ActionOutputRecorded/JudgmentRecorded event to stamp — it issues
+        // exactly one retrieve() call and one structured model request — so
+        // this is currently unread; it is reserved for `run_scout`'s
+        // `parent_turn_id` (Phase 5) and any future planner-side ledger entry.
+        _turn_id: TurnId,
         objective: &str,
         worktree: &Path,
         revision: Option<PlanRevision<'_>>,
@@ -1141,6 +1198,167 @@ impl<'a> NativeAgent<'a> {
             },
         )?;
         Ok(plan)
+    }
+
+    /// Run a read-only scout subagent that explores the repository and returns
+    /// structured findings (PRD v1.1 Phase 5).
+    ///
+    /// The scout opens its own context index, retrieves relevant files, and
+    /// executes bounded typed-read actions through PawGate + Claw — it does
+    /// NOT bypass authorization.
+    pub async fn run_scout(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        request: ScoutRequest,
+    ) -> Result<ScoutFinding, AgentError> {
+        let state = store.load(session_id)?;
+        let worktree = state
+            .worktree
+            .clone()
+            .ok_or_else(|| AgentError::CorruptSession("worktree is missing".into()))?;
+        let role = if self.models.contains_key("scout") {
+            "scout"
+        } else {
+            "fast_router"
+        };
+        let database = worktree.join(".purrcode").join("context.db");
+        let mut context_index = AgentContextIndex::open(&worktree, &database)?;
+        let _indexed =
+            context_index.submit_task(&request.objective, &[], &AgentContextPolicy::default())?;
+        let context_hits = context_index.retrieve(&request.objective, &RetrievalBudget::default())?;
+        let messages = crate::context::build_scout_messages(
+            &request.objective,
+            &worktree,
+            &context_hits,
+        );
+        let mut token_used: u64 = 0;
+        let mut action_count: u32 = 0;
+        let mut evidence: Vec<EvidenceRef> = Vec::new();
+        let mut conclusions: Vec<String> = Vec::new();
+
+        let model = self.model_for(role).1.clone();
+
+        loop {
+            if action_count >= request.max_actions || token_used >= request.max_tokens {
+                conclusions.push(format!(
+                    "scout halted at limit: {} actions, {} tokens used",
+                    action_count, token_used
+                ));
+                break;
+            }
+
+            let scout_request = ModelRequest {
+                model: model.clone(),
+                messages: messages.clone(),
+                tools: Vec::new(),
+                max_output_tokens: Some(4096),
+                reasoning_effort: None,
+            };
+
+            let (turn, usage) = self
+                .structured_observed(
+                    store,
+                    session_id,
+                    role,
+                    1,
+                    scout_request,
+                    schema_for!(crate::schema::AgentTurn),
+                    crate::schema::validate_turn,
+                )
+                .await?;
+
+            let (input_tokens, output_tokens) = usage.unwrap_or((0, 0));
+            token_used = token_used.saturating_add(input_tokens.saturating_add(output_tokens));
+
+            if turn.complete {
+                conclusions.push(turn.rationale.clone());
+                break;
+            }
+
+            let action = turn
+                .action
+                .clone()
+                .ok_or_else(|| AgentError::InvalidModelTurn("scout action is required".into()))?;
+            let proposed =
+                crate::normalize::normalize_action(action, &worktree)?;
+            // Verify the action is read-only per scout's allowed kinds.
+            if !matches!(&proposed, ProposedAction::RepositoryRead(_)) {
+                return Err(AgentError::InvalidModelTurn(
+                    "scout may only issue typed read actions".into(),
+                ));
+            }
+
+            // Route through PawGate before execution.
+            let deterministic = self.policy.evaluate(&proposed, &worktree);
+            let constraints = crate::normalize::decision_constraints(&deterministic)
+                .ok_or_else(|| AgentError::InvalidModelTurn(
+                    "scout action was denied by PawGate".into(),
+                ))?;
+
+            let session_worktree = crate::context::session_worktree(&state)?;
+            let action_id = ActionId::new();
+            store.append(
+                session_id,
+                &SessionEvent::ActionProposed {
+                    action_id,
+                    action: proposed.clone(),
+                    turn_id: Some(request.parent_turn_id),
+                },
+            )?;
+
+            let authorization = Authorization {
+                action_id,
+                session_id,
+                action_digest: proposed.digest(&constraints)?,
+                constraints: constraints.clone(),
+                authorized_at: Utc::now(),
+                approved_by: ApprovalAuthority::DeterministicPolicy,
+            };
+            store.authorize(&authorization)?;
+
+            let execution = execute_and_record(
+                store,
+                session_id,
+                action_id,
+                &proposed,
+                &constraints,
+                &session_worktree,
+                Some(request.parent_turn_id),
+            )
+            .await?;
+
+            // Collect evidence from the read output.
+            let stdout = String::from_utf8_lossy(&execution.stdout).to_string();
+            if let ProposedAction::RepositoryRead(ref read) = proposed {
+                // Map each path the read touched to an evidence ref.
+                let paths = read_paths(read);
+                for path in paths {
+                    evidence.push(EvidenceRef {
+                        path,
+                        line_range: (1, 0),
+                        excerpt: stdout.chars().take(2048).collect(),
+                    });
+                }
+            }
+
+            action_count += 1;
+        }
+
+        let confidence = if evidence.is_empty() {
+            ScoutConfidence::Low
+        } else if conclusions.iter().any(|c| c.len() > 100) {
+            ScoutConfidence::High
+        } else {
+            ScoutConfidence::Medium
+        };
+
+        Ok(ScoutFinding {
+            scout_id: request.scout_id,
+            evidence,
+            conclusions,
+            confidence,
+        })
     }
 
     pub async fn resume(
@@ -1336,6 +1554,10 @@ impl<'a> NativeAgent<'a> {
             &action,
             &constraints,
             &worktree,
+            // Approval happens outside `run_until_pause`'s loop (a human may
+            // approve long after the action was proposed), so there is no
+            // "current" turn to stamp this execution with.
+            None,
         )
         .await;
         let result = match result {
@@ -1439,8 +1661,33 @@ impl<'a> NativeAgent<'a> {
         let mut iteration = 0_usize;
         for _ in 0..MAX_AUTONOMOUS_ITERATIONS {
             iteration += 1;
+            // Every ProposedAction/ActionOutputRecorded/JudgmentRecorded event
+            // durably logged in this iteration, and the ContextAssembled
+            // ledger entry `build_messages` produces for it, all share this
+            // turn_id (PRD v1.1 §6.3) — it is what lets the IDE Work Log and
+            // the context-ledger inspector correlate a turn's evidence
+            // exactly instead of via `work_log_anchor`'s positional guess.
+            let turn_id = TurnId::new();
             let state = store.load(session_id)?;
-            if state.proposed_actions.len() > MAX_ACTIONS_IN_PROMPT {
+            // Phase 2 dual trigger: fire compaction when either the action
+            // count exceeds the hard cap OR the estimated prompt tokens
+            // approach the input budget (PRD v1.1 §7.3). The token guard is
+            // active only when the context ledger has a recent entry and the
+            // budget specifies a numeric cap.
+            let token_pressure = state
+                .recent_context_ledger
+                .back()
+                .and_then(|entry| {
+                    self.controls
+                        .effective_budget()
+                        .maximum_input_tokens
+                        .map(|max_input| {
+                            entry.total_estimated_tokens as f64
+                                > max_input as f64 * COMPACTION_INPUT_TOKEN_THRESHOLD_RATIO
+                        })
+                })
+                .unwrap_or(false);
+            if state.proposed_actions.len() > MAX_ACTIONS_IN_PROMPT || token_pressure {
                 let retained_action_ids: Vec<_> = state
                     .proposed_actions
                     .keys()
@@ -1461,13 +1708,126 @@ impl<'a> NativeAgent<'a> {
                         )
                     })
                     .count();
+                // ── v1.0 backward-compat summary ──
                 store.append(
                     session_id,
                     &SessionEvent::ContextCompacted {
                         summary: format!(
                             "Compacted {compacted} older actions. Across the pre-compaction window, {successful} actions had allow-class deterministic/effective judgments. The durable event log remains authoritative."
                         ),
-                        retained_action_ids,
+                        retained_action_ids: retained_action_ids.clone(),
+                    },
+                )?;
+                // ── Phase 2 Semantic Checkpoint ──
+                // Build a structured checkpoint from the about-to-be-pruned
+                // state so failed_attempts survive every subsequent compaction
+                // (PRD v1.1 §7.3 / §7.5). The v1.0 ContextCompacted event
+                // above stays for audit compatibility; CheckpointCompacted is
+                // the richer, additive replacement that build_messages()
+                // prefers when `state.checkpoint` is Some.
+                let objective = state
+                    .objective
+                    .clone()
+                    .unwrap_or_else(|| String::new());
+                let files_inspected: Vec<PathBuf> = state
+                    .proposed_actions
+                    .iter()
+                    .filter_map(|(_id, action)| match action {
+                        ProposedAction::RepositoryRead(read) => match read {
+                            RepositoryReadAction::ReadFile { path, .. } => Some(path.clone()),
+                            RepositoryReadAction::GitShow { path, .. } => Some(path.clone()),
+                            RepositoryReadAction::GitDiff { paths }
+                            | RepositoryReadAction::List { paths, .. }
+                            | RepositoryReadAction::Find { paths, .. }
+                            | RepositoryReadAction::RepositoryGrep { paths, .. } => {
+                                paths.first().cloned()
+                            }
+                            RepositoryReadAction::GitLsFiles { pathspec } => {
+                                pathspec.first().cloned()
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                let files_modified: Vec<PathBuf> = state
+                    .proposed_actions
+                    .iter()
+                    .filter_map(|(_id, action)| match action {
+                        ProposedAction::WriteFile(write) => Some(write.path.clone()),
+                        ProposedAction::DeleteFile(delete) => Some(delete.path.clone()),
+                        _ => None,
+                    })
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                let failed_attempts: Vec<FailedAttempt> = state
+                    .proposed_actions
+                    .iter()
+                    .filter(|(id, _)| {
+                        !retained_action_ids.contains(id)
+                            && !matches!(
+                                state.judgments.get(id),
+                                Some(
+                                    JudgmentDecision::Allow
+                                        | JudgmentDecision::AllowWithConstraints(_)
+                                )
+                            )
+                    })
+                    .map(|(id, action)| FailedAttempt {
+                        action_id: *id,
+                        action_summary: format!("{action:?}"),
+                        reason: state
+                            .judgments
+                            .get(id)
+                            .map(|j| format!("{j:?}"))
+                            .unwrap_or_else(|| "judgment missing".into()),
+                        judgment: state.judgments.get(id).map(|j| format!("{j:?}")),
+                    })
+                    .collect();
+                let decisions: Vec<CheckpointDecision> = state
+                    .proposed_actions
+                    .iter()
+                    .filter(|(id, _)| retained_action_ids.contains(id))
+                    .map(|(id, action)| CheckpointDecision {
+                        summary: format!("{action:?}"),
+                        action_id: Some(*id),
+                    })
+                    .collect();
+                let retained: BTreeSet<ActionId> =
+                    retained_action_ids.iter().copied().collect();
+                let conversation_messages_retained_from = state
+                    .conversation_messages
+                    .len()
+                    .saturating_sub(RETAINED_ACTIONS_AFTER_COMPACTION)
+                    .min(state.conversation_messages.len());
+                let checkpoint = SemanticCheckpoint {
+                    checkpoint_id: CheckpointId::new(),
+                    turn_id,
+                    superseded_checkpoint_id: state.checkpoint.as_ref().map(|c| c.checkpoint_id),
+                    objective,
+                    accepted_requirements: vec![],
+                    user_constraints: vec![],
+                    decisions,
+                    files_inspected,
+                    files_modified,
+                    important_symbols: vec![],
+                    validated_facts: vec![],
+                    failed_attempts,
+                    test_results: vec![],
+                    unresolved_questions: vec![],
+                    current_hypothesis: None,
+                    next_actions: vec![],
+                    pinned_context: vec![],
+                };
+                store.append(
+                    session_id,
+                    &SessionEvent::CheckpointCompacted {
+                        checkpoint,
+                        retained_action_ids: retained,
+                        conversation_messages_retained_from,
                     },
                 )?;
                 continue;
@@ -1522,13 +1882,21 @@ impl<'a> NativeAgent<'a> {
                 },
             )?;
             let session_events = store.events(session_id)?;
-            let mut messages = build_messages(
+            let (mut messages, context_ledger_entry) = build_messages(
+                turn_id,
+                session_id,
                 &objective,
                 &worktree,
                 &state,
                 &context_hits,
                 &session_events,
             );
+            store.append(
+                session_id,
+                &SessionEvent::ContextAssembled {
+                    entry: context_ledger_entry,
+                },
+            )?;
             // Insert daemon contract BEFORE the final user message so the model
             // sees controls as authoritative context, not as an afterthought
             // that competes with the user's request.
@@ -1733,6 +2101,85 @@ impl<'a> NativeAgent<'a> {
             // bounded opportunity to express the same action with a safe,
             // repository-relative path instead of failing the whole session.
             let mut proposed_action = None;
+            if !turn.actions.is_empty() {
+                // ── Batch (multi-read) path ──────────────────────────────
+                // Normalize every action, then propose, judge, authorize, and
+                // execute them as a batch through execute_batch.
+                let mut normalized = Vec::with_capacity(turn.actions.len());
+                for a in &turn.actions {
+                    normalized.push(normalize_action(a.clone(), &worktree)?);
+                }
+                let mut action_ids = Vec::with_capacity(turn.actions.len());
+                for action in &normalized {
+                    let action_id = ActionId::new();
+                    action_ids.push(action_id);
+                    store.append(
+                        session_id,
+                        &SessionEvent::ActionProposed {
+                            action_id,
+                            action: action.clone(),
+                            turn_id: Some(turn_id),
+                        },
+                    )?;
+                    let deterministic = self.policy.evaluate(action, &worktree);
+                    store.append(
+                        session_id,
+                        &SessionEvent::JudgmentRecorded {
+                            action_id,
+                            decision: deterministic.clone(),
+                            turn_id: Some(turn_id),
+                        },
+                    )?;
+                    if !matches!(
+                        deterministic,
+                        JudgmentDecision::AllowWithConstraints(_)
+                    ) {
+                        return Ok(AgentOutcome::IterationLimit { session_id });
+                    }
+                }
+                // All actions share the same read-only constraints
+                let constraints = ActionConstraints::read_only(worktree.clone());
+                for (action_id, action) in action_ids.iter().zip(normalized.iter()) {
+                    let digest = action.digest(&constraints)?;
+                    store.authorize(&Authorization {
+                        action_id: *action_id,
+                        session_id,
+                        action_digest: digest,
+                        constraints: constraints.clone(),
+                        authorized_at: Utc::now(),
+                        approved_by: ApprovalAuthority::DeterministicPolicy,
+                    })?;
+                }
+                let results = ToolRuntime::execute_batch(
+                    store,
+                    &action_ids,
+                    &normalized,
+                    &constraints,
+                )
+                .await?;
+                for (action_id, result) in action_ids.iter().zip(results.iter()) {
+                    store.append(
+                        session_id,
+                        &SessionEvent::ActionOutputRecorded {
+                            action_id: *action_id,
+                            stdout: bounded_terminal_text(&result.stdout),
+                            stderr: bounded_terminal_text(&result.stderr),
+                            truncated: result.truncated,
+                            turn_id: Some(turn_id),
+                        },
+                    )?;
+                }
+                if self.controls.execution_style.pauses_between_stages() {
+                    store.append(
+                        session_id,
+                        &SessionEvent::SessionPaused {
+                            reason: "Collaborative execution paused after the batch read; review its results, then resume to continue".into(),
+                        },
+                    )?;
+                    return Ok(AgentOutcome::IterationLimit { session_id });
+                }
+                continue;
+            }
             if !turn.complete {
                 let mut action_repair_attempts = 0_usize;
                 loop {
@@ -1851,6 +2298,7 @@ impl<'a> NativeAgent<'a> {
                                 self.model_for("coding_worker").1.provider,
                                 self.model_for("coding_worker").1.model
                             )),
+                            turn_id: Some(turn_id),
                         },
                     },
                 )?;
@@ -2075,6 +2523,7 @@ impl<'a> NativeAgent<'a> {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: proposed.clone(),
+                    turn_id: Some(turn_id),
                 },
             )?;
             let deterministic = self.policy.evaluate(&proposed, &worktree);
@@ -2083,6 +2532,7 @@ impl<'a> NativeAgent<'a> {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: deterministic.clone(),
+                    turn_id: Some(turn_id),
                 },
             )?;
             if let Some(constraints) = decision_constraints(&deterministic) {
@@ -2094,6 +2544,7 @@ impl<'a> NativeAgent<'a> {
                         session_id,
                         &SessionEvent::JudgmentRecorded {
                             action_id,
+                            turn_id: Some(turn_id),
                             decision: JudgmentDecision::Replan {
                                 reason: format!(
                                     "exact action already succeeded as {}; reuse its recorded output and continue with the next distinct step",
@@ -2151,6 +2602,7 @@ impl<'a> NativeAgent<'a> {
                             &SessionEvent::JudgmentRecorded {
                                 action_id,
                                 decision: outcome.effective_decision.clone(),
+                                turn_id: Some(turn_id),
                             },
                         )?;
                         outcome.effective_decision
@@ -2180,6 +2632,7 @@ impl<'a> NativeAgent<'a> {
                             &SessionEvent::JudgmentRecorded {
                                 action_id,
                                 decision: effective.clone(),
+                                turn_id: Some(turn_id),
                             },
                         )?;
                         effective
@@ -2224,6 +2677,7 @@ impl<'a> NativeAgent<'a> {
                         &proposed,
                         &constraints,
                         &session_worktree,
+                        Some(turn_id),
                     )
                     .await;
                     match execution {
@@ -2331,6 +2785,34 @@ impl<'a> NativeAgent<'a> {
             },
         )?;
         Ok(AgentOutcome::IterationLimit { session_id })
+    }
+}
+
+/// Extract paths touched by a typed repository read action.
+fn read_paths(read: &purrcode_runtime_core::RepositoryReadAction) -> Vec<PathBuf> {
+    match read {
+        purrcode_runtime_core::RepositoryReadAction::ReadFile { path, .. } => {
+            vec![path.clone()]
+        }
+        purrcode_runtime_core::RepositoryReadAction::List { paths, .. }
+        | purrcode_runtime_core::RepositoryReadAction::Find { paths, .. }
+        | purrcode_runtime_core::RepositoryReadAction::RepositoryGrep { paths, .. }
+        | purrcode_runtime_core::RepositoryReadAction::GitDiff { paths }
+        | purrcode_runtime_core::RepositoryReadAction::GitLsFiles { pathspec: paths } => {
+            if paths.is_empty() {
+                vec![PathBuf::from(".")]
+            } else {
+                paths.clone()
+            }
+        }
+        purrcode_runtime_core::RepositoryReadAction::GitShow { path, .. } => {
+            vec![path.clone()]
+        }
+        purrcode_runtime_core::RepositoryReadAction::GitStatus
+        | purrcode_runtime_core::RepositoryReadAction::GitLog { .. }
+        | purrcode_runtime_core::RepositoryReadAction::GitRevParse { .. } => {
+            vec![PathBuf::from(".")]
+        }
     }
 }
 
@@ -2730,6 +3212,7 @@ async fn execute_and_record(
     action: &ProposedAction,
     constraints: &purrcode_runtime_core::ActionConstraints,
     worktree: &SessionWorktree,
+    turn_id: Option<TurnId>,
 ) -> Result<ExecutionResult, AgentError> {
     let before = RepositoryEngine::snapshot(worktree).await?;
     store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
@@ -2755,6 +3238,7 @@ async fn execute_and_record(
                     stdout: bounded_terminal_text(&result.stdout),
                     stderr: bounded_terminal_text(&result.stderr),
                     truncated: result.truncated,
+                    turn_id,
                 },
             )?;
             store.append(

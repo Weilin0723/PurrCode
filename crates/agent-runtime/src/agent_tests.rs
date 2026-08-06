@@ -1074,6 +1074,7 @@ async fn a_worktree_less_session_answers_the_follow_up_not_the_original_objectiv
                     tool_calls: Vec::new(),
                     tool_results: Vec::new(),
                     model: None,
+                    turn_id: None,
                 },
             },
         )
@@ -1529,6 +1530,7 @@ async fn a_plan_can_be_revised_until_the_reviewer_is_satisfied() {
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: None,
+                turn_id: None,
             },
         },
         SessionEvent::SessionResumed,

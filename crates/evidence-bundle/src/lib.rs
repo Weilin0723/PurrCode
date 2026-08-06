@@ -348,6 +348,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::TaskStatusChanged { .. } => "task_status_changed",
         SessionEvent::EvidenceLinked { .. } => "evidence_linked",
         SessionEvent::ContextCompacted { .. } => "context_compacted",
+        SessionEvent::CheckpointCompacted { .. } => "checkpoint_compacted",
+        SessionEvent::ContextAssembled { .. } => "context_assembled",
         SessionEvent::SessionPaused { .. } => "session_paused",
         SessionEvent::SessionResumed => "session_resumed",
         SessionEvent::ModelSelected { .. } => "model_selected",
@@ -468,6 +470,7 @@ mod tests {
                             "super-secret-value".into(),
                         )]),
                     }),
+                turn_id: None,
                 },
             )
             .unwrap();
@@ -478,6 +481,7 @@ mod tests {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: JudgmentDecision::Allow,
+                turn_id: None,
                 },
             )
             .unwrap();
@@ -678,6 +682,7 @@ mod tests {
                             "super-secret-value".into(),
                         )]),
                     }),
+                turn_id: None,
                 },
             )
             .unwrap();
@@ -687,6 +692,7 @@ mod tests {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: JudgmentDecision::Allow,
+                turn_id: None,
                 },
             )
             .unwrap();
