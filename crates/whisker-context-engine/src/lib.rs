@@ -1118,6 +1118,8 @@ impl ContextIndex {
         }
 
         // --- Phase 3: import-proximity boost ---
+        let mut cochange_boosted_paths: BTreeSet<String> = BTreeSet::new();
+        let mut test_relation_paths: BTreeSet<String> = BTreeSet::new();
         if !query_terms.is_empty() {
             let mut import_boosted_paths: BTreeSet<String> = BTreeSet::new();
             for term in &query_terms {
@@ -1139,12 +1141,99 @@ impl ContextIndex {
             for (_, hit) in candidates.iter_mut() {
                 if import_boosted_paths.contains(&hit.path.to_string_lossy().into_owned()) {
                     hit.score_millis += 1500;
+                    hit.reason = HitReason::ImportProximity {
+                        imported_by: hit.path.clone(),
+                    };
+                }
+            }
+
+            // P1-14: Cochange expansion — files that historically changed
+            // together with matched hits get a moderate score boost.
+            let mut cochange_boosted_paths: BTreeSet<String> = BTreeSet::new();
+            {
+                let candidate_paths: Vec<String> = candidates
+                    .values()
+                    .map(|h| h.path.to_string_lossy().into_owned())
+                    .collect();
+                for path_str in &candidate_paths {
+                    let mut co_stmt = self.connection.prepare(
+                        "SELECT DISTINCT
+                            CASE WHEN path_a = ?1 THEN path_b ELSE path_a END AS sibling
+                         FROM cochanges
+                         WHERE (path_a = ?1 OR path_b = ?1)
+                           AND occurrences >= 2
+                         LIMIT ?2",
+                    )?;
+                    let co_rows = co_stmt.query_map(
+                        params![path_str, (budget.maximum_hits / 2).max(2) as i64],
+                        |row| row.get::<_, String>(0),
+                    )?;
+                    for co_row in co_rows {
+                        if let Ok(sibling) = co_row {
+                            cochange_boosted_paths.insert(sibling);
+                        }
+                    }
+                }
+            }
+
+            // P1-14: Test-relation expansion — test files linked to matched
+            // source files (and vice versa) get a scoring boost.
+            let mut test_relation_paths: BTreeSet<String> = BTreeSet::new();
+            {
+                let candidate_paths: Vec<String> = candidates
+                    .values()
+                    .map(|h| h.path.to_string_lossy().into_owned())
+                    .collect();
+                for path_str in &candidate_paths {
+                    let mut tr_stmt = self.connection.prepare(
+                        "SELECT DISTINCT test_path, source_path
+                         FROM test_relations
+                         WHERE test_path = ?1 OR source_path = ?1
+                         LIMIT ?2",
+                    )?;
+                    let tr_rows = tr_stmt.query_map(
+                        params![path_str, (budget.maximum_hits / 2).max(2) as i64],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                            ))
+                        },
+                    )?;
+                    for tr_row in tr_rows {
+                        if let Ok((test_path, source_path)) = tr_row {
+                            let other = if test_path.as_str() == path_str.as_str() {
+                                source_path
+                            } else {
+                                test_path
+                            };
+                            test_relation_paths.insert(other);
+                        }
+                    }
                 }
             }
         }
 
         // --- Phase 4: sort, deduplicate overlapping spans, apply budget ---
         let mut scored: Vec<ContextHit> = candidates.into_values().collect();
+        // P1-14: Boost cochange and test-relation paths that already exist
+        // in the candidate pool (additive, doesn't introduce hits that weren't
+        // already retrieved by Phase 1/2).
+        for hit in scored.iter_mut() {
+            let path_str = hit.path.to_string_lossy().into_owned();
+            if cochange_boosted_paths.contains(&path_str) {
+                hit.score_millis += 1000;
+                hit.reason = HitReason::Cochange {
+                    changed_with: hit.path.clone(),
+                };
+            }
+            if test_relation_paths.contains(&path_str) {
+                hit.score_millis += 2000;
+                hit.reason = HitReason::TestRelation {
+                    tests: hit.path.clone(),
+                };
+            }
+        }
         scored.sort_by(|a, b| b.score_millis.cmp(&a.score_millis));
 
         let mut hits = Vec::new();
