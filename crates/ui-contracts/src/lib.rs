@@ -559,6 +559,12 @@ pub struct UsageSummaryView {
     /// before any model call has reported a latency.
     #[serde(default)]
     pub total_latency_ms: u64,
+    /// The coding-worker model's actual context window, when the configured
+    /// provider reports one. `None` when unresolved (provider capabilities
+    /// unreachable or unknown) — a client must not substitute a made-up
+    /// number here without saying so.
+    #[serde(default)]
+    pub context_capacity_tokens: Option<u64>,
 }
 
 #[cfg(test)]

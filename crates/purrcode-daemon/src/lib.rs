@@ -4921,6 +4921,7 @@ async fn session_summary(
     let validation = validation_from_events(&events);
     let activity = activity_from_events(&events);
     let lease_active = state.leases.lock().await.contains_key(&id);
+    let context_capacity_tokens = coding_model_context_capacity(&state, id).await;
     Ok(Json(purrcode_ui_contracts::SessionSummary {
         id: session.id.0.to_string(),
         objective: session.objective.clone().unwrap_or_default(),
@@ -4979,11 +4980,39 @@ async fn session_summary(
             .as_ref()
             .map(|plan| format!("{:?}", plan.search_policy).to_ascii_lowercase()),
         budget_profile: Some(format!("{:?}", session.controls.budget_profile).to_ascii_lowercase()),
-        usage: Some(usage_summary_view(&session)),
+        usage: Some(usage_summary_view(&session, context_capacity_tokens)),
     }))
 }
 
-fn usage_summary_view(session: &SessionState) -> purrcode_ui_contracts::UsageSummaryView {
+/// The coding-worker model's actual context window, straight from the
+/// configured provider's capabilities (an in-memory lookup, not a network
+/// call, for every built-in provider). Best-effort: any failure to resolve
+/// config, route, or capabilities degrades to `None` rather than failing the
+/// whole summary request — this is a presentation detail, not something a
+/// session's correctness depends on.
+async fn coding_model_context_capacity(state: &AppState, id: SessionId) -> Option<u64> {
+    let config = AppConfig::load(&state.app_config).ok()?;
+    let models = configured_session_models(state, id, &config).await.ok()?;
+    let model = models.get("coding_worker")?;
+    let router = ProviderRouter::from_config(
+        &config,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .ok()?;
+    let provider = router.provider(model).ok()?;
+    let capabilities = provider.capabilities(model).await.ok()?;
+    capabilities.context_window.map(|window| window as u64)
+}
+
+fn usage_summary_view(
+    session: &SessionState,
+    context_capacity_tokens: Option<u64>,
+) -> purrcode_ui_contracts::UsageSummaryView {
     let ledger =
         purrcode_runtime_core::adaptation::UsageLedger::from_records(session.usage_records.clone());
     let summary = ledger.summary(
@@ -5013,6 +5042,7 @@ fn usage_summary_view(session: &SessionState) -> purrcode_ui_contracts::UsageSum
         cache_read_tokens: summary.cache_read_tokens,
         cache_write_tokens: summary.cache_write_tokens,
         total_latency_ms: summary.total_latency_ms,
+        context_capacity_tokens,
     }
 }
 
@@ -5360,7 +5390,7 @@ async fn session_artifacts(
     artifacts.push(serde_json::json!({
         "kind": "usage",
         "title": "Usage",
-        "summary": format!("{} model calls · {} tokens · {} web searches", session.usage_records.len(), usage_summary_view(&session).total_tokens, usage_summary_view(&session).search_requests),
+        "summary": format!("{} model calls · {} tokens · {} web searches", session.usage_records.len(), usage_summary_view(&session, None).total_tokens, usage_summary_view(&session, None).search_requests),
     }));
     Ok(Json(artifacts))
 }
@@ -9789,8 +9819,35 @@ mod tests {
         assert!(reserve_mcp_call(&mut store, session_id, "test", "tool").is_err());
         let state = store.load(session_id).unwrap();
         assert_eq!(state.usage_records.len(), 2);
-        assert_eq!(usage_summary_view(&state).search_requests, 1);
-        assert_eq!(usage_summary_view(&state).mcp_calls, 1);
+        assert_eq!(usage_summary_view(&state, None).search_requests, 1);
+        assert_eq!(usage_summary_view(&state, None).mcp_calls, 1);
+    }
+
+    #[test]
+    fn usage_summary_view_carries_the_resolved_model_capacity_through_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&directory.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "check capacity plumbing".into(),
+                    repository: directory.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        let state = store.load(session_id).unwrap();
+
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).context_capacity_tokens,
+            Some(32_000)
+        );
+        assert_eq!(
+            usage_summary_view(&state, None).context_capacity_tokens,
+            None
+        );
     }
 
     #[test]

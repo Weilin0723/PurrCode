@@ -1777,6 +1777,46 @@ async fn zero_wall_time_budget_fails_before_provider_call() {
 }
 
 #[test]
+fn inject_runtime_messages_ledger_total_matches_ceil_of_final_message_chars() {
+    // Regression for a rounding drift: adding independent
+    // ceil(contract_chars/4) + ceil(warning_chars/4) to the ledger total can
+    // overcount vs. one ceiling over the concatenated whole. Two chars each
+    // (ceil(2/4) = 1 apiece) makes the old bug add 2 tokens for content that
+    // should only cost 1 once merged into the running total.
+    let session_id = SessionId::new();
+    let turn_id = TurnId::new();
+    let messages = vec![ModelMessage {
+        role: "user".into(),
+        content: "ab".into(),
+    }];
+    let ledger = purrcode_runtime_core::ContextLedgerEntry {
+        turn_id,
+        session_id,
+        sections: vec![],
+        total_estimated_tokens: 1,
+        estimator: purrcode_runtime_core::TokenEstimator::CharDiv4,
+        recorded_at: chrono::Utc::now(),
+    };
+    let contract = ModelMessage {
+        role: "system".into(),
+        content: "cd".into(),
+    };
+
+    let (final_messages, final_ledger) =
+        NativeAgent::inject_runtime_messages(messages, ledger, &contract, None);
+
+    let total_chars: u64 = final_messages
+        .iter()
+        .map(|message| message.content.chars().count() as u64)
+        .sum();
+    assert_eq!(
+        final_ledger.total_estimated_tokens,
+        total_chars.div_ceil(4),
+        "ledger total must equal one ceiling over the concatenated final messages"
+    );
+}
+
+#[test]
 fn per_file_evidence_splits_grep_output_by_path_with_real_line_ranges() {
     let stdout = "src/auth.rs:42:let token = &session;\nsrc/auth.rs:108:token.verify()\nsrc/session.rs:7:pub fn resolve()\n";
     let evidence = per_file_evidence("grep", stdout, &[], 16);
@@ -1803,6 +1843,15 @@ fn per_file_evidence_falls_back_to_paths_when_find_output_is_empty() {
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].path, PathBuf::from("src"));
     assert_eq!(evidence[0].line_range, (1, 1));
+}
+
+#[test]
+fn per_file_evidence_strips_type_and_size_columns_from_list_output() {
+    let stdout = "d      4096 src\n-      1820 Cargo.toml\n";
+    let evidence = per_file_evidence("list", stdout, &[], 8);
+    assert_eq!(evidence.len(), 2);
+    assert_eq!(evidence[0].path, PathBuf::from("src"));
+    assert_eq!(evidence[1].path, PathBuf::from("Cargo.toml"));
 }
 
 #[test]

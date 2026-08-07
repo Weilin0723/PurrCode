@@ -1963,20 +1963,32 @@ impl<'a> NativeAgent<'a> {
         contract: &ModelMessage,
         step_limit_warning: Option<&ModelMessage>,
     ) -> (Vec<ModelMessage>, ContextLedgerEntry) {
+        // Same cumulative-ceiling accounting build_messages() uses: each
+        // injected section's estimated_tokens is the *increment* in
+        // ceil(running_chars / 4), not an independent ceil(section_chars /
+        // 4). Adding independent ceilings here (as before) could drift the
+        // ledger's total_estimated_tokens away from ceil(total_chars / 4) by
+        // a token or two, breaking the PRD v1.1 §6.5/§14.1 invariant that
+        // the ledger sum exactly equals the final request estimate.
+        let mut cumulative_chars: u64 = messages
+            .iter()
+            .map(|message| message.content.chars().count() as u64)
+            .sum();
+
         // 1. Insert contract before last user message
         let idx = messages
             .iter()
             .rposition(|m| m.role == "user")
             .unwrap_or(messages.len());
         messages.insert(idx, contract.clone());
-        let contract_chars = contract.content.chars().count() as u64;
-        ledger.total_estimated_tokens = ledger
-            .total_estimated_tokens
-            .saturating_add(contract_chars.div_ceil(4));
+        cumulative_chars += contract.content.chars().count() as u64;
+        let running_total = cumulative_chars.div_ceil(4);
+        let contract_tokens = running_total.saturating_sub(ledger.total_estimated_tokens);
+        ledger.total_estimated_tokens = running_total;
         ledger.sections.push(ContextLedgerSection {
             class: ContextClass::Instructions,
             label: "daemon_contract".into(),
-            estimated_tokens: contract_chars.div_ceil(4),
+            estimated_tokens: contract_tokens,
             byte_len: contract.content.len(),
             why_included: WhyIncluded::AlwaysPresent,
         });
@@ -1988,14 +2000,14 @@ impl<'a> NativeAgent<'a> {
                 .rposition(|m| m.role == "user")
                 .unwrap_or(messages.len());
             messages.insert(idx + 1, warning.clone());
-            let warning_chars = warning.content.chars().count() as u64;
-            ledger.total_estimated_tokens = ledger
-                .total_estimated_tokens
-                .saturating_add(warning_chars.div_ceil(4));
+            cumulative_chars += warning.content.chars().count() as u64;
+            let running_total = cumulative_chars.div_ceil(4);
+            let warning_tokens = running_total.saturating_sub(ledger.total_estimated_tokens);
+            ledger.total_estimated_tokens = running_total;
             ledger.sections.push(ContextLedgerSection {
                 class: ContextClass::Instructions,
                 label: "step_limit_warning".into(),
-                estimated_tokens: warning_chars.div_ceil(4),
+                estimated_tokens: warning_tokens,
                 byte_len: warning.content.len(),
                 why_included: WhyIncluded::AlwaysPresent,
             });
@@ -3588,6 +3600,25 @@ fn read_evidence_kind(read: &purrcode_runtime_core::RepositoryReadAction) -> &'s
 /// Split multi-file line-oriented output (grep's `path:line:content`, find's
 /// `path` entries) into per-file [`EvidenceRef`]s with real line ranges, instead
 /// of stamping the entire stdout onto every searched directory.
+/// Extract the path column from one `list` action output line, formatted by
+/// the sandbox as `"{file_type} {size:>8} {name}"` (e.g. `"d      4096
+/// src"`). Splitting on the first two whitespace-delimited fields — rather
+/// than trimming the whole line — keeps the type/size columns out of the
+/// evidence path regardless of how much padding the size field carries.
+fn list_entry_path(line: &str) -> &str {
+    let after_type = line
+        .trim_start()
+        .splitn(2, char::is_whitespace)
+        .nth(1)
+        .unwrap_or("");
+    after_type
+        .trim_start()
+        .splitn(2, char::is_whitespace)
+        .nth(1)
+        .unwrap_or("")
+        .trim_start()
+}
+
 fn per_file_evidence(
     kind: &str,
     stdout: &str,
@@ -3631,7 +3662,11 @@ fn per_file_evidence(
     } else if kind == "find" || kind == "list" {
         let mut seen = std::collections::BTreeSet::new();
         for line in stdout.lines() {
-            let path = line.trim();
+            let path = if kind == "list" {
+                list_entry_path(line)
+            } else {
+                line.trim()
+            };
             if path.is_empty() || !seen.insert(path.to_owned()) {
                 continue;
             }

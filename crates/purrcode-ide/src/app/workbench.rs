@@ -653,19 +653,20 @@ impl PurrCodeIde {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     self.bypass_chip(ui);
-                    // Intent shortcuts: / commands, @ files, # symbols.
-                    // PRD v1.1 §10.5: @-mention resolution reads from the
-                    // Whisker context index; /-command dispatch routes through
-                    // the daemon's command palette. Rendered as compact
-                    // eyebrow chips so the user learns what is available
-                    // without being talked down to.
+                    // Intent legend: / commands, @ files, # symbols are typed
+                    // directly into the composer text. There is no fuzzy
+                    // picker or click dispatch behind these yet (that lands
+                    // with the Whisker-backed resolver + command palette in
+                    // a follow-up Context UX pass), so this is plain static
+                    // text — no hover affordance that would promise a click
+                    // does something.
                     if self.composer.trim().is_empty() && !submitting {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
                             for (shortcut, name) in
                                 [("/", "commands"), ("@", "files"), ("#", "symbols")]
                             {
-                                let chip = egui::Frame::new()
+                                egui::Frame::new()
                                     .fill(self.tokens.background_secondary)
                                     .corner_radius(theme::RADIUS_PILL)
                                     .inner_margin(egui::Margin::symmetric(6, 1))
@@ -674,19 +675,14 @@ impl PurrCodeIde {
                                         ui.label(
                                             RichText::new(shortcut)
                                                 .size(theme::TYPE_EYEBROW)
-                                                .strong()
-                                                .color(self.tokens.text_secondary),
+                                                .color(self.tokens.text_muted),
                                         );
                                         ui.label(
                                             RichText::new(name)
                                                 .size(theme::TYPE_EYEBROW)
                                                 .color(self.tokens.text_muted),
                                         );
-                                    })
-                                    .response;
-                                if ui.rect_contains_pointer(chip.rect) {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
+                                    });
                             }
                         });
                     }
@@ -1270,26 +1266,36 @@ impl PurrCodeIde {
         }
         ui.add_space(4.0);
 
-        let track_height = 4.0;
-        let bar_width = ui.available_width().min(240.0);
-        let total = usage.total_tokens.max(1) as f64;
+        // Proportional bar against the coding model's actual context window.
+        // Only the daemon knows that number (it comes from the configured
+        // provider's capabilities, which vary from a 32K local model to a
+        // 1M-token remote one) — drawing a fill against a guessed ceiling
+        // would misrepresent how close the session actually is to
+        // overflowing, so the bar is simply omitted until the real capacity
+        // is resolved rather than defaulting to a fabricated number.
+        if let Some(capacity) = usage.model_capacity_tokens.filter(|capacity| *capacity > 0) {
+            let track_height = 4.0;
+            let bar_width = ui.available_width().min(240.0);
+            let total = usage.total_tokens.max(1) as f64;
 
-        let accent = self.tokens.accent_primary;
-        let track = self.tokens.background_secondary;
+            let accent = self.tokens.accent_primary;
+            let track = self.tokens.background_secondary;
 
-        // Proportional bar — one solid accent fill against a subtle track.
-        let (rect, _response) =
-            ui.allocate_exact_size(egui::vec2(bar_width, track_height), egui::Sense::hover());
-        let painter = ui.painter();
-        painter.rect_filled(rect, theme::RADIUS_PILL, track);
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(bar_width, track_height), egui::Sense::hover());
+            let painter = ui.painter();
+            painter.rect_filled(rect, theme::RADIUS_PILL, track);
 
-        // Nominal 200K-token ceiling (Balanced profile cap).
-        let cap: f64 = 200_000.0;
-        let fill_frac = (total / cap).clamp(0.0, 1.0) as f32;
-        if fill_frac > 0.0 {
-            let mut fill_rect = rect;
-            fill_rect.set_width(rect.width() * fill_frac);
-            painter.rect_filled(fill_rect, theme::RADIUS_PILL, accent);
+            let fill_frac = (total / capacity as f64).clamp(0.0, 1.0) as f32;
+            if fill_frac > 0.0 {
+                let mut fill_rect = rect;
+                fill_rect.set_width(rect.width() * fill_frac);
+                painter.rect_filled(fill_rect, theme::RADIUS_PILL, accent);
+            }
+            response.on_hover_text(format!(
+                "{} of {} tokens used this session, against the coding model's context window",
+                usage.total_tokens, capacity
+            ));
         }
 
         // Label
@@ -1307,6 +1313,9 @@ impl PurrCodeIde {
                 RichText::new(format!("{total_str} tokens"))
                     .size(theme::TYPE_EYEBROW)
                     .color(self.tokens.text_muted),
+            )
+            .on_hover_text(
+                "Total tokens used across this session, not the size of the next request",
             );
             if usage.model_calls > 0 {
                 ui.label(

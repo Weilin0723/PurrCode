@@ -479,6 +479,9 @@ pub struct Usage {
     pub cache_write_tokens: u64,
     /// Total wall-clock the model calls took, summed across the session.
     pub total_latency_ms: u64,
+    /// The coding-worker model's actual context window, when the daemon
+    /// resolved one. `None` means unresolved, never "assume 200K".
+    pub model_capacity_tokens: Option<u64>,
 }
 
 impl Usage {
@@ -977,6 +980,7 @@ fn parse_usage(raw: &Value) -> Usage {
         cache_read_tokens: number(raw, "cache_read_tokens"),
         cache_write_tokens: number(raw, "cache_write_tokens"),
         total_latency_ms: number(raw, "total_latency_ms"),
+        model_capacity_tokens: raw.get("context_capacity_tokens").and_then(Value::as_u64),
     }
 }
 
@@ -1384,6 +1388,21 @@ mod tests {
             usage.compact(),
             "42K tokens · 6 model calls · no web search"
         );
+    }
+
+    #[test]
+    fn parse_usage_reads_the_daemon_resolved_model_capacity() {
+        let usage = parse_usage(&json!({
+            "total_tokens": 42_000,
+            "context_capacity_tokens": 32_000,
+        }));
+        assert_eq!(usage.model_capacity_tokens, Some(32_000));
+    }
+
+    #[test]
+    fn parse_usage_leaves_capacity_unknown_when_the_daemon_did_not_resolve_one() {
+        let usage = parse_usage(&json!({"total_tokens": 42_000}));
+        assert_eq!(usage.model_capacity_tokens, None);
     }
 
     #[test]
