@@ -425,7 +425,11 @@ pub async fn bind_and_report(
         .route("/v1/workspace", get(workspace_state))
         .route("/v1/workspace/changes", get(workspace_changes))
         .route("/v1/sessions", post(start_session))
-        .route("/v1/sessions/{id}", get(session))
+        .route("/v1/sessions/search", get(search_sessions))
+        .route(
+            "/v1/sessions/{id}",
+            get(session).patch(update_session_meta).delete(delete_session),
+        )
         .route("/v1/sessions/{id}/events", get(events))
         .route(
             "/v1/sessions/{id}/messages",
@@ -1477,6 +1481,10 @@ async fn sessions(
                 awaiting_plan_review: false,
                 recovery_reconciled: false,
                 objective: unavailable.objective.clone(),
+                title: None,
+                archived: false,
+                pinned: false,
+                parent_id: None,
                 repository,
                 worktree: None,
                 selected_model: None,
@@ -1509,6 +1517,7 @@ async fn sessions(
                 .unwrap_or_else(|_| repository.clone())
         });
         let timestamps = store.timestamped_events(id)?;
+        let meta = store.session_meta(id)?;
         views.push(SessionView {
             id: id.0.to_string(),
             status: format!("{:?}", session.status),
@@ -1518,6 +1527,10 @@ async fn sessions(
             awaiting_plan_review: awaiting_plan_review(&session),
             recovery_reconciled: recovery_reconciled(&session, &events),
             objective: session.objective,
+            title: meta.title,
+            archived: meta.archived,
+            pinned: meta.pinned,
+            parent_id: meta.parent_id.map(|id| id.0.to_string()),
             repository,
             worktree: session.worktree,
             selected_model: session.selected_model,
@@ -4274,6 +4287,7 @@ async fn session(
     }
     let timestamps = store.timestamped_events(id)?;
     let events = store.events(id)?;
+    let meta = store.session_meta(id)?;
     Ok(Json(SessionView {
         id: id.0.to_string(),
         status: format!("{:?}", session.status),
@@ -4283,6 +4297,10 @@ async fn session(
         awaiting_plan_review: awaiting_plan_review(&session),
         recovery_reconciled: recovery_reconciled(&session, &events),
         objective: session.objective,
+        title: meta.title,
+        archived: meta.archived,
+        pinned: meta.pinned,
+        parent_id: meta.parent_id.map(|id| id.0.to_string()),
         repository: session.repository,
         worktree: session.worktree,
         selected_model: session.selected_model,
@@ -4290,6 +4308,123 @@ async fn session(
         updated_at: timestamps.last().map(|(timestamp, _)| *timestamp),
         unavailable_reason: None,
     }))
+}
+
+/// Full-text search over the durable session event log.
+async fn search_sessions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SearchSessionsQuery>,
+) -> Result<Json<Vec<SessionSearchHitView>>, ApiError> {
+    authorize(&state, &headers)?;
+    let store = state.store.lock().await;
+    let hits = store.search_sessions(&query.q, query.limit)?;
+    Ok(Json(
+        hits.into_iter()
+            .map(|hit| SessionSearchHitView {
+                session_id: hit.session_id.0.to_string(),
+                event_type: hit.event_type,
+                snippet: hit.snippet,
+                occurred_at: hit.occurred_at,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Deserialize)]
+struct SearchSessionsQuery {
+    q: String,
+    #[serde(default = "default_search_limit")]
+    limit: u64,
+}
+
+fn default_search_limit() -> u64 {
+    20
+}
+
+#[derive(Serialize)]
+struct SessionSearchHitView {
+    session_id: String,
+    event_type: String,
+    snippet: String,
+    occurred_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateSessionMetaRequest {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default)]
+    pinned: Option<bool>,
+}
+
+/// Rename, archive, or pin a session. Mutations are workspace metadata, not
+/// audit events, so they update `session_meta` without touching the event log.
+async fn update_session_meta(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<UpdateSessionMetaRequest>,
+) -> Result<Json<SessionView>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let mut store = state.store.lock().await;
+    let session_state = store.load(id)?;
+    if session_state.event_count == 0 {
+        return Err(ApiError::NotFound);
+    }
+    if let Some(title) = &request.title {
+        store.set_session_title(id, title)?;
+    }
+    if let Some(archived) = request.archived {
+        store.set_session_archived(id, archived)?;
+    }
+    if let Some(pinned) = request.pinned {
+        store.set_session_pinned(id, pinned)?;
+    }
+    let timestamps = store.timestamped_events(id)?;
+    let meta = store.session_meta(id)?;
+    Ok(Json(SessionView {
+        id: id.0.to_string(),
+        status: format!("{:?}", session_state.status),
+        status_code: presentation_status(&session_state),
+        event_count: session_state.event_count,
+        lease_active: state.leases.lock().await.contains_key(&id),
+        awaiting_plan_review: awaiting_plan_review(&session_state),
+        recovery_reconciled: recovery_reconciled(&session_state, &store.events(id)?),
+        objective: session_state.objective,
+        title: meta.title,
+        archived: meta.archived,
+        pinned: meta.pinned,
+        parent_id: meta.parent_id.map(|id| id.0.to_string()),
+        repository: session_state.repository,
+        worktree: session_state.worktree,
+        selected_model: session_state.selected_model,
+        created_at: timestamps.first().map(|(timestamp, _)| *timestamp),
+        updated_at: timestamps.last().map(|(timestamp, _)| *timestamp),
+        unavailable_reason: None,
+    }))
+}
+
+/// Soft-delete a session: it disappears from the working list but its event
+/// log is preserved for audit and recovery.
+async fn delete_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let mut store = state.store.lock().await;
+    let session = store.load(id)?;
+    if session.event_count == 0 {
+        return Err(ApiError::NotFound);
+    }
+    store.set_session_deleted(id, true)?;
+    Ok(Json(serde_json::json!({"id": id.0.to_string(), "deleted": true})))
 }
 
 async fn events(
@@ -6296,6 +6431,14 @@ struct Health {
 struct SessionView {
     id: String,
     objective: Option<String>,
+    /// Presentation title from the session workspace; falls back to the
+    /// objective when the user has not renamed the session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    archived: bool,
+    pinned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_id: Option<String>,
     status: String,
     status_code: &'static str,
     repository: Option<PathBuf>,

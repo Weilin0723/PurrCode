@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 const MIGRATION_1: &str = include_str!("../../../migrations/0001_initial.sql");
 const MIGRATION_2: &str = include_str!("../../../migrations/0002_automations.sql");
+const MIGRATION_3: &str = include_str!("../../../migrations/0003_session_workspace.sql");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Automation {
@@ -27,6 +28,36 @@ pub struct Automation {
 
 pub struct SessionStore {
     connection: Connection,
+}
+
+/// Presentation/workspace metadata for a session. Kept out of the replayable
+/// event log because title/archive/pin are organization state, not audit state.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct SessionMeta {
+    pub title: Option<String>,
+    pub archived: bool,
+    pub pinned: bool,
+    pub parent_id: Option<SessionId>,
+    pub deleted: bool,
+}
+
+impl SessionMeta {
+    /// A session with no stored metadata row shows its objective as the title.
+    pub fn titled(objective: Option<&str>) -> Self {
+        SessionMeta {
+            title: objective.map(ToOwned::to_owned),
+            ..Self::default()
+        }
+    }
+}
+
+/// A full-text search hit over the session event log.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionSearchHit {
+    pub session_id: SessionId,
+    pub event_type: String,
+    pub snippet: String,
+    pub occurred_at: DateTime<Utc>,
 }
 
 /// Result of startup reconciliation. A legacy session whose event log no
@@ -64,6 +95,7 @@ impl SessionStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute_batch(MIGRATION_1)?;
         transaction.execute_batch(MIGRATION_2)?;
+        transaction.execute_batch(MIGRATION_3)?;
         transaction.commit()?;
         Ok(())
     }
@@ -90,6 +122,7 @@ impl SessionStore {
             [session_id.0.to_string()],
             |row| row.get(0),
         )?;
+        let payload = serde_json::to_string(event)?;
         transaction.execute(
             "INSERT INTO session_events(session_id, sequence, event_type, payload, occurred_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -97,9 +130,16 @@ impl SessionStore {
                 session_id.0.to_string(),
                 sequence,
                 event_name(event),
-                serde_json::to_string(event)?,
+                payload,
                 Utc::now()
             ],
+        )?;
+        // Keep the live FTS index in the same transaction as the append so
+        // search can never lag the durable log.
+        transaction.execute(
+            "INSERT INTO session_search(session_id, event_type, payload)
+             VALUES (?1, ?2, ?3)",
+            params![session_id.0.to_string(), event_name(event), payload],
         )?;
         transaction.commit()?;
         Ok(sequence)
@@ -322,6 +362,221 @@ impl SessionStore {
 
     pub fn latest_session_id(&self) -> Result<Option<SessionId>, StoreError> {
         Ok(self.list_session_ids()?.into_iter().next())
+    }
+
+    /// Returns the stored metadata row for a session, or a default that titles
+    /// the session by its objective. Sessions created before v1.2 have no row.
+    pub fn session_meta(&self, session_id: SessionId) -> Result<SessionMeta, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT title, archived, pinned, parent_id, deleted
+                 FROM session_meta WHERE session_id = ?1",
+                [session_id.0.to_string()],
+                |row| {
+                    Ok(SessionMeta {
+                        title: row.get(0)?,
+                        archived: row.get::<_, i64>(1)? != 0,
+                        pinned: row.get::<_, i64>(2)? != 0,
+                        parent_id: row
+                            .get::<_, Option<String>>(3)?
+                            .map(|value| SessionId(Uuid::parse_str(&value).unwrap_or_default())),
+                        deleted: row.get::<_, i64>(4)? != 0,
+                    })
+                },
+            )
+            .optional()?
+            .map(Ok)
+            .unwrap_or_else(|| Ok(SessionMeta::default()))
+    }
+
+    fn upsert_meta(
+        &mut self,
+        session_id: SessionId,
+        title: Option<&str>,
+        archived: Option<bool>,
+        pinned: Option<bool>,
+        parent_id: Option<Option<SessionId>>,
+        deleted: Option<bool>,
+    ) -> Result<(), StoreError> {
+        let current = self.session_meta(session_id)?;
+        let next = SessionMeta {
+            title: title.map(ToOwned::to_owned).or(current.title),
+            archived: archived.unwrap_or(current.archived),
+            pinned: pinned.unwrap_or(current.pinned),
+            parent_id: match parent_id {
+                Some(Some(id)) => Some(id),
+                Some(None) => None,
+                None => current.parent_id,
+            },
+            deleted: deleted.unwrap_or(current.deleted),
+        };
+        let now = Utc::now();
+        self.connection.execute(
+            "INSERT INTO session_meta(session_id, title, archived, pinned, parent_id, deleted, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+             ON CONFLICT(session_id) DO UPDATE SET
+                title = excluded.title,
+                archived = excluded.archived,
+                pinned = excluded.pinned,
+                parent_id = excluded.parent_id,
+                deleted = excluded.deleted,
+                updated_at = excluded.updated_at",
+            params![
+                session_id.0.to_string(),
+                next.title,
+                next.archived,
+                next.pinned,
+                next.parent_id.map(|id| id.0.to_string()),
+                next.deleted,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_session_title(
+        &mut self,
+        session_id: SessionId,
+        title: &str,
+    ) -> Result<(), StoreError> {
+        if title.trim().is_empty() {
+            return Err(StoreError::InvalidAutomation(
+                "session title must be a non-empty string".into(),
+            ));
+        }
+        self.upsert_meta(session_id, Some(title), None, None, None, None)
+    }
+
+    pub fn set_session_archived(
+        &mut self,
+        session_id: SessionId,
+        archived: bool,
+    ) -> Result<(), StoreError> {
+        self.upsert_meta(session_id, None, Some(archived), None, None, None)
+    }
+
+    pub fn set_session_pinned(
+        &mut self,
+        session_id: SessionId,
+        pinned: bool,
+    ) -> Result<(), StoreError> {
+        self.upsert_meta(session_id, None, None, Some(pinned), None, None)
+    }
+
+    pub fn set_session_deleted(
+        &mut self,
+        session_id: SessionId,
+        deleted: bool,
+    ) -> Result<(), StoreError> {
+        self.upsert_meta(session_id, None, None, None, None, Some(deleted))
+    }
+
+    pub fn set_session_parent(
+        &mut self,
+        session_id: SessionId,
+        parent_id: SessionId,
+    ) -> Result<(), StoreError> {
+        self.upsert_meta(session_id, None, None, None, Some(Some(parent_id)), None)
+    }
+
+    /// Full-text search across the durable event log. Returns a bounded,
+    /// most-recent-first set of hits with a highlight snippet.
+    pub fn search_sessions(&self, query: &str, limit: u64) -> Result<Vec<SessionSearchHit>, StoreError> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(StoreError::InvalidAutomation(
+                "search query must be a non-empty string".into(),
+            ));
+        }
+        let bound = limit.clamp(1, 100);
+        let mut statement = self.connection.prepare(
+            "SELECT session_search.session_id, session_search.event_type,
+                    snippet(session_search, 2, '', '', '…', 80) AS snippet,
+                    session_events.occurred_at
+             FROM session_search
+             JOIN session_events
+               ON session_events.session_id = session_search.session_id
+              AND session_events.event_type = session_search.event_type
+             WHERE session_search.payload MATCH ?1
+             ORDER BY session_events.occurred_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![query, bound], |row| {
+            let session_id = Uuid::parse_str(&row.get::<_, String>(0)?)
+                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                ))?;
+            Ok(SessionSearchHit {
+                session_id: SessionId(session_id),
+                event_type: row.get(1)?,
+                snippet: row.get(2)?,
+                occurred_at: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Copies a session's event prefix `[1..=anchor_sequence]` (the parent's
+    /// own `SessionCreated` is not copied) into a fresh child session in one
+    /// transaction. The child's meta row records the parent linkage. The
+    /// caller is responsible for appending the child's own `SessionCreated`
+    /// and `WorktreeCreated` events before the copied prefix is meaningful.
+    pub fn fork_session_events(
+        &mut self,
+        parent_id: SessionId,
+        child_id: SessionId,
+        anchor_sequence: u64,
+    ) -> Result<u64, StoreError> {
+        let parent_events = self.events(parent_id)?;
+        if parent_events.is_empty() {
+            return Err(StoreError::InvalidAutomation(
+                "cannot fork an empty parent session".into(),
+            ));
+        }
+        // The parent's SessionCreated is event index 0 (sequence 1); skip it.
+        let copy_from = parent_events.split_first().map(|(_, rest)| rest).unwrap_or(&[]);
+        let copy_from = copy_from
+            .iter()
+            .take(anchor_sequence as usize)
+            .collect::<Vec<_>>();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut sequence: u64 = transaction.query_row(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM session_events WHERE session_id = ?1",
+            [child_id.0.to_string()],
+            |row| row.get(0),
+        )?;
+        for event in copy_from {
+            let payload = serde_json::to_string(event)?;
+            transaction.execute(
+                "INSERT INTO session_events(session_id, sequence, event_type, payload, occurred_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    child_id.0.to_string(),
+                    sequence,
+                    event_name(event),
+                    payload,
+                    Utc::now()
+                ],
+            )?;
+            transaction.execute(
+                "INSERT INTO session_search(session_id, event_type, payload)
+                 VALUES (?1, ?2, ?3)",
+                params![child_id.0.to_string(), event_name(event), payload],
+            )?;
+            sequence += 1;
+        }
+        let now = Utc::now();
+        transaction.execute(
+            "INSERT INTO session_meta(session_id, title, archived, pinned, parent_id, deleted, created_at, updated_at)
+             VALUES (?1, NULL, 0, 0, ?2, 0, ?3, ?3)",
+            params![child_id.0.to_string(), parent_id.0.to_string(), now],
+        )?;
+        transaction.commit()?;
+        Ok(sequence - 1)
     }
 
     pub fn create_automation(
@@ -746,7 +1001,7 @@ mod tests {
             .create_automation("run repository health check", repository.path(), 60)
             .unwrap();
         assert!(automation.enabled);
-        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(store.schema_version().unwrap(), 3);
         assert!(store.due_automations(Utc::now()).unwrap().is_empty());
         store
             .connection
@@ -1081,5 +1336,132 @@ mod tests {
             })
             .expect("a ContextAssembled event survives replay");
         assert_eq!(replayed_entry, entry);
+    }
+
+    #[test]
+    fn session_meta_title_archive_pin_and_delete_are_durable() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        // No row yet: defaults to an objective title.
+        assert_eq!(store.session_meta(session).unwrap().title, None);
+        store
+            .append(
+                session,
+                &SessionEvent::SessionCreated {
+                    objective: "meta round trip".into(),
+                    repository: PathBuf::from("/repo"),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+
+        store.set_session_title(session, "my project").unwrap();
+        store.set_session_archived(session, true).unwrap();
+        store.set_session_pinned(session, true).unwrap();
+        store.set_session_deleted(session, true).unwrap();
+
+        let meta = store.session_meta(session).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("my project"));
+        assert!(meta.archived && meta.pinned && meta.deleted);
+        assert!(store.set_session_title(session, "").is_err());
+
+        // Reopen: metadata survives because it is not event-sourced.
+        let reopened = SessionStore::in_memory().unwrap();
+        reopened
+            .connection
+            .execute(
+                "INSERT INTO session_meta(session_id, title, archived, pinned, parent_id, deleted, created_at, updated_at)
+                 VALUES (?1, 'my project', 1, 1, NULL, 1, ?2, ?2)",
+                params![session.0.to_string(), Utc::now()],
+            )
+            .unwrap();
+        let meta = reopened.session_meta(session).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("my project"));
+        assert!(meta.archived && meta.pinned && meta.deleted);
+    }
+
+    #[test]
+    fn session_search_indexes_appends_and_returns_snippets() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        store
+            .append(
+                session,
+                &SessionEvent::SessionCreated {
+                    objective: "search finds the health endpoint work".into(),
+                    repository: PathBuf::from("/repo"),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::ConversationMessageAdded {
+                    message: purrcode_runtime_core::ConversationMessage {
+                        id: Uuid::new_v4().to_string(),
+                        role: "user".into(),
+                        content: "fix the flaky login test".into(),
+                        timestamp: Utc::now(),
+                        tool_calls: Vec::new(),
+                        tool_results: Vec::new(),
+                        model: None,
+                        turn_id: None,
+                    },
+                },
+            )
+            .unwrap();
+
+        let hits = store.search_sessions("flaky", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, session);
+        assert!(hits[0].snippet.contains("flaky"));
+        assert!(store.search_sessions("", 10).is_err());
+    }
+
+    #[test]
+    fn fork_session_events_copies_prefix_and_links_parent() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let parent = SessionId::new();
+        store
+            .append(
+                parent,
+                &SessionEvent::SessionCreated {
+                    objective: "parent session".into(),
+                    repository: PathBuf::from("/repo"),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        let first_turn = SessionEvent::ConversationMessageAdded {
+            message: purrcode_runtime_core::ConversationMessage {
+                id: Uuid::new_v4().to_string(),
+                role: "user".into(),
+                content: "first message".into(),
+                timestamp: Utc::now(),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                model: None,
+                turn_id: None,
+            },
+        };
+        store.append(parent, &first_turn).unwrap();
+        store.append(parent, &SessionEvent::SessionPaused { reason: "work in progress".into() }).unwrap();
+
+        let child = SessionId::new();
+        let copied = store
+            .fork_session_events(parent, child, 1)
+            .unwrap();
+        assert_eq!(copied, 1);
+        let meta = store.session_meta(child).unwrap();
+        assert_eq!(meta.parent_id, Some(parent));
+        let child_events = store.events(child).unwrap();
+        assert_eq!(child_events.len(), 1);
+        assert!(matches!(
+            child_events[0],
+            SessionEvent::ConversationMessageAdded { .. }
+        ));
+        // The parent keeps its full log.
+        assert_eq!(store.events(parent).unwrap().len(), 3);
     }
 }
