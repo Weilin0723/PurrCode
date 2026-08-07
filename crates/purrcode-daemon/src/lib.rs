@@ -2663,7 +2663,7 @@ async fn compact_session(
     state.store.lock().await.append(
         id,
         &SessionEvent::CheckpointCompacted {
-            checkpoint: purrcode_runtime_core::SemanticCheckpoint {
+            checkpoint: Box::new(purrcode_runtime_core::SemanticCheckpoint {
                 checkpoint_id: purrcode_runtime_core::CheckpointId::new(),
                 turn_id: purrcode_runtime_core::TurnId::new(),
                 superseded_checkpoint_id: session.checkpoint.as_ref().map(|c| c.checkpoint_id),
@@ -2681,7 +2681,7 @@ async fn compact_session(
                 current_hypothesis: None,
                 next_actions: vec![],
                 pinned_context: vec![],
-            },
+            }),
             retained_action_ids: retained_action_ids.iter().copied().collect(),
             conversation_messages_retained_from,
         },
@@ -4435,7 +4435,9 @@ async fn ui_status(
 /// `JudgmentRecorded` it emits (PRD v1.1 §6.3). Events created outside the
 /// main loop (user messages, supervisor workers, MCP invocations) carry
 /// `turn_id: None` and project the same here.
-fn event_turn_id(event: &purrcode_runtime_core::SessionEvent) -> Option<purrcode_runtime_core::TurnId> {
+fn event_turn_id(
+    event: &purrcode_runtime_core::SessionEvent,
+) -> Option<purrcode_runtime_core::TurnId> {
     use purrcode_runtime_core::SessionEvent as Event;
     match event {
         Event::ActionProposed { turn_id, .. }
@@ -9952,7 +9954,7 @@ mod tests {
             action: ProposedAction::RepositoryRead(
                 purrcode_runtime_core::RepositoryReadAction::GitStatus,
             ),
-        turn_id: None,
+            turn_id: None,
         };
         let events = vec![read(), read(), read()];
         let activity = activity_from_events(&events);
@@ -10134,7 +10136,7 @@ mod tests {
                     content: "pub fn parse() {}\n".into(),
                     expected_digest: None,
                 }),
-            turn_id: None,
+                turn_id: None,
             },
             SessionEvent::SessionPaused {
                 reason: "validation could not run".into(),

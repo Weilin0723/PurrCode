@@ -472,7 +472,7 @@ mod tests {
                             "super-secret-value".into(),
                         )]),
                     }),
-                turn_id: None,
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -483,7 +483,7 @@ mod tests {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: JudgmentDecision::Allow,
-                turn_id: None,
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -684,7 +684,7 @@ mod tests {
                             "super-secret-value".into(),
                         )]),
                     }),
-                turn_id: None,
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -694,7 +694,7 @@ mod tests {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: JudgmentDecision::Allow,
-                turn_id: None,
+                    turn_id: None,
                 },
             )
             .unwrap();

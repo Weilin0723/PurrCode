@@ -697,6 +697,7 @@ mod tests {
             status: ActivityStatus::Running,
             summary: None,
             detail_available: true,
+            turn_id: None,
         };
         let encoded = serde_json::to_string(&item).unwrap();
         assert!(encoded.contains("\"kind\":\"validation\""));

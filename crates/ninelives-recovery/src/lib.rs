@@ -1005,7 +1005,8 @@ mod tests {
     #[test]
     fn replay_reconstructs_identical_context_ledger_entries() {
         use purrcode_runtime_core::{
-            ContextClass, ContextLedgerEntry, ContextLedgerSection, TurnId, WhyIncluded,
+            ContextClass, ContextLedgerEntry, ContextLedgerSection, TokenEstimator, TurnId,
+            WhyIncluded,
         };
 
         let temporary = tempfile::tempdir().unwrap();

@@ -792,7 +792,9 @@ pub enum WhyIncluded {
     /// conversation tail, plan/recent-actions/validation, the compacted
     /// checkpoint slot).
     AlwaysPresent,
-    MatchedQuery { term: String },
+    MatchedQuery {
+        term: String,
+    },
     RecentEdit,
     Pinned,
 }
@@ -852,7 +854,9 @@ pub const MAX_RECENT_CONTEXT_LEDGER_ENTRIES: usize = 64;
 
 // ── Semantic checkpoint types (PRD v1.1 §7.2, Phase 2) ──────────────────
 
-#[derive(Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct CheckpointId(pub Uuid);
 
@@ -1040,7 +1044,7 @@ pub enum SessionEvent {
     /// never dropped — and truncates `conversation_messages` to the window
     /// starting at `conversation_messages_retained_from`.
     CheckpointCompacted {
-        checkpoint: SemanticCheckpoint,
+        checkpoint: Box<SemanticCheckpoint>,
         retained_action_ids: BTreeSet<ActionId>,
         conversation_messages_retained_from: usize,
     },
@@ -1749,7 +1753,7 @@ impl SessionState {
                 let merged = if let Some(ref prev) = self.checkpoint {
                     Self::merge_checkpoint(prev, checkpoint)
                 } else {
-                    checkpoint.clone()
+                    checkpoint.as_ref().clone()
                 };
                 self.checkpoint = Some(merged);
                 let retained: BTreeSet<_> = retained_action_ids.iter().copied().collect();
@@ -1760,9 +1764,9 @@ impl SessionState {
                 // conversation_messages now bounded — the oldest messages before
                 // the retained window are dropped (PRD v1.1 §7.3, §7.5).
                 if *conversation_messages_retained_from < self.conversation_messages.len() {
-                    self.conversation_messages =
-                        self.conversation_messages
-                            .split_off(*conversation_messages_retained_from);
+                    self.conversation_messages = self
+                        .conversation_messages
+                        .split_off(*conversation_messages_retained_from);
                 }
             }
             SessionEvent::ContextAssembled { entry } => {
@@ -2388,7 +2392,7 @@ mod tests {
                         content: "value".into(),
                         expected_digest: None,
                     }),
-                turn_id: None,
+                    turn_id: None,
                 })
                 .unwrap();
         }
@@ -2500,7 +2504,7 @@ mod tests {
             .reduce_event(&SessionEvent::ActionProposed {
                 action_id,
                 action: ProposedAction::RepositoryRead(RepositoryReadAction::GitStatus),
-            turn_id: None,
+                turn_id: None,
             })
             .unwrap();
         assert!(state.proposed_actions.contains_key(&action_id));
@@ -2543,7 +2547,7 @@ mod tests {
             .reduce_event(&SessionEvent::ActionProposed {
                 action_id: proposed,
                 action: ProposedAction::RepositoryRead(RepositoryReadAction::GitStatus),
-            turn_id: None,
+                turn_id: None,
             })
             .unwrap();
         state
@@ -2553,7 +2557,7 @@ mod tests {
                     reason: "user review".into(),
                     constraints: ActionConstraints::read_only(PathBuf::from("/repo")),
                 },
-            turn_id: None,
+                turn_id: None,
             })
             .unwrap();
         assert_eq!(state.status, SessionStatus::AwaitingApproval(proposed));
@@ -2624,7 +2628,7 @@ mod tests {
             .reduce_event(&SessionEvent::ActionProposed {
                 action_id,
                 action: ProposedAction::RepositoryRead(RepositoryReadAction::GitStatus),
-            turn_id: None,
+                turn_id: None,
             })
             .unwrap();
         state
@@ -2634,7 +2638,7 @@ mod tests {
                     reason: "human review".into(),
                     constraints: ActionConstraints::read_only(PathBuf::from("/repo")),
                 },
-            turn_id: None,
+                turn_id: None,
             })
             .unwrap();
         assert_eq!(state.status, SessionStatus::AwaitingApproval(action_id));
@@ -2692,7 +2696,7 @@ mod tests {
             SessionEvent::ActionProposed {
                 action_id: ActionId::new(),
                 action: ProposedAction::RepositoryRead(RepositoryReadAction::GitStatus),
-            turn_id: None,
+                turn_id: None,
             },
             SessionEvent::SessionCompleted,
         ];
@@ -2812,7 +2816,7 @@ mod tests {
                     content: "content".into(),
                     expected_digest: None,
                 }),
-            turn_id: None,
+                turn_id: None,
             })
             .unwrap();
         let decision = JudgmentDecision::RequireApproval {
@@ -2823,7 +2827,7 @@ mod tests {
             .reduce_event(&SessionEvent::JudgmentRecorded {
                 action_id,
                 decision: decision.clone(),
-            turn_id: None,
+                turn_id: None,
             })
             .unwrap();
         assert!(state.judgments.contains_key(&action_id));
@@ -2856,65 +2860,6 @@ mod tests {
             })
             .unwrap();
         assert_eq!(state.status, SessionStatus::Active);
-    }
-
-    // ── SemanticCheckpoint merge (PRD v1.1 §7.3) ──────────────────
-
-    /// Merge a new checkpoint over the previous one, unioning additive fields.
-    /// Called from the `CheckpointCompacted` reducer arm — not test-only.
-    pub fn merge_checkpoint(
-        previous: &SemanticCheckpoint,
-        latest: &SemanticCheckpoint,
-    ) -> SemanticCheckpoint {
-        use std::collections::BTreeSet;
-        let mut merged = latest.clone();
-        merged.superseded_checkpoint_id = Some(previous.checkpoint_id);
-        // Additive fields — union across the chain
-        let mut files_inspected: BTreeSet<PathBuf> =
-            previous.files_inspected.iter().cloned().collect();
-        files_inspected.extend(latest.files_inspected.iter().cloned());
-        merged.files_inspected = files_inspected.into_iter().collect();
-
-        let mut files_modified: BTreeSet<PathBuf> =
-            previous.files_modified.iter().cloned().collect();
-        files_modified.extend(latest.files_modified.iter().cloned());
-        merged.files_modified = files_modified.into_iter().collect();
-
-        let mut decisions = previous.decisions.clone();
-        decisions.extend(latest.decisions.iter().cloned());
-        merged.decisions = decisions;
-
-        let mut failed_attempts = previous.failed_attempts.clone();
-        failed_attempts.extend(latest.failed_attempts.iter().cloned());
-        merged.failed_attempts = failed_attempts;
-
-        let mut validated_facts: BTreeSet<String> =
-            previous.validated_facts.iter().cloned().collect();
-        validated_facts.extend(latest.validated_facts.iter().cloned());
-        merged.validated_facts = validated_facts.into_iter().collect();
-
-        let mut test_results = previous.test_results.clone();
-        test_results.extend(latest.test_results.iter().cloned());
-        merged.test_results = test_results;
-
-        let mut pinned_context = previous.pinned_context.clone();
-        pinned_context.extend(latest.pinned_context.iter().cloned());
-        merged.pinned_context = pinned_context;
-
-        // Carry-forward: if the latest checkpoint doesn't set these, inherit
-        // from the previous one.
-        if merged.objective.is_empty() {
-            merged.objective = previous.objective.clone();
-        }
-        if merged.current_hypothesis.is_none() {
-            merged.current_hypothesis = previous.current_hypothesis.clone();
-        }
-        let mut unresolved: BTreeSet<String> =
-            previous.unresolved_questions.iter().cloned().collect();
-        unresolved.extend(latest.unresolved_questions.iter().cloned());
-        merged.unresolved_questions = unresolved.into_iter().collect();
-
-        merged
     }
 }
 
@@ -2985,14 +2930,18 @@ mod session_state_tests {
             2,
             "failed_attempts must union across the chain"
         );
-        assert!(merged
-            .failed_attempts
-            .iter()
-            .any(|f| f.action_summary.contains("hand-written")));
-        assert!(merged
-            .failed_attempts
-            .iter()
-            .any(|f| f.action_summary.contains("nom")));
+        assert!(
+            merged
+                .failed_attempts
+                .iter()
+                .any(|f| f.action_summary.contains("hand-written"))
+        );
+        assert!(
+            merged
+                .failed_attempts
+                .iter()
+                .any(|f| f.action_summary.contains("nom"))
+        );
         assert_eq!(
             merged.files_inspected.len(),
             2,

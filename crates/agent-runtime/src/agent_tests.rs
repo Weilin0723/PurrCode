@@ -355,7 +355,10 @@ fn startup_prepares_only_tier0_then_task_indexes_relevant_paths_once() {
     // We instead verify the task-specific retrieval WORKS for the relevant path.
     assert!(
         context
-            .retrieve("src/relevant.rs behavior_update", &RetrievalBudget::default())
+            .retrieve(
+                "src/relevant.rs behavior_update",
+                &RetrievalBudget::default()
+            )
             .unwrap()
             .iter()
             .any(|hit| hit.path == Path::new("src/relevant.rs"))
@@ -1771,4 +1774,68 @@ async fn zero_wall_time_budget_fails_before_provider_call() {
         .await
         .expect_err("zero wall-time budget must fail closed");
     assert!(error.to_string().contains("wall-time budget"));
+}
+
+#[test]
+fn per_file_evidence_splits_grep_output_by_path_with_real_line_ranges() {
+    let stdout = "src/auth.rs:42:let token = &session;\nsrc/auth.rs:108:token.verify()\nsrc/session.rs:7:pub fn resolve()\n";
+    let evidence = per_file_evidence("grep", stdout, &[], 16);
+    assert_eq!(evidence.len(), 2, "one EvidenceRef per matched file");
+    let auth = evidence
+        .iter()
+        .find(|e| e.path.to_string_lossy() == "src/auth.rs")
+        .unwrap();
+    assert_eq!(auth.line_range, (42, 108));
+    assert!(auth.excerpt.contains("42:"));
+    assert!(auth.excerpt.contains("108:"));
+    assert!(!auth.excerpt.contains("session.rs"));
+    let session = evidence
+        .iter()
+        .find(|e| e.path.to_string_lossy() == "src/session.rs")
+        .unwrap();
+    assert_eq!(session.line_range, (7, 7));
+}
+
+#[test]
+fn per_file_evidence_falls_back_to_paths_when_find_output_is_empty() {
+    let fallback = vec![PathBuf::from("src")];
+    let evidence = per_file_evidence("find", "", &fallback, 8);
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].path, PathBuf::from("src"));
+    assert_eq!(evidence[0].line_range, (1, 1));
+}
+
+#[test]
+fn read_evidence_kind_classifies_grep_and_find() {
+    let grep = ProposedAction::RepositoryRead(RepositoryReadAction::RepositoryGrep {
+        pattern: "token".into(),
+        paths: vec![PathBuf::from("src")],
+        case_insensitive: false,
+        max_results: 10,
+        max_bytes: 1024,
+    });
+    let find = ProposedAction::RepositoryRead(RepositoryReadAction::Find {
+        paths: vec![PathBuf::from("src")],
+        max_depth: 2,
+        max_entries: 10,
+    });
+    let read_file = ProposedAction::RepositoryRead(RepositoryReadAction::ReadFile {
+        path: PathBuf::from("src/auth.rs"),
+        max_bytes: 1024,
+    });
+    let grep_action = match grep {
+        ProposedAction::RepositoryRead(read) => read,
+        _ => unreachable!(),
+    };
+    let find_action = match find {
+        ProposedAction::RepositoryRead(read) => read,
+        _ => unreachable!(),
+    };
+    let read_file_action = match read_file {
+        ProposedAction::RepositoryRead(read) => read,
+        _ => unreachable!(),
+    };
+    assert_eq!(read_evidence_kind(&grep_action), "grep");
+    assert_eq!(read_evidence_kind(&find_action), "find");
+    assert_eq!(read_evidence_kind(&read_file_action), "other");
 }

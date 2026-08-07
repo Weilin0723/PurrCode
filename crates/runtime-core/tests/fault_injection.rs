@@ -82,14 +82,14 @@ fn event_append_failure_is_rejected_not_silently_accepted() {
         .reduce_event(&SessionEvent::ActionProposed {
             action_id,
             action: test_command_action(),
-        turn_id: None,
+            turn_id: None,
         })
         .unwrap();
     state
         .reduce_event(&SessionEvent::JudgmentRecorded {
             action_id,
             decision: JudgmentDecision::AllowWithConstraints(allow_with_constraints()),
-        turn_id: None,
+            turn_id: None,
         })
         .unwrap();
 
@@ -146,7 +146,7 @@ fn restart_while_awaiting_approval_preserves_pending_judgment() {
         SessionEvent::ActionProposed {
             action_id,
             action: test_command_action(),
-        turn_id: None,
+            turn_id: None,
         },
         SessionEvent::JudgmentRecorded {
             action_id,
@@ -154,7 +154,7 @@ fn restart_while_awaiting_approval_preserves_pending_judgment() {
                 reason: "external tool invocation".into(),
                 constraints: allow_with_constraints(),
             },
-        turn_id: None,
+            turn_id: None,
         },
     ];
 
@@ -209,7 +209,7 @@ fn restart_after_authorization_persistence_does_not_silently_execute() {
         SessionEvent::ActionProposed {
             action_id,
             action: test_command_action(),
-        turn_id: None,
+            turn_id: None,
         },
         SessionEvent::JudgmentRecorded {
             action_id,
@@ -217,7 +217,7 @@ fn restart_after_authorization_persistence_does_not_silently_execute() {
                 reason: "external tool invocation".into(),
                 constraints: constraints.clone(),
             },
-        turn_id: None,
+            turn_id: None,
         },
         SessionEvent::ApprovalRecorded {
             action_id,
@@ -276,14 +276,14 @@ fn missing_execution_finished_leaves_session_executing_not_completed() {
         .reduce_event(&SessionEvent::ActionProposed {
             action_id,
             action: test_command_action(),
-        turn_id: None,
+            turn_id: None,
         })
         .unwrap();
     state
         .reduce_event(&SessionEvent::JudgmentRecorded {
             action_id,
             decision: JudgmentDecision::AllowWithConstraints(allow_with_constraints()),
-        turn_id: None,
+            turn_id: None,
         })
         .unwrap();
     state
@@ -478,7 +478,7 @@ fn interrupted_bundle_export_fails_verification_and_reports_partial_state() {
                     working_directory: PathBuf::from("/repo"),
                     environment: BTreeMap::new(),
                 }),
-            turn_id: None,
+                turn_id: None,
             },
         )
         .unwrap();

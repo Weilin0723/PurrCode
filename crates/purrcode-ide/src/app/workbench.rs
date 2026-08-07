@@ -256,8 +256,7 @@ impl PurrCodeIde {
                     // the final answer — anchored to the request by exact
                     // `turn_id`, not to the answer; see `work_log_anchor` for
                     // why.
-                    let anchor =
-                        work_log_anchor(&self.session.messages, &self.session.activity);
+                    let anchor = work_log_anchor(&self.session.messages, &self.session.activity);
                     let mut work_log_rendered = false;
                     for (index, message) in self.session.messages.iter().enumerate() {
                         // Every user message is a bubble, including the first:
@@ -663,11 +662,9 @@ impl PurrCodeIde {
                     if self.composer.trim().is_empty() && !submitting {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
-                            for (shortcut, name) in [
-                                ("/", "commands"),
-                                ("@", "files"),
-                                ("#", "symbols"),
-                            ] {
+                            for (shortcut, name) in
+                                [("/", "commands"), ("@", "files"), ("#", "symbols")]
+                            {
                                 let chip = egui::Frame::new()
                                     .fill(self.tokens.background_secondary)
                                     .corner_radius(theme::RADIUS_PILL)
@@ -1318,14 +1315,14 @@ impl PurrCodeIde {
                         .color(self.tokens.text_muted),
                 );
             }
-            if let Some(ref cost) = usage.estimated_cost {
-                if !cost.is_empty() {
-                    ui.label(
-                        RichText::new(format!("· {}", cost))
-                            .size(theme::TYPE_EYEBROW)
-                            .color(self.tokens.text_muted),
-                    );
-                }
+            if let Some(ref cost) = usage.estimated_cost
+                && !cost.is_empty()
+            {
+                ui.label(
+                    RichText::new(format!("· {}", cost))
+                        .size(theme::TYPE_EYEBROW)
+                        .color(self.tokens.text_muted),
+                );
             }
         });
     }

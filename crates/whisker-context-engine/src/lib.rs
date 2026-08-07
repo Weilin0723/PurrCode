@@ -375,21 +375,13 @@ impl fmt::Debug for Tier2Work {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HitReason {
     /// Matched the FTS5 query — the primary retrieval signal.
-    MatchedQuery {
-        term: String,
-    },
+    MatchedQuery { term: String },
     /// Included because it is imported by another matched hit.
-    ImportProximity {
-        imported_by: PathBuf,
-    },
+    ImportProximity { imported_by: PathBuf },
     /// Historically changed together with a matched hit.
-    Cochange {
-        changed_with: PathBuf,
-    },
+    Cochange { changed_with: PathBuf },
     /// Test file for a source hit (or vice versa).
-    TestRelation {
-        tests: PathBuf,
-    },
+    TestRelation { tests: PathBuf },
     /// Fallback — included through generic retrieval with no specific signal.
     #[default]
     Unspecified,
@@ -969,7 +961,7 @@ impl ContextIndex {
             .split(|c: char| !c.is_alphanumeric() && c != '_')
             .filter(|t| t.len() >= 2 && !is_query_stopword(t))
             .take(5) // P1-13: increased from 3 to capture more terms after filtering
-            .map(|t| normalize_code_identifier(t))
+            .map(normalize_code_identifier)
             .collect();
 
         // --- candidate pool keyed by (path, start_line) ---
@@ -1030,15 +1022,10 @@ impl ContextIndex {
                         OR lower(kind) LIKE '%' || lower(?1) || '%'
                      LIMIT ?2",
                 )?;
-                let sym_rows = sym_stmt.query_map(
-                    params![term, (budget.maximum_hits * 2) as i64],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, usize>(1)?,
-                        ))
-                    },
-                )?;
+                let sym_rows = sym_stmt
+                    .query_map(params![term, (budget.maximum_hits * 2) as i64], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+                    })?;
                 for sym_row in sym_rows {
                     let (sym_path_str, sym_line) = sym_row?;
 
@@ -1128,17 +1115,15 @@ impl ContextIndex {
                      WHERE lower(target) LIKE '%' || lower(?1) || '%'
                      LIMIT ?2",
                 )?;
-                let imp_rows = imp_stmt.query_map(
-                    params![term, (budget.maximum_hits * 2) as i64],
-                    |row| row.get::<_, String>(0),
-                )?;
-                for imp_row in imp_rows {
-                    if let Ok(path) = imp_row {
-                        import_boosted_paths.insert(path);
-                    }
+                let imp_rows = imp_stmt
+                    .query_map(params![term, (budget.maximum_hits * 2) as i64], |row| {
+                        row.get::<_, String>(0)
+                    })?;
+                for imp_row in imp_rows.flatten() {
+                    import_boosted_paths.insert(imp_row);
                 }
             }
-            for (_, hit) in candidates.iter_mut() {
+            for hit in candidates.values_mut() {
                 if import_boosted_paths.contains(&hit.path.to_string_lossy().into_owned()) {
                     hit.score_millis += 1500;
                     hit.reason = HitReason::ImportProximity {
@@ -1149,7 +1134,6 @@ impl ContextIndex {
 
             // P1-14: Cochange expansion — files that historically changed
             // together with matched hits get a moderate score boost.
-            let mut cochange_boosted_paths: BTreeSet<String> = BTreeSet::new();
             {
                 let candidate_paths: Vec<String> = candidates
                     .values()
@@ -1168,17 +1152,14 @@ impl ContextIndex {
                         params![path_str, (budget.maximum_hits / 2).max(2) as i64],
                         |row| row.get::<_, String>(0),
                     )?;
-                    for co_row in co_rows {
-                        if let Ok(sibling) = co_row {
-                            cochange_boosted_paths.insert(sibling);
-                        }
+                    for sibling in co_rows.flatten() {
+                        cochange_boosted_paths.insert(sibling);
                     }
                 }
             }
 
             // P1-14: Test-relation expansion — test files linked to matched
             // source files (and vice versa) get a scoring boost.
-            let mut test_relation_paths: BTreeSet<String> = BTreeSet::new();
             {
                 let candidate_paths: Vec<String> = candidates
                     .values()
@@ -1193,22 +1174,16 @@ impl ContextIndex {
                     )?;
                     let tr_rows = tr_stmt.query_map(
                         params![path_str, (budget.maximum_hits / 2).max(2) as i64],
-                        |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, String>(1)?,
-                            ))
-                        },
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                     )?;
-                    for tr_row in tr_rows {
-                        if let Ok((test_path, source_path)) = tr_row {
-                            let other = if test_path.as_str() == path_str.as_str() {
-                                source_path
-                            } else {
-                                test_path
-                            };
-                            test_relation_paths.insert(other);
-                        }
+                    for tr_row in tr_rows.flatten() {
+                        let (test_path, source_path) = tr_row;
+                        let other = if test_path.as_str() == path_str.as_str() {
+                            source_path
+                        } else {
+                            test_path
+                        };
+                        test_relation_paths.insert(other);
                     }
                 }
             }
@@ -1234,7 +1209,7 @@ impl ContextIndex {
                 };
             }
         }
-        scored.sort_by(|a, b| b.score_millis.cmp(&a.score_millis));
+        scored.sort_by_key(|hit| std::cmp::Reverse(hit.score_millis));
 
         let mut hits = Vec::new();
         let mut bytes = 0;
@@ -2053,7 +2028,12 @@ fn fts_query(query: &str) -> String {
         .split(|character: char| !character.is_alphanumeric() && character != '_')
         .filter(|token| token.len() >= 2 && !is_query_stopword(token))
         .take(12)
-        .flat_map(|token| normalize_code_identifier(&token).split('|').map(|s| s.to_owned()).collect::<Vec<_>>())
+        .flat_map(|token| {
+            normalize_code_identifier(token)
+                .split('|')
+                .map(|s| s.to_owned())
+                .collect::<Vec<_>>()
+        })
         .map(|token| format!("\"{}\"", token.replace('"', "")))
         .collect::<Vec<_>>()
         .join(" OR ")
@@ -2063,24 +2043,121 @@ fn fts_query(query: &str) -> String {
 fn is_query_stopword(token: &str) -> bool {
     matches!(
         token.to_ascii_lowercase().as_str(),
-        "the" | "a" | "an" | "is" | "are" | "was" | "were"
-            | "be" | "been" | "being" | "have" | "has" | "had"
-            | "do" | "does" | "did" | "will" | "would" | "could"
-            | "should" | "may" | "might" | "can" | "shall" | "must"
-            | "in" | "to" | "for" | "on" | "at" | "by" | "of" | "with"
-            | "from" | "as" | "into" | "through" | "during" | "before"
-            | "after" | "above" | "below" | "between" | "under"
-            | "and" | "or" | "not" | "but" | "if" | "then" | "else"
-            | "when" | "where" | "why" | "how" | "all" | "each"
-            | "every" | "both" | "few" | "more" | "most" | "other"
-            | "some" | "such" | "no" | "nor" | "only" | "own" | "same"
-            | "so" | "than" | "too" | "very" | "just" | "about"
-            | "also" | "here" | "there" | "this" | "that" | "these"
-            | "those" | "what" | "which" | "who" | "whom"
-            | "it" | "its" | "i" | "me" | "my" | "we" | "our" | "you" | "your"
-            | "he" | "she" | "they" | "them" | "their" | "his" | "her"
-            | "please" | "need" | "want" | "like" | "find" | "get"
-            | "make" | "use" | "using" | "show" | "tell" | "explain"
+        "the"
+            | "a"
+            | "an"
+            | "is"
+            | "are"
+            | "was"
+            | "were"
+            | "be"
+            | "been"
+            | "being"
+            | "have"
+            | "has"
+            | "had"
+            | "do"
+            | "does"
+            | "did"
+            | "will"
+            | "would"
+            | "could"
+            | "should"
+            | "may"
+            | "might"
+            | "can"
+            | "shall"
+            | "must"
+            | "in"
+            | "to"
+            | "for"
+            | "on"
+            | "at"
+            | "by"
+            | "of"
+            | "with"
+            | "from"
+            | "as"
+            | "into"
+            | "through"
+            | "during"
+            | "before"
+            | "after"
+            | "above"
+            | "below"
+            | "between"
+            | "under"
+            | "and"
+            | "or"
+            | "not"
+            | "but"
+            | "if"
+            | "then"
+            | "else"
+            | "when"
+            | "where"
+            | "why"
+            | "how"
+            | "all"
+            | "each"
+            | "every"
+            | "both"
+            | "few"
+            | "more"
+            | "most"
+            | "other"
+            | "some"
+            | "such"
+            | "no"
+            | "nor"
+            | "only"
+            | "own"
+            | "same"
+            | "so"
+            | "than"
+            | "too"
+            | "very"
+            | "just"
+            | "about"
+            | "also"
+            | "here"
+            | "there"
+            | "this"
+            | "that"
+            | "these"
+            | "those"
+            | "what"
+            | "which"
+            | "who"
+            | "whom"
+            | "it"
+            | "its"
+            | "i"
+            | "me"
+            | "my"
+            | "we"
+            | "our"
+            | "you"
+            | "your"
+            | "he"
+            | "she"
+            | "they"
+            | "them"
+            | "their"
+            | "his"
+            | "her"
+            | "please"
+            | "need"
+            | "want"
+            | "like"
+            | "find"
+            | "get"
+            | "make"
+            | "use"
+            | "using"
+            | "show"
+            | "tell"
+            | "explain"
     )
 }
 
@@ -2112,7 +2189,11 @@ fn normalize_code_identifier(token: &str) -> String {
             }
         }
         parts.push(chars[start..].iter().collect::<String>());
-        let parts: Vec<&str> = parts.iter().map(|s| s.as_str()).filter(|s| s.len() >= 2).collect();
+        let parts: Vec<&str> = parts
+            .iter()
+            .map(|s| s.as_str())
+            .filter(|s| s.len() >= 2)
+            .collect();
         if parts.len() > 1 {
             let mut result = parts.join("|");
             result.push('|');

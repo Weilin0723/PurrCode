@@ -43,8 +43,8 @@ use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, Authorization, CheckpointDecision,
     CheckpointId, ContextClass, ContextLedgerEntry, ContextLedgerSection, ContextualDecision,
     ContextualJudgment, ConversationMessage, FailedAttempt, JudgmentDecision, ProposedAction,
-    RepositoryReadAction, SemanticCheckpoint, SessionEvent, SessionId, SessionState,
-    SessionStatus, TurnId, ValidationStatus, WhyIncluded,
+    RepositoryReadAction, SemanticCheckpoint, SessionEvent, SessionId, SessionState, SessionStatus,
+    TurnId, ValidationStatus, WhyIncluded,
 };
 use purrcode_validation_runtime::{
     EvidenceStatus, ValidationDetector, ValidationPlan, ValidationRunner, ValidationStage,
@@ -53,11 +53,11 @@ use purrcode_whisker::RetrievalBudget;
 use schemars::schema_for;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Instant;
 use tokio::sync::Notify;
@@ -100,6 +100,10 @@ const MAX_REJECTED_RESPONSE_PREVIEW_CHARS: usize = 4_096;
 const MAX_VALIDATION_REPAIR_CYCLES: usize = 3;
 const MAX_COMPLETION_REPAIR_ATTEMPTS: usize = 2;
 const MAX_ACTION_REPAIR_ATTEMPTS: usize = 1;
+/// Bounded reject+repair opportunities when a Scout turn requests more actions
+/// than the remaining exploration budget. One repair is enough for a compliant
+/// model; repeating the overflow fails closed instead of truncating silently.
+const MAX_SCOUT_TRUNCATE_REPAIRS: usize = 1;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct ScoutId(pub Uuid);
@@ -128,7 +132,6 @@ pub struct EvidenceRef {
     pub line_range: (u32, u32),
     pub excerpt: String,
 }
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ScoutConfidence {
     High,
@@ -200,9 +203,11 @@ pub struct NativeAgent<'a> {
     /// use different providers. `coding_worker` is always present.
     models: BTreeMap<String, (Arc<dyn ModelProvider>, ModelId)>,
     /// P0: Cached context window from provider capabilities, resolved once
-    /// before the first capacity decision. `None` means not yet resolved.
-    /// `Some(None)` means the provider returned no context_window.
-    cached_context_window: Cell<Option<Option<usize>>>,
+    /// before the first capacity decision. The outer `None` means not yet
+    /// resolved; the inner `None` means the provider returned no
+    /// context_window. `OnceLock` keeps `NativeAgent` `Send + Sync` across
+    /// `.await` points (a `Cell` would not).
+    cached_context_window: OnceLock<Option<usize>>,
     policy: Policy,
     controls: SessionControls,
     usage_ledger: Mutex<UsageLedger>,
@@ -220,7 +225,7 @@ impl<'a> NativeAgent<'a> {
     ) -> Self {
         Self {
             models,
-            cached_context_window: Cell::new(None),
+            cached_context_window: OnceLock::new(),
             policy,
             controls: SessionControls::default(),
             usage_ledger: Mutex::new(UsageLedger::default()),
@@ -311,15 +316,13 @@ impl<'a> NativeAgent<'a> {
     fn model_capability_context_limit(&self) -> u64 {
         const DEFAULT_CONTEXT_LIMIT: u64 = 200_000;
         // If provider capabilities have been resolved, use the actual window.
-        if let Some(window_opt) = self.cached_context_window.get() {
-            if let Some(window) = window_opt {
-                let budget_limit = self
-                    .budget()
-                    .maximum_input_tokens
-                    .unwrap_or(DEFAULT_CONTEXT_LIMIT);
-                // Respect both: the model's actual limit and the user's budget.
-                return (window as u64).min(budget_limit);
-            }
+        if let Some(window) = self.cached_context_window.get().copied().flatten() {
+            let budget_limit = self
+                .budget()
+                .maximum_input_tokens
+                .unwrap_or(DEFAULT_CONTEXT_LIMIT);
+            // Respect both: the model's actual limit and the user's budget.
+            return (window as u64).min(budget_limit);
         }
         // Provider hasn't been queried yet — fall back to user budget or default.
         self.budget()
@@ -329,7 +332,9 @@ impl<'a> NativeAgent<'a> {
 
     /// P0: Resolve the model's actual context window from provider capabilities.
     /// Called once during request preparation so all subsequent capacity
-    /// decisions use the real limit.
+    /// decisions use the real limit. `OnceLock::get_or_init` is not used
+    /// because the provider call is async; the set is idempotent under races
+    /// (first write wins).
     async fn ensure_context_capacity(&self, role: &str) {
         if self.cached_context_window.get().is_some() {
             return;
@@ -339,17 +344,21 @@ impl<'a> NativeAgent<'a> {
             Ok(caps) => caps.context_window,
             Err(_) => None,
         };
-        self.cached_context_window.set(Some(context_window));
+        let _ = self.cached_context_window.set(context_window);
     }
 
     /// P0: Wired provider context-overflow recovery. Called from the
     /// structured-response failure path when the provider returns
-    /// ProviderErrorCategory::ContextTooLarge. Compacts once and retries.
+    /// ProviderErrorCategory::ContextTooLarge. Compacts once and rebuilds the
+    /// request around the CURRENT objective (never the session's original
+    /// objective), reloading durable state first so a second compaction never
+    /// runs against a stale snapshot. When auto_context is disabled, retrieval
+    /// is skipped exactly like the happy path.
     async fn recover_context_overflow(
         &self,
         store: &mut SessionStore,
         session_id: SessionId,
-        state: &SessionState,
+        current_objective: &str,
         turn_id: TurnId,
         compaction_cycles: u8,
     ) -> Result<(Vec<ModelMessage>, ContextLedgerEntry), AgentError> {
@@ -360,20 +369,29 @@ impl<'a> NativeAgent<'a> {
                 after_compaction: true,
             });
         }
-        self.compact_and_checkpoint(store, session_id, state, turn_id).await?;
+        // Compact the CURRENT durable state, never a caller-supplied snapshot
+        // that predates this turn's events.
+        let state = store.load(session_id)?;
+        self.compact_and_checkpoint(store, session_id, &state, turn_id)
+            .await?;
         let rebuilt_state = store.load(session_id)?;
         let session_events = store.events(session_id)?;
-        let context_index = crate::context::AgentContextIndex::open(
-            &state.worktree.as_ref().ok_or_else(|| AgentError::CorruptSession("worktree missing".into()))?,
-            &state.worktree.as_ref().unwrap().join(".purrcode").join("context.db"),
-        )?;
-        let objective = state.objective.clone().unwrap_or_default();
-        let context_hits = context_index.retrieve(&objective, &purrcode_whisker::RetrievalBudget::default())?;
-        let (messages, ledger) = crate::context::build_messages(
+        let worktree = state
+            .worktree
+            .as_ref()
+            .ok_or_else(|| AgentError::CorruptSession("worktree missing".into()))?;
+        let mut context_hits = Vec::new();
+        if self.controls.auto_context {
+            let context_index =
+                AgentContextIndex::open(worktree, &worktree.join(".purrcode").join("context.db"))?;
+            context_hits =
+                context_index.retrieve(current_objective, &RetrievalBudget::default())?;
+        }
+        let (messages, ledger) = build_messages(
             turn_id,
             session_id,
-            &objective,
-            state.worktree.as_ref().unwrap(),
+            current_objective,
+            worktree,
             &rebuilt_state,
             &context_hits,
             &session_events,
@@ -392,8 +410,8 @@ impl<'a> NativeAgent<'a> {
         if !state.plan_steps.is_empty() {
             return false;
         }
-        let has_scout_model = self.models.contains_key("scout")
-            || self.models.contains_key("fast_router");
+        let has_scout_model =
+            self.models.contains_key("scout") || self.models.contains_key("fast_router");
         if !has_scout_model {
             return false;
         }
@@ -1393,16 +1411,15 @@ impl<'a> NativeAgent<'a> {
         let mut context_index = AgentContextIndex::open(&worktree, &database)?;
         let _indexed =
             context_index.submit_task(&request.objective, &[], &AgentContextPolicy::default())?;
-        let context_hits = context_index.retrieve(&request.objective, &RetrievalBudget::default())?;
-        let mut messages = crate::context::build_scout_messages(
-            &request.objective,
-            &worktree,
-            &context_hits,
-        );
+        let context_hits =
+            context_index.retrieve(&request.objective, &RetrievalBudget::default())?;
+        let mut messages =
+            crate::context::build_scout_messages(&request.objective, &worktree, &context_hits);
         let mut token_used: u64 = 0;
         let mut action_count: u32 = 0;
         let mut evidence: Vec<EvidenceRef> = Vec::new();
         let mut conclusions: Vec<String> = Vec::new();
+        let mut scout_truncate_repairs = 0_usize;
 
         let model = self.model_for(role).1.clone();
 
@@ -1456,31 +1473,43 @@ impl<'a> NativeAgent<'a> {
             let actions: Vec<crate::schema::AgentAction> = if !turn.actions.is_empty() {
                 turn.actions.clone()
             } else {
-                let action = turn
-                    .action
-                    .clone()
-                    .ok_or_else(|| AgentError::InvalidModelTurn("scout action is required".into()))?;
+                let action = turn.action.clone().ok_or_else(|| {
+                    AgentError::InvalidModelTurn("scout action is required".into())
+                })?;
                 vec![action]
             };
 
             // P0: Enforce Scout max_actions before execution, not just at
-            // loop boundary. A model turn can return a batch; truncate to
-            // the remaining budget.
+            // loop boundary. A model turn that returns a batch larger than the
+            // remaining budget is rejected for a bounded repair — the model
+            // chooses the highest-value subset — instead of silently dropping
+            // its actions.
             let remaining = request.max_actions.saturating_sub(action_count) as usize;
-            let actions = if actions.len() > remaining {
-                let mut truncated = actions;
-                truncated.truncate(remaining);
-                truncated
-            } else {
-                actions
-            };
+            if actions.len() > remaining {
+                if scout_truncate_repairs >= MAX_SCOUT_TRUNCATE_REPAIRS {
+                    conclusions.push(format!(
+                        "scout halted: model requested {} actions but only {remaining} remain in budget",
+                        actions.len()
+                    ));
+                    break;
+                }
+                scout_truncate_repairs += 1;
+                messages.push(ModelMessage {
+                    role: "user".into(),
+                    content: format!(
+                        "Your previous turn returned {} actions, but only {remaining} exploration \
+                        actions remain in budget. Return the SAME incomplete turn with at most \
+                        {remaining} highest-value read actions (no repeats). Do not mark complete.",
+                        actions.len()
+                    ),
+                });
+                continue;
+            }
 
             // P0-5: Append the model's turn to messages so the scout sees its
             // own reasoning in the conversation history.
-            let action_descriptions: Vec<String> = actions
-                .iter()
-                .map(|a| format!("{a:?}"))
-                .collect();
+            let action_descriptions: Vec<String> =
+                actions.iter().map(|a| format!("{a:?}")).collect();
             messages.push(ModelMessage {
                 role: "assistant".into(),
                 content: format!(
@@ -1492,8 +1521,7 @@ impl<'a> NativeAgent<'a> {
 
             let mut action_results = Vec::new();
             for action in actions {
-                let proposed =
-                    crate::normalize::normalize_action(action, &worktree)?;
+                let proposed = crate::normalize::normalize_action(action, &worktree)?;
                 // Verify the action is read-only per scout's allowed kinds.
                 if !matches!(&proposed, ProposedAction::RepositoryRead(_)) {
                     return Err(AgentError::InvalidModelTurn(
@@ -1504,9 +1532,9 @@ impl<'a> NativeAgent<'a> {
                 // Route through PawGate before execution.
                 let deterministic = self.policy.evaluate(&proposed, &worktree);
                 let constraints = crate::normalize::decision_constraints(&deterministic)
-                    .ok_or_else(|| AgentError::InvalidModelTurn(
-                        "scout action was denied by PawGate".into(),
-                    ))?;
+                    .ok_or_else(|| {
+                        AgentError::InvalidModelTurn("scout action was denied by PawGate".into())
+                    })?;
 
                 let session_worktree = crate::context::session_worktree(&state)?;
                 let action_id = ActionId::new();
@@ -1550,30 +1578,49 @@ impl<'a> NativeAgent<'a> {
                 )
                 .await?;
 
-                // P0: Collect evidence from the execution result's actual
-                // affected_paths instead of naively parsing stdout. For
-                // ReadFile this gives the exact file; for list/find/grep it
-                // gives the explored directories. The read_paths() fallback
-                // is only used when affected_paths is empty (git subprocess).
+                // P0: Structured per-action evidence. Grep output is
+                // `path:line:content`, find/list output is one path per line —
+                // split those into per-file EvidenceRefs with real line ranges
+                // instead of stamping the whole stdout onto every searched
+                // directory. read_file/git_show know their exact path.
                 let stdout_str = String::from_utf8_lossy(&execution.stdout).to_string();
-                let evidence_paths: Vec<PathBuf> = if execution.affected_paths.is_empty() {
-                    // Git subprocess actions — use the action's declared paths.
-                    if let ProposedAction::RepositoryRead(ref read) = proposed {
-                        read_paths(read)
-                    } else {
-                        vec![]
+                let mut action_evidence: Vec<EvidenceRef> = Vec::new();
+                if let ProposedAction::RepositoryRead(ref read) = proposed {
+                    let kind = read_evidence_kind(read);
+                    match kind {
+                        "grep" | "find" | "list" => {
+                            action_evidence.extend(per_file_evidence(
+                                kind,
+                                &stdout_str,
+                                &read_paths(read),
+                                16,
+                            ));
+                        }
+                        _ => {
+                            let line_count = stdout_str.lines().count().max(1) as u32;
+                            for path in read_paths(read) {
+                                action_evidence.push(EvidenceRef {
+                                    path,
+                                    line_range: (1, line_count),
+                                    excerpt: stdout_str.chars().take(2048).collect(),
+                                });
+                            }
+                        }
                     }
-                } else {
-                    execution.affected_paths.clone()
-                };
-                let line_count = stdout_str.lines().count().max(1) as u32;
-                for path in evidence_paths {
-                    evidence.push(EvidenceRef {
-                        path,
-                        line_range: (1, line_count),
-                        excerpt: stdout_str.chars().take(2048).collect(),
-                    });
                 }
+                if action_evidence.is_empty() {
+                    // Parsed output was empty or unparseable — fall back to the
+                    // execution result's affected paths.
+                    let line_count = stdout_str.lines().count().max(1) as u32;
+                    for path in &execution.affected_paths {
+                        action_evidence.push(EvidenceRef {
+                            path: path.clone(),
+                            line_range: (1, line_count),
+                            excerpt: stdout_str.chars().take(2048).collect(),
+                        });
+                    }
+                }
+                evidence.extend(action_evidence);
                 action_results.push(format!(
                     "Action result ({}):\n{}",
                     action_id.0,
@@ -1590,12 +1637,23 @@ impl<'a> NativeAgent<'a> {
             });
         }
 
+        // P0: Confidence reflects evidence quality, not how chatty the
+        // conclusions are. High requires at least two distinct files with
+        // specific (non-whole-file) line ranges; Medium requires any
+        // repository-backed evidence.
         let confidence = if evidence.is_empty() {
             ScoutConfidence::Low
-        } else if conclusions.iter().any(|c| c.len() > 100) {
-            ScoutConfidence::High
         } else {
-            ScoutConfidence::Medium
+            let distinct_files: std::collections::BTreeSet<&PathBuf> =
+                evidence.iter().map(|e| &e.path).collect();
+            let specific_lines = evidence.iter().any(|e| {
+                e.line_range.0 > 1 || (e.line_range.1 != 1 && e.line_range.0 != e.line_range.1)
+            });
+            if distinct_files.len() >= 2 && specific_lines {
+                ScoutConfidence::High
+            } else {
+                ScoutConfidence::Medium
+            }
         };
 
         Ok(ScoutFinding {
@@ -1902,11 +1960,7 @@ impl<'a> NativeAgent<'a> {
         mut messages: Vec<ModelMessage>,
         mut ledger: ContextLedgerEntry,
         contract: &ModelMessage,
-        contract_chars: u64,
-        contract_len: usize,
         step_limit_warning: Option<&ModelMessage>,
-        warning_chars: u64,
-        warning_len: usize,
     ) -> (Vec<ModelMessage>, ContextLedgerEntry) {
         // 1. Insert contract before last user message
         let idx = messages
@@ -1914,13 +1968,15 @@ impl<'a> NativeAgent<'a> {
             .rposition(|m| m.role == "user")
             .unwrap_or(messages.len());
         messages.insert(idx, contract.clone());
-        ledger.total_estimated_tokens =
-            ledger.total_estimated_tokens.saturating_add(contract_chars.div_ceil(4));
+        let contract_chars = contract.content.chars().count() as u64;
+        ledger.total_estimated_tokens = ledger
+            .total_estimated_tokens
+            .saturating_add(contract_chars.div_ceil(4));
         ledger.sections.push(ContextLedgerSection {
             class: ContextClass::Instructions,
             label: "daemon_contract".into(),
             estimated_tokens: contract_chars.div_ceil(4),
-            byte_len: contract_len,
+            byte_len: contract.content.len(),
             why_included: WhyIncluded::AlwaysPresent,
         });
 
@@ -1931,13 +1987,15 @@ impl<'a> NativeAgent<'a> {
                 .rposition(|m| m.role == "user")
                 .unwrap_or(messages.len());
             messages.insert(idx + 1, warning.clone());
-            ledger.total_estimated_tokens =
-                ledger.total_estimated_tokens.saturating_add(warning_chars.div_ceil(4));
+            let warning_chars = warning.content.chars().count() as u64;
+            ledger.total_estimated_tokens = ledger
+                .total_estimated_tokens
+                .saturating_add(warning_chars.div_ceil(4));
             ledger.sections.push(ContextLedgerSection {
                 class: ContextClass::Instructions,
                 label: "step_limit_warning".into(),
                 estimated_tokens: warning_chars.div_ceil(4),
-                byte_len: warning_len,
+                byte_len: warning.content.len(),
                 why_included: WhyIncluded::AlwaysPresent,
             });
         }
@@ -1983,7 +2041,8 @@ impl<'a> NativeAgent<'a> {
             let mut compaction_cycles: u8 = 0;
             loop {
                 if state.proposed_actions.len() > MAX_ACTIONS_IN_PROMPT {
-                    self.compact_and_checkpoint(store, session_id, &state, turn_id).await?;
+                    self.compact_and_checkpoint(store, session_id, &state, turn_id)
+                        .await?;
                     compaction_cycles += 1;
                     if compaction_cycles >= MAX_COMPACTION_CYCLES_PER_ITERATION {
                         return Err(AgentError::ContextOverflow {
@@ -2040,7 +2099,8 @@ impl<'a> NativeAgent<'a> {
                     sensitive_files: index_report.summary.sensitive_files,
                 },
             )?;
-            let mut context_hits = context_index.retrieve(&objective, &RetrievalBudget::default())?;
+            let mut context_hits =
+                context_index.retrieve(&objective, &RetrievalBudget::default())?;
             // P1-12: When auto_context is disabled, skip both Whisker retrieval
             // AND Scout delegation — the user has opted out of automatic context.
             if !self.controls.auto_context {
@@ -2086,10 +2146,7 @@ impl<'a> NativeAgent<'a> {
             }
             // Merge scout hits into the context hits for the main turn.
             if !scout_context_hits.is_empty() {
-                context_hits = scout_context_hits
-                    .into_iter()
-                    .chain(context_hits)
-                    .collect();
+                context_hits = scout_context_hits.into_iter().chain(context_hits).collect();
             }
             store.append(
                 session_id,
@@ -2126,58 +2183,48 @@ impl<'a> NativeAgent<'a> {
                         .unwrap_or(purrcode_runtime_core::adaptation::WorkflowProfile::Direct)
                 )
             );
-            let contract_chars = contract_content.chars().count() as u64;
-            let contract_len = contract_content.len();
             let contract = ModelMessage {
                 role: "system".into(),
                 content: contract_content,
             };
 
-            let step_limit_warning = if iteration >= MAX_AUTONOMOUS_ITERATIONS - 1 {
-                let warning_content: String =
-                    "STEP LIMIT: This is your last action before the autonomous loop ends. \
+            let step_limit_warning: Option<ModelMessage> =
+                if iteration >= MAX_AUTONOMOUS_ITERATIONS - 1 {
+                    Some(ModelMessage {
+                        role: "user".into(),
+                        content:
+                            "STEP LIMIT: This is your last action before the autonomous loop ends. \
                 If the objective is satisfied, summarize what was accomplished with \
                 `complete: true`. If work remains, describe what is incomplete and set \
                 `complete: true` with a clear handoff for a human to resume. \
                 Do NOT issue another tool call — produce your closing turn NOW."
-                        .into();
-                let warning_chars = warning_content.chars().count() as u64;
-                let warning_len = warning_content.len();
-                Some((ModelMessage {
-                    role: "user".into(),
-                    content: warning_content,
-                }, warning_chars, warning_len))
-            } else {
-                None
-            };
+                                .into(),
+                    })
+                } else {
+                    None
+                };
 
             // P0: Use inject_runtime_messages helper so both the normal path
             // and the compaction-rebuilt path share the same index-recomputation
             // and ledger-update logic — no stale user_idx, no ledger drift.
-            let (warning_ref, warning_chars, warning_len) = step_limit_warning
-                .as_ref()
-                .map(|(msg, chars, len)| (Some(msg), *chars, *len))
-                .unwrap_or((None, 0u64, 0usize));
+            let warning_ref = step_limit_warning.as_ref();
             (messages, context_ledger_entry) = Self::inject_runtime_messages(
                 messages,
                 context_ledger_entry,
                 &contract,
-                contract_chars,
-                contract_len,
                 warning_ref,
-                warning_chars,
-                warning_len,
             );
-            let step_limit_warning: Option<ModelMessage> =
-                step_limit_warning.map(|(msg, _, _)| msg);
 
             // ── Token-pressure preflight (P0-1/P0-2) on FINAL request ─
             let messages_char_count: usize =
                 messages.iter().map(|m| m.content.chars().count()).sum();
             let estimated_tokens = (messages_char_count as u64).div_ceil(4);
             let capacity = self.effective_input_capacity();
-            if estimated_tokens > capacity && compaction_cycles == 0 {
-                self.compact_and_checkpoint(store, session_id, &state, turn_id).await?;
+            if estimated_tokens as f64 > capacity as f64 * COMPACTION_INPUT_TOKEN_THRESHOLD_RATIO
+                && compaction_cycles == 0
+            {
+                self.compact_and_checkpoint(store, session_id, &state, turn_id)
+                    .await?;
                 compaction_cycles += 1;
                 // Reload state, rebuild with contract+warning, re-estimate.
                 let rebuilt_state = store.load(session_id)?;
@@ -2194,19 +2241,12 @@ impl<'a> NativeAgent<'a> {
                 // P0: Re-inject contract+warning with freshly computed
                 // indices via inject_runtime_messages — no stale user_idx,
                 // and the rebuilt ledger includes both sections.
-                let (reb_warning_ref, reb_warning_chars, reb_warning_len) = step_limit_warning
-                    .as_ref()
-                    .map(|msg| (Some(msg), msg.content.chars().count() as u64, msg.content.len()))
-                    .unwrap_or((None, 0u64, 0usize));
+                let reb_warning_ref = step_limit_warning.as_ref();
                 let (rebuilt_msgs, rebuilt_ledger) = Self::inject_runtime_messages(
                     rebuilt_msgs,
                     rebuilt_ledger,
                     &contract,
-                    contract_chars,
-                    contract_len,
                     reb_warning_ref,
-                    reb_warning_chars,
-                    reb_warning_len,
                 );
                 // P0: Re-estimate after compaction — fail if still too large.
                 let rebuilt_char_count: usize =
@@ -2231,7 +2271,7 @@ impl<'a> NativeAgent<'a> {
                 },
             )?;
 
-            let request = ModelRequest {
+            let mut active_request = ModelRequest {
                 model: self.model_for("coding_worker").1.clone(),
                 messages,
                 tools: Vec::new(),
@@ -2245,7 +2285,7 @@ impl<'a> NativeAgent<'a> {
                     "coding_worker",
                     1,
                     tracker,
-                    request.clone(),
+                    active_request.clone(),
                     schema_for!(AgentTurn),
                     validate_turn,
                 )
@@ -2262,28 +2302,35 @@ impl<'a> NativeAgent<'a> {
                     {
                         let (rebuilt_msgs, rebuilt_ledger) = self
                             .recover_context_overflow(
-                                store, session_id, &state, turn_id, compaction_cycles,
+                                store,
+                                session_id,
+                                &objective,
+                                turn_id,
+                                compaction_cycles,
                             )
                             .await?;
-                        compaction_cycles += 1;
                         // Re-inject contract and warning into rebuilt messages
-                        let (reb_w, reb_wc, reb_wl) = step_limit_warning
-                            .as_ref()
-                            .map(|msg| {
-                                let c = msg.content.chars().count() as u64;
-                                (Some(msg), c, msg.content.len())
-                            })
-                            .unwrap_or((None, 0u64, 0usize));
+                        let reb_w = step_limit_warning.as_ref();
                         let (rebuilt_msgs, rebuilt_ledger) = Self::inject_runtime_messages(
                             rebuilt_msgs,
                             rebuilt_ledger,
                             &contract,
-                            contract_chars,
-                            contract_len,
                             reb_w,
-                            reb_wc,
-                            reb_wl,
                         );
+                        // Local preflight of the REBUILT final request: if
+                        // compaction still cannot fit within the effective
+                        // capacity, fail closed instead of sending a retry
+                        // that will overflow again.
+                        let rebuilt_char_count: usize =
+                            rebuilt_msgs.iter().map(|m| m.content.chars().count()).sum();
+                        let rebuilt_est = (rebuilt_char_count as u64).div_ceil(4);
+                        if rebuilt_est > capacity {
+                            return Err(AgentError::ContextOverflow {
+                                estimated_tokens: rebuilt_est,
+                                max_input_tokens: capacity,
+                                after_compaction: true,
+                            });
+                        }
                         context_ledger_entry = rebuilt_ledger;
                         store.append(
                             session_id,
@@ -2291,7 +2338,10 @@ impl<'a> NativeAgent<'a> {
                                 entry: context_ledger_entry.clone(),
                             },
                         )?;
-                        let retry_request = ModelRequest {
+                        // Swap the active request to the compacted one so every
+                        // subsequent repair (schema/completion/action) rebases
+                        // on the rebuilt messages, not the oversized original.
+                        active_request = ModelRequest {
                             model: self.model_for("coding_worker").1.clone(),
                             messages: rebuilt_msgs,
                             tools: Vec::new(),
@@ -2303,13 +2353,13 @@ impl<'a> NativeAgent<'a> {
                             session_id,
                             "coding_worker",
                             1,
-                            retry_request,
+                            active_request.clone(),
                             schema_for!(AgentTurn),
                             validate_turn,
                         )
                         .await?
                     } else {
-                        let mut repair = request.clone();
+                        let mut repair = active_request.clone();
                         repair.messages.push(ModelMessage {
                             role: "user".into(),
                             content: format!(
@@ -2379,7 +2429,7 @@ impl<'a> NativeAgent<'a> {
                         ),
                     },
                 )?;
-                let mut repair = request.clone();
+                let mut repair = active_request.clone();
                 // Escalating severity: first attempt is a polite nudge, second
                 // is a direct command to stop meta-commentary and produce output.
                 let repair_prompt = if completion_repair_attempts == 1 {
@@ -2481,11 +2531,7 @@ impl<'a> NativeAgent<'a> {
                     )?;
                     match deterministic {
                         JudgmentDecision::AllowWithConstraints(constraints) => {
-                            authorized_reads.push((
-                                action_id,
-                                action.clone(),
-                                constraints.clone(),
-                            ));
+                            authorized_reads.push((action_id, action.clone(), constraints.clone()));
                         }
                         _ => {
                             return Ok(AgentOutcome::IterationLimit { session_id });
@@ -2516,11 +2562,7 @@ impl<'a> NativeAgent<'a> {
                         constraints: constraints.clone(),
                     })
                     .collect();
-                let results = purrcode_claw::ToolRuntime::execute_batch(
-                    store,
-                    &batch,
-                )
-                .await?;
+                let results = purrcode_claw::ToolRuntime::execute_batch(store, &batch).await?;
                 for (i, result) in results.iter().enumerate() {
                     if let Some((action_id, _, _)) = authorized_reads.get(i) {
                         store.append(
@@ -2567,7 +2609,7 @@ impl<'a> NativeAgent<'a> {
                         }
                         Err(error) if action_repair_attempts < MAX_ACTION_REPAIR_ATTEMPTS => {
                             action_repair_attempts += 1;
-                            let mut repair = request.clone();
+                            let mut repair = active_request.clone();
                             repair.messages.push(ModelMessage {
                                 role: "user".into(),
                                 content: format!(
@@ -3200,19 +3242,17 @@ impl<'a> NativeAgent<'a> {
         )?;
         let objective = state.objective.clone().unwrap_or_default();
         let files_inspected: Vec<PathBuf> = state
-            .proposed_actions.values().filter_map(|action| match action {
+            .proposed_actions
+            .values()
+            .filter_map(|action| match action {
                 ProposedAction::RepositoryRead(read) => match read {
                     RepositoryReadAction::ReadFile { path, .. } => Some(path.clone()),
                     RepositoryReadAction::GitShow { path, .. } => Some(path.clone()),
                     RepositoryReadAction::GitDiff { paths }
                     | RepositoryReadAction::List { paths, .. }
                     | RepositoryReadAction::Find { paths, .. }
-                    | RepositoryReadAction::RepositoryGrep { paths, .. } => {
-                        paths.first().cloned()
-                    }
-                    RepositoryReadAction::GitLsFiles { pathspec } => {
-                        pathspec.first().cloned()
-                    }
+                    | RepositoryReadAction::RepositoryGrep { paths, .. } => paths.first().cloned(),
+                    RepositoryReadAction::GitLsFiles { pathspec } => pathspec.first().cloned(),
                     _ => None,
                 },
                 _ => None,
@@ -3221,7 +3261,9 @@ impl<'a> NativeAgent<'a> {
             .into_iter()
             .collect();
         let files_modified: Vec<PathBuf> = state
-            .proposed_actions.values().filter_map(|action| match action {
+            .proposed_actions
+            .values()
+            .filter_map(|action| match action {
                 ProposedAction::WriteFile(write) => Some(write.path.clone()),
                 ProposedAction::DeleteFile(delete) => Some(delete.path.clone()),
                 _ => None,
@@ -3229,21 +3271,58 @@ impl<'a> NativeAgent<'a> {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
+        // P1-3: Derive execution/validation failures from the durable event log
+        // so policy-allowed actions that failed at runtime still enter
+        // failed_attempts (a judgment-only filter misses them entirely).
+        let events = store.events(session_id)?;
+        let mut runtime_failures: BTreeMap<ActionId, String> = BTreeMap::new();
+        for event in &events {
+            match event {
+                SessionEvent::ExecutionFinished {
+                    action_id,
+                    exit_code,
+                    ..
+                } if *exit_code != Some(0) => {
+                    runtime_failures.insert(
+                        *action_id,
+                        format!("execution exited with code {exit_code:?}"),
+                    );
+                }
+                SessionEvent::ValidationRecorded {
+                    action_id,
+                    status: ValidationStatus::Failed,
+                    evidence,
+                } => {
+                    runtime_failures.insert(
+                        *action_id,
+                        format!(
+                            "validation failed: {}",
+                            evidence.chars().take(200).collect::<String>()
+                        ),
+                    );
+                }
+                _ => {}
+            }
+        }
         let failed_attempts: Vec<FailedAttempt> = state
             .proposed_actions
             .iter()
             .filter(|(id, _)| !retained_action_ids.contains(id))
             .filter(|(id, _)| {
-                // Include any action that didn't receive a clean allow
-                !matches!(
-                    state.judgments.get(id),
+                let judgment = state.judgments.get(id);
+                let is_allow = matches!(
+                    judgment,
                     Some(JudgmentDecision::Allow | JudgmentDecision::AllowWithConstraints(_))
-                )
+                );
+                // Policy denial, OR policy approval that failed at runtime.
+                !is_allow || runtime_failures.contains_key(id)
             })
             .map(|(id, action)| {
-                // P1-3: Broaden failure reason to distinguish policy denial
-                // from execution failure, validation failure, and repair.
-                let reason = if let Some(judgment) = state.judgments.get(id) {
+                // Prefer the concrete runtime failure; fall back to the policy
+                // judgment when the action never executed.
+                let reason = if let Some(failure) = runtime_failures.get(id) {
+                    failure.clone()
+                } else if let Some(judgment) = state.judgments.get(id) {
                     match judgment {
                         JudgmentDecision::Deny { reason }
                         | JudgmentDecision::ModifyAction { reason }
@@ -3252,7 +3331,9 @@ impl<'a> NativeAgent<'a> {
                             "execution or validation failed after policy approval".into()
                         }
                         JudgmentDecision::RequireApproval { reason, .. } => {
-                            format!("required approval but was compacted before resolution: {reason}")
+                            format!(
+                                "required approval but was compacted before resolution: {reason}"
+                            )
                         }
                     }
                 } else {
@@ -3279,8 +3360,10 @@ impl<'a> NativeAgent<'a> {
         // P0-10: Token-based conversation retention instead of fixed message
         // count. Walk backwards through conversation_messages and stop at the
         // last user-message turn boundary within the token budget.
-        let conversation_messages_retained_from =
-            compaction_window(&state.conversation_messages, COMPACTION_RETAINED_TOKEN_BUDGET);
+        let conversation_messages_retained_from = compaction_window(
+            &state.conversation_messages,
+            COMPACTION_RETAINED_TOKEN_BUDGET,
+        );
         let checkpoint = SemanticCheckpoint {
             checkpoint_id: CheckpointId::new(),
             turn_id,
@@ -3295,7 +3378,10 @@ impl<'a> NativeAgent<'a> {
             user_constraints: {
                 let mut constraints = Vec::new();
                 constraints.push(format!("task_mode={}", self.controls.task_mode));
-                constraints.push(format!("execution_style={:?}", self.controls.execution_style));
+                constraints.push(format!(
+                    "execution_style={:?}",
+                    self.controls.execution_style
+                ));
                 constraints.push(format!("workflow={}", self.controls.workflow.label()));
                 if let Some(ref plan) = state.workflow_plan {
                     constraints.push(format!("search_policy={:?}", plan.search_policy));
@@ -3313,7 +3399,9 @@ impl<'a> NativeAgent<'a> {
                         RepositoryReadAction::ReadFile { path, .. } => {
                             Some(path.file_name()?.to_string_lossy().to_string())
                         }
-                        RepositoryReadAction::GitShow { path, .. } if !path.as_os_str().is_empty() => {
+                        RepositoryReadAction::GitShow { path, .. }
+                            if !path.as_os_str().is_empty() =>
+                        {
                             Some(path.file_name()?.to_string_lossy().to_string())
                         }
                         _ => None,
@@ -3326,7 +3414,12 @@ impl<'a> NativeAgent<'a> {
             validated_facts: state
                 .evidence_links
                 .iter()
-                .filter(|link| matches!(link.coverage, purrcode_runtime_core::work::EvidenceCoverage::Covered))
+                .filter(|link| {
+                    matches!(
+                        link.coverage,
+                        purrcode_runtime_core::work::EvidenceCoverage::Covered
+                    )
+                })
                 .map(|link| format!("{:?} covered by task {}", link.criterion_id, link.task_id.0))
                 .collect(),
             failed_attempts,
@@ -3338,7 +3431,12 @@ impl<'a> NativeAgent<'a> {
                     graph
                         .tasks
                         .iter()
-                        .filter(|t| matches!(t.status, WorkTaskStatus::NeedsAttention | WorkTaskStatus::Pending))
+                        .filter(|t| {
+                            matches!(
+                                t.status,
+                                WorkTaskStatus::NeedsAttention | WorkTaskStatus::Pending
+                            )
+                        })
                         .map(|t| format!("task[{}]: {}", t.id.0, t.objective))
                         .collect()
                 })
@@ -3356,7 +3454,9 @@ impl<'a> NativeAgent<'a> {
                     graph
                         .tasks
                         .iter()
-                        .filter(|t| matches!(t.status, WorkTaskStatus::Ready | WorkTaskStatus::Pending))
+                        .filter(|t| {
+                            matches!(t.status, WorkTaskStatus::Ready | WorkTaskStatus::Pending)
+                        })
                         .take(8)
                         .map(|t| format!("task[{}]: {}", t.id.0, t.objective))
                         .collect()
@@ -3367,7 +3467,7 @@ impl<'a> NativeAgent<'a> {
         store.append(
             session_id,
             &SessionEvent::CheckpointCompacted {
-                checkpoint,
+                checkpoint: Box::new(checkpoint),
                 retained_action_ids: retained,
                 conversation_messages_retained_from,
             },
@@ -3381,10 +3481,7 @@ impl<'a> NativeAgent<'a> {
 /// accumulating estimated tokens, and stops at the last **user** message
 /// boundary before the budget is exceeded. Returns `0` (keep everything) when
 /// the total is within budget.
-pub(crate) fn compaction_window(
-    messages: &[ConversationMessage],
-    max_tokens: u64,
-) -> usize {
+pub(crate) fn compaction_window(messages: &[ConversationMessage], max_tokens: u64) -> usize {
     if messages.is_empty() {
         return 0;
     }
@@ -3433,6 +3530,89 @@ fn read_paths(read: &purrcode_runtime_core::RepositoryReadAction) -> Vec<PathBuf
             vec![PathBuf::from(".")]
         }
     }
+}
+
+/// Classify a typed read action's stdout shape for evidence extraction.
+fn read_evidence_kind(read: &purrcode_runtime_core::RepositoryReadAction) -> &'static str {
+    match read {
+        purrcode_runtime_core::RepositoryReadAction::RepositoryGrep { .. } => "grep",
+        purrcode_runtime_core::RepositoryReadAction::Find { .. } => "find",
+        purrcode_runtime_core::RepositoryReadAction::List { .. } => "list",
+        purrcode_runtime_core::RepositoryReadAction::GitLsFiles { .. } => "list",
+        _ => "other",
+    }
+}
+
+/// Split multi-file line-oriented output (grep's `path:line:content`, find's
+/// `path` entries) into per-file [`EvidenceRef`]s with real line ranges, instead
+/// of stamping the entire stdout onto every searched directory.
+fn per_file_evidence(
+    kind: &str,
+    stdout: &str,
+    fallback_paths: &[PathBuf],
+    max_lines: usize,
+) -> Vec<EvidenceRef> {
+    let mut evidence: Vec<EvidenceRef> = Vec::new();
+    if kind == "grep" {
+        let mut per_path: BTreeMap<PathBuf, Vec<(u32, String)>> = BTreeMap::new();
+        for line in stdout.lines() {
+            let mut split = line.splitn(3, ':');
+            let Some(path) = split.next() else {
+                continue;
+            };
+            let Some(line_no) = split.next().and_then(|n| n.trim().parse::<u32>().ok()) else {
+                continue;
+            };
+            let content = split.next().unwrap_or("").trim().to_owned();
+            per_path
+                .entry(PathBuf::from(path))
+                .or_default()
+                .push((line_no, content));
+        }
+        for (path, matches) in per_path {
+            let (first, last) = (
+                matches.first().map(|m| m.0).unwrap_or(1),
+                matches.last().map(|m| m.0).unwrap_or(1),
+            );
+            let excerpt = matches
+                .iter()
+                .take(max_lines)
+                .map(|(n, content)| format!("{n}:{content}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            evidence.push(EvidenceRef {
+                path,
+                line_range: (first, last),
+                excerpt,
+            });
+        }
+    } else if kind == "find" || kind == "list" {
+        let mut seen = std::collections::BTreeSet::new();
+        for line in stdout.lines() {
+            let path = line.trim();
+            if path.is_empty() || !seen.insert(path.to_owned()) {
+                continue;
+            }
+            evidence.push(EvidenceRef {
+                path: PathBuf::from(path),
+                line_range: (1, 1),
+                excerpt: String::new(),
+            });
+            if evidence.len() >= max_lines {
+                break;
+            }
+        }
+        if evidence.is_empty() {
+            for path in fallback_paths {
+                evidence.push(EvidenceRef {
+                    path: path.clone(),
+                    line_range: (1, 1),
+                    excerpt: String::new(),
+                });
+            }
+        }
+    }
+    evidence
 }
 
 fn repair_stages(
