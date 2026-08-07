@@ -1180,6 +1180,19 @@ pub enum SessionEvent {
         head: String,
         patch_digest: String,
     },
+    /// A restorable checkpoint was reverse-applied to the isolated worktree.
+    /// Audit-only, mirroring `CheckpointCreated`.
+    CheckpointRestored {
+        checkpoint_id: String,
+        head: String,
+        patch_digest: String,
+    },
+    /// A session was forked from a parent at a conversation anchor. Audit-only;
+    /// the child session's `SessionCreated` carries the `parent_id`.
+    SessionForked {
+        parent_id: String,
+        anchor_message_id: String,
+    },
     WorktreeDispositionRecorded {
         strategy: String,
         detail: String,

@@ -53,7 +53,7 @@ use purrcode_mcp_host::{
     DynamicQualificationRequest, McpHost, McpServerConfig, Qualifier as SkillQualifier,
     read_skill_manifest, skill_digest,
 };
-use purrcode_ninelives::{Automation, SessionStore, StoreError};
+use purrcode_ninelives::{Automation, SessionCheckpoint, SessionStore, StoreError};
 use purrcode_pawgate::{Policy, resolve_policy_path};
 use purrcode_provider_gateway::failover::FailoverProvider;
 use purrcode_provider_gateway::{
@@ -465,6 +465,16 @@ pub async fn bind_and_report(
         .route("/v1/sessions/{id}/reject", post(reject_session))
         .route("/v1/sessions/{id}/pause", post(pause_session))
         .route("/v1/sessions/{id}/checkpoint", post(checkpoint_session))
+        .route("/v1/sessions/{id}/checkpoints", get(list_checkpoints))
+        .route(
+            "/v1/sessions/{id}/checkpoints/{checkpoint_id}",
+            get(checkpoint_preview),
+        )
+        .route(
+            "/v1/sessions/{id}/checkpoints/{checkpoint_id}/restore",
+            post(restore_checkpoint),
+        )
+        .route("/v1/sessions/{id}/fork", post(fork_session))
         .route(
             "/v1/sessions/{id}/rollback",
             get(rollback_preview).post(rollback_session),
@@ -2550,18 +2560,50 @@ async fn checkpoint_session(
     let effects = RepositoryEngine::effects(&worktree)
         .await
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    state.store.lock().await.append(
-        id,
-        &SessionEvent::CheckpointCreated {
-            label: request.label,
-            head: worktree.base_head,
-            patch_digest: blake3::hash(&effects.binary_patch).to_hex().to_string(),
-        },
-    )?;
+    persist_checkpoint(&state, id, &request.label, &worktree, &effects).await?;
     Ok(Json(AcceptedSession {
         id: id.0.to_string(),
         status: "checkpoint created",
     }))
+}
+
+/// Persists a restorable checkpoint: the patch blob goes into
+/// `session_checkpoints` (so a later "restore here" can reverse-apply it) and
+/// the `CheckpointCreated` event records the audit digest. Idempotent for the
+/// same patch — an unchanged worktree does not stack duplicate checkpoints.
+async fn persist_checkpoint(
+    state: &AppState,
+    id: SessionId,
+    label: &str,
+    worktree: &SessionWorktree,
+    effects: &purrcode_repository_engine::WorktreeEffects,
+) -> Result<(), ApiError> {
+    let patch_digest = blake3::hash(&effects.binary_patch).to_hex().to_string();
+    let mut store = state.store.lock().await;
+    let existing = store.checkpoints(id)?;
+    if existing.last().is_some_and(|last| last.patch_digest == patch_digest) {
+        return Ok(());
+    }
+    let checkpoint = SessionCheckpoint {
+        id: Uuid::new_v4(),
+        session_id: id,
+        sequence: store.events(id)?.len() as u64 + 1,
+        label: label.into(),
+        head: worktree.base_head.clone(),
+        patch: effects.binary_patch.clone(),
+        patch_digest: patch_digest.clone(),
+        created_at: Utc::now(),
+    };
+    store.insert_checkpoint(&checkpoint)?;
+    store.append(
+        id,
+        &SessionEvent::CheckpointCreated {
+            label: label.into(),
+            head: worktree.base_head.clone(),
+            patch_digest,
+        },
+    )?;
+    Ok(())
 }
 
 async fn rollback_preview(
@@ -2644,6 +2686,258 @@ async fn rollback_session(
     Ok(Json(AcceptedSession {
         id: id.0.to_string(),
         status: "rolled back",
+    }))
+}
+
+#[derive(Serialize)]
+struct CheckpointView {
+    id: String,
+    label: String,
+    head: String,
+    patch_digest: String,
+    created_at: DateTime<Utc>,
+}
+
+/// Lists the restorable checkpoints for a session, most recent first.
+async fn list_checkpoints(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Vec<CheckpointView>>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let store = state.store.lock().await;
+    let mut views: Vec<CheckpointView> = store
+        .checkpoints(id)?
+        .into_iter()
+        .map(|checkpoint| CheckpointView {
+            id: checkpoint.id.to_string(),
+            label: checkpoint.label,
+            head: checkpoint.head,
+            patch_digest: checkpoint.patch_digest,
+            created_at: checkpoint.created_at,
+        })
+        .collect();
+    views.reverse();
+    Ok(Json(views))
+}
+
+/// Describes what would change if the worktree were restored to a checkpoint:
+/// the checkpoint patch re-applied over a rollback to base HEAD.
+async fn checkpoint_preview(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((id, checkpoint_id)): AxumPath<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let checkpoint = load_checkpoint(&state, id, &checkpoint_id).await?;
+    let changed_files = checkpoint_patch_files(&checkpoint.patch);
+    Ok(Json(serde_json::json!({
+        "checkpoint_id": checkpoint.id.to_string(),
+        "label": checkpoint.label,
+        "head": checkpoint.head,
+        "created_at": checkpoint.created_at,
+        "changed_files": changed_files,
+        "changed_file_count": changed_files.len(),
+        "warning": "Restoring discards all isolated-worktree changes made after this checkpoint. The checkpoint patch is re-applied over a rollback to base HEAD, so the restored code state is the checkpoint exactly."
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoreCheckpointRequest {
+    acknowledge_discard: bool,
+}
+
+/// Restores the isolated worktree to a checkpoint: roll back to base HEAD,
+/// then forward-apply the checkpoint patch. The event log is untouched except
+/// for the audit `CheckpointRestored` event.
+async fn restore_checkpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((id, checkpoint_id)): AxumPath<(String, String)>,
+    Json(request): Json<RestoreCheckpointRequest>,
+) -> Result<Json<AcceptedSession>, ApiError> {
+    authorize(&state, &headers)?;
+    if !request.acknowledge_discard {
+        return Err(ApiError::BadRequest(
+            "restore requires acknowledgement that changes after the checkpoint will be discarded"
+                .into(),
+        ));
+    }
+    let id = parse_session_id(&id)?;
+    require_idle(&state, id).await?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let checkpoint = load_checkpoint(&state, id, &checkpoint_id).await?;
+    RepositoryEngine::rollback_all(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    RepositoryEngine::apply_patch(&worktree, &checkpoint.patch)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    state.store.lock().await.append(
+        id,
+        &SessionEvent::CheckpointRestored {
+            checkpoint_id: checkpoint.id.to_string(),
+            head: checkpoint.head.clone(),
+            patch_digest: checkpoint.patch_digest.clone(),
+        },
+    )?;
+    Ok(Json(AcceptedSession {
+        id: id.0.to_string(),
+        status: "restored",
+    }))
+}
+
+async fn load_checkpoint(
+    state: &AppState,
+    session_id: SessionId,
+    checkpoint_id: &str,
+) -> Result<SessionCheckpoint, ApiError> {
+    let checkpoint_id = Uuid::parse_str(checkpoint_id).map_err(|_| ApiError::NotFound)?;
+    let store = state.store.lock().await;
+    let checkpoint = store.checkpoint(checkpoint_id).map_err(|error| match error {
+        StoreError::CheckpointNotFound(_) => ApiError::NotFound,
+        error => ApiError::Store(error),
+    })?;
+    if checkpoint.session_id != session_id {
+        return Err(ApiError::NotFound);
+    }
+    Ok(checkpoint)
+}
+
+/// Extracts the changed file paths from a git binary patch for display.
+fn checkpoint_patch_files(patch: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(patch);
+    let mut files = Vec::new();
+    for line in text.lines() {
+        let line = line.strip_prefix("+++ ").unwrap_or(line);
+        let line = line.strip_prefix("--- ").unwrap_or(line);
+        if line.starts_with("a/") || line.starts_with("b/") {
+            let path = &line[2..];
+            let path = path.split('\t').next().unwrap_or(path);
+            if path != "/dev/null" && !files.contains(&path.to_string()) {
+                files.push(path.to_string());
+            }
+        }
+    }
+    files
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForkSessionRequest {
+    /// Conversation message id that anchors the fork. The child inherits the
+    /// conversation and checkpoint state up to this message.
+    anchor_message_id: String,
+}
+
+/// Forks a session at a conversation anchor. The child inherits the parent's
+/// conversation prefix and its own isolated worktree, with the parent's
+/// code state at the anchor reproduced in it.
+async fn fork_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<ForkSessionRequest>,
+) -> Result<Json<AcceptedSession>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    require_idle(&state, id).await?;
+    let store = state.store.lock().await;
+    let parent = store.load(id)?;
+    if parent.event_count == 0 {
+        return Err(ApiError::NotFound);
+    }
+    // Resolve the anchor message to its event-log sequence so we know exactly
+    // how much of the log the child inherits. Sequences are 1-based.
+    let parent_events = store.events(id)?;
+    let anchor_sequence = parent_events
+        .iter()
+        .enumerate()
+        .find_map(|(index, event)| match event {
+            SessionEvent::ConversationMessageAdded { message }
+                if message.id == request.anchor_message_id =>
+            {
+                Some(index as u64 + 1)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| ApiError::NotFound)?;
+    let repository = parent
+        .repository
+        .clone()
+        .ok_or_else(|| ApiError::Conflict("parent session repository is missing".into()))?;
+    drop(store);
+
+    // Reproduce the parent's code state at the anchor: the checkpoint nearest
+    // to (at or before) the anchor message.
+    let checkpoint = {
+        let store = state.store.lock().await;
+        store
+            .checkpoints(id)?
+            .into_iter()
+            .filter(|checkpoint| checkpoint.sequence <= anchor_sequence)
+            .next_back()
+    };
+    let child_id = SessionId::new();
+    let mut store = state.store.lock().await;
+    store.append(
+        child_id,
+        &SessionEvent::SessionCreated {
+            objective: parent.objective.clone().unwrap_or_default(),
+            repository: repository.clone(),
+            authority_mode: match parent.controls.permission_mode {
+                PermissionMode::Ask => AuthorityMode::Governed,
+                PermissionMode::Auto => AuthorityMode::Elevated {
+                    capabilities: Vec::new(),
+                    allowed_programs: Vec::new(),
+                },
+                PermissionMode::FullAccess => AuthorityMode::Unrestricted,
+            },
+        },
+    )?;
+    store.set_session_parent(child_id, id)?;
+    store.fork_session_events(id, child_id, anchor_sequence)?;
+    store.copy_checkpoints(id, child_id)?;
+    drop(store);
+
+    // Create a fresh isolated worktree for the child and reproduce the
+    // parent's code state at the anchor in it.
+    let child_worktree = RepositoryEngine::create_worktree(&repository, child_id)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    if let Some(checkpoint) = checkpoint {
+        RepositoryEngine::apply_patch(&child_worktree, &checkpoint.patch)
+            .await
+            .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    }
+    let mut store = state.store.lock().await;
+    store.append(
+        child_id,
+        &SessionEvent::WorktreeCreated {
+            path: child_worktree.path.clone(),
+            base_head: child_worktree.base_head.clone(),
+            source_was_dirty: false,
+        },
+    )?;
+    store.append(
+        child_id,
+        &SessionEvent::SessionForked {
+            parent_id: id.0.to_string(),
+            anchor_message_id: request.anchor_message_id.clone(),
+        },
+    )?;
+    let title = format!(
+        "Fork of: {}",
+        parent.objective.clone().unwrap_or_else(|| "untitled session".into())
+    );
+    store.set_session_title(child_id, &title)?;
+    Ok(Json(AcceptedSession {
+        id: child_id.0.to_string(),
+        status: "forked",
     }))
 }
 
@@ -3966,6 +4260,17 @@ async fn run_agent_operation(
         }
     };
     result.map_err(|error| DaemonError::Agent(error.to_string()))?;
+    // Capture a restorable checkpoint after each completed agent operation so
+    // "restore here" / "fork from here" always has a patch for the work the
+    // turn produced. Paused or incomplete work (an error above) is not
+    // checkpointed.
+    if let Ok(session) = store.load(id) {
+        if let Ok(worktree) = worktree_from_state(&session) {
+            if let Ok(effects) = RepositoryEngine::effects(&worktree).await {
+                let _ = persist_checkpoint(state, id, "turn", &worktree, &effects).await;
+            }
+        }
+    }
     Ok(())
 }
 

@@ -376,6 +376,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::ActionOutputRecorded { .. } => "action_output_recorded",
         SessionEvent::ValidationRecorded { .. } => "validation_recorded",
         SessionEvent::CheckpointCreated { .. } => "checkpoint_created",
+        SessionEvent::CheckpointRestored { .. } => "checkpoint_restored",
+        SessionEvent::SessionForked { .. } => "session_forked",
         SessionEvent::WorktreeDispositionRecorded { .. } => "worktree_disposition_recorded",
         SessionEvent::SessionCancelled { .. } => "session_cancelled",
         SessionEvent::RecoveryRequired { .. } => "recovery_required",

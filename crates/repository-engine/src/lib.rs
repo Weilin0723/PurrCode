@@ -778,6 +778,39 @@ impl RepositoryEngine {
         }
         Ok(())
     }
+
+    /// Forward-applies a checkpoint patch (a diff against the worktree base
+    /// HEAD) to the isolated worktree. Used after a rollback to reproduce a
+    /// checkpoint's code state exactly. A conflict aborts without touching
+    /// anything.
+    pub async fn apply_patch(
+        worktree: &SessionWorktree,
+        patch: &[u8],
+    ) -> Result<(), RepositoryError> {
+        ensure_session_path(
+            &worktree.source_repository,
+            worktree.session_id,
+            &worktree.path,
+        )?;
+        if patch.is_empty() {
+            return Ok(());
+        }
+        git_with_input(
+            &worktree.path,
+            &["apply", "--check", "--binary", "--whitespace=nowarn", "-"],
+            patch,
+            &[0],
+        )
+        .await?;
+        git_with_input(
+            &worktree.path,
+            &["apply", "--binary", "--whitespace=nowarn", "-"],
+            patch,
+            &[0],
+        )
+        .await?;
+        Ok(())
+    }
 }
 
 fn atomic_write(destination: &Path, content: &[u8]) -> Result<(), RepositoryError> {
@@ -1784,6 +1817,53 @@ mod tests {
                 .unwrap()
                 .changed_files
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_reproduces_a_checkpoint_state_after_rollback() {
+        // A checkpoint is a diff against the worktree base. Restoring means
+        // rollback to base HEAD, then forward-applying the patch.
+        let temporary = tempfile::tempdir().unwrap();
+        git(temporary.path(), &["init", "-q"]);
+        std::fs::write(temporary.path().join("a.txt"), "base\n").unwrap();
+        git(temporary.path(), &["add", "."]);
+        git(temporary.path(), &["commit", "-q", "-m", "base"]);
+        let worktree = RepositoryEngine::create_worktree(temporary.path(), SessionId::new())
+            .await
+            .unwrap();
+
+        // Simulate the agent making a change, then capturing a checkpoint.
+        std::fs::write(worktree.path.join("a.txt"), "base\ncheckpointed\n").unwrap();
+        let checkpoint_patch = RepositoryEngine::effects(&worktree)
+            .await
+            .unwrap()
+            .binary_patch;
+        assert!(!checkpoint_patch.is_empty());
+
+        // The agent keeps working past the checkpoint.
+        std::fs::write(worktree.path.join("a.txt"), "base\ncheckpointed\nmore work\n").unwrap();
+        std::fs::write(worktree.path.join("later.txt"), "later\n").unwrap();
+
+        // Restore to the checkpoint: rollback, then apply the checkpoint patch.
+        RepositoryEngine::rollback_all(&worktree).await.unwrap();
+        RepositoryEngine::apply_patch(&worktree, &checkpoint_patch)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(worktree.path.join("a.txt")).unwrap(),
+            "base\ncheckpointed\n"
+        );
+        assert!(!worktree.path.join("later.txt").exists());
+        // The restored state is exactly the checkpoint digest.
+        let digest = blake3::hash(
+            &RepositoryEngine::effects(&worktree).await.unwrap().binary_patch,
+        )
+        .to_hex()
+        .to_string();
+        assert_eq!(
+            digest,
+            blake3::hash(&checkpoint_patch).to_hex().to_string()
         );
     }
 }

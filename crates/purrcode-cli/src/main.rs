@@ -4240,6 +4240,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         ActionOutputRecorded { .. } => "action_output_recorded",
         ValidationRecorded { .. } => "validation_recorded",
         CheckpointCreated { .. } => "checkpoint_created",
+        CheckpointRestored { .. } => "checkpoint_restored",
+        SessionForked { .. } => "session_forked",
         WorktreeDispositionRecorded { .. } => "worktree_disposition_recorded",
         SessionCancelled { .. } => "session_cancelled",
         RecoveryRequired { .. } => "recovery_required",

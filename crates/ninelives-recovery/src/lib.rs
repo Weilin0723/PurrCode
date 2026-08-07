@@ -60,6 +60,21 @@ pub struct SessionSearchHit {
     pub occurred_at: DateTime<Utc>,
 }
 
+/// A restorable worktree checkpoint. The patch blob is persisted at capture
+/// time so a later "restore here" can reverse-apply it; the `CheckpointCreated`
+/// event remains the durable audit record.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionCheckpoint {
+    pub id: Uuid,
+    pub session_id: SessionId,
+    pub sequence: u64,
+    pub label: String,
+    pub head: String,
+    pub patch: Vec<u8>,
+    pub patch_digest: String,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Result of startup reconciliation. A legacy session whose event log no
 /// longer satisfies the current state-machine invariants is isolated by ID;
 /// healthy sessions still recover normally and the daemon can serve new work.
@@ -579,6 +594,76 @@ impl SessionStore {
         Ok(sequence - 1)
     }
 
+    /// Persists a restorable checkpoint. The patch blob is stored so a later
+    /// restore can reverse-apply it, and the caller's `CheckpointCreated`
+    /// event is the durable audit record.
+    pub fn insert_checkpoint(&mut self, checkpoint: &SessionCheckpoint) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO session_checkpoints(id, session_id, sequence, label, head, patch, patch_digest, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                checkpoint.id.to_string(),
+                checkpoint.session_id.0.to_string(),
+                checkpoint.sequence,
+                checkpoint.label,
+                checkpoint.head,
+                checkpoint.patch,
+                checkpoint.patch_digest,
+                checkpoint.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn checkpoints(&self, session_id: SessionId) -> Result<Vec<SessionCheckpoint>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, session_id, sequence, label, head, patch, patch_digest, created_at
+             FROM session_checkpoints WHERE session_id = ?1 ORDER BY sequence",
+        )?;
+        let rows = statement.query_map([session_id.0.to_string()], checkpoint_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn checkpoint(&self, id: Uuid) -> Result<SessionCheckpoint, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT id, session_id, sequence, label, head, patch, patch_digest, created_at
+                 FROM session_checkpoints WHERE id = ?1",
+                [id.to_string()],
+                checkpoint_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::CheckpointNotFound(id))
+    }
+
+    /// Copies the checkpoint rows of a parent session into a forked child,
+    /// re-keyed with fresh ids for the child, so the child keeps its own
+    /// restore history without colliding on the primary key.
+    pub fn copy_checkpoints(
+        &mut self,
+        parent_id: SessionId,
+        child_id: SessionId,
+    ) -> Result<(), StoreError> {
+        let checkpoints = self.checkpoints(parent_id)?;
+        for checkpoint in checkpoints {
+            self.connection.execute(
+                "INSERT INTO session_checkpoints(id, session_id, sequence, label, head, patch, patch_digest, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    child_id.0.to_string(),
+                    checkpoint.sequence,
+                    checkpoint.label,
+                    checkpoint.head,
+                    checkpoint.patch,
+                    checkpoint.patch_digest,
+                    checkpoint.created_at,
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn create_automation(
         &mut self,
         objective: &str,
@@ -797,6 +882,33 @@ fn automation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Automation> 
     })
 }
 
+fn checkpoint_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionCheckpoint> {
+    Ok(SessionCheckpoint {
+        id: Uuid::parse_str(&row.get::<_, String>(0)?)
+            .map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?,
+        session_id: SessionId(Uuid::parse_str(&row.get::<_, String>(1)?)
+            .map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?),
+        sequence: row.get(2)?,
+        label: row.get(3)?,
+        head: row.get(4)?,
+        patch: row.get(5)?,
+        patch_digest: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
+
 fn event_name(event: &SessionEvent) -> &'static str {
     match event {
         SessionEvent::SessionCreated { .. } => "session_created",
@@ -837,6 +949,8 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::ActionOutputRecorded { .. } => "action_output_recorded",
         SessionEvent::ValidationRecorded { .. } => "validation_recorded",
         SessionEvent::CheckpointCreated { .. } => "checkpoint_created",
+        SessionEvent::CheckpointRestored { .. } => "checkpoint_restored",
+        SessionEvent::SessionForked { .. } => "session_forked",
         SessionEvent::WorktreeDispositionRecorded { .. } => "worktree_disposition_recorded",
         SessionEvent::SessionCancelled { .. } => "session_cancelled",
         SessionEvent::RecoveryRequired { .. } => "recovery_required",
@@ -866,6 +980,8 @@ pub enum StoreError {
     InvalidAutomation(String),
     #[error("automation `{0}` was not found")]
     AutomationNotFound(Uuid),
+    #[error("checkpoint `{0}` was not found")]
+    CheckpointNotFound(Uuid),
     #[error("session {session:?} rejected invalid event: {reason}")]
     InvalidEvent { session: SessionId, reason: String },
     #[error("session {session:?} event log is inconsistent at sequence {sequence}: {reason}")]
@@ -1463,5 +1579,83 @@ mod tests {
         ));
         // The parent keeps its full log.
         assert_eq!(store.events(parent).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn checkpoints_are_persisted_and_restorable() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        store
+            .append(
+                session,
+                &SessionEvent::SessionCreated {
+                    objective: "checkpoint round trip".into(),
+                    repository: PathBuf::from("/repo"),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::CheckpointCreated {
+                    label: "turn".into(),
+                    head: "abc123".into(),
+                    patch_digest: "deadbeef".into(),
+                },
+            )
+            .unwrap();
+
+        let patch = b"diff --git a/a.rs b/a.rs\nnew file mode 100644\n";
+        store
+            .insert_checkpoint(&SessionCheckpoint {
+                id: Uuid::new_v4(),
+                session_id: session,
+                sequence: 2,
+                label: "turn".into(),
+                head: "abc123".into(),
+                patch: patch.to_vec(),
+                patch_digest: "deadbeef".into(),
+                created_at: Utc::now(),
+            })
+            .unwrap();
+        assert_eq!(store.checkpoints(session).unwrap().len(), 1);
+        let loaded = store.checkpoints(session).unwrap().remove(0);
+        assert_eq!(loaded.patch, patch);
+        assert_eq!(loaded.patch_digest, "deadbeef");
+    }
+
+    #[test]
+    fn copy_checkpoints_rekeys_to_child() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let parent = SessionId::new();
+        store
+            .append(
+                parent,
+                &SessionEvent::SessionCreated {
+                    objective: "parent".into(),
+                    repository: PathBuf::from("/repo"),
+                    authority_mode: Default::default(),
+                },
+            )
+            .unwrap();
+        store
+            .insert_checkpoint(&SessionCheckpoint {
+                id: Uuid::new_v4(),
+                session_id: parent,
+                sequence: 2,
+                label: "turn".into(),
+                head: "abc".into(),
+                patch: b"patch-bytes".to_vec(),
+                patch_digest: "d1".into(),
+                created_at: Utc::now(),
+            })
+            .unwrap();
+        let child = SessionId::new();
+        store.copy_checkpoints(parent, child).unwrap();
+        let child_checkpoints = store.checkpoints(child).unwrap();
+        assert_eq!(child_checkpoints.len(), 1);
+        assert_eq!(child_checkpoints[0].session_id, child);
+        assert_eq!(child_checkpoints[0].patch, b"patch-bytes");
     }
 }
