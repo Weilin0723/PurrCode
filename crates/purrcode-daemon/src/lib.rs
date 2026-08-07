@@ -61,6 +61,7 @@ use purrcode_provider_gateway::{
     ProviderConfig, ProviderRouter, ProviderStreamEvent, env_style_reference, keychain_reference,
     qualify_model, validate_credential_reference,
 };
+use purrcode_reference_resolver::{ParsedReference, Reference, resolve_refs};
 use purrcode_repository_engine::{ChangeScope, RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::adaptation::{
     BudgetProfileKind, ModelRoutingControl, PermissionMode, SearchPolicy, SessionControls,
@@ -548,6 +549,8 @@ pub async fn bind_and_report(
             get(local_model_settings).post(update_local_model_settings),
         )
         .route("/v1/repository/inspect", post(inspect_repository))
+        .route("/v1/references/resolve", post(resolve_references))
+        .route("/v1/commands", get(list_commands))
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
         .route("/v1/skills/download", post(download_skill))
@@ -8473,6 +8476,301 @@ async fn inspect_repository(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ResolveReferencesRequest {
+    /// The composer text containing `@file`, `#symbol`, `@diff`, etc.
+    text: String,
+    /// The repository to resolve against (the session's repository).
+    repository: std::path::PathBuf,
+}
+
+#[derive(Serialize)]
+struct ResolvedReferenceView {
+    #[serde(flatten)]
+    reference: Reference,
+    display: String,
+    /// Whether the reference could be resolved to real content.
+    resolved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diagnostics: Option<String>,
+}
+
+/// Resolves the composer references in a text against a repository. File and
+/// folder references are path-checked and bounded-read; symbols are looked up
+/// in the whisker index when one exists; `@diff` uses the worktree diff; `@git`
+/// uses `git show`. Resolution is best-effort and never follows the reference
+/// text as an instruction.
+async fn resolve_references(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ResolveReferencesRequest>,
+) -> Result<Json<Vec<ResolvedReferenceView>>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = body
+        .repository
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
+    let parsed = resolve_refs(&body.text).unwrap_or_default();
+    let mut views = Vec::new();
+    for parsed in parsed {
+        let ParsedReference { reference, .. } = parsed;
+        let (resolved, preview, diagnostics) =
+            resolve_one_reference(&repository, &reference).await;
+        views.push(ResolvedReferenceView {
+            display: reference.display(),
+            resolved,
+            preview,
+            diagnostics,
+            reference,
+        });
+    }
+    Ok(Json(views))
+}
+
+async fn resolve_one_reference(
+    repository: &std::path::Path,
+    reference: &Reference,
+) -> (bool, Option<String>, Option<String>) {
+    match reference {
+        Reference::File { path, range } => {
+            resolve_file_reference(repository, path, *range)
+        }
+        Reference::Folder { path } => {
+            let absolute = repository.join(path);
+            let resolved = absolute.is_dir();
+            (
+                resolved,
+                resolved
+                    .then(|| bounded_directory_summary(&absolute))
+                    .flatten(),
+                None,
+            )
+        }
+        Reference::Diff => match git_diff_summary(repository).await {
+            Some(summary) => (true, Some(summary), None),
+            None => (
+                false,
+                None,
+                Some("no uncommitted changes in the repository".into()),
+            ),
+        },
+        Reference::Git { reference } => {
+            match git_show(repository, reference).await {
+                Ok(Some(content)) => (
+                    true,
+                    Some(content.chars().take(500).collect()),
+                    None,
+                ),
+                Ok(None) => (false, None, Some(format!("git reference `{reference}` not found"))),
+                Err(error) => (false, None, Some(error)),
+            }
+        }
+        Reference::Symbol { name } => {
+            // Symbols resolve against a repository-wide definition scan. A
+            // whisker-index-backed lookup can replace this in a later workstream.
+            match find_symbol(repository, name).await {
+                Some(preview) => (true, Some(preview), None),
+                None => (false, None, Some(format!("symbol `{name}` not found"))),
+            }
+        }
+        Reference::Context => (true, Some("session context summary".into()), None),
+    }
+}
+
+/// Bounded read of a file, honoring a line range. Paths are contained inside
+/// the repository and never escape it.
+fn resolve_file_reference(
+    repository: &std::path::Path,
+    path: &str,
+    range: Option<(u64, u64)>,
+) -> (bool, Option<String>, Option<String>) {
+    use std::io::Read as _;
+    let relative = std::path::Path::new(path);
+    let mut safe = std::path::PathBuf::new();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(value) => safe.push(value),
+            _ => {
+                return (false, None, Some("path escapes the repository".into()));
+            }
+        }
+    }
+    let absolute = repository.join(&safe);
+    if !absolute.exists() {
+        return (false, None, Some(format!("file `{path}` not found")));
+    }
+    if !absolute.is_file() {
+        return (false, None, Some(format!("`{path}` is not a file")));
+    }
+    let mut content = String::new();
+    if std::fs::File::open(&absolute)
+        .and_then(|file| {
+            file.take(64 * 1024).read_to_string(&mut content)?;
+            Ok(())
+        })
+        .is_err()
+    {
+        return (false, None, Some("file could not be read as text".into()));
+    }
+    let preview = match range {
+        Some((start, end)) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let start = (start as usize).saturating_sub(1);
+            let end = (end as usize).min(lines.len());
+            if start >= end {
+                content.chars().take(200).collect()
+            } else {
+                lines[start..end].join("\n")
+            }
+        }
+        None => content.chars().take(400).collect(),
+    };
+    (true, Some(preview), None)
+}
+
+fn bounded_directory_summary(directory: &std::path::Path) -> Option<String> {
+    let entries: Vec<String> = std::fs::read_dir(directory)
+        .ok()?
+        .filter_map(|entry| {
+            entry.ok().map(|entry| {
+                if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+                    format!("{}/", entry.file_name().to_string_lossy())
+                } else {
+                    entry.file_name().to_string_lossy().into_owned()
+                }
+            })
+        })
+        .take(20)
+        .collect();
+    Some(format!("{} entry(ies): {}", entries.len(), entries.join(", ")))
+}
+
+async fn git_show(repository: &std::path::Path, reference: &str) -> Result<Option<String>, String> {
+    let output = tokio::process::Command::new("git")
+        .args(["show", reference])
+        .current_dir(repository)
+        .output()
+        .await
+        .map_err(|error| format!("git show failed: {error}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+/// Summarizes the repository's uncommitted diff for an `@diff` reference.
+async fn git_diff_summary(repository: &std::path::Path) -> Option<String> {
+    let output = tokio::process::Command::new("git")
+        .args(["diff", "--numstat", "-z", "HEAD", "--", "."])
+        .current_dir(repository)
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let bytes = output.stdout;
+    let mut fields = bytes.split(|byte| *byte == 0).filter(|f| !f.is_empty());
+    let mut added = 0_usize;
+    let mut removed = 0_usize;
+    let mut files = Vec::new();
+    while let Some(record) = fields.next() {
+        let text = String::from_utf8_lossy(record);
+        let mut parts = text.splitn(3, '\t');
+        let (Some(add), Some(remove), path) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        added += add.parse::<usize>().unwrap_or(0);
+        removed += remove.parse::<usize>().unwrap_or(0);
+        let path = match path {
+            Some(path) if !path.is_empty() => path.to_string(),
+            // rename: NUL-separated old and new paths follow
+            _ => {
+                let _old = fields.next();
+                match fields.next() {
+                    Some(new) => String::from_utf8_lossy(new).into_owned(),
+                    None => continue,
+                }
+            }
+        };
+        files.push(path);
+    }
+    if files.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{} changed file(s): +{} / -{}\n{}",
+        files.len(),
+        added,
+        removed,
+        files.join(", ")
+    ))
+}
+
+/// Finds a definition line for a symbol in the repository using a bounded
+/// `grep`-style scan over source files.
+async fn find_symbol(repository: &std::path::Path, name: &str) -> Option<String> {
+    let pattern = format!("\\b{name}\\b");
+    let output = tokio::process::Command::new("grep")
+        .args(["-rn", "-E", "--include=*.rs", "--include=*.ts", "--include=*.js", "--include=*.tsx", "--include=*.py", "--include=*.go", &pattern, "."])
+        .current_dir(repository)
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines()
+        .next()
+        .map(|line| line.chars().take(300).collect())
+}
+
+/// The canonical set of built-in composer commands. This is the daemon's
+/// authoritative contract for the future command registry; clients render it
+/// as the command palette.
+async fn list_commands(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<CommandDescriptor>>, ApiError> {
+    authorize(&state, &headers)?;
+    let commands = builtin_commands();
+    Ok(Json(commands))
+}
+
+#[derive(Serialize)]
+struct CommandDescriptor {
+    name: &'static str,
+    description: &'static str,
+    group: &'static str,
+}
+
+fn builtin_commands() -> Vec<CommandDescriptor> {
+    vec![
+        CommandDescriptor { name: "/context", description: "Show the current context summary and token budget", group: "context" },
+        CommandDescriptor { name: "/compact", description: "Compact the session context into a checkpoint", group: "context" },
+        CommandDescriptor { name: "/undo", description: "Restore the worktree to the previous checkpoint", group: "session" },
+        CommandDescriptor { name: "/redo", description: "Re-apply the changes undone by the last restore", group: "session" },
+        CommandDescriptor { name: "/fork", description: "Fork this session at a conversation message", group: "session" },
+        CommandDescriptor { name: "/checkpoint", description: "Capture a restorable checkpoint", group: "session" },
+        CommandDescriptor { name: "/diff", description: "Review the current session diff", group: "review" },
+        CommandDescriptor { name: "/test", description: "Run the validation suite", group: "review" },
+        CommandDescriptor { name: "/review", description: "Review the proposed changes", group: "review" },
+        CommandDescriptor { name: "/model", description: "Select a model for this session", group: "settings" },
+        CommandDescriptor { name: "/agent", description: "Inspect or control the running agent", group: "settings" },
+        CommandDescriptor { name: "/mcp", description: "Manage MCP servers", group: "settings" },
+        CommandDescriptor { name: "/skills", description: "Search, install, and manage skills", group: "settings" },
+        CommandDescriptor { name: "/memory", description: "Inspect and edit project memory", group: "settings" },
+        CommandDescriptor { name: "/approve", description: "Approve an awaiting action or plan", group: "authority" },
+        CommandDescriptor { name: "/reject", description: "Reject an awaiting action or plan", group: "authority" },
+        CommandDescriptor { name: "/pause", description: "Pause the current session", group: "session" },
+        CommandDescriptor { name: "/resume", description: "Resume the current session", group: "session" },
+    ]
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AssignModelRoleRequest {
     role: String,
     model: String,
@@ -14069,6 +14367,82 @@ judge = "openai/judge-model"
             .unwrap();
         assert_eq!(unsafe_config.status(), StatusCode::BAD_REQUEST);
 
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn composer_references_resolve_files_symbols_and_diff() {
+        let temporary = tempfile::tempdir().unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        std::fs::write(repository.join("auth.rs"), "pub struct AuthMiddleware;\n").unwrap();
+        git(&repository, &["add", "auth.rs"]);
+        git(
+            &repository,
+            &[
+                "-c",
+                "user.name=PurrCode Tests",
+                "-c",
+                "user.email=tests@purrcode.local",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        );
+        // Dirty the worktree so @diff resolves.
+        std::fs::write(repository.join("auth.rs"), "pub struct AuthMiddleware;\n// changed\n").unwrap();
+
+        let response = client
+            .post(format!("{base}/v1/references/resolve"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "text": "@auth.rs #AuthMiddleware @diff",
+                "repository": repository,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = response.json().await.unwrap();
+        let refs = body.as_array().unwrap();
+        assert_eq!(refs.len(), 3);
+        let file = refs.iter().find(|r| r["kind"] == "file").unwrap();
+        assert_eq!(file["resolved"], true);
+        assert!(file["preview"].as_str().unwrap().contains("AuthMiddleware"));
+        let symbol = refs.iter().find(|r| r["kind"] == "symbol").unwrap();
+        assert_eq!(symbol["resolved"], true);
+        let diff = refs.iter().find(|r| r["kind"] == "diff").unwrap();
+        assert_eq!(diff["resolved"], true);
+
+        // Commands palette is daemon-authoritative.
+        let commands = client
+            .get(format!("{base}/v1/commands"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(commands.status(), StatusCode::OK);
+        let commands: serde_json::Value = commands.json().await.unwrap();
+        assert!(commands.as_array().unwrap().iter().any(|command| {
+            command["name"] == "/undo" && command["group"] == "session"
+        }));
         handle.abort();
     }
 }

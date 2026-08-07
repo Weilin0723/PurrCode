@@ -23,6 +23,7 @@ members = [
   "crates/skill-store",
   "crates/skill-registry",
   "crates/web-research",
+  "crates/reference-resolver",
   "crates/golden-suite",
   "crates/evaluation-runtime",
   "crates/evidence-bundle",
