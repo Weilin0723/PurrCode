@@ -154,24 +154,29 @@ fn classify(token: &str) -> Option<Reference> {
             let (path, range) = split_range(rest);
             let path = path.trim_end_matches([',', ';', ')', ']', '}']);
             if !path.is_empty() {
-                return Some(Reference::File { path: path.to_string(), range });
+                return Some(Reference::File {
+                    path: path.to_string(),
+                    range,
+                });
             }
         }
     }
     // A bare `#symbol` (e.g. `#AuthMiddleware`). Tokens like `#tag` inside
     // prose are intentionally included; the daemon decides whether the symbol
     // resolves.
-    if let Some(name) = token.strip_prefix('#') {
-        if !name.is_empty()
-            && !name.contains(' ')
-            && !name.contains('@')
-            && !name.ends_with(',')
-            && !name.ends_with(';')
-        {
-            return Some(Reference::Symbol {
-                name: name.to_string(),
-            });
-        }
+    if let Some(name) = token
+        .strip_prefix('#')
+        .filter(|name| {
+            !name.is_empty()
+                && !name.contains(' ')
+                && !name.contains('@')
+                && !name.ends_with(',')
+                && !name.ends_with(';')
+        })
+    {
+        return Some(Reference::Symbol {
+            name: name.to_string(),
+        });
     }
     None
 }
@@ -276,9 +281,12 @@ mod tests {
     #[test]
     fn line_range_must_be_ascending() {
         let parsed = resolve_refs("@a.rs#L91-L42").unwrap();
-        assert_eq!(parsed[0].reference, Reference::File {
-            path: "a.rs".into(),
-            range: None,
-        });
+        assert_eq!(
+            parsed[0].reference,
+            Reference::File {
+                path: "a.rs".into(),
+                range: None,
+            }
+        );
     }
 }

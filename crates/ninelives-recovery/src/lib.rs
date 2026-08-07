@@ -511,7 +511,11 @@ impl SessionStore {
 
     /// Full-text search across the durable event log. Returns a bounded,
     /// most-recent-first set of hits with a highlight snippet.
-    pub fn search_sessions(&self, query: &str, limit: u64) -> Result<Vec<SessionSearchHit>, StoreError> {
+    pub fn search_sessions(
+        &self,
+        query: &str,
+        limit: u64,
+    ) -> Result<Vec<SessionSearchHit>, StoreError> {
         let query = query.trim();
         if query.is_empty() {
             return Err(StoreError::InvalidAutomation(
@@ -532,12 +536,13 @@ impl SessionStore {
              LIMIT ?2",
         )?;
         let rows = statement.query_map(params![query, bound], |row| {
-            let session_id = Uuid::parse_str(&row.get::<_, String>(0)?)
-                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
+            let session_id = Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
                     0,
                     rusqlite::types::Type::Text,
                     Box::new(error),
-                ))?;
+                )
+            })?;
             Ok(SessionSearchHit {
                 session_id: SessionId(session_id),
                 event_type: row.get(1)?,
@@ -566,7 +571,10 @@ impl SessionStore {
             ));
         }
         // The parent's SessionCreated is event index 0 (sequence 1); skip it.
-        let copy_from = parent_events.split_first().map(|(_, rest)| rest).unwrap_or(&[]);
+        let copy_from = parent_events
+            .split_first()
+            .map(|(_, rest)| rest)
+            .unwrap_or(&[]);
         let copy_from = copy_from
             .iter()
             .take(anchor_sequence as usize)
@@ -718,7 +726,9 @@ impl SessionStore {
         sql.push_str(" ORDER BY created_at DESC");
         let mut statement = self.connection.prepare(&sql)?;
         let rows = match kind {
-            Some(kind) => statement.query_map(params![repository.as_ref(), kind], memory_from_row)?,
+            Some(kind) => {
+                statement.query_map(params![repository.as_ref(), kind], memory_from_row)?
+            }
             None => statement.query_map(params![repository.as_ref()], memory_from_row)?,
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -1013,22 +1023,20 @@ fn memory_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectMemoryEnt
 
 fn checkpoint_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionCheckpoint> {
     Ok(SessionCheckpoint {
-        id: Uuid::parse_str(&row.get::<_, String>(0)?)
-            .map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Text,
-                    Box::new(error),
-                )
-            })?,
-        session_id: SessionId(Uuid::parse_str(&row.get::<_, String>(1)?)
-            .map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    1,
-                    rusqlite::types::Type::Text,
-                    Box::new(error),
-                )
-            })?),
+        id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        session_id: SessionId(Uuid::parse_str(&row.get::<_, String>(1)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?),
         sequence: row.get(2)?,
         label: row.get(3)?,
         head: row.get(4)?,
@@ -1693,12 +1701,17 @@ mod tests {
             },
         };
         store.append(parent, &first_turn).unwrap();
-        store.append(parent, &SessionEvent::SessionPaused { reason: "work in progress".into() }).unwrap();
+        store
+            .append(
+                parent,
+                &SessionEvent::SessionPaused {
+                    reason: "work in progress".into(),
+                },
+            )
+            .unwrap();
 
         let child = SessionId::new();
-        let copied = store
-            .fork_session_events(parent, child, 1)
-            .unwrap();
+        let copied = store.fork_session_events(parent, child, 1).unwrap();
         assert_eq!(copied, 1);
         let meta = store.session_meta(child).unwrap();
         assert_eq!(meta.parent_id, Some(parent));
@@ -1830,7 +1843,12 @@ mod tests {
 
         // Edit + touch + forget round trip.
         let entry = store.memory(&repository, Some("build")).unwrap().remove(0);
-        store.update_memory_content(entry.id, "Integration tests require a Redis-compatible store").unwrap();
+        store
+            .update_memory_content(
+                entry.id,
+                "Integration tests require a Redis-compatible store",
+            )
+            .unwrap();
         assert!(
             store
                 .memory_entry(entry.id)

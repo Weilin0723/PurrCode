@@ -1842,7 +1842,11 @@ mod tests {
         assert!(!checkpoint_patch.is_empty());
 
         // The agent keeps working past the checkpoint.
-        std::fs::write(worktree.path.join("a.txt"), "base\ncheckpointed\nmore work\n").unwrap();
+        std::fs::write(
+            worktree.path.join("a.txt"),
+            "base\ncheckpointed\nmore work\n",
+        )
+        .unwrap();
         std::fs::write(worktree.path.join("later.txt"), "later\n").unwrap();
 
         // Restore to the checkpoint: rollback, then apply the checkpoint patch.
@@ -1857,13 +1861,13 @@ mod tests {
         assert!(!worktree.path.join("later.txt").exists());
         // The restored state is exactly the checkpoint digest.
         let digest = blake3::hash(
-            &RepositoryEngine::effects(&worktree).await.unwrap().binary_patch,
+            &RepositoryEngine::effects(&worktree)
+                .await
+                .unwrap()
+                .binary_patch,
         )
         .to_hex()
         .to_string();
-        assert_eq!(
-            digest,
-            blake3::hash(&checkpoint_patch).to_hex().to_string()
-        );
+        assert_eq!(digest, blake3::hash(&checkpoint_patch).to_hex().to_string());
     }
 }

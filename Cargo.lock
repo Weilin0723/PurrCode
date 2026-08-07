@@ -3955,6 +3955,7 @@ dependencies = [
  "purrcode-pawgate",
  "purrcode-provider-gateway",
  "purrcode-provider-import",
+ "purrcode-reference-resolver",
  "purrcode-repository-engine",
  "purrcode-runtime-core",
  "purrcode-skill-registry",
@@ -4161,6 +4162,14 @@ dependencies = [
  "tree-sitter-python",
  "url",
  "zeroize",
+]
+
+[[package]]
+name = "purrcode-reference-resolver"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

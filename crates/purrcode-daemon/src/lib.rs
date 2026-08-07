@@ -53,7 +53,9 @@ use purrcode_mcp_host::{
     DynamicQualificationRequest, McpHost, McpServerConfig, Qualifier as SkillQualifier,
     read_skill_manifest, skill_digest,
 };
-use purrcode_ninelives::{Automation, ProjectMemoryEntry, SessionCheckpoint, SessionStore, StoreError};
+use purrcode_ninelives::{
+    Automation, ProjectMemoryEntry, SessionCheckpoint, SessionStore, StoreError,
+};
 use purrcode_pawgate::{Policy, resolve_policy_path};
 use purrcode_provider_gateway::failover::FailoverProvider;
 use purrcode_provider_gateway::{
@@ -429,7 +431,9 @@ pub async fn bind_and_report(
         .route("/v1/sessions/search", get(search_sessions))
         .route(
             "/v1/sessions/{id}",
-            get(session).patch(update_session_meta).delete(delete_session),
+            get(session)
+                .patch(update_session_meta)
+                .delete(delete_session),
         )
         .route("/v1/sessions/{id}/events", get(events))
         .route(
@@ -2589,7 +2593,10 @@ async fn persist_checkpoint(
     let patch_digest = blake3::hash(&effects.binary_patch).to_hex().to_string();
     let mut store = state.store.lock().await;
     let existing = store.checkpoints(id)?;
-    if existing.last().is_some_and(|last| last.patch_digest == patch_digest) {
+    if existing
+        .last()
+        .is_some_and(|last| last.patch_digest == patch_digest)
+    {
         return Ok(());
     }
     let checkpoint = SessionCheckpoint {
@@ -2806,10 +2813,12 @@ async fn load_checkpoint(
 ) -> Result<SessionCheckpoint, ApiError> {
     let checkpoint_id = Uuid::parse_str(checkpoint_id).map_err(|_| ApiError::NotFound)?;
     let store = state.store.lock().await;
-    let checkpoint = store.checkpoint(checkpoint_id).map_err(|error| match error {
-        StoreError::CheckpointNotFound(_) => ApiError::NotFound,
-        error => ApiError::Store(error),
-    })?;
+    let checkpoint = store
+        .checkpoint(checkpoint_id)
+        .map_err(|error| match error {
+            StoreError::CheckpointNotFound(_) => ApiError::NotFound,
+            error => ApiError::Store(error),
+        })?;
     if checkpoint.session_id != session_id {
         return Err(ApiError::NotFound);
     }
@@ -2887,8 +2896,7 @@ async fn fork_session(
         store
             .checkpoints(id)?
             .into_iter()
-            .filter(|checkpoint| checkpoint.sequence <= anchor_sequence)
-            .next_back()
+            .rfind(|checkpoint| checkpoint.sequence <= anchor_sequence)
     };
     let child_id = SessionId::new();
     let mut store = state.store.lock().await;
@@ -2940,7 +2948,10 @@ async fn fork_session(
     )?;
     let title = format!(
         "Fork of: {}",
-        parent.objective.clone().unwrap_or_else(|| "untitled session".into())
+        parent
+            .objective
+            .clone()
+            .unwrap_or_else(|| "untitled session".into())
     );
     store.set_session_title(child_id, &title)?;
     Ok(Json(AcceptedSession {
@@ -4737,7 +4748,9 @@ async fn delete_session(
         return Err(ApiError::NotFound);
     }
     store.set_session_deleted(id, true)?;
-    Ok(Json(serde_json::json!({"id": id.0.to_string(), "deleted": true})))
+    Ok(Json(
+        serde_json::json!({"id": id.0.to_string(), "deleted": true}),
+    ))
 }
 
 async fn events(
@@ -8520,8 +8533,7 @@ async fn resolve_references(
     let mut views = Vec::new();
     for parsed in parsed {
         let ParsedReference { reference, .. } = parsed;
-        let (resolved, preview, diagnostics) =
-            resolve_one_reference(&repository, &reference).await;
+        let (resolved, preview, diagnostics) = resolve_one_reference(&repository, &reference).await;
         views.push(ResolvedReferenceView {
             display: reference.display(),
             resolved,
@@ -8538,9 +8550,7 @@ async fn resolve_one_reference(
     reference: &Reference,
 ) -> (bool, Option<String>, Option<String>) {
     match reference {
-        Reference::File { path, range } => {
-            resolve_file_reference(repository, path, *range)
-        }
+        Reference::File { path, range } => resolve_file_reference(repository, path, *range),
         Reference::Folder { path } => {
             let absolute = repository.join(path);
             let resolved = absolute.is_dir();
@@ -8560,17 +8570,15 @@ async fn resolve_one_reference(
                 Some("no uncommitted changes in the repository".into()),
             ),
         },
-        Reference::Git { reference } => {
-            match git_show(repository, reference).await {
-                Ok(Some(content)) => (
-                    true,
-                    Some(content.chars().take(500).collect()),
-                    None,
-                ),
-                Ok(None) => (false, None, Some(format!("git reference `{reference}` not found"))),
-                Err(error) => (false, None, Some(error)),
-            }
-        }
+        Reference::Git { reference } => match git_show(repository, reference).await {
+            Ok(Some(content)) => (true, Some(content.chars().take(500).collect()), None),
+            Ok(None) => (
+                false,
+                None,
+                Some(format!("git reference `{reference}` not found")),
+            ),
+            Err(error) => (false, None, Some(error)),
+        },
         Reference::Symbol { name } => {
             // Symbols resolve against a repository-wide definition scan. A
             // whisker-index-backed lookup can replace this in a later workstream.
@@ -8648,7 +8656,11 @@ fn bounded_directory_summary(directory: &std::path::Path) -> Option<String> {
         })
         .take(20)
         .collect();
-    Some(format!("{} entry(ies): {}", entries.len(), entries.join(", ")))
+    Some(format!(
+        "{} entry(ies): {}",
+        entries.len(),
+        entries.join(", ")
+    ))
 }
 
 async fn git_show(repository: &std::path::Path, reference: &str) -> Result<Option<String>, String> {
@@ -8718,7 +8730,18 @@ async fn git_diff_summary(repository: &std::path::Path) -> Option<String> {
 async fn find_symbol(repository: &std::path::Path, name: &str) -> Option<String> {
     let pattern = format!("\\b{name}\\b");
     let output = tokio::process::Command::new("grep")
-        .args(["-rn", "-E", "--include=*.rs", "--include=*.ts", "--include=*.js", "--include=*.tsx", "--include=*.py", "--include=*.go", &pattern, "."])
+        .args([
+            "-rn",
+            "-E",
+            "--include=*.rs",
+            "--include=*.ts",
+            "--include=*.js",
+            "--include=*.tsx",
+            "--include=*.py",
+            "--include=*.go",
+            &pattern,
+            ".",
+        ])
         .current_dir(repository)
         .output()
         .await
@@ -8753,24 +8776,96 @@ struct CommandDescriptor {
 
 fn builtin_commands() -> Vec<CommandDescriptor> {
     vec![
-        CommandDescriptor { name: "/context", description: "Show the current context summary and token budget", group: "context" },
-        CommandDescriptor { name: "/compact", description: "Compact the session context into a checkpoint", group: "context" },
-        CommandDescriptor { name: "/undo", description: "Restore the worktree to the previous checkpoint", group: "session" },
-        CommandDescriptor { name: "/redo", description: "Re-apply the changes undone by the last restore", group: "session" },
-        CommandDescriptor { name: "/fork", description: "Fork this session at a conversation message", group: "session" },
-        CommandDescriptor { name: "/checkpoint", description: "Capture a restorable checkpoint", group: "session" },
-        CommandDescriptor { name: "/diff", description: "Review the current session diff", group: "review" },
-        CommandDescriptor { name: "/test", description: "Run the validation suite", group: "review" },
-        CommandDescriptor { name: "/review", description: "Review the proposed changes", group: "review" },
-        CommandDescriptor { name: "/model", description: "Select a model for this session", group: "settings" },
-        CommandDescriptor { name: "/agent", description: "Inspect or control the running agent", group: "settings" },
-        CommandDescriptor { name: "/mcp", description: "Manage MCP servers", group: "settings" },
-        CommandDescriptor { name: "/skills", description: "Search, install, and manage skills", group: "settings" },
-        CommandDescriptor { name: "/memory", description: "Inspect and edit project memory", group: "settings" },
-        CommandDescriptor { name: "/approve", description: "Approve an awaiting action or plan", group: "authority" },
-        CommandDescriptor { name: "/reject", description: "Reject an awaiting action or plan", group: "authority" },
-        CommandDescriptor { name: "/pause", description: "Pause the current session", group: "session" },
-        CommandDescriptor { name: "/resume", description: "Resume the current session", group: "session" },
+        CommandDescriptor {
+            name: "/context",
+            description: "Show the current context summary and token budget",
+            group: "context",
+        },
+        CommandDescriptor {
+            name: "/compact",
+            description: "Compact the session context into a checkpoint",
+            group: "context",
+        },
+        CommandDescriptor {
+            name: "/undo",
+            description: "Restore the worktree to the previous checkpoint",
+            group: "session",
+        },
+        CommandDescriptor {
+            name: "/redo",
+            description: "Re-apply the changes undone by the last restore",
+            group: "session",
+        },
+        CommandDescriptor {
+            name: "/fork",
+            description: "Fork this session at a conversation message",
+            group: "session",
+        },
+        CommandDescriptor {
+            name: "/checkpoint",
+            description: "Capture a restorable checkpoint",
+            group: "session",
+        },
+        CommandDescriptor {
+            name: "/diff",
+            description: "Review the current session diff",
+            group: "review",
+        },
+        CommandDescriptor {
+            name: "/test",
+            description: "Run the validation suite",
+            group: "review",
+        },
+        CommandDescriptor {
+            name: "/review",
+            description: "Review the proposed changes",
+            group: "review",
+        },
+        CommandDescriptor {
+            name: "/model",
+            description: "Select a model for this session",
+            group: "settings",
+        },
+        CommandDescriptor {
+            name: "/agent",
+            description: "Inspect or control the running agent",
+            group: "settings",
+        },
+        CommandDescriptor {
+            name: "/mcp",
+            description: "Manage MCP servers",
+            group: "settings",
+        },
+        CommandDescriptor {
+            name: "/skills",
+            description: "Search, install, and manage skills",
+            group: "settings",
+        },
+        CommandDescriptor {
+            name: "/memory",
+            description: "Inspect and edit project memory",
+            group: "settings",
+        },
+        CommandDescriptor {
+            name: "/approve",
+            description: "Approve an awaiting action or plan",
+            group: "authority",
+        },
+        CommandDescriptor {
+            name: "/reject",
+            description: "Reject an awaiting action or plan",
+            group: "authority",
+        },
+        CommandDescriptor {
+            name: "/pause",
+            description: "Pause the current session",
+            group: "session",
+        },
+        CommandDescriptor {
+            name: "/resume",
+            description: "Resume the current session",
+            group: "session",
+        },
     ]
 }
 
@@ -8797,9 +8892,7 @@ async fn list_memory(
         ));
     }
     let repository = std::path::PathBuf::from(&query.repository);
-    let repository = repository
-        .canonicalize()
-        .unwrap_or(repository);
+    let repository = repository.canonicalize().unwrap_or(repository);
     let store = state.store.lock().await;
     let entries = store.memory(&repository, query.kind.as_deref())?;
     let mut grouped: BTreeMap<String, Vec<ProjectMemoryEntry>> = BTreeMap::new();
@@ -8905,11 +8998,18 @@ async fn forget_memory(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
     let id = Uuid::parse_str(&id).map_err(|_| ApiError::NotFound)?;
-    state.store.lock().await.forget_memory(id).map_err(|error| match error {
-        StoreError::MemoryNotFound(_) => ApiError::NotFound,
-        error => ApiError::Store(error),
-    })?;
-    Ok(Json(serde_json::json!({"id": id.to_string(), "forgotten": true})))
+    state
+        .store
+        .lock()
+        .await
+        .forget_memory(id)
+        .map_err(|error| match error {
+            StoreError::MemoryNotFound(_) => ApiError::NotFound,
+            error => ApiError::Store(error),
+        })?;
+    Ok(Json(
+        serde_json::json!({"id": id.to_string(), "forgotten": true}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -14550,7 +14650,11 @@ judge = "openai/judge-model"
             ],
         );
         // Dirty the worktree so @diff resolves.
-        std::fs::write(repository.join("auth.rs"), "pub struct AuthMiddleware;\n// changed\n").unwrap();
+        std::fs::write(
+            repository.join("auth.rs"),
+            "pub struct AuthMiddleware;\n// changed\n",
+        )
+        .unwrap();
 
         let response = client
             .post(format!("{base}/v1/references/resolve"))
@@ -14583,9 +14687,13 @@ judge = "openai/judge-model"
             .unwrap();
         assert_eq!(commands.status(), StatusCode::OK);
         let commands: serde_json::Value = commands.json().await.unwrap();
-        assert!(commands.as_array().unwrap().iter().any(|command| {
-            command["name"] == "/undo" && command["group"] == "session"
-        }));
+        assert!(
+            commands
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|command| { command["name"] == "/undo" && command["group"] == "session" })
+        );
         handle.abort();
     }
 
