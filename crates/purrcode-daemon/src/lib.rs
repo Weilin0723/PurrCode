@@ -5029,6 +5029,12 @@ fn usage_summary_view(
             })
             .unwrap_or_default(),
     );
+    let current_context_tokens = session
+        .recent_context_ledger
+        .back()
+        .map(|entry| entry.total_estimated_tokens);
+    let effective_capacity_tokens = context_capacity_tokens
+        .map(|capacity| capacity.saturating_sub(purrcode_runtime_core::RESERVED_OUTPUT_TOKENS));
     purrcode_ui_contracts::UsageSummaryView {
         total_tokens: summary.total_tokens,
         input_tokens: summary.input_tokens,
@@ -5043,6 +5049,8 @@ fn usage_summary_view(
         cache_write_tokens: summary.cache_write_tokens,
         total_latency_ms: summary.total_latency_ms,
         context_capacity_tokens,
+        current_context_tokens,
+        effective_capacity_tokens,
     }
 }
 
@@ -9846,6 +9854,19 @@ mod tests {
         );
         assert_eq!(
             usage_summary_view(&state, None).context_capacity_tokens,
+            None
+        );
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).effective_capacity_tokens,
+            Some(32_000 - purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+        );
+        assert_eq!(
+            usage_summary_view(&state, None).effective_capacity_tokens,
+            None
+        );
+        // The session never ran a turn, so recent_context_ledger stays empty.
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).current_context_tokens,
             None
         );
     }

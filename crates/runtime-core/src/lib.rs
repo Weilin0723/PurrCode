@@ -852,6 +852,13 @@ pub struct ContextLedgerEntry {
 /// replayable from the NineLives event log regardless of this cap.
 pub const MAX_RECENT_CONTEXT_LEDGER_ENTRIES: usize = 64;
 
+/// Tokens NativeAgent reserves for model output when computing how much of
+/// the context window a turn's prompt may fill (see
+/// NativeAgent::effective_input_capacity in agent-runtime). Shared here so
+/// the daemon's presentation layer can compute the same "effective capacity"
+/// number it shows the user without duplicating the literal.
+pub const RESERVED_OUTPUT_TOKENS: u64 = 8192;
+
 // ── Semantic checkpoint types (PRD v1.1 §7.2, Phase 2) ──────────────────
 
 #[derive(

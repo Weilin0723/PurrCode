@@ -306,9 +306,8 @@ impl<'a> NativeAgent<'a> {
     /// model's context window (minus output reserve) and the user's input-token
     /// budget. When neither is known, falls back to a generous default.
     fn effective_input_capacity(&self) -> u64 {
-        let reserved_output: u64 = 8192;
         self.model_capability_context_limit()
-            .saturating_sub(reserved_output)
+            .saturating_sub(purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
     }
 
     /// P0: Use the model's actual context window when available.
@@ -1427,8 +1426,7 @@ impl<'a> NativeAgent<'a> {
         loop {
             if action_count >= request.max_actions || token_used >= request.max_tokens {
                 conclusions.push(format!(
-                    "scout halted at limit: {} actions, {} tokens used",
-                    action_count, token_used
+                    "scout halted at limit: {action_count} actions, {token_used} tokens used"
                 ));
                 break;
             }
@@ -3605,18 +3603,16 @@ fn read_evidence_kind(read: &purrcode_runtime_core::RepositoryReadAction) -> &'s
 /// src"`). Splitting on the first two whitespace-delimited fields — rather
 /// than trimming the whole line — keeps the type/size columns out of the
 /// evidence path regardless of how much padding the size field carries.
-fn list_entry_path(line: &str) -> &str {
-    let after_type = line
+fn strip_first_whitespace_field(input: &str) -> &str {
+    input
         .trim_start()
-        .splitn(2, char::is_whitespace)
-        .nth(1)
-        .unwrap_or("");
-    after_type
-        .trim_start()
-        .splitn(2, char::is_whitespace)
-        .nth(1)
+        .split_once(char::is_whitespace)
+        .map(|(_, rest)| rest)
         .unwrap_or("")
-        .trim_start()
+}
+
+fn list_entry_path(line: &str) -> &str {
+    strip_first_whitespace_field(strip_first_whitespace_field(line)).trim_start()
 }
 
 fn per_file_evidence(

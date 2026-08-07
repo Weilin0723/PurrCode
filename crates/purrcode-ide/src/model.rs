@@ -36,15 +36,19 @@ pub struct SessionRow {
 ///
 /// `turn_id` correlates this message with the `run_until_pause` iteration
 /// that produced it (PRD v1.1 §6.3), replacing the position-based "last user
-/// message" guess `work_log_anchor` used to make. `span_id`/`parent_span_id`
-/// are reserved for the nested-work-unit identity later phases add (e.g. a
-/// Scout exploration step); Phase 1 does not populate them.
+/// message" guess `work_log_anchor` used to make. `None` means the daemon
+/// genuinely did not stamp one — a user-typed message created outside
+/// `run_until_pause`, or a message recorded before turn ids existed — never a
+/// synthesized id that would coincidentally fail to match anything.
+/// `span_id`/`parent_span_id` are reserved for the nested-work-unit identity
+/// later phases add (e.g. a Scout exploration step); Phase 1 does not
+/// populate them.
 #[derive(Clone, Debug, Default)]
 pub struct Message {
     pub role: String,
     pub content: String,
     pub timestamp: String,
-    pub turn_id: TurnId,
+    pub turn_id: Option<TurnId>,
     pub span_id: Option<SpanId>,
     pub parent_span_id: Option<SpanId>,
 }
@@ -59,13 +63,14 @@ impl Message {
 ///
 /// Carries the same `turn_id`/`span_id`/`parent_span_id` triple as [`Message`]
 /// so the Work Log can be anchored to the request that produced it by exact
-/// identity rather than by scanning for the most recent user message.
+/// identity rather than by scanning for the most recent user message. `None`
+/// when the item is derived from an aggregation with no single owning turn.
 #[derive(Clone, Debug, Default)]
 pub struct ActivityLine {
     pub label: String,
     pub status: String,
     pub summary: Option<String>,
-    pub turn_id: TurnId,
+    pub turn_id: Option<TurnId>,
     pub span_id: Option<SpanId>,
     pub parent_span_id: Option<SpanId>,
 }
@@ -482,6 +487,12 @@ pub struct Usage {
     /// The coding-worker model's actual context window, when the daemon
     /// resolved one. `None` means unresolved, never "assume 200K".
     pub model_capacity_tokens: Option<u64>,
+    /// The most recent turn's actual prompt size — what the *next* request
+    /// would cost. `None` before any turn has a recorded ledger entry.
+    pub current_context_tokens: Option<u64>,
+    /// The model's context window minus the daemon's reserved-output
+    /// budget — what a turn can actually fill before compaction kicks in.
+    pub effective_capacity_tokens: Option<u64>,
 }
 
 impl Usage {
@@ -648,23 +659,22 @@ fn number(value: &Value, key: &str) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
 
-/// Parse a `TurnId` the daemon stamped onto this record.
+/// Parse a `TurnId` the daemon stamped onto this record, when it stamped
+/// one.
 ///
-/// The daemon does not yet serialize `turn_id` on conversation messages or
-/// activity items (PR1 threaded `TurnId` through `SessionEvent`, but the
-/// `/conversation` and `/activity` read models have not been updated to
-/// project it onto the wire yet). Until that lands, this degrades to a fresh,
-/// per-record id — which correctly fails to correlate with anything, rather
-/// than falsely claiming a turn it was never told. `work_log_anchor` treats
-/// that as "no anchor" and renders the work log at the end of the transcript,
-/// the same honest fallback used for a transcript with no request in it.
-fn turn_id(value: &Value, key: &str) -> TurnId {
+/// `None` — never a freshly synthesized id — when the field is absent or
+/// unparseable: a synthesized id would coincidentally never match a real
+/// turn, but claiming that as a positive "no turn" fact rather than
+/// "unknown" invites exactly the kind of silent-mismatch bug it should
+/// prevent. `work_log_anchor` treats `None` as "no anchor" and renders the
+/// work log at the end of the transcript, the same honest fallback used for
+/// a transcript with no request in it.
+fn turn_id(value: &Value, key: &str) -> Option<TurnId> {
     value
         .get(key)
         .and_then(Value::as_str)
         .and_then(|raw| Uuid::parse_str(raw).ok())
         .map(TurnId)
-        .unwrap_or_default()
 }
 
 /// Parse an optional `SpanId` the daemon stamped onto this record. Absent
@@ -981,6 +991,8 @@ fn parse_usage(raw: &Value) -> Usage {
         cache_write_tokens: number(raw, "cache_write_tokens"),
         total_latency_ms: number(raw, "total_latency_ms"),
         model_capacity_tokens: raw.get("context_capacity_tokens").and_then(Value::as_u64),
+        current_context_tokens: raw.get("current_context_tokens").and_then(Value::as_u64),
+        effective_capacity_tokens: raw.get("effective_capacity_tokens").and_then(Value::as_u64),
     }
 }
 
@@ -1403,6 +1415,24 @@ mod tests {
     fn parse_usage_leaves_capacity_unknown_when_the_daemon_did_not_resolve_one() {
         let usage = parse_usage(&json!({"total_tokens": 42_000}));
         assert_eq!(usage.model_capacity_tokens, None);
+    }
+
+    #[test]
+    fn parse_usage_reads_the_current_turn_context_and_effective_capacity() {
+        let usage = parse_usage(&json!({
+            "total_tokens": 42_000,
+            "current_context_tokens": 12_400,
+            "effective_capacity_tokens": 23_800,
+        }));
+        assert_eq!(usage.current_context_tokens, Some(12_400));
+        assert_eq!(usage.effective_capacity_tokens, Some(23_800));
+    }
+
+    #[test]
+    fn parse_usage_leaves_current_context_and_effective_capacity_unknown_when_absent() {
+        let usage = parse_usage(&json!({"total_tokens": 42_000}));
+        assert_eq!(usage.current_context_tokens, None);
+        assert_eq!(usage.effective_capacity_tokens, None);
     }
 
     #[test]

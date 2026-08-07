@@ -1266,17 +1266,25 @@ impl PurrCodeIde {
         }
         ui.add_space(4.0);
 
-        // Proportional bar against the coding model's actual context window.
-        // Only the daemon knows that number (it comes from the configured
-        // provider's capabilities, which vary from a 32K local model to a
-        // 1M-token remote one) — drawing a fill against a guessed ceiling
-        // would misrepresent how close the session actually is to
-        // overflowing, so the bar is simply omitted until the real capacity
-        // is resolved rather than defaulting to a fabricated number.
-        if let Some(capacity) = usage.model_capacity_tokens.filter(|capacity| *capacity > 0) {
+        // Context row: proportional bar comparing the *current turn's*
+        // actual prompt size against the model's effective capacity (its
+        // context window minus the daemon's reserved-output budget). This
+        // answers "how close is the next request to overflowing" — a
+        // different question from the cumulative Session row below it, which
+        // answers "how much has this session cost so far". Only the daemon
+        // knows either number (they depend on the configured provider's
+        // resolved capabilities and the live context ledger), so — mirroring
+        // the capacity-gated bar this replaced — the row is simply omitted
+        // whenever either is unresolved rather than drawn against a
+        // fabricated ceiling.
+        if let (Some(current), Some(capacity)) = (
+            usage.current_context_tokens,
+            usage
+                .effective_capacity_tokens
+                .filter(|capacity| *capacity > 0),
+        ) {
             let track_height = 4.0;
             let bar_width = ui.available_width().min(240.0);
-            let total = usage.total_tokens.max(1) as f64;
 
             let accent = self.tokens.accent_primary;
             let track = self.tokens.background_secondary;
@@ -1286,29 +1294,40 @@ impl PurrCodeIde {
             let painter = ui.painter();
             painter.rect_filled(rect, theme::RADIUS_PILL, track);
 
-            let fill_frac = (total / capacity as f64).clamp(0.0, 1.0) as f32;
+            let fill_frac = (current as f64 / capacity as f64).clamp(0.0, 1.0) as f32;
             if fill_frac > 0.0 {
                 let mut fill_rect = rect;
                 fill_rect.set_width(rect.width() * fill_frac);
                 painter.rect_filled(fill_rect, theme::RADIUS_PILL, accent);
             }
             response.on_hover_text(format!(
-                "{} of {} tokens used this session, against the coding model's context window",
-                usage.total_tokens, capacity
+                "{current} of {capacity} tokens in the current turn's prompt, against what the model can fill before compaction"
             ));
+
+            ui.add_space(3.0);
+            ui.label(
+                RichText::new(format!(
+                    "{} / {} context",
+                    format_token_count(current),
+                    format_token_count(capacity)
+                ))
+                .size(theme::TYPE_EYEBROW)
+                .color(self.tokens.text_muted),
+            );
         }
 
-        // Label
-        let total_str = if usage.total_tokens >= 1_000_000 {
-            format!("{:.1}M", usage.total_tokens as f64 / 1_000_000.0)
-        } else if usage.total_tokens >= 1000 {
-            format!("{:.0}K", usage.total_tokens as f64 / 1000.0)
-        } else {
-            format!("{}", usage.total_tokens)
-        };
+        // Session row: cumulative totals across the whole session. Prefixed
+        // with a "Session" label so it reads as clearly distinct from the
+        // per-turn Context row above rather than as a continuation of it.
+        let total_str = format_token_count(usage.total_tokens);
         ui.add_space(3.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
+            ui.label(
+                RichText::new("Session")
+                    .size(theme::TYPE_EYEBROW)
+                    .color(self.tokens.text_muted),
+            );
             ui.label(
                 RichText::new(format!("{total_str} tokens"))
                     .size(theme::TYPE_EYEBROW)
@@ -1334,6 +1353,19 @@ impl PurrCodeIde {
                 );
             }
         });
+    }
+}
+
+/// Compact K/M form for a token count, shared by the token usage meter's
+/// Context and Session rows so the two never drift into slightly different
+/// rounding or suffix rules.
+fn format_token_count(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1000 {
+        format!("{:.0}K", tokens as f64 / 1000.0)
+    } else {
+        format!("{tokens}")
     }
 }
 
@@ -1417,24 +1449,43 @@ fn transcript_height(available: f32, _running: bool) -> f32 {
 
 /// The message the current turn's work log is drawn under.
 ///
-/// Anchored by exact `turn_id`: the log belongs under the message that
-/// carries the same `turn_id` as the activity being shown, the identity
-/// `run_until_pause` stamps on every `ProposedAction`/`ActionOutputRecorded`/
-/// `JudgmentRecorded` it emits for one turn and that the IDE now threads onto
-/// both `Message` and `ActivityLine` (PRD v1.1 §6.3). This replaced a
-/// positional guess — "the last user message" — that broke the moment a turn
-/// was not exactly "one user message, then the agent's activity": correlating
-/// by identity instead of position is what stopped the work log jumping
-/// between the request and the final answer as a turn completed.
+/// Anchored by exact `turn_id`, matched against the *user* message that
+/// started the turn: the log belongs under the request that carries the same
+/// `turn_id` as the activity being shown, the identity `run_until_pause`
+/// stamps on every `ProposedAction`/`ActionOutputRecorded`/`JudgmentRecorded`
+/// it emits for one turn and that the IDE now threads onto both `Message` and
+/// `ActivityLine` (PRD v1.1 §6.3). This replaced a positional guess — "the
+/// last user message" — that broke the moment a turn was not exactly "one
+/// user message, then the agent's activity": correlating by identity instead
+/// of position is what stopped the work log jumping between the request and
+/// the final answer as a turn completed.
 ///
-/// `None` when the activity carries no turn identity yet (nothing has run) or
-/// names a turn no on-screen message belongs to — a session restored from
+/// The daemon stamps the *same* `turn_id` on both the user message that opens
+/// a turn and the assistant's final answer to it, so matching on `turn_id`
+/// alone is not enough: once the answer lands, both messages carry the turn,
+/// and an unqualified `rposition` — searching from the end — finds the
+/// assistant's reply instead of the request, which is exactly the jump this
+/// function exists to prevent. Requiring `message.is_user()` alongside the
+/// `turn_id` match is what keeps the anchor pinned to the request even after
+/// the answer arrives.
+///
+/// The turn identity itself is read by scanning `activity` from the end and
+/// taking the first `Some`, not by reading `activity.last()` directly:
+/// the most recent activity line can be an aggregated summary with no single
+/// owning turn (`turn_id: None`) even while an earlier line in the same batch
+/// does carry one, so `.last()?.turn_id` would go missing exactly when a
+/// running turn's own activity is still on screen.
+///
+/// `None` when no activity item carries a turn identity yet (nothing has run)
+/// or the turn names no on-screen user message — a session restored from
 /// durable history can begin with an assistant line and no matching turn at
 /// all. Either way the caller falls back to the end of the transcript, the
 /// only honest place for activity that cannot be pinned to a request.
 fn work_log_anchor(messages: &[model::Message], activity: &[model::ActivityLine]) -> Option<usize> {
-    let turn = activity.last()?.turn_id;
-    messages.iter().rposition(|message| message.turn_id == turn)
+    let turn = activity.iter().rev().find_map(|item| item.turn_id)?;
+    messages
+        .iter()
+        .rposition(|message| message.is_user() && message.turn_id == Some(turn))
 }
 
 #[cfg(test)]
@@ -1537,20 +1588,20 @@ mod tests {
         turn_id: purrcode_runtime_core::TurnId,
     ) -> model::Message {
         model::Message {
-            turn_id,
+            turn_id: Some(turn_id),
             ..message(role, content)
         }
     }
 
     /// One activity line stamped with a specific `turn_id`, standing in for
-    /// whatever `run_until_pause` produced during that turn — the anchor only
-    /// reads `activity.last().turn_id`, so the rest of the fields are
-    /// unconstrained.
+    /// whatever `run_until_pause` produced during that turn — the anchor
+    /// scans `activity` from the end for the first line that carries a turn,
+    /// so the rest of the fields are unconstrained.
     fn activity_in_turn(turn_id: purrcode_runtime_core::TurnId) -> model::ActivityLine {
         model::ActivityLine {
             label: "step".into(),
             status: "running".into(),
-            turn_id,
+            turn_id: Some(turn_id),
             ..Default::default()
         }
     }
@@ -1565,7 +1616,13 @@ mod tests {
         let working = vec![message_in_turn("user", "improve it", turn)];
         let answered = vec![
             message_in_turn("user", "improve it", turn),
-            message("assistant", "Here."),
+            // The daemon stamps the assistant's final answer with the same
+            // `turn_id` as the user message that opened the turn — using
+            // `message_in_turn` here (not a plain `message`) reproduces that
+            // real shared-identity data, so this assertion actually exercises
+            // the `is_user()` guard in `work_log_anchor` instead of passing
+            // vacuously because the assistant message never matched anyway.
+            message_in_turn("assistant", "Here.", turn),
         ];
         assert_eq!(work_log_anchor(&working, &activity), Some(0));
         assert_eq!(work_log_anchor(&answered, &activity), Some(0));

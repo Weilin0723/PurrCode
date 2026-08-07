@@ -565,6 +565,16 @@ pub struct UsageSummaryView {
     /// number here without saying so.
     #[serde(default)]
     pub context_capacity_tokens: Option<u64>,
+    /// The most recent turn's actual prompt size — what the *next* request
+    /// would cost, not the session's running total. `None` before any turn
+    /// has recorded a context-ledger entry.
+    #[serde(default)]
+    pub current_context_tokens: Option<u64>,
+    /// `context_capacity_tokens` minus the tokens the runtime reserves for
+    /// model output — what a turn can actually fill before compaction. `None`
+    /// under the same conditions as `context_capacity_tokens`.
+    #[serde(default)]
+    pub effective_capacity_tokens: Option<u64>,
 }
 
 #[cfg(test)]
