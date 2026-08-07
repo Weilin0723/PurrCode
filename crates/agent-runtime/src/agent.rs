@@ -83,12 +83,17 @@ use crate::stream::{AgentStreamEvent, AgentStreamObserver, RationaleStreamExtrac
 const MAX_AUTONOMOUS_ITERATIONS: usize = 32;
 const MAX_CONSECUTIVE_POLICY_REJECTIONS: usize = 3;
 const MAX_ACTIONS_IN_PROMPT: usize = 12;
-const RETAINED_ACTIONS_AFTER_COMPACTION: usize = 6;
+/// How many of the most recent proposed actions survive a compaction.
+/// `pub(crate)` (re-exported from `lib.rs`, matching `compaction_window`) so
+/// the daemon's manual `/compact` uses the exact same retention bound as
+/// automatic compaction rather than a second, independently-drifting number.
+pub(crate) const RETAINED_ACTIONS_AFTER_COMPACTION: usize = 6;
 /// P0-10: Target token budget for the retained conversation window after
 /// compaction — keep roughly the last 8K tokens of complete turns, aligned
 /// at user-message boundaries. The window always includes the checkpoint,
-/// which is accounted for separately.
-const COMPACTION_RETAINED_TOKEN_BUDGET: u64 = 8_192;
+/// which is accounted for separately. `pub(crate)` for the same reason as
+/// [`RETAINED_ACTIONS_AFTER_COMPACTION`].
+pub(crate) const COMPACTION_RETAINED_TOKEN_BUDGET: u64 = 8_192;
 /// Maximum number of compaction cycles per `run_until_pause` iteration.
 /// One preflight compaction is the norm; a second is only allowed as a
 /// provider-overflow recovery (P0-5). More than that fails closed.
@@ -3251,164 +3256,14 @@ impl<'a> NativeAgent<'a> {
                 retained_action_ids: retained_action_ids.clone(),
             },
         )?;
-        let objective = state.objective.clone().unwrap_or_default();
-        let files_inspected: Vec<PathBuf> = state
-            .proposed_actions
-            .values()
-            .filter_map(|action| match action {
-                ProposedAction::RepositoryRead(read) => match read {
-                    RepositoryReadAction::ReadFile { path, .. } => Some(path.clone()),
-                    RepositoryReadAction::GitShow { path, .. } => Some(path.clone()),
-                    RepositoryReadAction::GitDiff { paths }
-                    | RepositoryReadAction::List { paths, .. }
-                    | RepositoryReadAction::Find { paths, .. }
-                    | RepositoryReadAction::RepositoryGrep { paths, .. } => paths.first().cloned(),
-                    RepositoryReadAction::GitLsFiles { pathspec } => pathspec.first().cloned(),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let files_modified: Vec<PathBuf> = state
-            .proposed_actions
-            .values()
-            .filter_map(|action| match action {
-                ProposedAction::WriteFile(write) => Some(write.path.clone()),
-                ProposedAction::DeleteFile(delete) => Some(delete.path.clone()),
-                _ => None,
-            })
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        // P1-3: Derive execution/validation failures from the durable event log
-        // so policy-allowed actions that failed at runtime still enter
-        // failed_attempts (a judgment-only filter misses them entirely).
         let events = store.events(session_id)?;
-        let mut runtime_failures: BTreeMap<ActionId, String> = BTreeMap::new();
-        for event in &events {
-            match event {
-                SessionEvent::ExecutionFinished {
-                    action_id,
-                    exit_code,
-                    ..
-                } if *exit_code != Some(0) => {
-                    runtime_failures.insert(
-                        *action_id,
-                        format!("execution exited with code {exit_code:?}"),
-                    );
-                }
-                SessionEvent::ValidationRecorded {
-                    action_id,
-                    status: ValidationStatus::Failed,
-                    evidence,
-                } => {
-                    runtime_failures.insert(
-                        *action_id,
-                        format!(
-                            "validation failed: {}",
-                            evidence.chars().take(200).collect::<String>()
-                        ),
-                    );
-                }
-                _ => {}
-            }
-        }
-        // P1-3: Derive per-stage test results from the same durable event log.
-        // Each ValidationRecorded carries a serialized ValidationEvidence with a
-        // concrete stage; group pass/fail/skip counts by stage label so the
-        // checkpoint's test_results reflect what actually ran instead of being
-        // perpetually empty.
-        let mut test_counts: BTreeMap<String, [u32; 3]> = BTreeMap::new(); // [passed, failed, skipped]
-        for event in &events {
-            let SessionEvent::ValidationRecorded {
-                status, evidence, ..
-            } = event
-            else {
-                continue;
-            };
-            let parsed = serde_json::from_str::<ValidationEvidence>(evidence).ok();
-            let Some(parsed) = parsed else {
-                continue;
-            };
-            if parsed.stage == ValidationStage::CompletionCriteria {
-                continue;
-            }
-            let label = format!("{stage:?}", stage = parsed.stage);
-            let counts = test_counts.entry(label).or_insert([0, 0, 0]);
-            match status {
-                ValidationStatus::Passed => counts[0] += 1,
-                ValidationStatus::Failed
-                | ValidationStatus::TimedOut
-                | ValidationStatus::Uncertain => counts[1] += 1,
-                ValidationStatus::SkippedByConfiguration
-                | ValidationStatus::NotDetected
-                | ValidationStatus::Unavailable => counts[2] += 1,
-            }
-        }
-        let test_results: Vec<TestResultSummary> = test_counts
-            .into_iter()
-            .map(|(label, [passed, failed, skipped])| TestResultSummary {
-                label,
-                passed,
-                failed,
-                skipped,
-            })
-            .collect();
-        let failed_attempts: Vec<FailedAttempt> = state
-            .proposed_actions
-            .iter()
-            .filter(|(id, _)| !retained_action_ids.contains(id))
-            .filter(|(id, _)| {
-                let judgment = state.judgments.get(id);
-                let is_allow = matches!(
-                    judgment,
-                    Some(JudgmentDecision::Allow | JudgmentDecision::AllowWithConstraints(_))
-                );
-                // Policy denial, OR policy approval that failed at runtime.
-                !is_allow || runtime_failures.contains_key(id)
-            })
-            .map(|(id, action)| {
-                // Prefer the concrete runtime failure; fall back to the policy
-                // judgment when the action never executed.
-                let reason = if let Some(failure) = runtime_failures.get(id) {
-                    failure.clone()
-                } else if let Some(judgment) = state.judgments.get(id) {
-                    match judgment {
-                        JudgmentDecision::Deny { reason }
-                        | JudgmentDecision::ModifyAction { reason }
-                        | JudgmentDecision::Replan { reason } => reason.clone(),
-                        JudgmentDecision::Allow | JudgmentDecision::AllowWithConstraints(_) => {
-                            "execution or validation failed after policy approval".into()
-                        }
-                        JudgmentDecision::RequireApproval { reason, .. } => {
-                            format!(
-                                "required approval but was compacted before resolution: {reason}"
-                            )
-                        }
-                    }
-                } else {
-                    "judgment missing from state".into()
-                };
-                FailedAttempt {
-                    action_id: *id,
-                    action_summary: format!("{action:?}"),
-                    reason,
-                    judgment: state.judgments.get(id).map(|j| format!("{j:?}")),
-                }
-            })
-            .collect();
-        let decisions: Vec<CheckpointDecision> = state
-            .proposed_actions
-            .iter()
-            .filter(|(id, _)| retained_action_ids.contains(id))
-            .map(|(id, action)| CheckpointDecision {
-                summary: format!("{action:?}"),
-                action_id: Some(*id),
-            })
-            .collect();
-        let retained: BTreeSet<ActionId> = retained_action_ids.iter().copied().collect();
+        let checkpoint = build_semantic_checkpoint(
+            state,
+            &events,
+            &self.controls,
+            turn_id,
+            &retained_action_ids,
+        );
         // P0-10: Token-based conversation retention instead of fixed message
         // count. Walk backwards through conversation_messages and stop at the
         // last user-message turn boundary within the token budget.
@@ -3416,106 +3271,7 @@ impl<'a> NativeAgent<'a> {
             &state.conversation_messages,
             COMPACTION_RETAINED_TOKEN_BUDGET,
         );
-        let checkpoint = SemanticCheckpoint {
-            checkpoint_id: CheckpointId::new(),
-            turn_id,
-            superseded_checkpoint_id: state.checkpoint.as_ref().map(|c| c.checkpoint_id),
-            objective,
-            // P1-2: Populate from available session state.
-            accepted_requirements: state
-                .plan_steps
-                .iter()
-                .map(|s| format!("planned: {s}"))
-                .collect(),
-            user_constraints: {
-                let mut constraints = Vec::new();
-                constraints.push(format!("task_mode={}", self.controls.task_mode));
-                constraints.push(format!(
-                    "execution_style={:?}",
-                    self.controls.execution_style
-                ));
-                constraints.push(format!("workflow={}", self.controls.workflow.label()));
-                if let Some(ref plan) = state.workflow_plan {
-                    constraints.push(format!("search_policy={:?}", plan.search_policy));
-                }
-                constraints
-            },
-            decisions,
-            files_inspected,
-            files_modified,
-            important_symbols: state
-                .proposed_actions
-                .values()
-                .filter_map(|action| match action {
-                    ProposedAction::RepositoryRead(read) => match read {
-                        RepositoryReadAction::ReadFile { path, .. } => {
-                            Some(path.file_name()?.to_string_lossy().to_string())
-                        }
-                        RepositoryReadAction::GitShow { path, .. }
-                            if !path.as_os_str().is_empty() =>
-                        {
-                            Some(path.file_name()?.to_string_lossy().to_string())
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                })
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect(),
-            validated_facts: state
-                .evidence_links
-                .iter()
-                .filter(|link| {
-                    matches!(
-                        link.coverage,
-                        purrcode_runtime_core::work::EvidenceCoverage::Covered
-                    )
-                })
-                .map(|link| format!("{:?} covered by task {}", link.criterion_id, link.task_id.0))
-                .collect(),
-            failed_attempts,
-            test_results,
-            unresolved_questions: state
-                .task_graph
-                .as_ref()
-                .map(|graph| {
-                    graph
-                        .tasks
-                        .iter()
-                        .filter(|t| {
-                            matches!(
-                                t.status,
-                                WorkTaskStatus::NeedsAttention | WorkTaskStatus::Pending
-                            )
-                        })
-                        .map(|t| format!("task[{}]: {}", t.id.0, t.objective))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            current_hypothesis: state
-                .conversation_messages
-                .iter()
-                .rev()
-                .find(|m| m.role.eq_ignore_ascii_case("assistant"))
-                .map(|m| m.content.chars().take(512).collect()),
-            next_actions: state
-                .task_graph
-                .as_ref()
-                .map(|graph| {
-                    graph
-                        .tasks
-                        .iter()
-                        .filter(|t| {
-                            matches!(t.status, WorkTaskStatus::Ready | WorkTaskStatus::Pending)
-                        })
-                        .take(8)
-                        .map(|t| format!("task[{}]: {}", t.id.0, t.objective))
-                        .collect()
-                })
-                .unwrap_or_else(|| state.plan_steps.iter().take(8).cloned().collect()),
-            pinned_context: vec![],
-        };
+        let retained: BTreeSet<ActionId> = retained_action_ids.iter().copied().collect();
         store.append(
             session_id,
             &SessionEvent::CheckpointCompacted {
@@ -3525,6 +3281,278 @@ impl<'a> NativeAgent<'a> {
             },
         )?;
         Ok(())
+    }
+}
+
+/// Build a `SemanticCheckpoint` from durable session state.
+///
+/// This is the single implementation both automatic context-pressure
+/// compaction (`NativeAgent::compact_and_checkpoint` above) and the daemon's
+/// manual `POST /v1/sessions/{id}/compact` endpoint call, so a manual
+/// compaction can never construct an empty checkpoint that silently discards
+/// accumulated semantic memory (PRD v1.1 §7.3) — the two paths cannot drift
+/// apart because there is only one path. A pure function of its inputs, with
+/// no `SessionStore`/`NativeAgent` access, so the daemon can call it directly
+/// without spinning up an agent just to compact.
+///
+/// `retained_action_ids` is a parameter rather than recomputed internally:
+/// every caller already needs the same slice for other purposes (the
+/// `ContextCompacted` summary event, and the `CheckpointCompacted` event's
+/// own `retained_action_ids` field), and recomputing it here would either
+/// duplicate that work or risk silently diverging from it.
+pub(crate) fn build_semantic_checkpoint(
+    state: &SessionState,
+    events: &[SessionEvent],
+    controls: &SessionControls,
+    turn_id: TurnId,
+    retained_action_ids: &[ActionId],
+) -> SemanticCheckpoint {
+    let objective = state.objective.clone().unwrap_or_default();
+    let files_inspected: Vec<PathBuf> = state
+        .proposed_actions
+        .values()
+        .filter_map(|action| match action {
+            ProposedAction::RepositoryRead(read) => match read {
+                RepositoryReadAction::ReadFile { path, .. } => Some(path.clone()),
+                RepositoryReadAction::GitShow { path, .. } => Some(path.clone()),
+                RepositoryReadAction::GitDiff { paths }
+                | RepositoryReadAction::List { paths, .. }
+                | RepositoryReadAction::Find { paths, .. }
+                | RepositoryReadAction::RepositoryGrep { paths, .. } => paths.first().cloned(),
+                RepositoryReadAction::GitLsFiles { pathspec } => pathspec.first().cloned(),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let files_modified: Vec<PathBuf> = state
+        .proposed_actions
+        .values()
+        .filter_map(|action| match action {
+            ProposedAction::WriteFile(write) => Some(write.path.clone()),
+            ProposedAction::DeleteFile(delete) => Some(delete.path.clone()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    // P1-3: Derive execution/validation failures from the durable event log
+    // so policy-allowed actions that failed at runtime still enter
+    // failed_attempts (a judgment-only filter misses them entirely).
+    let mut runtime_failures: BTreeMap<ActionId, String> = BTreeMap::new();
+    for event in events {
+        match event {
+            SessionEvent::ExecutionFinished {
+                action_id,
+                exit_code,
+                ..
+            } if *exit_code != Some(0) => {
+                runtime_failures.insert(
+                    *action_id,
+                    format!("execution exited with code {exit_code:?}"),
+                );
+            }
+            SessionEvent::ValidationRecorded {
+                action_id,
+                status: ValidationStatus::Failed,
+                evidence,
+            } => {
+                runtime_failures.insert(
+                    *action_id,
+                    format!(
+                        "validation failed: {}",
+                        evidence.chars().take(200).collect::<String>()
+                    ),
+                );
+            }
+            _ => {}
+        }
+    }
+    // P1-3: Derive per-stage test results from the same durable event log.
+    // Each ValidationRecorded carries a serialized ValidationEvidence with a
+    // concrete stage; group pass/fail/skip counts by stage label so the
+    // checkpoint's test_results reflect what actually ran instead of being
+    // perpetually empty.
+    let mut test_counts: BTreeMap<String, [u32; 3]> = BTreeMap::new(); // [passed, failed, skipped]
+    for event in events {
+        let SessionEvent::ValidationRecorded {
+            status, evidence, ..
+        } = event
+        else {
+            continue;
+        };
+        let parsed = serde_json::from_str::<ValidationEvidence>(evidence).ok();
+        let Some(parsed) = parsed else {
+            continue;
+        };
+        if parsed.stage == ValidationStage::CompletionCriteria {
+            continue;
+        }
+        let label = format!("{stage:?}", stage = parsed.stage);
+        let counts = test_counts.entry(label).or_insert([0, 0, 0]);
+        match status {
+            ValidationStatus::Passed => counts[0] += 1,
+            ValidationStatus::Failed | ValidationStatus::TimedOut | ValidationStatus::Uncertain => {
+                counts[1] += 1
+            }
+            ValidationStatus::SkippedByConfiguration
+            | ValidationStatus::NotDetected
+            | ValidationStatus::Unavailable => counts[2] += 1,
+        }
+    }
+    let test_results: Vec<TestResultSummary> = test_counts
+        .into_iter()
+        .map(|(label, [passed, failed, skipped])| TestResultSummary {
+            label,
+            passed,
+            failed,
+            skipped,
+        })
+        .collect();
+    let failed_attempts: Vec<FailedAttempt> = state
+        .proposed_actions
+        .iter()
+        .filter(|(id, _)| !retained_action_ids.contains(id))
+        .filter(|(id, _)| {
+            let judgment = state.judgments.get(id);
+            let is_allow = matches!(
+                judgment,
+                Some(JudgmentDecision::Allow | JudgmentDecision::AllowWithConstraints(_))
+            );
+            // Policy denial, OR policy approval that failed at runtime.
+            !is_allow || runtime_failures.contains_key(id)
+        })
+        .map(|(id, action)| {
+            // Prefer the concrete runtime failure; fall back to the policy
+            // judgment when the action never executed.
+            let reason = if let Some(failure) = runtime_failures.get(id) {
+                failure.clone()
+            } else if let Some(judgment) = state.judgments.get(id) {
+                match judgment {
+                    JudgmentDecision::Deny { reason }
+                    | JudgmentDecision::ModifyAction { reason }
+                    | JudgmentDecision::Replan { reason } => reason.clone(),
+                    JudgmentDecision::Allow | JudgmentDecision::AllowWithConstraints(_) => {
+                        "execution or validation failed after policy approval".into()
+                    }
+                    JudgmentDecision::RequireApproval { reason, .. } => {
+                        format!("required approval but was compacted before resolution: {reason}")
+                    }
+                }
+            } else {
+                "judgment missing from state".into()
+            };
+            FailedAttempt {
+                action_id: *id,
+                action_summary: format!("{action:?}"),
+                reason,
+                judgment: state.judgments.get(id).map(|j| format!("{j:?}")),
+            }
+        })
+        .collect();
+    let decisions: Vec<CheckpointDecision> = state
+        .proposed_actions
+        .iter()
+        .filter(|(id, _)| retained_action_ids.contains(id))
+        .map(|(id, action)| CheckpointDecision {
+            summary: format!("{action:?}"),
+            action_id: Some(*id),
+        })
+        .collect();
+    SemanticCheckpoint {
+        checkpoint_id: CheckpointId::new(),
+        turn_id,
+        superseded_checkpoint_id: state.checkpoint.as_ref().map(|c| c.checkpoint_id),
+        objective,
+        // P1-2: Populate from available session state.
+        accepted_requirements: state
+            .plan_steps
+            .iter()
+            .map(|s| format!("planned: {s}"))
+            .collect(),
+        user_constraints: {
+            let mut constraints = Vec::new();
+            constraints.push(format!("task_mode={}", controls.task_mode));
+            constraints.push(format!("execution_style={:?}", controls.execution_style));
+            constraints.push(format!("workflow={}", controls.workflow.label()));
+            if let Some(ref plan) = state.workflow_plan {
+                constraints.push(format!("search_policy={:?}", plan.search_policy));
+            }
+            constraints
+        },
+        decisions,
+        files_inspected,
+        files_modified,
+        important_symbols: state
+            .proposed_actions
+            .values()
+            .filter_map(|action| match action {
+                ProposedAction::RepositoryRead(read) => match read {
+                    RepositoryReadAction::ReadFile { path, .. } => {
+                        Some(path.file_name()?.to_string_lossy().to_string())
+                    }
+                    RepositoryReadAction::GitShow { path, .. } if !path.as_os_str().is_empty() => {
+                        Some(path.file_name()?.to_string_lossy().to_string())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        validated_facts: state
+            .evidence_links
+            .iter()
+            .filter(|link| {
+                matches!(
+                    link.coverage,
+                    purrcode_runtime_core::work::EvidenceCoverage::Covered
+                )
+            })
+            .map(|link| format!("{:?} covered by task {}", link.criterion_id, link.task_id.0))
+            .collect(),
+        failed_attempts,
+        test_results,
+        unresolved_questions: state
+            .task_graph
+            .as_ref()
+            .map(|graph| {
+                graph
+                    .tasks
+                    .iter()
+                    .filter(|t| {
+                        matches!(
+                            t.status,
+                            WorkTaskStatus::NeedsAttention | WorkTaskStatus::Pending
+                        )
+                    })
+                    .map(|t| format!("task[{}]: {}", t.id.0, t.objective))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        current_hypothesis: state
+            .conversation_messages
+            .iter()
+            .rev()
+            .find(|m| m.role.eq_ignore_ascii_case("assistant"))
+            .map(|m| m.content.chars().take(512).collect()),
+        next_actions: state
+            .task_graph
+            .as_ref()
+            .map(|graph| {
+                graph
+                    .tasks
+                    .iter()
+                    .filter(|t| matches!(t.status, WorkTaskStatus::Ready | WorkTaskStatus::Pending))
+                    .take(8)
+                    .map(|t| format!("task[{}]: {}", t.id.0, t.objective))
+                    .collect()
+            })
+            .unwrap_or_else(|| state.plan_steps.iter().take(8).cloned().collect()),
+        pinned_context: vec![],
     }
 }
 

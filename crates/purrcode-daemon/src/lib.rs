@@ -2642,46 +2642,39 @@ async fn compact_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     require_idle(&state, id).await?;
-    let session = state.store.lock().await.load(id)?;
+    let (session, events) = {
+        let store = state.store.lock().await;
+        (store.load(id)?, store.events(id)?)
+    };
     // P1-10: Use the same token-based window as automatic compaction so
     // manual /compact is consistent with the agent's own preflight path.
     let conversation_messages_retained_from = purrcode_agent_runtime::compaction_window(
         &session.conversation_messages,
-        8192, // COMPACTION_RETAINED_TOKEN_BUDGET
+        purrcode_agent_runtime::COMPACTION_RETAINED_TOKEN_BUDGET,
     );
     let retained_action_ids = session
         .proposed_actions
         .keys()
         .rev()
-        .take(6) // keep the fixed action-count bound as a safety floor
+        .take(purrcode_agent_runtime::RETAINED_ACTIONS_AFTER_COMPACTION)
         .copied()
         .collect::<Vec<_>>();
-    let _archived = session
-        .proposed_actions
-        .len()
-        .saturating_sub(retained_action_ids.len());
+    // Manual /compact builds through the exact same SemanticCheckpoint
+    // constructor automatic context-pressure compaction uses (PRD v1.1
+    // §7.3) — never a hand-rolled, empty checkpoint that would silently
+    // discard accumulated_requirements/decisions/failed_attempts/etc. the
+    // moment a person triggers this endpoint instead of the agent.
+    let checkpoint = purrcode_agent_runtime::build_semantic_checkpoint(
+        &session,
+        &events,
+        &session.controls,
+        purrcode_runtime_core::TurnId::new(),
+        &retained_action_ids,
+    );
     state.store.lock().await.append(
         id,
         &SessionEvent::CheckpointCompacted {
-            checkpoint: Box::new(purrcode_runtime_core::SemanticCheckpoint {
-                checkpoint_id: purrcode_runtime_core::CheckpointId::new(),
-                turn_id: purrcode_runtime_core::TurnId::new(),
-                superseded_checkpoint_id: session.checkpoint.as_ref().map(|c| c.checkpoint_id),
-                objective: session.objective.clone().unwrap_or_default(),
-                accepted_requirements: vec![],
-                user_constraints: vec![],
-                decisions: vec![],
-                files_inspected: vec![],
-                files_modified: vec![],
-                important_symbols: vec![],
-                validated_facts: vec![],
-                failed_attempts: vec![],
-                test_results: vec![],
-                unresolved_questions: vec![],
-                current_hypothesis: None,
-                next_actions: vec![],
-                pinned_context: vec![],
-            }),
+            checkpoint: Box::new(checkpoint),
             retained_action_ids: retained_action_ids.iter().copied().collect(),
             conversation_messages_retained_from,
         },
@@ -5033,8 +5026,22 @@ fn usage_summary_view(
         .recent_context_ledger
         .back()
         .map(|entry| entry.total_estimated_tokens);
-    let effective_capacity_tokens = context_capacity_tokens
-        .map(|capacity| capacity.saturating_sub(purrcode_runtime_core::RESERVED_OUTPUT_TOKENS));
+    // Must match NativeAgent::effective_input_capacity exactly (agent-runtime
+    // agent.rs): min(provider context window, the session's own input-token
+    // budget cap) minus the reserved-output budget. Only clamping by the raw
+    // window (as this used to) overstates capacity for any session running
+    // under a tighter custom or profile budget — the UI would show room the
+    // runtime will actually refuse to fill.
+    let effective_capacity_tokens = context_capacity_tokens.map(|capacity| {
+        let budget_limit = session
+            .controls
+            .effective_budget()
+            .maximum_input_tokens
+            .unwrap_or(capacity);
+        capacity
+            .min(budget_limit)
+            .saturating_sub(purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+    });
     purrcode_ui_contracts::UsageSummaryView {
         total_tokens: summary.total_tokens,
         input_tokens: summary.input_tokens,
@@ -9868,6 +9875,226 @@ mod tests {
         assert_eq!(
             usage_summary_view(&state, Some(32_000)).current_context_tokens,
             None
+        );
+    }
+
+    #[test]
+    fn effective_capacity_tokens_is_clamped_by_the_sessions_own_budget_not_just_the_raw_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&directory.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "check budget-clamped capacity".into(),
+                    repository: directory.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        // A custom budget tighter than the provider's window: the effective
+        // capacity the UI reports must match what
+        // NativeAgent::effective_input_capacity would actually enforce —
+        // min(window, budget) - RESERVED_OUTPUT_TOKENS — not the raw window
+        // alone, which would overstate how much room a turn actually has.
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionControlsUpdated {
+                    controls: purrcode_runtime_core::adaptation::SessionControls {
+                        budget_profile: BudgetProfileKind::Custom,
+                        custom_budget: Some(purrcode_runtime_core::adaptation::BudgetConstraints {
+                            maximum_input_tokens: Some(20_000),
+                            ..Default::default()
+                        }),
+                        ..purrcode_runtime_core::adaptation::SessionControls::default()
+                    },
+                },
+            )
+            .unwrap();
+        let state = store.load(session_id).unwrap();
+
+        // window (32K) > budget (20K): the budget wins.
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).effective_capacity_tokens,
+            Some(20_000 - purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+        );
+        // window (16K) < budget (20K): the window wins.
+        assert_eq!(
+            usage_summary_view(&state, Some(16_000)).effective_capacity_tokens,
+            Some(16_000 - purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+        );
+        // No resolved window at all: still unknown, budget notwithstanding.
+        assert_eq!(
+            usage_summary_view(&state, None).effective_capacity_tokens,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_compact_preserves_semantic_memory_while_truncating_conversation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&temporary.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "build a parser".into(),
+                    repository: temporary.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        // Semantic memory an earlier automatic compaction already
+        // accumulated — manual /compact must merge into this through the
+        // same builder + merge_checkpoint path, never replace it with the
+        // daemon's old hand-rolled empty SemanticCheckpoint.
+        store
+            .append(
+                session_id,
+                &SessionEvent::CheckpointCompacted {
+                    checkpoint: Box::new(purrcode_runtime_core::SemanticCheckpoint {
+                        checkpoint_id: purrcode_runtime_core::CheckpointId::new(),
+                        turn_id: TurnId::new(),
+                        superseded_checkpoint_id: None,
+                        objective: "build a parser".into(),
+                        accepted_requirements: vec!["planned: support nested expressions".into()],
+                        user_constraints: vec!["task_mode=build".into()],
+                        decisions: vec![],
+                        files_inspected: vec![PathBuf::from("src/parser.rs")],
+                        files_modified: vec![],
+                        important_symbols: vec!["parser.rs".into()],
+                        validated_facts: vec!["parser compiles".into()],
+                        failed_attempts: vec![purrcode_runtime_core::FailedAttempt {
+                            action_id: ActionId::new(),
+                            action_summary: "tried a hand-written parser".into(),
+                            reason: "too many edge cases".into(),
+                            judgment: None,
+                        }],
+                        test_results: vec![],
+                        unresolved_questions: vec![],
+                        current_hypothesis: Some("regex covers 90% of cases".into()),
+                        next_actions: vec!["task[1]: wire the parser into the CLI".into()],
+                        pinned_context: vec![],
+                    }),
+                    retained_action_ids: std::collections::BTreeSet::new(),
+                    conversation_messages_retained_from: 0,
+                },
+            )
+            .unwrap();
+        // Long enough to exceed COMPACTION_RETAINED_TOKEN_BUDGET (8192
+        // tokens ≈ 32768 chars) so manual /compact actually truncates the
+        // window instead of a no-op "keep everything" pass.
+        for i in 0..40 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            store
+                .append(
+                    session_id,
+                    &SessionEvent::ConversationMessageAdded {
+                        message: ConversationMessage {
+                            id: format!("msg-{i}"),
+                            role: role.into(),
+                            content: "x".repeat(2000),
+                            timestamp: Utc::now(),
+                            tool_calls: vec![],
+                            tool_results: vec![],
+                            model: None,
+                            turn_id: None,
+                        },
+                    },
+                )
+                .unwrap();
+        }
+        let messages_before = store.load(session_id).unwrap().conversation_messages.len();
+        assert_eq!(messages_before, 40);
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            terminals: TerminalRuntime::default(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let _ = compact_session(
+            State(state.clone()),
+            headers,
+            AxumPath(session_id.0.to_string()),
+        )
+        .await
+        .expect("manual compact must succeed against an idle session");
+
+        let after = state.store.lock().await.load(session_id).unwrap();
+        assert!(
+            after.conversation_messages.len() < messages_before,
+            "manual /compact must truncate the conversation window, not just record a checkpoint"
+        );
+        let checkpoint = after
+            .checkpoint
+            .as_ref()
+            .expect("manual /compact must record a checkpoint");
+        assert!(
+            checkpoint
+                .accepted_requirements
+                .iter()
+                .any(|r| r.contains("nested expressions")),
+            "manual /compact must not wipe accepted_requirements accumulated before it: {:?}",
+            checkpoint.accepted_requirements
+        );
+        assert!(
+            checkpoint
+                .failed_attempts
+                .iter()
+                .any(|f| f.action_summary.contains("hand-written parser")),
+            "manual /compact must not wipe failed_attempts accumulated before it: {:?}",
+            checkpoint.failed_attempts
+        );
+        assert!(
+            checkpoint
+                .important_symbols
+                .iter()
+                .any(|s| s == "parser.rs"),
+            "manual /compact must not wipe important_symbols accumulated before it: {:?}",
+            checkpoint.important_symbols
+        );
+        assert!(
+            checkpoint
+                .validated_facts
+                .iter()
+                .any(|f| f == "parser compiles"),
+            "manual /compact must not wipe validated_facts accumulated before it: {:?}",
+            checkpoint.validated_facts
+        );
+        // The exact bug this test guards against: the daemon used to build
+        // `SemanticCheckpoint { user_constraints: vec![], .. }` unconditionally.
+        assert!(
+            !checkpoint.user_constraints.is_empty(),
+            "manual /compact must populate user_constraints from the session's own controls, \
+             never construct an empty SemanticCheckpoint"
+        );
+        // This session has no task_graph/plan_steps, so the freshly-built
+        // checkpoint's own next_actions is empty — merge_checkpoint's
+        // current-state fallback rule must carry the previous checkpoint's
+        // next_actions forward rather than silently dropping it.
+        assert_eq!(
+            checkpoint.next_actions,
+            vec!["task[1]: wire the parser into the CLI".to_string()],
+            "manual /compact must fall back to the previous checkpoint's next_actions when its \
+             own snapshot has none"
         );
     }
 

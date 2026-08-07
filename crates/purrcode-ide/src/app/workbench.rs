@@ -1347,7 +1347,7 @@ impl PurrCodeIde {
                 && !cost.is_empty()
             {
                 ui.label(
-                    RichText::new(format!("· {}", cost))
+                    RichText::new(format!("· {cost}"))
                         .size(theme::TYPE_EYEBROW)
                         .color(self.tokens.text_muted),
                 );

@@ -1894,11 +1894,40 @@ impl SessionState {
         pinned_context.extend(latest.pinned_context.iter().cloned());
         merged.pinned_context = pinned_context;
 
+        // Accumulated memory, same as files_inspected/validated_facts above:
+        // a requirement once accepted, or a symbol once seen as significant,
+        // stays remembered across compactions rather than being forgotten
+        // the moment a later checkpoint's snapshot of "what's inspected right
+        // now" doesn't happen to include it.
+        let mut accepted_requirements: BTreeSet<String> =
+            previous.accepted_requirements.iter().cloned().collect();
+        accepted_requirements.extend(latest.accepted_requirements.iter().cloned());
+        merged.accepted_requirements = accepted_requirements.into_iter().collect();
+
+        let mut important_symbols: BTreeSet<String> =
+            previous.important_symbols.iter().cloned().collect();
+        important_symbols.extend(latest.important_symbols.iter().cloned());
+        merged.important_symbols = important_symbols.into_iter().collect();
+
         if merged.objective.is_empty() {
             merged.objective = previous.objective.clone();
         }
         if merged.current_hypothesis.is_none() {
             merged.current_hypothesis = previous.current_hypothesis.clone();
+        }
+        // user_constraints/next_actions describe *current* state (the
+        // session's live controls, the plan's still-open work) rather than
+        // accumulated history, so unioning them the way files/facts are
+        // unioned above would let stale entries (a task_mode that's since
+        // changed, a next_action already completed) linger forever next to
+        // the correct current one. Only fall back to `previous` when
+        // `latest` has nothing to say — the same rule already applied to
+        // `objective`/`current_hypothesis` above — never merge the two sets.
+        if merged.user_constraints.is_empty() {
+            merged.user_constraints = previous.user_constraints.clone();
+        }
+        if merged.next_actions.is_empty() {
+            merged.next_actions = previous.next_actions.clone();
         }
         let mut unresolved: BTreeSet<String> =
             previous.unresolved_questions.iter().cloned().collect();
@@ -2967,5 +2996,83 @@ mod session_state_tests {
             merged.superseded_checkpoint_id,
             Some(previous.checkpoint_id)
         );
+    }
+
+    #[test]
+    fn checkpoint_merge_unions_accumulated_memory_and_carries_forward_current_state() {
+        let previous = SemanticCheckpoint {
+            checkpoint_id: CheckpointId::new(),
+            turn_id: TurnId::new(),
+            superseded_checkpoint_id: None,
+            objective: "fix the parser".into(),
+            accepted_requirements: vec!["planned: use a real parser combinator".into()],
+            user_constraints: vec!["task_mode=build".into()],
+            decisions: vec![],
+            files_inspected: vec![],
+            files_modified: vec![],
+            important_symbols: vec!["parser.rs".into()],
+            validated_facts: vec![],
+            failed_attempts: vec![],
+            test_results: vec![],
+            unresolved_questions: vec![],
+            current_hypothesis: None,
+            next_actions: vec!["task[1]: wire the new parser into the CLI".into()],
+            pinned_context: vec![],
+        };
+        let latest = SemanticCheckpoint {
+            checkpoint_id: CheckpointId::new(),
+            turn_id: TurnId::new(),
+            superseded_checkpoint_id: None,
+            objective: "fix the parser".into(),
+            accepted_requirements: vec!["planned: add a regression test".into()],
+            // Manual /compact building through the same path as automatic
+            // compaction always populates this from current controls, but
+            // the merge rule itself must not assume that — it should carry
+            // `previous` forward whenever `latest` genuinely has nothing.
+            user_constraints: vec![],
+            decisions: vec![],
+            files_inspected: vec![],
+            files_modified: vec![],
+            important_symbols: vec!["cli.rs".into()],
+            validated_facts: vec![],
+            failed_attempts: vec![],
+            test_results: vec![],
+            unresolved_questions: vec![],
+            current_hypothesis: None,
+            // The first next_action is done; the checkpoint now reports a
+            // different one. This must NOT accumulate with `previous`'s —
+            // next_actions describes what's still open right now, not a
+            // log of everything ever queued.
+            next_actions: vec!["task[2]: add docs".into()],
+            pinned_context: vec![],
+        };
+        let merged = SessionState::merge_checkpoint(&previous, &latest);
+
+        // Accumulated memory: union, same rule as failed_attempts/files_inspected.
+        assert_eq!(merged.accepted_requirements.len(), 2);
+        assert!(
+            merged
+                .accepted_requirements
+                .iter()
+                .any(|r| r.contains("parser combinator"))
+        );
+        assert!(
+            merged
+                .accepted_requirements
+                .iter()
+                .any(|r| r.contains("regression test"))
+        );
+        assert_eq!(merged.important_symbols.len(), 2);
+        assert!(merged.important_symbols.iter().any(|s| s == "parser.rs"));
+        assert!(merged.important_symbols.iter().any(|s| s == "cli.rs"));
+
+        // Current state: latest wins outright when non-empty — no union,
+        // no stale entries left sitting next to the fresh one.
+        assert_eq!(merged.next_actions, vec!["task[2]: add docs".to_string()]);
+
+        // Current state: falls back to previous only because latest was
+        // empty here — this is what a hand-rolled empty manual-compact
+        // checkpoint used to wipe permanently before the unified builder.
+        assert_eq!(merged.user_constraints, vec!["task_mode=build".to_string()]);
     }
 }
