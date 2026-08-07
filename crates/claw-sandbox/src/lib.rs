@@ -68,6 +68,16 @@ pub struct ExecutionResult {
     pub sandbox_backend: String,
 }
 
+/// An action authorized for batch execution with its own per-action
+/// PawGate constraints (P0 — restore batch concurrency with per-action
+/// authorization safety).
+#[derive(Clone, Debug)]
+pub struct AuthorizedRead {
+    pub action_id: ActionId,
+    pub action: ProposedAction,
+    pub constraints: purrcode_runtime_core::ActionConstraints,
+}
+
 pub struct ToolRuntime;
 
 impl ToolRuntime {
@@ -114,6 +124,61 @@ impl ToolRuntime {
             )),
         }
     }
+
+    /// Execute multiple read-only actions in a single batch.
+    ///
+    /// Each `AuthorizedRead` carries its exact PawGate-approved constraints;
+    /// authorization is consumed serially (single-use semantic), then reads
+    /// execute concurrently. Results are returned in the same order as input.
+    pub async fn execute_batch(
+        store: &mut SessionStore,
+        batch: &[AuthorizedRead],
+    ) -> Result<Vec<ExecutionResult>, ExecutionError> {
+        // Consume all authorizations up front — serial, single-use semantics,
+        // each with its own PawGate-approved constraints.
+        for item in batch {
+            let digest = item.action.digest(&item.constraints)?;
+            let authorization = store.consume_authorization(item.action_id, &digest)?;
+            if authorization.constraints != item.constraints {
+                return Err(ExecutionError::ConstraintMismatch);
+            }
+        }
+        // Execute every action concurrently.  Only RepositoryRead is allowed;
+        // anything else is rejected before any execution starts.
+        let mut futures = Vec::with_capacity(batch.len());
+        for (i, item) in batch.iter().enumerate() {
+            let read = match &item.action {
+                ProposedAction::RepositoryRead(read) => read.clone(),
+                other => {
+                    return Err(ExecutionError::UnsupportedConstraint(format!(
+                        "execute_batch only accepts RepositoryRead actions, got {other:?}"
+                    )));
+                }
+            };
+            let constraints = item.constraints.clone();
+            futures.push(async move {
+                let result = execute_typed_read(&read, &constraints).await;
+                (i, result)
+            });
+        }
+        let mut results = vec![
+            ExecutionResult {
+                exit_code: None,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                truncated: false,
+                affected_paths: Vec::new(),
+                sandbox_level: SandboxLevel::WorktreeWriteNoShell,
+                sandbox_backend: "cap-std".into(),
+            };
+            batch.len()
+        ];
+        let joined = futures::future::join_all(futures).await;
+        for (i, result) in joined {
+            results[i] = result?;
+        }
+        Ok(results)
+    }
 }
 
 async fn execute_typed_read(
@@ -153,7 +218,7 @@ async fn execute_typed_read(
                 stdout,
                 stderr: Vec::new(),
                 truncated,
-                affected_paths: Vec::new(),
+                affected_paths: vec![path.clone()],
                 sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                 sandbox_backend: "cap-std".into(),
             })
@@ -212,7 +277,7 @@ async fn execute_typed_read(
                 stdout: output,
                 stderr: Vec::new(),
                 truncated: entries > max_entries,
-                affected_paths: Vec::new(),
+                affected_paths: paths.clone(),
                 sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                 sandbox_backend: "cap-std".into(),
             })
@@ -250,7 +315,7 @@ async fn execute_typed_read(
                 stdout: output,
                 stderr: Vec::new(),
                 truncated: false,
-                affected_paths: Vec::new(),
+                affected_paths: paths.clone(),
                 sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                 sandbox_backend: "cap-std".into(),
             })
@@ -299,7 +364,7 @@ async fn execute_typed_read(
                 stdout: output,
                 stderr: Vec::new(),
                 truncated: results >= max_results || output_bytes >= max_bytes,
-                affected_paths: Vec::new(),
+                affected_paths: search_paths.clone(),
                 sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                 sandbox_backend: "cap-std".into(),
             })
@@ -850,6 +915,7 @@ mod tests {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -862,6 +928,7 @@ mod tests {
                         reason: "test requires explicit human approval".into(),
                         constraints: constraints.clone(),
                     },
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -925,6 +992,7 @@ mod tests {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -937,6 +1005,7 @@ mod tests {
                         reason: "test requires explicit human approval".into(),
                         constraints: constraints.clone(),
                     },
+                    turn_id: None,
                 },
             )
             .unwrap();

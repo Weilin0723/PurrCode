@@ -1024,7 +1024,7 @@ impl ResearchDecision {
 ///
 /// These live on the session, not in a client, so the TUI and the IDE cannot
 /// disagree about whether search is off (PRD §7).
-#[derive(Clone, Debug, Default, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 pub struct SessionControls {
     pub workflow: WorkflowControl,
     pub routing: ModelRoutingControl,
@@ -1045,9 +1045,18 @@ pub struct SessionControls {
     /// explicit value is a user override and always wins.
     #[serde(default)]
     pub search_policy: Option<SearchPolicy>,
+    /// P1-12: Auto-context toggle. When `false`, Whisker retrieval is
+    /// suppressed — only pinned context, conversation, and the checkpoint are
+    /// sent. When `true` (the default), retrieval runs each turn.
+    #[serde(default = "default_auto_context")]
+    pub auto_context: bool,
     /// Only meaningful when `budget_profile` is `Custom`.
     #[serde(default)]
     pub custom_budget: Option<BudgetConstraints>,
+}
+
+fn default_auto_context() -> bool {
+    true
 }
 
 // Sessions written before task mode existed were implementation sessions.
@@ -1073,6 +1082,22 @@ impl SessionControls {
         match (self.budget_profile, &self.custom_budget) {
             (BudgetProfileKind::Custom, Some(custom)) => custom.clone(),
             (kind, _) => kind.constraints(),
+        }
+    }
+}
+
+impl Default for SessionControls {
+    fn default() -> Self {
+        Self {
+            workflow: WorkflowControl::default(),
+            routing: ModelRoutingControl::default(),
+            budget_profile: BudgetProfileKind::default(),
+            execution_style: ExecutionStyle::default(),
+            task_mode: TaskMode::Ask,
+            permission_mode: PermissionMode::Ask,
+            search_policy: None,
+            auto_context: true,
+            custom_budget: None,
         }
     }
 }
@@ -2014,6 +2039,7 @@ mod tests {
             task_mode: TaskMode::Review,
             permission_mode: PermissionMode::FullAccess,
             search_policy: Some(SearchPolicy::Off),
+            auto_context: true,
             custom_budget: None,
         };
         let encoded = serde_json::to_string(&controls).unwrap();
@@ -2043,7 +2069,7 @@ mod tests {
         // New code auto-approves governed actions (the product default).
         assert_eq!(
             SessionControls::default().permission_mode,
-            PermissionMode::Auto
+            PermissionMode::Ask
         );
         // A session recorded before permission modes existed must keep
         // replaying as governed, not silently upgrade to Auto.

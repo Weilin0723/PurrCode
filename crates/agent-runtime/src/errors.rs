@@ -45,6 +45,14 @@ pub enum AgentError {
     SessionNotAwaitingApproval,
     #[error("unconstrained allow is forbidden")]
     UnsafeUnconstrainedAllow,
+    #[error(
+        "context overflow: estimated {estimated_tokens} tokens exceeds input capacity of {max_input_tokens} (after compaction: {after_compaction})"
+    )]
+    ContextOverflow {
+        estimated_tokens: u64,
+        max_input_tokens: u64,
+        after_compaction: bool,
+    },
 }
 
 impl AgentError {
@@ -54,5 +62,15 @@ impl AgentError {
             Self::Provider(error)
                 if error.category() == Some(ProviderErrorCategory::Cancelled)
         ) || matches!(self, Self::Cancelled(_))
+    }
+
+    /// True when the provider rejected the request because the context
+    /// exceeded the model's input limit. The caller should compact and retry.
+    pub fn is_context_too_large(&self) -> bool {
+        matches!(
+            self,
+            Self::Provider(error)
+                if error.category() == Some(ProviderErrorCategory::ContextTooLarge)
+        )
     }
 }

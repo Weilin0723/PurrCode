@@ -348,6 +348,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::TaskStatusChanged { .. } => "task_status_changed",
         SessionEvent::EvidenceLinked { .. } => "evidence_linked",
         SessionEvent::ContextCompacted { .. } => "context_compacted",
+        SessionEvent::CheckpointCompacted { .. } => "checkpoint_compacted",
+        SessionEvent::ContextAssembled { .. } => "context_assembled",
         SessionEvent::SessionPaused { .. } => "session_paused",
         SessionEvent::SessionResumed => "session_resumed",
         SessionEvent::ModelSelected { .. } => "model_selected",
@@ -355,6 +357,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::WorkerFinished { .. } => "worker_finished",
         SessionEvent::SupervisorReviewRequired { .. } => "supervisor_review_required",
         SessionEvent::ContextIndexed { .. } => "context_indexed",
+        SessionEvent::ScoutCompleted { .. } => "scout_completed",
+        SessionEvent::ScoutFailed { .. } => "scout_failed",
         SessionEvent::ModelRequestStarted { .. } => "model_request_started",
         SessionEvent::ModelRequestFinished { .. } => "model_request_finished",
         SessionEvent::ActionProposed { .. } => "action_proposed",
@@ -468,6 +472,7 @@ mod tests {
                             "super-secret-value".into(),
                         )]),
                     }),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -478,6 +483,7 @@ mod tests {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: JudgmentDecision::Allow,
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -678,6 +684,7 @@ mod tests {
                             "super-secret-value".into(),
                         )]),
                     }),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -687,6 +694,7 @@ mod tests {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: JudgmentDecision::Allow,
+                    turn_id: None,
                 },
             )
             .unwrap();

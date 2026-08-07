@@ -1069,6 +1069,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )?;
             let decision = policy.evaluate(&action, &repository);
@@ -1077,6 +1078,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: decision.clone(),
+                    turn_id: None,
                 },
             )?;
             let constraints = match decision {
@@ -1841,6 +1843,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )?;
             store.append(
@@ -1848,6 +1851,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision,
+                    turn_id: None,
                 },
             )?;
             store.authorize(&Authorization {
@@ -3010,6 +3014,7 @@ fn run_judgment_benchmark_case(
         &SessionEvent::ActionProposed {
             action_id,
             action: action.clone(),
+            turn_id: None,
         },
     )?;
     evidence.append(
@@ -3017,6 +3022,7 @@ fn run_judgment_benchmark_case(
         &SessionEvent::JudgmentRecorded {
             action_id,
             decision: decision.clone(),
+            turn_id: None,
         },
     )?;
 
@@ -4206,6 +4212,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         TaskStatusChanged { .. } => "task_status_changed",
         EvidenceLinked { .. } => "evidence_linked",
         ContextCompacted { .. } => "context_compacted",
+        CheckpointCompacted { .. } => "checkpoint_compacted",
+        ContextAssembled { .. } => "context_assembled",
         SessionPaused { .. } => "session_paused",
         SessionResumed => "session_resumed",
         ModelSelected { .. } => "model_selected",
@@ -4213,6 +4221,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         WorkerFinished { .. } => "worker_finished",
         SupervisorReviewRequired { .. } => "supervisor_review_required",
         ContextIndexed { .. } => "context_indexed",
+        ScoutCompleted { .. } => "scout_completed",
+        ScoutFailed { .. } => "scout_failed",
         ModelRequestStarted { .. } => "model_request_started",
         ModelRequestFinished { .. } => "model_request_finished",
         ActionProposed { .. } => "action_proposed",

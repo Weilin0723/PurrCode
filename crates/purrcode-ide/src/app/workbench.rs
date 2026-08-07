@@ -253,11 +253,10 @@ impl PurrCodeIde {
                     });
                 } else {
                     // Runtime activity belongs between the user's request and
-                    // the final answer. We do not have per-turn activity IDs
-                    // yet, so the log is anchored to the request instead — see
-                    // `work_log_anchor` for why it may not be anchored to the
-                    // answer.
-                    let anchor = work_log_anchor(&self.session.messages);
+                    // the final answer — anchored to the request by exact
+                    // `turn_id`, not to the answer; see `work_log_anchor` for
+                    // why.
+                    let anchor = work_log_anchor(&self.session.messages, &self.session.activity);
                     let mut work_log_rendered = false;
                     for (index, message) in self.session.messages.iter().enumerate() {
                         // Every user message is a bubble, including the first:
@@ -654,12 +653,38 @@ impl PurrCodeIde {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     self.bypass_chip(ui);
+                    // Intent legend: / commands, @ files, # symbols are typed
+                    // directly into the composer text. There is no fuzzy
+                    // picker or click dispatch behind these yet (that lands
+                    // with the Whisker-backed resolver + command palette in
+                    // a follow-up Context UX pass), so this is plain static
+                    // text — no hover affordance that would promise a click
+                    // does something.
                     if self.composer.trim().is_empty() && !submitting {
-                        ui.label(
-                            RichText::new("/ commands   @ files   # symbols")
-                                .size(theme::TYPE_EYEBROW)
-                                .color(self.tokens.text_muted),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 3.0;
+                            for (shortcut, name) in
+                                [("/", "commands"), ("@", "files"), ("#", "symbols")]
+                            {
+                                egui::Frame::new()
+                                    .fill(self.tokens.background_secondary)
+                                    .corner_radius(theme::RADIUS_PILL)
+                                    .inner_margin(egui::Margin::symmetric(6, 1))
+                                    .show(ui, |ui| {
+                                        ui.spacing_mut().item_spacing.x = 1.0;
+                                        ui.label(
+                                            RichText::new(shortcut)
+                                                .size(theme::TYPE_EYEBROW)
+                                                .color(self.tokens.text_muted),
+                                        );
+                                        ui.label(
+                                            RichText::new(name)
+                                                .size(theme::TYPE_EYEBROW)
+                                                .color(self.tokens.text_muted),
+                                        );
+                                    });
+                            }
+                        });
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if submitting {
@@ -669,6 +694,8 @@ impl PurrCodeIde {
                         }
                     });
                 });
+                // Token usage meter (PRD v1.1 Phase 5).
+                self.token_usage_meter(ui);
             });
 
         // Track input-method composition. While the IME is composing, Enter
@@ -1218,6 +1245,128 @@ impl PurrCodeIde {
             }
         });
     }
+
+    /// Token usage meter shown below the composer (PRD v1.1 Phase 5).
+    ///
+    /// Renders a compact, proportional bar chart with one segment per
+    /// ContextClass, sourced from the Phase 1 context-ledger endpoint.
+    /// Design intent (impeccable "product" surface rules):
+    /// - Typographic: all type at TYPE_EYEBROW, no bold — quiet monitoring, not
+    ///   a dashboard alert.
+    /// - Color: each segment uses a tinted neutral drawn from the status palette
+    ///   so the bar reads as context rather than traffic.
+    /// - Size: the bar is 4px tall and fits on one line; the meter must never
+    ///   compete with the composer for attention.
+    /// - Contrast: labels use text_muted on the canvas background, and the bar
+    ///   segments are solid against the background_secondary track.
+    fn token_usage_meter(&self, ui: &mut Ui) {
+        let usage = &self.session.usage;
+        if usage.total_tokens == 0 {
+            return;
+        }
+        ui.add_space(4.0);
+
+        // Context row: proportional bar comparing the *current turn's*
+        // actual prompt size against the model's effective capacity (its
+        // context window minus the daemon's reserved-output budget). This
+        // answers "how close is the next request to overflowing" — a
+        // different question from the cumulative Session row below it, which
+        // answers "how much has this session cost so far". Only the daemon
+        // knows either number (they depend on the configured provider's
+        // resolved capabilities and the live context ledger), so — mirroring
+        // the capacity-gated bar this replaced — the row is simply omitted
+        // whenever either is unresolved rather than drawn against a
+        // fabricated ceiling.
+        if let (Some(current), Some(capacity)) = (
+            usage.current_context_tokens,
+            usage
+                .effective_capacity_tokens
+                .filter(|capacity| *capacity > 0),
+        ) {
+            let track_height = 4.0;
+            let bar_width = ui.available_width().min(240.0);
+
+            let accent = self.tokens.accent_primary;
+            let track = self.tokens.background_secondary;
+
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(bar_width, track_height), egui::Sense::hover());
+            let painter = ui.painter();
+            painter.rect_filled(rect, theme::RADIUS_PILL, track);
+
+            let fill_frac = (current as f64 / capacity as f64).clamp(0.0, 1.0) as f32;
+            if fill_frac > 0.0 {
+                let mut fill_rect = rect;
+                fill_rect.set_width(rect.width() * fill_frac);
+                painter.rect_filled(fill_rect, theme::RADIUS_PILL, accent);
+            }
+            response.on_hover_text(format!(
+                "{current} of {capacity} tokens in the current turn's prompt, against what the model can fill before compaction"
+            ));
+
+            ui.add_space(3.0);
+            ui.label(
+                RichText::new(format!(
+                    "{} / {} context",
+                    format_token_count(current),
+                    format_token_count(capacity)
+                ))
+                .size(theme::TYPE_EYEBROW)
+                .color(self.tokens.text_muted),
+            );
+        }
+
+        // Session row: cumulative totals across the whole session. Prefixed
+        // with a "Session" label so it reads as clearly distinct from the
+        // per-turn Context row above rather than as a continuation of it.
+        let total_str = format_token_count(usage.total_tokens);
+        ui.add_space(3.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.label(
+                RichText::new("Session")
+                    .size(theme::TYPE_EYEBROW)
+                    .color(self.tokens.text_muted),
+            );
+            ui.label(
+                RichText::new(format!("{total_str} tokens"))
+                    .size(theme::TYPE_EYEBROW)
+                    .color(self.tokens.text_muted),
+            )
+            .on_hover_text(
+                "Total tokens used across this session, not the size of the next request",
+            );
+            if usage.model_calls > 0 {
+                ui.label(
+                    RichText::new(format!("· {} calls", usage.model_calls))
+                        .size(theme::TYPE_EYEBROW)
+                        .color(self.tokens.text_muted),
+                );
+            }
+            if let Some(ref cost) = usage.estimated_cost
+                && !cost.is_empty()
+            {
+                ui.label(
+                    RichText::new(format!("· {cost}"))
+                        .size(theme::TYPE_EYEBROW)
+                        .color(self.tokens.text_muted),
+                );
+            }
+        });
+    }
+}
+
+/// Compact K/M form for a token count, shared by the token usage meter's
+/// Context and Session rows so the two never drift into slightly different
+/// rounding or suffix rules.
+fn format_token_count(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1000 {
+        format!("{:.0}K", tokens as f64 / 1000.0)
+    } else {
+        format!("{tokens}")
+    }
 }
 
 /// The daemon route a strip affordance maps to.
@@ -1300,20 +1449,43 @@ fn transcript_height(available: f32, _running: bool) -> f32 {
 
 /// The message the current turn's work log is drawn under.
 ///
-/// The last *user* message, always. The obvious alternative — draw it above the
-/// final answer — anchors the card to something that does not exist for most of
-/// the turn: while the agent is still working there is no reply yet, so the log
-/// renders at the very end of the transcript, and the instant the reply lands it
-/// teleports up above it. Sending a follow-up throws it back down again. That
-/// jump was the drift users reported, and it happened twice per turn.
+/// Anchored by exact `turn_id`, matched against the *user* message that
+/// started the turn: the log belongs under the request that carries the same
+/// `turn_id` as the activity being shown, the identity `run_until_pause`
+/// stamps on every `ProposedAction`/`ActionOutputRecorded`/`JudgmentRecorded`
+/// it emits for one turn and that the IDE now threads onto both `Message` and
+/// `ActivityLine` (PRD v1.1 §6.3). This replaced a positional guess — "the
+/// last user message" — that broke the moment a turn was not exactly "one
+/// user message, then the agent's activity": correlating by identity instead
+/// of position is what stopped the work log jumping between the request and
+/// the final answer as a turn completed.
 ///
-/// The request, by contrast, is already on screen before any of this starts and
-/// never moves. `None` for a transcript with no user message at all — a session
-/// restored from durable history can begin with an assistant line — in which
-/// case the caller falls back to the end of the transcript, which is the only
-/// honest place for activity that belongs to no visible request.
-fn work_log_anchor(messages: &[model::Message]) -> Option<usize> {
-    messages.iter().rposition(model::Message::is_user)
+/// The daemon stamps the *same* `turn_id` on both the user message that opens
+/// a turn and the assistant's final answer to it, so matching on `turn_id`
+/// alone is not enough: once the answer lands, both messages carry the turn,
+/// and an unqualified `rposition` — searching from the end — finds the
+/// assistant's reply instead of the request, which is exactly the jump this
+/// function exists to prevent. Requiring `message.is_user()` alongside the
+/// `turn_id` match is what keeps the anchor pinned to the request even after
+/// the answer arrives.
+///
+/// The turn identity itself is read by scanning `activity` from the end and
+/// taking the first `Some`, not by reading `activity.last()` directly:
+/// the most recent activity line can be an aggregated summary with no single
+/// owning turn (`turn_id: None`) even while an earlier line in the same batch
+/// does carry one, so `.last()?.turn_id` would go missing exactly when a
+/// running turn's own activity is still on screen.
+///
+/// `None` when no activity item carries a turn identity yet (nothing has run)
+/// or the turn names no on-screen user message — a session restored from
+/// durable history can begin with an assistant line and no matching turn at
+/// all. Either way the caller falls back to the end of the transcript, the
+/// only honest place for activity that cannot be pinned to a request.
+fn work_log_anchor(messages: &[model::Message], activity: &[model::ActivityLine]) -> Option<usize> {
+    let turn = activity.iter().rev().find_map(|item| item.turn_id)?;
+    messages
+        .iter()
+        .rposition(|message| message.is_user() && message.turn_id == Some(turn))
 }
 
 #[cfg(test)]
@@ -1389,6 +1561,7 @@ mod tests {
             label: "step".into(),
             status: status.into(),
             summary: None,
+            ..Default::default()
         };
         assert!(activity_needs_attention(&line("failed")));
         assert!(activity_needs_attention(&line("blocked")));
@@ -1401,6 +1574,35 @@ mod tests {
             role: role.into(),
             content: content.into(),
             timestamp: String::new(),
+            ..Default::default()
+        }
+    }
+
+    /// Like [`message`], but stamped with a specific `turn_id` — for
+    /// exercising `work_log_anchor`'s exact-identity correlation, where the
+    /// default (each call gets its own fresh `TurnId`) would never match
+    /// anything by construction.
+    fn message_in_turn(
+        role: &str,
+        content: &str,
+        turn_id: purrcode_runtime_core::TurnId,
+    ) -> model::Message {
+        model::Message {
+            turn_id: Some(turn_id),
+            ..message(role, content)
+        }
+    }
+
+    /// One activity line stamped with a specific `turn_id`, standing in for
+    /// whatever `run_until_pause` produced during that turn — the anchor
+    /// scans `activity` from the end for the first line that carries a turn,
+    /// so the rest of the fields are unconstrained.
+    fn activity_in_turn(turn_id: purrcode_runtime_core::TurnId) -> model::ActivityLine {
+        model::ActivityLine {
+            label: "step".into(),
+            status: "running".into(),
+            turn_id: Some(turn_id),
+            ..Default::default()
         }
     }
 
@@ -1409,37 +1611,100 @@ mod tests {
         // One turn. The log is drawn under the request while the agent works,
         // and it is still drawn under the same request afterwards — the card
         // does not move when the answer arrives.
-        let working = vec![message("user", "improve it")];
-        let answered = vec![message("user", "improve it"), message("assistant", "Here.")];
-        assert_eq!(work_log_anchor(&working), Some(0));
-        assert_eq!(work_log_anchor(&answered), Some(0));
+        let turn = purrcode_runtime_core::TurnId::new();
+        let activity = vec![activity_in_turn(turn)];
+        let working = vec![message_in_turn("user", "improve it", turn)];
+        let answered = vec![
+            message_in_turn("user", "improve it", turn),
+            // The daemon stamps the assistant's final answer with the same
+            // `turn_id` as the user message that opened the turn — using
+            // `message_in_turn` here (not a plain `message`) reproduces that
+            // real shared-identity data, so this assertion actually exercises
+            // the `is_user()` guard in `work_log_anchor` instead of passing
+            // vacuously because the assistant message never matched anyway.
+            message_in_turn("assistant", "Here.", turn),
+        ];
+        assert_eq!(work_log_anchor(&working, &activity), Some(0));
+        assert_eq!(work_log_anchor(&answered, &activity), Some(0));
     }
 
     #[test]
     fn the_work_log_stays_put_across_three_turns() {
+        let first = purrcode_runtime_core::TurnId::new();
+        let second = purrcode_runtime_core::TurnId::new();
+        let third = purrcode_runtime_core::TurnId::new();
         let mut transcript = vec![
-            message("user", "first"),
+            message_in_turn("user", "first", first),
             message("assistant", "one"),
-            message("user", "second"),
+            message_in_turn("user", "second", second),
             message("assistant", "two"),
-            message("user", "introduce a plan to improve it"),
+            message_in_turn("user", "introduce a plan to improve it", third),
         ];
+        let activity = vec![activity_in_turn(third)];
         // The third request is the anchor while it is still being worked on…
-        assert_eq!(work_log_anchor(&transcript), Some(4));
+        assert_eq!(work_log_anchor(&transcript, &activity), Some(4));
         transcript.push(message("assistant", "three"));
         // …and the same one after the answer lands. Anchoring to the last
         // assistant message would have moved this from 5 to 4 and back to 5
         // again on the next follow-up.
-        assert_eq!(work_log_anchor(&transcript), Some(4));
+        assert_eq!(work_log_anchor(&transcript, &activity), Some(4));
+    }
+
+    #[test]
+    fn anchoring_uses_turn_id_not_the_old_last_user_message_heuristic() {
+        // PRD v1.1 §14.1: the deleted `work_log_anchor` used to be
+        // `messages.iter().rposition(model::Message::is_user)` — anchor to
+        // whichever user message is *last in the transcript*, regardless of
+        // which turn produced the activity being shown. A later, unrelated
+        // user message (e.g. a follow-up queued while the first turn is still
+        // running) sits after the first turn's message in the transcript, so
+        // the old heuristic would have anchored the first turn's still-running
+        // work log under the *second* message — a stale-looking scroll jump.
+        // Exact `turn_id` correlation must anchor it under the first message
+        // instead.
+        let first_turn = purrcode_runtime_core::TurnId::new();
+        let second_turn = purrcode_runtime_core::TurnId::new();
+        let transcript = vec![
+            message_in_turn("user", "start the long task", first_turn),
+            message_in_turn("user", "also do this while you're at it", second_turn),
+        ];
+        let activity = vec![activity_in_turn(first_turn)];
+
+        // The old `rposition(is_user)` heuristic, kept here only to prove the
+        // real function no longer matches it.
+        let old_heuristic_anchor = transcript.iter().rposition(model::Message::is_user);
+        assert_eq!(
+            old_heuristic_anchor,
+            Some(1),
+            "sanity check: the old heuristic would anchor to the last user message"
+        );
+
+        assert_eq!(
+            work_log_anchor(&transcript, &activity),
+            Some(0),
+            "exact turn_id correlation must anchor to the message that started this turn, \
+             not to whichever user message happens to be last in the transcript"
+        );
+        assert_ne!(
+            work_log_anchor(&transcript, &activity),
+            old_heuristic_anchor,
+            "no positional fallback may remain: turn_id correlation must diverge from the \
+             deleted rposition(is_user) heuristic exactly when they disagree"
+        );
     }
 
     #[test]
     fn a_transcript_with_no_request_in_it_anchors_nowhere() {
-        // Both fall through to the caller's "render at the end" path, which is
-        // the only honest place for activity with no visible request.
-        assert_eq!(work_log_anchor(&[]), None);
+        // No activity at all: nothing to anchor.
+        assert_eq!(work_log_anchor(&[], &[]), None);
+        // Activity names a turn no on-screen message belongs to — a session
+        // restored from durable history can begin with an assistant line and
+        // no matching turn. Both fall through to the caller's "render at the
+        // end" path, which is the only honest place for activity that cannot
+        // be pinned to a request.
+        let activity = vec![activity_in_turn(purrcode_runtime_core::TurnId::new())];
         assert_eq!(
-            work_log_anchor(&[message("assistant", "restored from history")]),
+            work_log_anchor(&[message("assistant", "restored from history")], &activity),
             None
         );
     }

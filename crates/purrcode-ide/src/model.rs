@@ -10,9 +10,10 @@
 //! *interpret* the label the daemon already chose.
 
 use chrono::{DateTime, Utc};
-use purrcode_runtime_core::{ProductState, ProductStateView};
+use purrcode_runtime_core::{ProductState, ProductStateView, SpanId, TurnId};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 use crate::daemon::{PanelAvailability, PanelKind, PanelResult};
 
@@ -32,11 +33,24 @@ pub struct SessionRow {
 }
 
 /// One conversation turn.
-#[derive(Clone, Debug)]
+///
+/// `turn_id` correlates this message with the `run_until_pause` iteration
+/// that produced it (PRD v1.1 §6.3), replacing the position-based "last user
+/// message" guess `work_log_anchor` used to make. `None` means the daemon
+/// genuinely did not stamp one — a user-typed message created outside
+/// `run_until_pause`, or a message recorded before turn ids existed — never a
+/// synthesized id that would coincidentally fail to match anything.
+/// `span_id`/`parent_span_id` are reserved for the nested-work-unit identity
+/// later phases add (e.g. a Scout exploration step); Phase 1 does not
+/// populate them.
+#[derive(Clone, Debug, Default)]
 pub struct Message {
     pub role: String,
     pub content: String,
     pub timestamp: String,
+    pub turn_id: Option<TurnId>,
+    pub span_id: Option<SpanId>,
+    pub parent_span_id: Option<SpanId>,
 }
 
 impl Message {
@@ -46,11 +60,19 @@ impl Message {
 }
 
 /// One line of semantic progress.
-#[derive(Clone, Debug)]
+///
+/// Carries the same `turn_id`/`span_id`/`parent_span_id` triple as [`Message`]
+/// so the Work Log can be anchored to the request that produced it by exact
+/// identity rather than by scanning for the most recent user message. `None`
+/// when the item is derived from an aggregation with no single owning turn.
+#[derive(Clone, Debug, Default)]
 pub struct ActivityLine {
     pub label: String,
     pub status: String,
     pub summary: Option<String>,
+    pub turn_id: Option<TurnId>,
+    pub span_id: Option<SpanId>,
+    pub parent_span_id: Option<SpanId>,
 }
 
 impl ActivityLine {
@@ -462,6 +484,15 @@ pub struct Usage {
     pub cache_write_tokens: u64,
     /// Total wall-clock the model calls took, summed across the session.
     pub total_latency_ms: u64,
+    /// The coding-worker model's actual context window, when the daemon
+    /// resolved one. `None` means unresolved, never "assume 200K".
+    pub model_capacity_tokens: Option<u64>,
+    /// The most recent turn's actual prompt size — what the *next* request
+    /// would cost. `None` before any turn has a recorded ledger entry.
+    pub current_context_tokens: Option<u64>,
+    /// The model's context window minus the daemon's reserved-output
+    /// budget — what a turn can actually fill before compaction kicks in.
+    pub effective_capacity_tokens: Option<u64>,
 }
 
 impl Usage {
@@ -628,6 +659,35 @@ fn number(value: &Value, key: &str) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
 
+/// Parse a `TurnId` the daemon stamped onto this record, when it stamped
+/// one.
+///
+/// `None` — never a freshly synthesized id — when the field is absent or
+/// unparseable: a synthesized id would coincidentally never match a real
+/// turn, but claiming that as a positive "no turn" fact rather than
+/// "unknown" invites exactly the kind of silent-mismatch bug it should
+/// prevent. `work_log_anchor` treats `None` as "no anchor" and renders the
+/// work log at the end of the transcript, the same honest fallback used for
+/// a transcript with no request in it.
+fn turn_id(value: &Value, key: &str) -> Option<TurnId> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .map(TurnId)
+}
+
+/// Parse an optional `SpanId` the daemon stamped onto this record. Absent
+/// today for the same reason `turn_id` is (see [`turn_id`]); `None` here is
+/// simply "not available", not a guess.
+fn span_id(value: &Value, key: &str) -> Option<SpanId> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .map(SpanId)
+}
+
 /// Map whatever status word the daemon uses onto a canonical state.
 ///
 /// The daemon owns the vocabulary; this only recognises it. An unknown word
@@ -762,6 +822,9 @@ fn parse_activity(raw: &[Value]) -> Vec<ActivityLine> {
             label: text(value, "label").unwrap_or_else(|| "Working".to_owned()),
             status: text(value, "status").unwrap_or_else(|| "pending".to_owned()),
             summary: text(value, "summary").or_else(|| text(value, "detail")),
+            turn_id: turn_id(value, "turn_id"),
+            span_id: span_id(value, "span_id"),
+            parent_span_id: span_id(value, "parent_span_id"),
         })
         .collect()
 }
@@ -927,6 +990,9 @@ fn parse_usage(raw: &Value) -> Usage {
         cache_read_tokens: number(raw, "cache_read_tokens"),
         cache_write_tokens: number(raw, "cache_write_tokens"),
         total_latency_ms: number(raw, "total_latency_ms"),
+        model_capacity_tokens: raw.get("context_capacity_tokens").and_then(Value::as_u64),
+        current_context_tokens: raw.get("current_context_tokens").and_then(Value::as_u64),
+        effective_capacity_tokens: raw.get("effective_capacity_tokens").and_then(Value::as_u64),
     }
 }
 
@@ -957,6 +1023,9 @@ fn parse_controls(raw: &Value) -> Controls {
                     label: text(lane, "objective").unwrap_or_else(|| "Lane".to_owned()),
                     status: text(lane, "status").unwrap_or_else(|| "pending".to_owned()),
                     summary: text(lane, "kind"),
+                    turn_id: turn_id(lane, "turn_id"),
+                    span_id: span_id(lane, "span_id"),
+                    parent_span_id: span_id(lane, "parent_span_id"),
                 })
                 .collect()
         })
@@ -1112,6 +1181,9 @@ pub fn parse_session(id: &str, snapshot: &crate::daemon::SessionSnapshot) -> Ses
                     role: text(value, "role")?,
                     content: text(value, "content").unwrap_or_default(),
                     timestamp: text(value, "timestamp").unwrap_or_default(),
+                    turn_id: turn_id(value, "turn_id"),
+                    span_id: span_id(value, "span_id"),
+                    parent_span_id: span_id(value, "parent_span_id"),
                 })
             })
             .collect(),
@@ -1331,6 +1403,39 @@ mod tests {
     }
 
     #[test]
+    fn parse_usage_reads_the_daemon_resolved_model_capacity() {
+        let usage = parse_usage(&json!({
+            "total_tokens": 42_000,
+            "context_capacity_tokens": 32_000,
+        }));
+        assert_eq!(usage.model_capacity_tokens, Some(32_000));
+    }
+
+    #[test]
+    fn parse_usage_leaves_capacity_unknown_when_the_daemon_did_not_resolve_one() {
+        let usage = parse_usage(&json!({"total_tokens": 42_000}));
+        assert_eq!(usage.model_capacity_tokens, None);
+    }
+
+    #[test]
+    fn parse_usage_reads_the_current_turn_context_and_effective_capacity() {
+        let usage = parse_usage(&json!({
+            "total_tokens": 42_000,
+            "current_context_tokens": 12_400,
+            "effective_capacity_tokens": 23_800,
+        }));
+        assert_eq!(usage.current_context_tokens, Some(12_400));
+        assert_eq!(usage.effective_capacity_tokens, Some(23_800));
+    }
+
+    #[test]
+    fn parse_usage_leaves_current_context_and_effective_capacity_unknown_when_absent() {
+        let usage = parse_usage(&json!({"total_tokens": 42_000}));
+        assert_eq!(usage.current_context_tokens, None);
+        assert_eq!(usage.effective_capacity_tokens, None);
+    }
+
+    #[test]
     fn a_direct_plan_shows_search_off_rather_than_an_empty_control() {
         let controls = parse_controls(&json!({
             "controls": {"workflow": "direct", "budget_profile": "economy"},
@@ -1360,6 +1465,7 @@ mod tests {
                 label: (*label).to_owned(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             })
             .collect();
         let folded = condense(&raw);
@@ -1370,6 +1476,7 @@ mod tests {
                 label: "Validation failed".into(),
                 status: "failed".into(),
                 summary: None,
+                ..Default::default()
             })
             .collect();
         let folded = condense(&same);
@@ -1384,11 +1491,13 @@ mod tests {
                 label: "Testing".into(),
                 status: "failed".into(),
                 summary: Some("first".into()),
+                ..Default::default()
             },
             ActivityLine {
                 label: "Testing".into(),
                 status: "failed".into(),
                 summary: Some("latest".into()),
+                ..Default::default()
             },
         ];
         let folded = condense(&lines);
@@ -1402,21 +1511,25 @@ mod tests {
                 label: "Indexed 0 file(s), 0 symbol(s)".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
             ActivityLine {
                 label: "Read repository manifest".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
             ActivityLine {
                 label: "Indexed 0 file(s), 0 symbol(s)".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
             ActivityLine {
                 label: "Indexed 12 file(s), 34 symbol(s)".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
         ];
         let folded = condense(&lines);

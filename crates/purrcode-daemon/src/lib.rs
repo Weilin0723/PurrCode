@@ -69,7 +69,8 @@ use purrcode_runtime_core::adaptation::{
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, AuthorityMode, Authorization,
     ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
-    SessionEvent, SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
+    SessionEvent, SessionId, SessionState, SessionStatus, TurnId, ValidationStatus,
+    WriteFileAction,
 };
 use purrcode_skill_registry::{
     ExternalSearchAuthorization, GitHubRegistryAdapter, Qualifier as RegistryQualifier,
@@ -341,6 +342,7 @@ async fn preserve_live_partial(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: Some(model),
+                turn_id: None, // recorded outside run_until_pause
             },
         },
     )?;
@@ -438,6 +440,10 @@ pub async fn bind_and_report(
         .route("/v1/sessions/{id}/changes", get(session_changes))
         .route("/v1/sessions/{id}/github", get(session_github))
         .route("/v1/sessions/{id}/usage", get(session_usage))
+        .route(
+            "/v1/sessions/{id}/context-ledger/{turn_id}",
+            get(session_context_ledger),
+        )
         .route("/v1/sessions/{id}/spec", get(session_spec))
         .route("/v1/sessions/{id}/tasks", get(session_tasks))
         .route("/v1/sessions/{id}/evidence", get(session_evidence))
@@ -1188,6 +1194,10 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    // Supervisor-worker actions run in their own isolated
+                    // worktree/conversation, outside `run_until_pause`'s main
+                    // turn loop (PRD v1.1 §6.3).
+                    turn_id: None,
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -1198,6 +1208,7 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: decision.clone(),
+                    turn_id: None,
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -1904,6 +1915,11 @@ async fn start_session(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: None,
+                // P0-9: TurnId originates at daemon user-message admission so
+                // all actions, judgments, and assistant messages in the same
+                // turn share the same id. The agent reads this back rather than
+                // creating its own inside run_until_pause.
+                turn_id: Some(TurnId::new()),
             },
         },
     )?;
@@ -1919,6 +1935,7 @@ async fn start_session(
                     tool_calls: Vec::new(),
                     tool_results: Vec::new(),
                     model: None,
+                    turn_id: None, // direct reply, outside run_until_pause
                 },
             },
         )?;
@@ -2033,6 +2050,9 @@ async fn append_message(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: None,
+                // P0-9: TurnId at admission for follow-ups too — each user
+                // message starts a new turn that propagates through all events.
+                turn_id: Some(TurnId::new()),
             },
         },
     )?;
@@ -2054,6 +2074,7 @@ async fn append_message(
                     tool_calls: Vec::new(),
                     tool_results: Vec::new(),
                     model: None,
+                    turn_id: None, // direct reply, outside run_until_pause
                 },
             },
         )?;
@@ -2621,25 +2642,41 @@ async fn compact_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     require_idle(&state, id).await?;
-    let session = state.store.lock().await.load(id)?;
+    let (session, events) = {
+        let store = state.store.lock().await;
+        (store.load(id)?, store.events(id)?)
+    };
+    // P1-10: Use the same token-based window as automatic compaction so
+    // manual /compact is consistent with the agent's own preflight path.
+    let conversation_messages_retained_from = purrcode_agent_runtime::compaction_window(
+        &session.conversation_messages,
+        purrcode_agent_runtime::COMPACTION_RETAINED_TOKEN_BUDGET,
+    );
     let retained_action_ids = session
         .proposed_actions
         .keys()
         .rev()
-        .take(6)
+        .take(purrcode_agent_runtime::RETAINED_ACTIONS_AFTER_COMPACTION)
         .copied()
         .collect::<Vec<_>>();
-    let archived = session
-        .proposed_actions
-        .len()
-        .saturating_sub(retained_action_ids.len());
+    // Manual /compact builds through the exact same SemanticCheckpoint
+    // constructor automatic context-pressure compaction uses (PRD v1.1
+    // §7.3) — never a hand-rolled, empty checkpoint that would silently
+    // discard accumulated_requirements/decisions/failed_attempts/etc. the
+    // moment a person triggers this endpoint instead of the agent.
+    let checkpoint = purrcode_agent_runtime::build_semantic_checkpoint(
+        &session,
+        &events,
+        &session.controls,
+        purrcode_runtime_core::TurnId::new(),
+        &retained_action_ids,
+    );
     state.store.lock().await.append(
         id,
-        &SessionEvent::ContextCompacted {
-            summary: format!(
-                "Manual compaction archived {archived} older action contexts. Objective, current plan, recent actions, approvals, validation evidence, and the complete audit log remain durable."
-            ),
-            retained_action_ids,
+        &SessionEvent::CheckpointCompacted {
+            checkpoint: Box::new(checkpoint),
+            retained_action_ids: retained_action_ids.iter().copied().collect(),
+            conversation_messages_retained_from,
         },
     )?;
     Ok(Json(AcceptedSession {
@@ -2761,6 +2798,10 @@ async fn replace_action(
         &SessionEvent::ActionProposed {
             action_id: replacement_action_id,
             action: request.action,
+            // A human-edited replacement is submitted through this endpoint
+            // outside `run_until_pause`'s loop, so there is no current
+            // TurnId to stamp it with (PRD v1.1 §6.3).
+            turn_id: None,
         },
     )?;
     store.append(
@@ -2768,6 +2809,7 @@ async fn replace_action(
         &SessionEvent::JudgmentRecorded {
             action_id: replacement_action_id,
             decision,
+            turn_id: None,
         },
     )?;
     Ok(Json(AcceptedSession {
@@ -2900,6 +2942,9 @@ async fn invoke_mcp(
             &SessionEvent::ActionProposed {
                 action_id,
                 action: action.clone(),
+                // Direct MCP invocations submitted through this endpoint run
+                // outside `run_until_pause`'s main turn loop (PRD v1.1 §6.3).
+                turn_id: None,
             },
         )?;
         store.append(
@@ -2907,6 +2952,7 @@ async fn invoke_mcp(
             &SessionEvent::JudgmentRecorded {
                 action_id,
                 decision: decision.clone(),
+                turn_id: None,
             },
         )?;
         return match decision {
@@ -4377,6 +4423,23 @@ async fn ui_status(
 // what a person reads.
 
 /// Derive the user-facing activity list from durable events.
+/// Extract the `TurnId` that [`SessionEvent`] variants carry — the identity
+/// `run_until_pause` stamps on every `ActionProposed`/`ActionOutputRecorded`/
+/// `JudgmentRecorded` it emits (PRD v1.1 §6.3). Events created outside the
+/// main loop (user messages, supervisor workers, MCP invocations) carry
+/// `turn_id: None` and project the same here.
+fn event_turn_id(
+    event: &purrcode_runtime_core::SessionEvent,
+) -> Option<purrcode_runtime_core::TurnId> {
+    use purrcode_runtime_core::SessionEvent as Event;
+    match event {
+        Event::ActionProposed { turn_id, .. }
+        | Event::ActionOutputRecorded { turn_id, .. }
+        | Event::JudgmentRecorded { turn_id, .. } => *turn_id,
+        _ => None,
+    }
+}
+
 fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<ActivityItem> {
     use purrcode_runtime_core::SessionEvent as Event;
     let mut items: Vec<ActivityItem> = Vec::new();
@@ -4408,6 +4471,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
 
     for (index, event) in events.iter().enumerate().skip(turn_start) {
         let id = index.to_string();
+        let turn = event_turn_id(event).map(|t| t.0.to_string());
         match event {
             Event::WorktreeCreated { .. } => items.push(ActivityItem {
                 id,
@@ -4416,6 +4480,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Done,
                 summary: None,
                 detail_available: false,
+                turn_id: turn.clone(),
             }),
             Event::ContextIndexed { files, symbols, .. } => items.push(ActivityItem {
                 id,
@@ -4424,6 +4489,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Done,
                 summary: None,
                 detail_available: false,
+                turn_id: turn.clone(),
             }),
             Event::CheckpointCreated { label, .. } => items.push(ActivityItem {
                 id,
@@ -4432,6 +4498,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Done,
                 summary: None,
                 detail_available: true,
+                turn_id: turn.clone(),
             }),
             Event::ModelRequestStarted { model, .. } => {
                 thinking = Some(items.len());
@@ -4442,6 +4509,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Running,
                     summary: None,
                     detail_available: false,
+                    turn_id: turn.clone(),
                 });
             }
             // Pair the request with its completion rather than adding a second
@@ -4463,6 +4531,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Blocked,
                 summary: Some(reason.chars().take(160).collect()),
                 detail_available: true,
+                turn_id: turn.clone(),
             }),
             Event::RecoveryRequired { reason } => items.push(ActivityItem {
                 id,
@@ -4471,6 +4540,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Blocked,
                 summary: Some(reason.chars().take(160).collect()),
                 detail_available: true,
+                turn_id: turn.clone(),
             }),
             Event::PlanCreated { steps } | Event::PlanRevised { steps, .. } => {
                 items.push(ActivityItem {
@@ -4480,6 +4550,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Done,
                     summary: steps.first().cloned(),
                     detail_available: !steps.is_empty(),
+                    turn_id: turn.clone(),
                 })
             }
             Event::ActionProposed { action, .. } => {
@@ -4495,6 +4566,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                         status: ActivityStatus::Done,
                         summary: None,
                         detail_available: true,
+                        turn_id: turn.clone(),
                     }),
                 }
             }
@@ -4506,6 +4578,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Blocked,
                     summary: None,
                     detail_available: true,
+                    turn_id: turn.clone(),
                 }),
             Event::ValidationRecorded {
                 action_id,
@@ -4529,6 +4602,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     format!("{}: {detail}", validation_stage_name(evidence, action_id))
                 }),
                 detail_available: !evidence.is_empty(),
+                turn_id: turn.clone(),
             }),
             // Completion is a turn boundary, not an activity step. Repeating
             // it after every answer produced a misleading "Finished ×3" in
@@ -4544,6 +4618,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Failed,
                     summary: Some(reason.chars().take(160).collect()),
                     detail_available: true,
+                    turn_id: turn.clone(),
                 })
             }
             Event::SessionFailed { .. } => {}
@@ -4616,6 +4691,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
             status: ActivityStatus::Done,
             summary: None,
             detail_available: true,
+            turn_id: None, // aggregated count, not a single event
         });
     }
     if edited > 0 {
@@ -4626,6 +4702,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
             status: ActivityStatus::Done,
             summary: None,
             detail_available: true,
+            turn_id: None, // aggregated count, not a single event
         });
     }
     derived.extend(items);
@@ -4837,6 +4914,7 @@ async fn session_summary(
     let validation = validation_from_events(&events);
     let activity = activity_from_events(&events);
     let lease_active = state.leases.lock().await.contains_key(&id);
+    let context_capacity_tokens = coding_model_context_capacity(&state, id).await;
     Ok(Json(purrcode_ui_contracts::SessionSummary {
         id: session.id.0.to_string(),
         objective: session.objective.clone().unwrap_or_default(),
@@ -4895,11 +4973,39 @@ async fn session_summary(
             .as_ref()
             .map(|plan| format!("{:?}", plan.search_policy).to_ascii_lowercase()),
         budget_profile: Some(format!("{:?}", session.controls.budget_profile).to_ascii_lowercase()),
-        usage: Some(usage_summary_view(&session)),
+        usage: Some(usage_summary_view(&session, context_capacity_tokens)),
     }))
 }
 
-fn usage_summary_view(session: &SessionState) -> purrcode_ui_contracts::UsageSummaryView {
+/// The coding-worker model's actual context window, straight from the
+/// configured provider's capabilities (an in-memory lookup, not a network
+/// call, for every built-in provider). Best-effort: any failure to resolve
+/// config, route, or capabilities degrades to `None` rather than failing the
+/// whole summary request — this is a presentation detail, not something a
+/// session's correctness depends on.
+async fn coding_model_context_capacity(state: &AppState, id: SessionId) -> Option<u64> {
+    let config = AppConfig::load(&state.app_config).ok()?;
+    let models = configured_session_models(state, id, &config).await.ok()?;
+    let model = models.get("coding_worker")?;
+    let router = ProviderRouter::from_config(
+        &config,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .ok()?;
+    let provider = router.provider(model).ok()?;
+    let capabilities = provider.capabilities(model).await.ok()?;
+    capabilities.context_window.map(|window| window as u64)
+}
+
+fn usage_summary_view(
+    session: &SessionState,
+    context_capacity_tokens: Option<u64>,
+) -> purrcode_ui_contracts::UsageSummaryView {
     let ledger =
         purrcode_runtime_core::adaptation::UsageLedger::from_records(session.usage_records.clone());
     let summary = ledger.summary(
@@ -4916,6 +5022,26 @@ fn usage_summary_view(session: &SessionState) -> purrcode_ui_contracts::UsageSum
             })
             .unwrap_or_default(),
     );
+    let current_context_tokens = session
+        .recent_context_ledger
+        .back()
+        .map(|entry| entry.total_estimated_tokens);
+    // Must match NativeAgent::effective_input_capacity exactly (agent-runtime
+    // agent.rs): min(provider context window, the session's own input-token
+    // budget cap) minus the reserved-output budget. Only clamping by the raw
+    // window (as this used to) overstates capacity for any session running
+    // under a tighter custom or profile budget — the UI would show room the
+    // runtime will actually refuse to fill.
+    let effective_capacity_tokens = context_capacity_tokens.map(|capacity| {
+        let budget_limit = session
+            .controls
+            .effective_budget()
+            .maximum_input_tokens
+            .unwrap_or(capacity);
+        capacity
+            .min(budget_limit)
+            .saturating_sub(purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+    });
     purrcode_ui_contracts::UsageSummaryView {
         total_tokens: summary.total_tokens,
         input_tokens: summary.input_tokens,
@@ -4929,6 +5055,9 @@ fn usage_summary_view(session: &SessionState) -> purrcode_ui_contracts::UsageSum
         cache_read_tokens: summary.cache_read_tokens,
         cache_write_tokens: summary.cache_write_tokens,
         total_latency_ms: summary.total_latency_ms,
+        context_capacity_tokens,
+        current_context_tokens,
+        effective_capacity_tokens,
     }
 }
 
@@ -4993,6 +5122,34 @@ async fn session_usage(
     let ledger =
         purrcode_runtime_core::adaptation::UsageLedger::from_records(session.usage_records);
     Ok(Json(ledger.summary(0)))
+}
+
+fn parse_turn_id(value: &str) -> Result<purrcode_runtime_core::TurnId, ApiError> {
+    Uuid::parse_str(value)
+        .map(purrcode_runtime_core::TurnId)
+        .map_err(|_| ApiError::BadRequest("turn ID is not a UUID".into()))
+}
+
+/// Presentation endpoint for Phase 1's context ledger (PRD v1.1 §6.3): returns
+/// the durable, section-by-section token/byte accounting `build_messages()`
+/// recorded for one turn, read from the bounded in-memory
+/// `SessionState.recent_context_ledger` projection.
+async fn session_context_ledger(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((id, turn_id)): AxumPath<(String, String)>,
+) -> Result<Json<purrcode_runtime_core::ContextLedgerEntry>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let turn_id = parse_turn_id(&turn_id)?;
+    let session = state.store.lock().await.load(id)?;
+    session
+        .recent_context_ledger
+        .iter()
+        .find(|entry| entry.turn_id == turn_id)
+        .cloned()
+        .map(Json)
+        .ok_or(ApiError::NotFound)
 }
 
 async fn session_spec(
@@ -5248,7 +5405,7 @@ async fn session_artifacts(
     artifacts.push(serde_json::json!({
         "kind": "usage",
         "title": "Usage",
-        "summary": format!("{} model calls · {} tokens · {} web searches", session.usage_records.len(), usage_summary_view(&session).total_tokens, usage_summary_view(&session).search_requests),
+        "summary": format!("{} model calls · {} tokens · {} web searches", session.usage_records.len(), usage_summary_view(&session, None).total_tokens, usage_summary_view(&session, None).search_requests),
     }));
     Ok(Json(artifacts))
 }
@@ -7478,7 +7635,13 @@ async fn propose_local_model_pull(
     let mut store = state.store.lock().await;
     store.append(
         session_id,
-        &SessionEvent::ActionProposed { action_id, action },
+        &SessionEvent::ActionProposed {
+            action_id,
+            action,
+            // A direct model-pull request submitted through this endpoint
+            // runs outside `run_until_pause`'s main turn loop (PRD v1.1 §6.3).
+            turn_id: None,
+        },
     )?;
     store.append(
         session_id,
@@ -7491,6 +7654,7 @@ async fn propose_local_model_pull(
                 ),
                 constraints,
             },
+            turn_id: None,
         },
     )?;
     Ok(Json(serde_json::json!({
@@ -7929,7 +8093,14 @@ fn append_exact_approval_proposal(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     store.append(
         session_id,
-        &SessionEvent::ActionProposed { action_id, action },
+        &SessionEvent::ActionProposed {
+            action_id,
+            action,
+            // This helper backs several daemon-triggered proposals (e.g.
+            // GitHub merge review) that run outside `run_until_pause`'s main
+            // turn loop (PRD v1.1 §6.3).
+            turn_id: None,
+        },
     )?;
     store.append(
         session_id,
@@ -7939,6 +8110,7 @@ fn append_exact_approval_proposal(
                 reason: reason.into(),
                 constraints,
             },
+            turn_id: None,
         },
     )?;
     Ok((action_id, action_digest))
@@ -9662,8 +9834,268 @@ mod tests {
         assert!(reserve_mcp_call(&mut store, session_id, "test", "tool").is_err());
         let state = store.load(session_id).unwrap();
         assert_eq!(state.usage_records.len(), 2);
-        assert_eq!(usage_summary_view(&state).search_requests, 1);
-        assert_eq!(usage_summary_view(&state).mcp_calls, 1);
+        assert_eq!(usage_summary_view(&state, None).search_requests, 1);
+        assert_eq!(usage_summary_view(&state, None).mcp_calls, 1);
+    }
+
+    #[test]
+    fn usage_summary_view_carries_the_resolved_model_capacity_through_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&directory.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "check capacity plumbing".into(),
+                    repository: directory.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        let state = store.load(session_id).unwrap();
+
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).context_capacity_tokens,
+            Some(32_000)
+        );
+        assert_eq!(
+            usage_summary_view(&state, None).context_capacity_tokens,
+            None
+        );
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).effective_capacity_tokens,
+            Some(32_000 - purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+        );
+        assert_eq!(
+            usage_summary_view(&state, None).effective_capacity_tokens,
+            None
+        );
+        // The session never ran a turn, so recent_context_ledger stays empty.
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).current_context_tokens,
+            None
+        );
+    }
+
+    #[test]
+    fn effective_capacity_tokens_is_clamped_by_the_sessions_own_budget_not_just_the_raw_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&directory.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "check budget-clamped capacity".into(),
+                    repository: directory.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        // A custom budget tighter than the provider's window: the effective
+        // capacity the UI reports must match what
+        // NativeAgent::effective_input_capacity would actually enforce —
+        // min(window, budget) - RESERVED_OUTPUT_TOKENS — not the raw window
+        // alone, which would overstate how much room a turn actually has.
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionControlsUpdated {
+                    controls: purrcode_runtime_core::adaptation::SessionControls {
+                        budget_profile: BudgetProfileKind::Custom,
+                        custom_budget: Some(purrcode_runtime_core::adaptation::BudgetConstraints {
+                            maximum_input_tokens: Some(20_000),
+                            ..Default::default()
+                        }),
+                        ..purrcode_runtime_core::adaptation::SessionControls::default()
+                    },
+                },
+            )
+            .unwrap();
+        let state = store.load(session_id).unwrap();
+
+        // window (32K) > budget (20K): the budget wins.
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).effective_capacity_tokens,
+            Some(20_000 - purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+        );
+        // window (16K) < budget (20K): the window wins.
+        assert_eq!(
+            usage_summary_view(&state, Some(16_000)).effective_capacity_tokens,
+            Some(16_000 - purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+        );
+        // No resolved window at all: still unknown, budget notwithstanding.
+        assert_eq!(
+            usage_summary_view(&state, None).effective_capacity_tokens,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_compact_preserves_semantic_memory_while_truncating_conversation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&temporary.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "build a parser".into(),
+                    repository: temporary.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        // Semantic memory an earlier automatic compaction already
+        // accumulated — manual /compact must merge into this through the
+        // same builder + merge_checkpoint path, never replace it with the
+        // daemon's old hand-rolled empty SemanticCheckpoint.
+        store
+            .append(
+                session_id,
+                &SessionEvent::CheckpointCompacted {
+                    checkpoint: Box::new(purrcode_runtime_core::SemanticCheckpoint {
+                        checkpoint_id: purrcode_runtime_core::CheckpointId::new(),
+                        turn_id: TurnId::new(),
+                        superseded_checkpoint_id: None,
+                        objective: "build a parser".into(),
+                        accepted_requirements: vec!["planned: support nested expressions".into()],
+                        user_constraints: vec!["task_mode=build".into()],
+                        decisions: vec![],
+                        files_inspected: vec![PathBuf::from("src/parser.rs")],
+                        files_modified: vec![],
+                        important_symbols: vec!["parser.rs".into()],
+                        validated_facts: vec!["parser compiles".into()],
+                        failed_attempts: vec![purrcode_runtime_core::FailedAttempt {
+                            action_id: ActionId::new(),
+                            action_summary: "tried a hand-written parser".into(),
+                            reason: "too many edge cases".into(),
+                            judgment: None,
+                        }],
+                        test_results: vec![],
+                        unresolved_questions: vec![],
+                        current_hypothesis: Some("regex covers 90% of cases".into()),
+                        next_actions: vec!["task[1]: wire the parser into the CLI".into()],
+                        pinned_context: vec![],
+                    }),
+                    retained_action_ids: std::collections::BTreeSet::new(),
+                    conversation_messages_retained_from: 0,
+                },
+            )
+            .unwrap();
+        // Long enough to exceed COMPACTION_RETAINED_TOKEN_BUDGET (8192
+        // tokens ≈ 32768 chars) so manual /compact actually truncates the
+        // window instead of a no-op "keep everything" pass.
+        for i in 0..40 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            store
+                .append(
+                    session_id,
+                    &SessionEvent::ConversationMessageAdded {
+                        message: ConversationMessage {
+                            id: format!("msg-{i}"),
+                            role: role.into(),
+                            content: "x".repeat(2000),
+                            timestamp: Utc::now(),
+                            tool_calls: vec![],
+                            tool_results: vec![],
+                            model: None,
+                            turn_id: None,
+                        },
+                    },
+                )
+                .unwrap();
+        }
+        let messages_before = store.load(session_id).unwrap().conversation_messages.len();
+        assert_eq!(messages_before, 40);
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            terminals: TerminalRuntime::default(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let _ = compact_session(
+            State(state.clone()),
+            headers,
+            AxumPath(session_id.0.to_string()),
+        )
+        .await
+        .expect("manual compact must succeed against an idle session");
+
+        let after = state.store.lock().await.load(session_id).unwrap();
+        assert!(
+            after.conversation_messages.len() < messages_before,
+            "manual /compact must truncate the conversation window, not just record a checkpoint"
+        );
+        let checkpoint = after
+            .checkpoint
+            .as_ref()
+            .expect("manual /compact must record a checkpoint");
+        assert!(
+            checkpoint
+                .accepted_requirements
+                .iter()
+                .any(|r| r.contains("nested expressions")),
+            "manual /compact must not wipe accepted_requirements accumulated before it: {:?}",
+            checkpoint.accepted_requirements
+        );
+        assert!(
+            checkpoint
+                .failed_attempts
+                .iter()
+                .any(|f| f.action_summary.contains("hand-written parser")),
+            "manual /compact must not wipe failed_attempts accumulated before it: {:?}",
+            checkpoint.failed_attempts
+        );
+        assert!(
+            checkpoint
+                .important_symbols
+                .iter()
+                .any(|s| s == "parser.rs"),
+            "manual /compact must not wipe important_symbols accumulated before it: {:?}",
+            checkpoint.important_symbols
+        );
+        assert!(
+            checkpoint
+                .validated_facts
+                .iter()
+                .any(|f| f == "parser compiles"),
+            "manual /compact must not wipe validated_facts accumulated before it: {:?}",
+            checkpoint.validated_facts
+        );
+        // The exact bug this test guards against: the daemon used to build
+        // `SemanticCheckpoint { user_constraints: vec![], .. }` unconditionally.
+        assert!(
+            !checkpoint.user_constraints.is_empty(),
+            "manual /compact must populate user_constraints from the session's own controls, \
+             never construct an empty SemanticCheckpoint"
+        );
+        // This session has no task_graph/plan_steps, so the freshly-built
+        // checkpoint's own next_actions is empty — merge_checkpoint's
+        // current-state fallback rule must carry the previous checkpoint's
+        // next_actions forward rather than silently dropping it.
+        assert_eq!(
+            checkpoint.next_actions,
+            vec!["task[1]: wire the parser into the CLI".to_string()],
+            "manual /compact must fall back to the previous checkpoint's next_actions when its \
+             own snapshot has none"
+        );
     }
 
     #[test]
@@ -9827,6 +10259,7 @@ mod tests {
             action: ProposedAction::RepositoryRead(
                 purrcode_runtime_core::RepositoryReadAction::GitStatus,
             ),
+            turn_id: None,
         };
         let events = vec![read(), read(), read()];
         let activity = activity_from_events(&events);
@@ -10008,6 +10441,7 @@ mod tests {
                     content: "pub fn parse() {}\n".into(),
                     expected_digest: None,
                 }),
+                turn_id: None,
             },
             SessionEvent::SessionPaused {
                 reason: "validation could not run".into(),
@@ -10202,6 +10636,7 @@ mod tests {
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
             model: None,
+            turn_id: None,
         };
         let activity = activity_from_events(&[
             SessionEvent::ConversationMessageAdded {
@@ -10253,6 +10688,7 @@ mod tests {
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
             model: None,
+            turn_id: None,
         };
         let activity = activity_from_events(&[
             SessionEvent::ConversationMessageAdded {
