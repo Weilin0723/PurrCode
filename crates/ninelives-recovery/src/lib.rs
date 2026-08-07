@@ -75,6 +75,21 @@ pub struct SessionCheckpoint {
     pub created_at: DateTime<Utc>,
 }
 
+/// A durable, auditable piece of project knowledge. Entries are user-authored
+/// (never silently inferred by the agent) and carry their provenance.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct ProjectMemoryEntry {
+    pub id: Uuid,
+    pub repository: PathBuf,
+    pub kind: String,
+    pub content: String,
+    pub source: String,
+    pub confidence: String,
+    pub scope: String,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
 /// Result of startup reconciliation. A legacy session whose event log no
 /// longer satisfies the current state-machine invariants is isolated by ID;
 /// healthy sessions still recover normally and the daemon can serve new work.
@@ -664,6 +679,96 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Inserts a user-authored project memory entry. The caller has already
+    /// validated and secret-scanned the content.
+    pub fn insert_memory(&mut self, entry: &ProjectMemoryEntry) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO project_memory(id, repository, kind, content, source, confidence, scope, created_at, last_used_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                entry.id.to_string(),
+                entry.repository.to_string_lossy(),
+                entry.kind,
+                entry.content,
+                entry.source,
+                entry.confidence,
+                entry.scope,
+                entry.created_at,
+                entry.last_used_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Lists project memory for a repository, optionally filtered by kind,
+    /// newest first.
+    pub fn memory(
+        &self,
+        repository: &Path,
+        kind: Option<&str>,
+    ) -> Result<Vec<ProjectMemoryEntry>, StoreError> {
+        let repository = repository.to_string_lossy();
+        let mut sql = String::from(
+            "SELECT id, repository, kind, content, source, confidence, scope, created_at, last_used_at
+             FROM project_memory WHERE repository = ?1",
+        );
+        if kind.is_some() {
+            sql.push_str(" AND kind = ?2");
+        }
+        sql.push_str(" ORDER BY created_at DESC");
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = match kind {
+            Some(kind) => statement.query_map(params![repository.as_ref(), kind], memory_from_row)?,
+            None => statement.query_map(params![repository.as_ref()], memory_from_row)?,
+        };
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn memory_entry(&self, id: Uuid) -> Result<ProjectMemoryEntry, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT id, repository, kind, content, source, confidence, scope, created_at, last_used_at
+                 FROM project_memory WHERE id = ?1",
+                [id.to_string()],
+                memory_from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::MemoryNotFound(id))
+    }
+
+    /// Edits a memory entry's content, preserving its provenance.
+    pub fn update_memory_content(&mut self, id: Uuid, content: &str) -> Result<(), StoreError> {
+        let changed = self.connection.execute(
+            "UPDATE project_memory SET content = ?2 WHERE id = ?1",
+            params![id.to_string(), content],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::MemoryNotFound(id));
+        }
+        Ok(())
+    }
+
+    /// Forgets a memory entry (removes it). Deletion is the only action: an
+    /// entry the user removes should not silently reappear.
+    pub fn forget_memory(&mut self, id: Uuid) -> Result<(), StoreError> {
+        let changed = self
+            .connection
+            .execute("DELETE FROM project_memory WHERE id = ?1", [id.to_string()])?;
+        if changed == 0 {
+            return Err(StoreError::MemoryNotFound(id));
+        }
+        Ok(())
+    }
+
+    /// Marks a memory entry as used so recency ranking reflects real usage.
+    pub fn touch_memory(&mut self, id: Uuid) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE project_memory SET last_used_at = ?2 WHERE id = ?1",
+            params![id.to_string(), Utc::now()],
+        )?;
+        Ok(())
+    }
+
     pub fn create_automation(
         &mut self,
         objective: &str,
@@ -882,6 +987,30 @@ fn automation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Automation> 
     })
 }
 
+fn memory_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectMemoryEntry> {
+    fn uuid_at(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Uuid> {
+        let raw: String = row.get(index)?;
+        Uuid::parse_str(&raw).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })
+    }
+    Ok(ProjectMemoryEntry {
+        id: uuid_at(row, 0)?,
+        repository: PathBuf::from(row.get::<_, String>(1)?),
+        kind: row.get(2)?,
+        content: row.get(3)?,
+        source: row.get(4)?,
+        confidence: row.get(5)?,
+        scope: row.get(6)?,
+        created_at: row.get(7)?,
+        last_used_at: row.get(8)?,
+    })
+}
+
 fn checkpoint_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionCheckpoint> {
     Ok(SessionCheckpoint {
         id: Uuid::parse_str(&row.get::<_, String>(0)?)
@@ -982,6 +1111,8 @@ pub enum StoreError {
     AutomationNotFound(Uuid),
     #[error("checkpoint `{0}` was not found")]
     CheckpointNotFound(Uuid),
+    #[error("project memory entry `{0}` was not found")]
+    MemoryNotFound(Uuid),
     #[error("session {session:?} rejected invalid event: {reason}")]
     InvalidEvent { session: SessionId, reason: String },
     #[error("session {session:?} event log is inconsistent at sequence {sequence}: {reason}")]
@@ -1657,5 +1788,62 @@ mod tests {
         assert_eq!(child_checkpoints.len(), 1);
         assert_eq!(child_checkpoints[0].session_id, child);
         assert_eq!(child_checkpoints[0].patch, b"patch-bytes");
+    }
+
+    #[test]
+    fn project_memory_is_repository_scoped_and_auditable() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let repository = std::path::PathBuf::from("/repo");
+        store
+            .insert_memory(&ProjectMemoryEntry {
+                id: Uuid::new_v4(),
+                repository: repository.clone(),
+                kind: "build".into(),
+                content: "Integration tests require Redis".into(),
+                source: "Session \"Fix auth test\"".into(),
+                confidence: "unverified".into(),
+                scope: "repository".into(),
+                created_at: Utc::now(),
+                last_used_at: None,
+            })
+            .unwrap();
+        store
+            .insert_memory(&ProjectMemoryEntry {
+                id: Uuid::new_v4(),
+                repository: repository.clone(),
+                kind: "architecture".into(),
+                content: "Auth uses middleware pipeline".into(),
+                source: "docs/architecture.md".into(),
+                confidence: "unverified".into(),
+                scope: "repository".into(),
+                created_at: Utc::now(),
+                last_used_at: None,
+            })
+            .unwrap();
+
+        // Scoped to repository.
+        let other_repo = std::path::PathBuf::from("/other");
+        assert!(store.memory(&other_repo, None).unwrap().is_empty());
+        assert_eq!(store.memory(&repository, None).unwrap().len(), 2);
+        // Filtered by kind.
+        assert_eq!(store.memory(&repository, Some("build")).unwrap().len(), 1);
+
+        // Edit + touch + forget round trip.
+        let entry = store.memory(&repository, Some("build")).unwrap().remove(0);
+        store.update_memory_content(entry.id, "Integration tests require a Redis-compatible store").unwrap();
+        assert!(
+            store
+                .memory_entry(entry.id)
+                .unwrap()
+                .content
+                .starts_with("Integration tests require")
+        );
+        store.touch_memory(entry.id).unwrap();
+        assert!(store.memory_entry(entry.id).unwrap().last_used_at.is_some());
+        store.forget_memory(entry.id).unwrap();
+        assert!(matches!(
+            store.memory_entry(entry.id),
+            Err(StoreError::MemoryNotFound(_))
+        ));
     }
 }

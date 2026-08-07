@@ -38,7 +38,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use futures::{FutureExt, StreamExt};
@@ -53,7 +53,7 @@ use purrcode_mcp_host::{
     DynamicQualificationRequest, McpHost, McpServerConfig, Qualifier as SkillQualifier,
     read_skill_manifest, skill_digest,
 };
-use purrcode_ninelives::{Automation, SessionCheckpoint, SessionStore, StoreError};
+use purrcode_ninelives::{Automation, ProjectMemoryEntry, SessionCheckpoint, SessionStore, StoreError};
 use purrcode_pawgate::{Policy, resolve_policy_path};
 use purrcode_provider_gateway::failover::FailoverProvider;
 use purrcode_provider_gateway::{
@@ -551,6 +551,11 @@ pub async fn bind_and_report(
         .route("/v1/repository/inspect", post(inspect_repository))
         .route("/v1/references/resolve", post(resolve_references))
         .route("/v1/commands", get(list_commands))
+        .route("/v1/memory", get(list_memory).post(create_memory))
+        .route(
+            "/v1/memory/{id}",
+            patch(update_memory).delete(forget_memory),
+        )
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
         .route("/v1/skills/download", post(download_skill))
@@ -8770,6 +8775,144 @@ fn builtin_commands() -> Vec<CommandDescriptor> {
 }
 
 #[derive(Deserialize)]
+struct ListMemoryQuery {
+    #[serde(default)]
+    repository: String,
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+/// Lists durable project memory for a repository, grouped by kind. Entries
+/// carry their provenance (source, confidence, scope) so knowledge is
+/// auditable rather than a black box.
+async fn list_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ListMemoryQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    if query.repository.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "repository is required to scope project memory".into(),
+        ));
+    }
+    let repository = std::path::PathBuf::from(&query.repository);
+    let repository = repository
+        .canonicalize()
+        .unwrap_or(repository);
+    let store = state.store.lock().await;
+    let entries = store.memory(&repository, query.kind.as_deref())?;
+    let mut grouped: BTreeMap<String, Vec<ProjectMemoryEntry>> = BTreeMap::new();
+    for entry in entries {
+        grouped.entry(entry.kind.clone()).or_default().push(entry);
+    }
+    Ok(Json(serde_json::json!({ "entries": grouped })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateMemoryRequest {
+    repository: std::path::PathBuf,
+    kind: String,
+    content: String,
+    /// Where this knowledge came from — a session title, a doc, the user.
+    source: String,
+    #[serde(default = "default_memory_scope")]
+    scope: String,
+}
+
+fn default_memory_scope() -> String {
+    "repository".into()
+}
+
+fn default_memory_confidence() -> String {
+    "unverified".into()
+}
+
+/// Creates a user-authored project memory entry. Content is secret-scanned so
+/// credentials never enter durable knowledge.
+async fn create_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateMemoryRequest>,
+) -> Result<Json<ProjectMemoryEntry>, ApiError> {
+    authorize(&state, &headers)?;
+    if request.content.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "memory content must be a non-empty string".into(),
+        ));
+    }
+    if request.kind.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "memory kind must be a non-empty string".into(),
+        ));
+    }
+    reject_secret_content(&request.content)?;
+    let repository = request
+        .repository
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
+    let entry = ProjectMemoryEntry {
+        id: Uuid::new_v4(),
+        repository,
+        kind: request.kind,
+        content: request.content,
+        source: request.source,
+        confidence: default_memory_confidence(),
+        scope: request.scope,
+        created_at: Utc::now(),
+        last_used_at: None,
+    };
+    state.store.lock().await.insert_memory(&entry)?;
+    Ok(Json(entry))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateMemoryRequest {
+    content: String,
+}
+
+/// Edits a memory entry's content, preserving its provenance.
+async fn update_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<UpdateMemoryRequest>,
+) -> Result<Json<ProjectMemoryEntry>, ApiError> {
+    authorize(&state, &headers)?;
+    if request.content.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "memory content must be a non-empty string".into(),
+        ));
+    }
+    reject_secret_content(&request.content)?;
+    let id = Uuid::parse_str(&id).map_err(|_| ApiError::NotFound)?;
+    let mut store = state.store.lock().await;
+    store.update_memory_content(id, &request.content)?;
+    let entry = store.memory_entry(id).map_err(|error| match error {
+        StoreError::MemoryNotFound(_) => ApiError::NotFound,
+        error => ApiError::Store(error),
+    })?;
+    Ok(Json(entry))
+}
+
+/// Forgets a memory entry. Removal is explicit and does not silently recur.
+async fn forget_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = Uuid::parse_str(&id).map_err(|_| ApiError::NotFound)?;
+    state.store.lock().await.forget_memory(id).map_err(|error| match error {
+        StoreError::MemoryNotFound(_) => ApiError::NotFound,
+        error => ApiError::Store(error),
+    })?;
+    Ok(Json(serde_json::json!({"id": id.to_string(), "forgotten": true})))
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AssignModelRoleRequest {
     role: String,
@@ -14443,6 +14586,106 @@ judge = "openai/judge-model"
         assert!(commands.as_array().unwrap().iter().any(|command| {
             command["name"] == "/undo" && command["group"] == "session"
         }));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn project_memory_is_scoped_secret_scanned_and_forgettable() {
+        let temporary = tempfile::tempdir().unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+
+        // Create a memory entry.
+        let created = client
+            .post(format!("{base}/v1/memory"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "repository": repository,
+                "kind": "build",
+                "content": "Integration tests require Redis",
+                "source": "Session \"Fix auth test\"",
+                "scope": "repository",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let created: serde_json::Value = created.json().await.unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        assert_eq!(created["confidence"], "unverified");
+
+        // List scoped to the repository.
+        let listed = client
+            .get(format!(
+                "{base}/v1/memory?repository={}",
+                repository.display()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed: serde_json::Value = listed.json().await.unwrap();
+        assert!(listed["entries"]["build"].as_array().unwrap().len() == 1);
+
+        // Secret content is rejected.
+        let secret = client
+            .post(format!("{base}/v1/memory"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "repository": repository,
+                "kind": "build",
+                "content": "sk-1234secret",
+                "source": "test",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(secret.status(), StatusCode::BAD_REQUEST);
+
+        // Edit, then forget.
+        let edited = client
+            .patch(format!("{base}/v1/memory/{id}"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({ "content": "Integration tests require a Redis-compatible store" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(edited.status(), StatusCode::OK);
+        let forgotten = client
+            .delete(format!("{base}/v1/memory/{id}"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(forgotten.status(), StatusCode::OK);
+        let listed = client
+            .get(format!(
+                "{base}/v1/memory?repository={}",
+                repository.display()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        let listed: serde_json::Value = listed.json().await.unwrap();
+        assert!(listed["entries"].as_object().unwrap().is_empty());
         handle.abort();
     }
 }
