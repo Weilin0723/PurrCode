@@ -699,6 +699,15 @@ pub(crate) fn build_messages(
                     parts.push(format!("  - {} → {}", fa.action_summary, fa.reason));
                 }
             }
+            if !checkpoint.test_results.is_empty() {
+                parts.push("TEST RESULTS:".to_string());
+                for tr in &checkpoint.test_results {
+                    parts.push(format!(
+                        "  - {}: {} passed, {} failed, {} skipped",
+                        tr.label, tr.passed, tr.failed, tr.skipped
+                    ));
+                }
+            }
             if !checkpoint.validated_facts.is_empty() {
                 parts.push(format!(
                     "Validated: {}",

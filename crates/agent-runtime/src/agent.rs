@@ -44,10 +44,11 @@ use purrcode_runtime_core::{
     CheckpointId, ContextClass, ContextLedgerEntry, ContextLedgerSection, ContextualDecision,
     ContextualJudgment, ConversationMessage, FailedAttempt, JudgmentDecision, ProposedAction,
     RepositoryReadAction, SemanticCheckpoint, SessionEvent, SessionId, SessionState, SessionStatus,
-    TurnId, ValidationStatus, WhyIncluded,
+    TestResultSummary, TurnId, ValidationStatus, WhyIncluded,
 };
 use purrcode_validation_runtime::{
-    EvidenceStatus, ValidationDetector, ValidationPlan, ValidationRunner, ValidationStage,
+    EvidenceStatus, ValidationDetector, ValidationEvidence, ValidationPlan, ValidationRunner,
+    ValidationStage,
 };
 use purrcode_whisker::RetrievalBudget;
 use schemars::schema_for;
@@ -3304,6 +3305,47 @@ impl<'a> NativeAgent<'a> {
                 _ => {}
             }
         }
+        // P1-3: Derive per-stage test results from the same durable event log.
+        // Each ValidationRecorded carries a serialized ValidationEvidence with a
+        // concrete stage; group pass/fail/skip counts by stage label so the
+        // checkpoint's test_results reflect what actually ran instead of being
+        // perpetually empty.
+        let mut test_counts: BTreeMap<String, [u32; 3]> = BTreeMap::new(); // [passed, failed, skipped]
+        for event in &events {
+            let SessionEvent::ValidationRecorded {
+                status, evidence, ..
+            } = event
+            else {
+                continue;
+            };
+            let parsed = serde_json::from_str::<ValidationEvidence>(evidence).ok();
+            let Some(parsed) = parsed else {
+                continue;
+            };
+            if parsed.stage == ValidationStage::CompletionCriteria {
+                continue;
+            }
+            let label = format!("{stage:?}", stage = parsed.stage);
+            let counts = test_counts.entry(label).or_insert([0, 0, 0]);
+            match status {
+                ValidationStatus::Passed => counts[0] += 1,
+                ValidationStatus::Failed
+                | ValidationStatus::TimedOut
+                | ValidationStatus::Uncertain => counts[1] += 1,
+                ValidationStatus::SkippedByConfiguration
+                | ValidationStatus::NotDetected
+                | ValidationStatus::Unavailable => counts[2] += 1,
+            }
+        }
+        let test_results: Vec<TestResultSummary> = test_counts
+            .into_iter()
+            .map(|(label, [passed, failed, skipped])| TestResultSummary {
+                label,
+                passed,
+                failed,
+                skipped,
+            })
+            .collect();
         let failed_attempts: Vec<FailedAttempt> = state
             .proposed_actions
             .iter()
@@ -3423,7 +3465,7 @@ impl<'a> NativeAgent<'a> {
                 .map(|link| format!("{:?} covered by task {}", link.criterion_id, link.task_id.0))
                 .collect(),
             failed_attempts,
-            test_results: vec![],
+            test_results,
             unresolved_questions: state
                 .task_graph
                 .as_ref()
