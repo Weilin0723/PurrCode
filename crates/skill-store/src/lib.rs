@@ -29,6 +29,9 @@ pub struct SkillRecord {
     pub successful_uses: u64,
     pub failed_uses: u64,
     pub pinned: bool,
+    /// A user can disable a skill without uninstalling it. Disabled skills are
+    /// installed and inspectable but never invoked.
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -145,6 +148,7 @@ impl SkillStore {
                 successful_uses INTEGER NOT NULL DEFAULT 0,
                 failed_uses INTEGER NOT NULL DEFAULT 0,
                 pinned INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (skill_id, scope)
             );
             CREATE TABLE IF NOT EXISTS blocked_publishers (
@@ -153,6 +157,18 @@ impl SkillStore {
                 reason TEXT NOT NULL
             );",
         )?;
+        // Older databases lack the enabled column; add it, defaulting to
+        // enabled so existing installs stay invocable.
+        let has_enabled = self
+            .conn
+            .prepare("PRAGMA table_info(skill_store)")?
+            .query_map([], |row| Ok(row.get::<_, String>(1)?))?
+            .filter_map(Result::ok)
+            .any(|name| name == "enabled");
+        if !has_enabled {
+            self.conn
+                .execute_batch("ALTER TABLE skill_store ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;")?;
+        }
         let scope_is_key = self
             .conn
             .prepare("PRAGMA table_info(skill_store)")?
@@ -172,8 +188,15 @@ impl SkillStore {
                     installed_at TEXT NOT NULL, approved_permissions TEXT NOT NULL DEFAULT '{}',
                     qualification_status TEXT NOT NULL DEFAULT 'unverified', last_used_at TEXT,
                     successful_uses INTEGER NOT NULL DEFAULT 0, failed_uses INTEGER NOT NULL DEFAULT 0,
-                    pinned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (skill_id, scope));
-                 INSERT INTO skill_store SELECT * FROM skill_store_v1;
+                    pinned INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (skill_id, scope));
+                 INSERT INTO skill_store (skill_id, version, scope, source_type, source_location,
+                    publisher, content_digest, signature_status, installed_at, approved_permissions,
+                    qualification_status, last_used_at, successful_uses, failed_uses, pinned, enabled)
+                 SELECT skill_id, version, scope, source_type, source_location,
+                    publisher, content_digest, signature_status, installed_at, approved_permissions,
+                    qualification_status, last_used_at, successful_uses, failed_uses, pinned, 1
+                 FROM skill_store_v1;
                  DROP TABLE skill_store_v1;
                  COMMIT;",
             )?;
@@ -251,8 +274,8 @@ impl SkillStore {
             "INSERT INTO skill_store
                 (skill_id, version, scope, source_type, source_location, publisher,
                  content_digest, signature_status, installed_at, approved_permissions,
-                 qualification_status, successful_uses, failed_uses, pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'unavailable', ?8, ?9, 'unverified', 0, 0, 0)",
+                 qualification_status, successful_uses, failed_uses, pinned, enabled)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'unavailable', ?8, ?9, 'unverified', 0, 0, 0, 1)",
             params![
                 skill_id,
                 version,
@@ -290,6 +313,7 @@ impl SkillStore {
             successful_uses: 0,
             failed_uses: 0,
             pinned: false,
+            enabled: true,
         })
     }
 
@@ -355,7 +379,7 @@ impl SkillStore {
         let mut stmt = self.conn.prepare(
             "SELECT skill_id, version, scope, source_type, source_location, publisher,
                     content_digest, signature_status, installed_at, approved_permissions,
-                    qualification_status, last_used_at, successful_uses, failed_uses, pinned
+                    qualification_status, last_used_at, successful_uses, failed_uses, pinned, enabled
              FROM skill_store
              ORDER BY installed_at DESC",
         )?;
@@ -395,6 +419,7 @@ impl SkillStore {
                 successful_uses: row.get::<_, i64>(12)? as u64,
                 failed_uses: row.get::<_, i64>(13)? as u64,
                 pinned: row.get::<_, i64>(14)? != 0,
+                enabled: row.get::<_, i64>(15)? != 0,
             })
         })?;
 
@@ -409,7 +434,7 @@ impl SkillStore {
         let mut stmt = self.conn.prepare(
             "SELECT skill_id, version, scope, source_type, source_location, publisher,
                     content_digest, signature_status, installed_at, approved_permissions,
-                    qualification_status, last_used_at, successful_uses, failed_uses, pinned
+                    qualification_status, last_used_at, successful_uses, failed_uses, pinned, enabled
              FROM skill_store WHERE skill_id = ?1
              ORDER BY CASE scope WHEN 'session' THEN 0 WHEN 'repository' THEN 1 ELSE 2 END
              LIMIT 1",
@@ -450,6 +475,7 @@ impl SkillStore {
                 successful_uses: row.get::<_, i64>(12)? as u64,
                 failed_uses: row.get::<_, i64>(13)? as u64,
                 pinned: row.get::<_, i64>(14)? != 0,
+                enabled: row.get::<_, i64>(15)? != 0,
             })
         })
         .map_err(|e| match e {
@@ -497,7 +523,10 @@ impl SkillStore {
         let matches = self.find_by_capability(capability)?;
         let (qualified_matches, non_invocable_matches): (Vec<_>, Vec<_>) = matches
             .into_iter()
-            .partition(|record| qualification_is_invocable(&record.qualification_status));
+            // A disabled skill is installed but never invoked, so it must not
+            // count as an invocable match (and must not suppress external
+            // search either).
+            .partition(|record| record.enabled && qualification_is_invocable(&record.qualification_status));
         let external_search_avoided = !qualified_matches.is_empty();
         Ok(InstalledCapabilityResolution {
             capability: capability.trim().to_owned(),
@@ -563,6 +592,38 @@ impl SkillStore {
             params![pinned as i64, skill_id],
         )?;
         Ok(())
+    }
+
+    /// Enables or disables an installed skill without uninstalling it. A
+    /// disabled skill is inspectable but never invoked.
+    pub fn set_enabled(&mut self, skill_id: &str, enabled: bool) -> Result<(), StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE skill_store SET enabled = ?1 WHERE skill_id = ?2",
+            params![enabled as i64, skill_id],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(skill_id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Whether an installed skill is enabled. Skills missing from the store
+    /// fail closed (not found, not silently enabled).
+    pub fn is_enabled(&self, skill_id: &str) -> Result<bool, StoreError> {
+        let enabled: i64 = self
+            .conn
+            .query_row(
+                "SELECT enabled FROM skill_store WHERE skill_id = ?1
+                 ORDER BY CASE scope WHEN 'session' THEN 0 WHEN 'repository' THEN 1 ELSE 2 END
+                 LIMIT 1",
+                params![skill_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound(skill_id.to_string()),
+                other => StoreError::Sqlite(other),
+            })?;
+        Ok(enabled != 0)
     }
 
     pub fn path_for(&self, skill_id: &str, scope: &SkillScope) -> PathBuf {
@@ -963,6 +1024,53 @@ mod tests {
         assert!(qualified.non_invocable_matches.is_empty());
         assert!(qualified.external_search_avoided);
         assert!(!qualified.requires_external_search());
+    }
+
+    #[test]
+    fn disabled_skills_are_inspectable_but_never_invocable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SkillStore::open(&dir.path().join("db"), &dir.path().join("lib")).unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# git review").unwrap();
+        let digest = skill_content_digest(&source).unwrap();
+
+        store
+            .install(
+                "git-review",
+                "1.0.0",
+                SkillScope::Repository,
+                "local",
+                None,
+                Some("trusted"),
+                &digest,
+                &json!({"read": ["**/*"]}),
+                &source,
+            )
+            .unwrap();
+        store
+            .update_qualification("git-review", &QualificationStatus::Qualified)
+            .unwrap();
+
+        // Fresh installs are enabled and invocable.
+        assert!(store.is_enabled("git-review").unwrap());
+        let enabled = store.resolve_installed_capability("git-review").unwrap();
+        assert_eq!(enabled.qualified_matches.len(), 1);
+        assert!(enabled.external_search_avoided);
+
+        // Disabling removes it from invocable matches and re-enables external
+        // search, but the record stays listed.
+        store.set_enabled("git-review", false).unwrap();
+        assert!(!store.is_enabled("git-review").unwrap());
+        let disabled = store.resolve_installed_capability("git-review").unwrap();
+        assert!(disabled.qualified_matches.is_empty());
+        assert_eq!(disabled.non_invocable_matches.len(), 1);
+        assert!(disabled.requires_external_search());
+        assert_eq!(store.list().unwrap().len(), 1);
+
+        store.set_enabled("git-review", true).unwrap();
+        assert!(store.is_enabled("git-review").unwrap());
+        assert!(store.set_enabled("missing-skill", true).is_err());
     }
 
     #[test]

@@ -571,6 +571,8 @@ pub async fn bind_and_report(
         )
         .route("/v1/skills/{id}", get(get_skill))
         .route("/v1/skills/{id}", delete(remove_skill))
+        .route("/v1/skills/{id}/enable", post(enable_skill))
+        .route("/v1/skills/{id}/disable", post(disable_skill))
         .route("/v1/research/fetch", post(fetch_research_page))
         .route("/v1/skills/publishers/block", post(block_skill_publisher))
         .route(
@@ -10840,6 +10842,50 @@ async fn remove_skill(
         Ok(record) => Ok(Json(serde_json::to_value(&record).unwrap_or_default())),
         Err(_) => Err(ApiError::NotFound),
     }
+}
+
+fn open_skill_store(state: &AppState) -> Result<SkillStore, ApiError> {
+    let db_path = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills.db");
+    let lib_root = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills");
+    SkillStore::open(&db_path, &lib_root)
+        .map_err(|e| ApiError::BadRequest(format!("skill store open failed: {e}")))
+}
+
+/// Enables an installed skill so it can be invoked again.
+async fn enable_skill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let mut store = open_skill_store(&state)?;
+    store
+        .set_enabled(&id, true)
+        .map_err(|_| ApiError::NotFound)?;
+    Ok(Json(serde_json::json!({"id": id, "enabled": true})))
+}
+
+/// Disables an installed skill without uninstalling it. Disabled skills are
+/// inspectable but never invoked.
+async fn disable_skill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let mut store = open_skill_store(&state)?;
+    store
+        .set_enabled(&id, false)
+        .map_err(|_| ApiError::NotFound)?;
+    Ok(Json(serde_json::json!({"id": id, "enabled": false})))
 }
 
 #[cfg(test)]
