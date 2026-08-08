@@ -534,6 +534,13 @@ pub struct PurrCodeIde {
     pub(crate) mcp_working_directory: String,
     pub(crate) mcp_network: bool,
     pub(crate) mcp_environment: String,
+    /// `true` when the server being added speaks HTTP rather than stdio.
+    pub(crate) mcp_http: bool,
+    pub(crate) mcp_url: String,
+    /// Comma-separated tool names that may run without a per-call prompt, and
+    /// those that may never run at all.
+    pub(crate) mcp_trusted_tools: String,
+    pub(crate) mcp_deny_tools: String,
 
     // ── Notices ────────────────────────────────────────────────────────
     pub(crate) notices: Vec<Notice>,
@@ -743,6 +750,10 @@ impl PurrCodeIde {
             mcp_working_directory: String::new(),
             mcp_network: false,
             mcp_environment: String::new(),
+            mcp_http: false,
+            mcp_url: String::new(),
+            mcp_trusted_tools: String::new(),
+            mcp_deny_tools: String::new(),
 
             notices: Vec::new(),
 
@@ -1502,6 +1513,10 @@ impl PurrCodeIde {
                 self.apply_format_edits(&path, &value, then_save)
             }
             Response::LspDiagnostics(value) => self.language.absorb_diagnostics(&value),
+            Response::McpTested(id, value) => {
+                self.settings_state.mutation_succeeded();
+                self.settings_state.mcp_tests.insert(id, value);
+            }
             Response::SessionSearch(query, value) => {
                 if self.session_hits_for.as_deref() == Some(query.as_str()) {
                     self.session_hits = crate::model::SessionHit::parse_all(&value);

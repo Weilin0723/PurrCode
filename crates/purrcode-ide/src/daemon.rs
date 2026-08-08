@@ -442,6 +442,18 @@ pub enum Request {
     SearchSessions {
         query: String,
     },
+    // ── Extensibility ────────────────────────────────────────────────
+    /// `POST /v1/mcp/servers/{id}/test` — connect and list tools. Unlike the
+    /// session-scoped probe this needs no session, so a server can be checked
+    /// while it is being configured.
+    McpTest {
+        id: String,
+    },
+    /// `POST /v1/skills/{id}/enable` or `.../disable`.
+    SkillSetEnabled {
+        id: String,
+        enabled: bool,
+    },
 }
 
 /// A panel in the session presentation snapshot.
@@ -814,6 +826,8 @@ pub enum Response {
     /// `GET /v1/sessions/search` — the query and its hits, echoed together so
     /// results for an abandoned query cannot be shown against a newer one.
     SessionSearch(String, Value),
+    /// `POST /v1/mcp/servers/{id}/test` — the server and its connection report.
+    McpTested(String, Value),
     /// A settings mutation landed; the UI refetches the affected page.
     SettingsMutated,
     /// Connectivity changed. `false` means every view should say so rather than
@@ -1067,6 +1081,8 @@ impl Request {
                     | Self::ForkSession { .. }
                     | Self::UpdateSessionMeta { .. }
                     | Self::DeleteSession { .. }
+                    | Self::McpTest { .. }
+                    | Self::SkillSetEnabled { .. }
             )
     }
 }
@@ -2025,6 +2041,21 @@ impl Worker {
                 let path = format!("/v1/sessions/search?q={}", urlencode(&query));
                 match self.get::<Value>(&path) {
                     Ok(value) => self.reply(Response::SessionSearch(query, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::McpTest { id } => {
+                let path = format!("/v1/mcp/servers/{}/test", urlencode(&id));
+                match self.post::<Value>(&path, &serde_json::json!({})) {
+                    Ok(value) => self.reply(Response::McpTested(id, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::SkillSetEnabled { id, enabled } => {
+                let action = if enabled { "enable" } else { "disable" };
+                let path = format!("/v1/skills/{}/{action}", urlencode(&id));
+                match self.post::<Value>(&path, &serde_json::json!({})) {
+                    Ok(_) => self.reply(Response::SettingsMutated),
                     Err(error) => self.reply_failure(error),
                 }
             }

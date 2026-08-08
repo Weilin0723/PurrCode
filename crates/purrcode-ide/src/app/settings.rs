@@ -132,6 +132,9 @@ pub(crate) struct SettingsState {
     pub mcp_saved: Value,
     pub mcp_removed: Value,
     pub mcp_probe: Value,
+    /// The latest connection report per server id. Keyed rather than global
+    /// so testing one server does not relabel the others.
+    pub mcp_tests: BTreeMap<String, Value>,
     // ── Codex ─────────────────────────────────────────────────────────
     pub codex: Value,
     pub codex_saved: Value,
@@ -559,11 +562,20 @@ enum CardAction {
     Unload,
 }
 
+/// What a skill row's buttons asked for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SkillAction {
+    Remove,
+    Toggle,
+}
+
 /// What the user asked of one MCP server row.
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum McpAction {
     Probe,
     Remove,
+    /// Connect to the server directly and list its tools, with no session.
+    Test,
 }
 
 impl PurrCodeIde {
@@ -1776,6 +1788,7 @@ impl PurrCodeIde {
                         return;
                     }
                     let mut remove: Option<String> = None;
+                    let mut toggle: Option<(String, bool)> = None;
                     ui.push_id("installed_skills", |ui| {
                         for skill in &skills {
                             let id = text_or(skill, "skill_id", "unnamed");
@@ -1786,6 +1799,15 @@ impl PurrCodeIde {
                                 text_or(skill, "qualification_status", "unverified");
                             let uses = number(skill, "successful_uses");
                             let failures = number(skill, "failed_uses");
+                            // A skill record from a daemon that predates the
+                            // toggle has no `enabled` field. Treating the
+                            // absence as "disabled" would silently switch off
+                            // every installed skill on upgrade, so an unstated
+                            // value means enabled — which is what it was.
+                            let enabled = skill
+                                .get("enabled")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(true);
                             let meta =
                                 format!("{scope} · {publisher} · {signature} · {qualification}");
                             let asked = primitives::list_row(
@@ -1793,9 +1815,29 @@ impl PurrCodeIde {
                                 &tokens,
                                 RowSpec::new(&id).meta(&meta),
                                 |ui| {
-                                    primitives::button(ui, &tokens, Tone::Danger, "Remove")
+                                    let mut asked: Option<SkillAction> = None;
+                                    if primitives::button(ui, &tokens, Tone::Danger, "Remove")
                                         .on_hover_text("Remove this skill from the workspace")
                                         .clicked()
+                                    {
+                                        asked = Some(SkillAction::Remove);
+                                    }
+                                    if primitives::button(
+                                        ui,
+                                        &tokens,
+                                        Tone::Secondary,
+                                        if enabled { "Disable" } else { "Enable" },
+                                    )
+                                    .on_hover_text(if enabled {
+                                        "Keep it installed and inspectable, but never invoke it"
+                                    } else {
+                                        "Allow the agent to invoke this skill again"
+                                    })
+                                    .clicked()
+                                    {
+                                        asked = Some(SkillAction::Toggle);
+                                    }
+                                    asked
                                 },
                             )
                             .inner;
@@ -1804,8 +1846,22 @@ impl PurrCodeIde {
                                 tokens.text_secondary,
                                 &format!("Uses: {uses} successful · {failures} failed"),
                             );
-                            if asked {
-                                remove = Some(id.clone());
+                            if !enabled {
+                                // Disabled is a real state with a real
+                                // consequence: the agent looks elsewhere for
+                                // the capability rather than quietly losing it.
+                                row_note(
+                                    ui,
+                                    tokens.status_warning,
+                                    "Disabled — the agent cannot invoke this skill.",
+                                );
+                            }
+                            match asked {
+                                Some(SkillAction::Remove) => remove = Some(id.clone()),
+                                Some(SkillAction::Toggle) => {
+                                    toggle = Some((id.clone(), !enabled));
+                                }
+                                None => {}
                             }
                         }
                     });
@@ -1813,6 +1869,11 @@ impl PurrCodeIde {
                         self.settings_state
                             .mutation_sent(&format!("skill_remove:{id}"));
                         self.client.send(Request::RemoveSkill { id });
+                    }
+                    if let Some((id, enabled)) = toggle {
+                        self.settings_state
+                            .mutation_sent(&format!("skill_toggle:{id}"));
+                        self.client.send(Request::SkillSetEnabled { id, enabled });
                     }
                     if let Some(key) = self.settings_state.pending.clone()
                         && key.starts_with("skill_remove:")
@@ -2157,6 +2218,88 @@ impl PurrCodeIde {
 
     // ── MCP servers ───────────────────────────────────────────────────
 
+    /// What this server's tools are allowed to do without being asked.
+    ///
+    /// This is the sentence that makes PurrCode's MCP surface different from
+    /// "did the server connect". A trusted tool runs without a per-call
+    /// prompt; a denied one cannot run at all. Both are stated here, because
+    /// a user who cannot see which tools are pre-approved has not really
+    /// approved them.
+    fn mcp_trust_summary(&self, ui: &mut Ui, id: &str, server: &Value) {
+        let names = |key: &str| {
+            array(server, key)
+                .into_iter()
+                .filter_map(|tool| tool.as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        let trusted = names("trusted_tools");
+        let denied = names("deny_tools");
+        let _ = id;
+        let summary = match (trusted.is_empty(), denied.is_empty()) {
+            (true, true) => "Every tool asks before it runs. No tool is denied.".to_owned(),
+            (false, true) => format!(
+                "Runs without asking: {}. No tool is denied.",
+                trusted.join(", ")
+            ),
+            (true, false) => format!(
+                "Every tool asks before it runs. Denied: {}.",
+                denied.join(", ")
+            ),
+            (false, false) => format!(
+                "Runs without asking: {}. Denied: {}.",
+                trusted.join(", "),
+                denied.join(", ")
+            ),
+        };
+        row_note(
+            ui,
+            if trusted.is_empty() {
+                self.tokens.text_muted
+            } else {
+                // Pre-approved tools are a standing grant, so the line that
+                // describes them is not muted chrome.
+                self.tokens.status_warning
+            },
+            &summary,
+        );
+    }
+
+    /// The result of the last connection test for one server.
+    fn mcp_test_report(&self, ui: &mut Ui, id: &str) {
+        let Some(report) = self.settings_state.mcp_tests.get(id) else {
+            return;
+        };
+        let connected = boolean(report, "connected");
+        let count = number(report, "tool_count");
+        let diagnostics = text_or(report, "diagnostics", "");
+        row_note(
+            ui,
+            if connected {
+                self.tokens.status_success
+            } else {
+                self.tokens.status_error
+            },
+            &if connected {
+                format!("Connected · {count} tool(s) discovered")
+            } else {
+                format!("Not reachable · {diagnostics}")
+            },
+        );
+        if !connected {
+            return;
+        }
+        // The tool names themselves, so "12 tools" can be checked rather than
+        // taken on faith — and so the user can see what they would be
+        // trusting before they trust it.
+        let names = array(report, "tools")
+            .iter()
+            .filter_map(|tool| text(tool, "name"))
+            .collect::<Vec<_>>();
+        if !names.is_empty() {
+            row_note(ui, self.tokens.text_muted, &names.join(", "));
+        }
+    }
+
     fn settings_mcp(&mut self, ui: &mut Ui) {
         let tokens = self.tokens;
         self.settings_heading(
@@ -2203,8 +2346,13 @@ impl PurrCodeIde {
                     }
                     let mut remove: Option<String> = None;
                     let mut probe: Option<String> = None;
+                    let mut test: Option<String> = None;
                     ui.push_id("mcp_servers", |ui| {
                         for (id, server) in map {
+                            let transport = match text_or(server, "transport", "stdio").as_str() {
+                                "http" => format!("HTTP {}", text_or(server, "url", "?")),
+                                other => other.to_owned(),
+                            };
                             let program = text_or(server, "program", "?");
                             let args = array(server, "arguments")
                                 .iter()
@@ -2243,6 +2391,16 @@ impl PurrCodeIde {
                                     {
                                         asked = Some(McpAction::Probe);
                                     }
+                                    // Unlike Probe, this needs no session: a
+                                    // server has to be checkable while it is
+                                    // being set up, which is the moment the
+                                    // configuration is most likely wrong.
+                                    if primitives::button(ui, &tokens, Tone::Secondary, "Test")
+                                        .on_hover_text("Connect now and list this server's tools")
+                                        .clicked()
+                                    {
+                                        asked = Some(McpAction::Test);
+                                    }
                                     asked
                                 },
                             )
@@ -2251,7 +2409,7 @@ impl PurrCodeIde {
                                 ui,
                                 tokens.text_secondary,
                                 &format!(
-                                    "{cwd} · network {} · timeout {timeout}s",
+                                    "{transport} · {cwd} · network {} · timeout {timeout}s",
                                     if network { "on" } else { "off" }
                                 ),
                             );
@@ -2260,9 +2418,17 @@ impl PurrCodeIde {
                                 tokens.text_muted,
                                 &format!("Environment variables: {env}"),
                             );
+                            // Trust is the point of this surface. A server
+                            // with auto-approved tools is materially different
+                            // from one where every call is asked about, so the
+                            // row says which tools those are rather than
+                            // leaving it to a config file.
+                            self.mcp_trust_summary(ui, id, server);
+                            self.mcp_test_report(ui, id);
                             match asked {
                                 Some(McpAction::Remove) => remove = Some(id.clone()),
                                 Some(McpAction::Probe) => probe = Some(id.clone()),
+                                Some(McpAction::Test) => test = Some(id.clone()),
                                 None => {}
                             }
                         }
@@ -2280,6 +2446,14 @@ impl PurrCodeIde {
                         self.settings_state
                             .mutation_sent(&format!("mcp_remove:{id}"));
                         self.client.send(Request::McpRemove { id });
+                    }
+                    if let Some(id) = test {
+                        self.settings_state.mutation_sent(&format!("mcp_test:{id}"));
+                        // Clear the previous report first: leaving a stale
+                        // "connected, 12 tools" on screen while a new test runs
+                        // claims the server is reachable before anyone asked.
+                        self.settings_state.mcp_tests.remove(&id);
+                        self.client.send(Request::McpTest { id });
                     }
                     if let Some(key) = self.settings_state.pending.clone()
                         && (key.starts_with("probe:") || key.starts_with("mcp_remove:"))
@@ -2325,20 +2499,39 @@ impl PurrCodeIde {
                         let room = ui.available_width();
                         ui.add(egui::TextEdit::singleline(&mut self.mcp_id).desired_width(room));
                     });
-                    primitives::field_row(ui, &tokens, "Program", |ui| {
-                        let room = ui.available_width();
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.mcp_program).desired_width(room),
-                        );
+                    primitives::field_row(ui, &tokens, "Transport", |ui| {
+                        ui.selectable_value(&mut self.mcp_http, false, "stdio");
+                        ui.selectable_value(&mut self.mcp_http, true, "HTTP");
                     });
-                    primitives::field_row(ui, &tokens, "Arguments", |ui| {
-                        let room = ui.available_width();
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.mcp_arguments)
-                                .hint_text("Comma-separated")
-                                .desired_width(room),
-                        );
-                    });
+                    // Only the fields the chosen transport actually uses are
+                    // shown. A "Program" box on an HTTP server is a question
+                    // with no right answer.
+                    if self.mcp_http {
+                        primitives::field_row(ui, &tokens, "URL", |ui| {
+                            let room = ui.available_width();
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.mcp_url)
+                                    .hint_text("https://host/mcp")
+                                    .desired_width(room),
+                            );
+                        });
+                    } else {
+                        primitives::field_row(ui, &tokens, "Program", |ui| {
+                            let room = ui.available_width();
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.mcp_program)
+                                    .desired_width(room),
+                            );
+                        });
+                        primitives::field_row(ui, &tokens, "Arguments", |ui| {
+                            let room = ui.available_width();
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.mcp_arguments)
+                                    .hint_text("Comma-separated")
+                                    .desired_width(room),
+                            );
+                        });
+                    }
                     primitives::field_row(ui, &tokens, "Working directory", |ui| {
                         let room = ui.available_width();
                         ui.add(
@@ -2357,9 +2550,35 @@ impl PurrCodeIde {
                                 .desired_width(room),
                         );
                     });
+                    // Trust is configured with the server, not after it: the
+                    // moment somebody adds a tool server is the moment to say
+                    // what it may do unattended.
+                    primitives::field_row(ui, &tokens, "Run without asking", |ui| {
+                        let room = ui.available_width();
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.mcp_trusted_tools)
+                                .hint_text(
+                                    "Comma-separated tool names — leave empty to ask every time",
+                                )
+                                .desired_width(room),
+                        );
+                    });
+                    primitives::field_row(ui, &tokens, "Never run", |ui| {
+                        let room = ui.available_width();
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.mcp_deny_tools)
+                                .hint_text("Comma-separated tool names")
+                                .desired_width(room),
+                        );
+                    });
                     ui.add_space(GAP_CONTROL);
+                    let endpoint_given = if self.mcp_http {
+                        !self.mcp_url.trim().is_empty()
+                    } else {
+                        !self.mcp_program.trim().is_empty()
+                    };
                     let ready = !self.mcp_id.trim().is_empty()
-                        && !self.mcp_program.trim().is_empty()
+                        && endpoint_given
                         && !self.mcp_working_directory.trim().is_empty();
                     save = primitives::button_enabled(
                         ui,
@@ -2374,7 +2593,11 @@ impl PurrCodeIde {
                         note(
                             ui,
                             &tokens,
-                            "A server id, a program and a working directory are required.",
+                            if self.mcp_http {
+                                "A server id, a URL and a working directory are required."
+                            } else {
+                                "A server id, a program and a working directory are required."
+                            },
                         );
                     }
                     self.settings_inline_error(ui, "mcp_save");
@@ -2387,8 +2610,19 @@ impl PurrCodeIde {
                         environment_from.insert(child.trim().to_owned(), host.trim().to_owned());
                     }
                 }
+                let tool_list = |raw: &str| {
+                    raw.split(',')
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                };
                 let server = serde_json::json!({
                     "id": self.mcp_id.trim().to_owned(),
+                    "transport": if self.mcp_http { "http" } else { "stdio" },
+                    "url": self.mcp_url.trim().to_owned(),
+                    "trusted_tools": tool_list(&self.mcp_trusted_tools),
+                    "deny_tools": tool_list(&self.mcp_deny_tools),
                     "program": self.mcp_program.trim().to_owned(),
                     "arguments": self
                         .mcp_arguments
