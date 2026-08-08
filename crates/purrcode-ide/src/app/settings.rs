@@ -177,6 +177,7 @@ pub(crate) enum SettingsPage {
     Skills,
     Mcp,
     Codex,
+    Memory,
     Authority,
     Agent,
     Terminal,
@@ -192,6 +193,7 @@ impl SettingsPage {
         Self::Skills,
         Self::Mcp,
         Self::Codex,
+        Self::Memory,
         Self::Authority,
         Self::Agent,
         Self::Terminal,
@@ -207,6 +209,7 @@ impl SettingsPage {
             Self::Skills => "Skills",
             Self::Mcp => "MCP servers",
             Self::Codex => "Codex",
+            Self::Memory => "Project memory",
             Self::Authority => "Authority & permissions",
             Self::Agent => "Agent behavior",
             Self::Terminal => "Terminal & Git",
@@ -220,6 +223,7 @@ impl SettingsPage {
             Self::General => "WORKSPACE",
             Self::Models | Self::LocalModels => "MODELS",
             Self::Skills | Self::Mcp | Self::Codex => "EXTENSIONS",
+            Self::Memory => "WORKSPACE",
             Self::Authority | Self::Agent | Self::Terminal => "RUNTIME",
             Self::Privacy | Self::Advanced => "SYSTEM",
         }
@@ -288,6 +292,14 @@ impl SettingsPage {
                 "worktree",
                 "auth",
                 "timeout",
+            ],
+            Self::Memory => &[
+                "memory",
+                "knowledge",
+                "remember",
+                "forget",
+                "build command",
+                "rules",
             ],
             Self::Authority => &["permission", "approval", "pawgate", "authority", "mode"],
             Self::Agent => &["workflow", "budget", "search", "routing", "agent", "plan"],
@@ -569,6 +581,34 @@ enum SkillAction {
     Toggle,
 }
 
+/// What a memory row's buttons asked for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MemoryAction {
+    Edit,
+    Forget,
+}
+
+/// The heading for one memory kind, in the user's words rather than the
+/// database's.
+fn kind_label(kind: &str) -> String {
+    match kind {
+        "build" => "Build".to_owned(),
+        "architecture" => "Architecture".to_owned(),
+        "learnings" => "Learnings".to_owned(),
+        "user_rules" => "Your rules".to_owned(),
+        // An unknown kind is titled from its own name rather than dropped:
+        // memory recorded by a newer daemon must still be visible and
+        // forgettable here.
+        other => {
+            let mut text = other.replace('_', " ");
+            if let Some(first) = text.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            text
+        }
+    }
+}
+
 /// What the user asked of one MCP server row.
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum McpAction {
@@ -783,6 +823,7 @@ impl PurrCodeIde {
             SettingsPage::Skills => self.settings_skills(ui),
             SettingsPage::Mcp => self.settings_mcp(ui),
             SettingsPage::Codex => self.settings_codex(ui),
+            SettingsPage::Memory => self.settings_memory(ui),
             SettingsPage::Authority => self.settings_authority(ui),
             SettingsPage::Agent => self.settings_agent(ui),
             SettingsPage::Terminal => self.settings_terminal(ui),
@@ -2213,6 +2254,203 @@ impl PurrCodeIde {
                     reason: "Blocked from Settings by the user".to_owned(),
                 });
             }
+        }
+    }
+
+    // ── Project memory ────────────────────────────────────────────────
+
+    /// Durable project knowledge, with its provenance on the surface.
+    ///
+    /// v1.2 Pillar 6. The deliberate choice here is that PurrCode does not
+    /// secretly remember things: every entry is visible, says where it came
+    /// from and how sure it is, and can be edited or forgotten. Memory the
+    /// user cannot see is memory they cannot correct, and a wrong fact that
+    /// silently shapes every future session is worse than no memory at all.
+    fn settings_memory(&mut self, ui: &mut Ui) {
+        let tokens = self.tokens;
+        self.settings_heading(
+            ui,
+            "Project memory",
+            "What PurrCode carries between sessions about this project. Every entry shows where \
+             it came from, and you can change or remove any of it.",
+        );
+
+        if self.repository.as_os_str().is_empty() {
+            note(ui, &tokens, "Open a folder to see its project memory.");
+            return;
+        }
+
+        let entries = self.memory.clone();
+        self.settings_status(
+            ui,
+            &if entries.is_empty() {
+                "Nothing remembered for this project yet.".to_owned()
+            } else {
+                format!(
+                    "{} entr{} remembered.",
+                    entries.len(),
+                    if entries.len() == 1 { "y" } else { "ies" }
+                )
+            },
+        );
+
+        let mut forget: Option<String> = None;
+        let mut edit: Option<(String, String)> = None;
+        for (kind, description) in crate::model::MEMORY_KINDS {
+            let group: Vec<_> = entries.iter().filter(|entry| entry.kind == *kind).collect();
+            if group.is_empty() && !self.control_matches(&[kind, "memory"]) {
+                continue;
+            }
+            primitives::section(ui, &tokens, &kind_label(kind), Some(description), |ui| {
+                if group.is_empty() {
+                    empty_state(ui, &tokens, "Nothing here yet.");
+                    return;
+                }
+                ui.push_id(format!("memory_{kind}"), |ui| {
+                    for entry in &group {
+                        let asked =
+                            primitives::list_row(ui, &tokens, RowSpec::new(&entry.content), |ui| {
+                                let mut asked: Option<MemoryAction> = None;
+                                if primitives::button(ui, &tokens, Tone::Danger, "Forget")
+                                    .on_hover_text(
+                                        "Remove this permanently. It will not come back on \
+                                             its own.",
+                                    )
+                                    .clicked()
+                                {
+                                    asked = Some(MemoryAction::Forget);
+                                }
+                                if primitives::button(ui, &tokens, Tone::Secondary, "Edit")
+                                    .clicked()
+                                {
+                                    asked = Some(MemoryAction::Edit);
+                                }
+                                asked
+                            })
+                            .inner;
+                        // The provenance line is the whole argument for
+                        // this surface: a fact with no visible source is
+                        // a fact nobody can check.
+                        row_note(ui, tokens.text_muted, &entry.provenance());
+                        match asked {
+                            Some(MemoryAction::Forget) => forget = Some(entry.id.clone()),
+                            Some(MemoryAction::Edit) => {
+                                edit = Some((entry.id.clone(), entry.content.clone()));
+                            }
+                            None => {}
+                        }
+                    }
+                });
+            });
+        }
+
+        if let Some(id) = forget {
+            self.settings_state
+                .mutation_sent(&format!("memory_forget:{id}"));
+            self.client.send(Request::ForgetMemory { id });
+        }
+        if let Some((id, content)) = edit {
+            self.editing_memory = Some((id, content));
+        }
+
+        // ── Remember something ────────────────────────────────────────
+        let mut save = false;
+        primitives::section(
+            ui,
+            &tokens,
+            "Remember something",
+            Some(
+                "Added entries are attributed to you, and marked unverified until something confirms them.",
+            ),
+            |ui| {
+                primitives::field_row(ui, &tokens, "Kind", |ui| {
+                    for (kind, _) in crate::model::MEMORY_KINDS {
+                        ui.selectable_value(
+                            &mut self.memory_kind,
+                            (*kind).to_owned(),
+                            kind_label(kind),
+                        );
+                    }
+                });
+                primitives::field_row(ui, &tokens, "What to remember", |ui| {
+                    let room = ui.available_width();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.memory_content)
+                            .hint_text("Integration tests need Redis running on :6379")
+                            .desired_rows(2)
+                            .desired_width(room),
+                    );
+                });
+                ui.add_space(GAP_CONTROL);
+                let ready = !self.memory_content.trim().is_empty();
+                save = primitives::button_enabled(ui, &tokens, Tone::Primary, "Remember", ready)
+                    .clicked();
+                self.settings_inline_error(ui, "memory_save");
+            },
+        );
+        if save {
+            self.settings_state.mutation_sent("memory_save");
+            self.client.send(Request::CreateMemory {
+                repository: self.repository_string(),
+                kind: self.memory_kind.clone(),
+                content: self.memory_content.trim().to_owned(),
+                // Attribution is honest: the user typed this, so the entry
+                // says so rather than claiming a session discovered it.
+                source: "Added by you in Settings".to_owned(),
+            });
+            self.memory_content.clear();
+        }
+    }
+
+    /// The edit dialog for one memory entry.
+    pub(crate) fn memory_dialog(&mut self, ctx: &egui::Context) {
+        let Some((id, content)) = self.editing_memory.clone() else {
+            return;
+        };
+        let mut next = content;
+        let mut close = false;
+        let mut commit = false;
+        egui::Modal::new(egui::Id::new("purrcode_edit_memory")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.label(
+                egui::RichText::new("Edit memory")
+                    .size(crate::theme::TYPE_TITLE)
+                    .color(self.tokens.text_primary),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("The entry keeps its original source and date.")
+                    .size(crate::theme::TYPE_META)
+                    .color(self.tokens.text_secondary),
+            );
+            ui.add_space(8.0);
+            ui.add(
+                egui::TextEdit::multiline(&mut next)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                ui.add_enabled_ui(!next.trim().is_empty(), |ui| {
+                    if ui.button("Save").clicked() {
+                        commit = true;
+                    }
+                });
+            });
+        });
+        self.editing_memory = Some((id.clone(), next.clone()));
+        if commit && !next.trim().is_empty() {
+            self.client.send(Request::UpdateMemory {
+                id,
+                content: next.trim().to_owned(),
+            });
+            close = true;
+        }
+        if close {
+            self.editing_memory = None;
         }
     }
 

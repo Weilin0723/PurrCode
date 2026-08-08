@@ -454,6 +454,27 @@ pub enum Request {
         id: String,
         enabled: bool,
     },
+    // ── Project memory ───────────────────────────────────────────────
+    /// `GET /v1/memory?repository=` — durable project knowledge, by kind.
+    ListMemory {
+        repository: String,
+    },
+    /// `POST /v1/memory` — record something worth remembering.
+    CreateMemory {
+        repository: String,
+        kind: String,
+        content: String,
+        source: String,
+    },
+    /// `PATCH /v1/memory/{id}` — edit the content, keeping the provenance.
+    UpdateMemory {
+        id: String,
+        content: String,
+    },
+    /// `DELETE /v1/memory/{id}` — forget it. Explicit, and it stays forgotten.
+    ForgetMemory {
+        id: String,
+    },
 }
 
 /// A panel in the session presentation snapshot.
@@ -828,6 +849,8 @@ pub enum Response {
     SessionSearch(String, Value),
     /// `POST /v1/mcp/servers/{id}/test` — the server and its connection report.
     McpTested(String, Value),
+    /// `GET /v1/memory` — project knowledge grouped by kind.
+    Memory(Value),
     /// A settings mutation landed; the UI refetches the affected page.
     SettingsMutated,
     /// Connectivity changed. `false` means every view should say so rather than
@@ -1083,6 +1106,9 @@ impl Request {
                     | Self::DeleteSession { .. }
                     | Self::McpTest { .. }
                     | Self::SkillSetEnabled { .. }
+                    | Self::CreateMemory { .. }
+                    | Self::UpdateMemory { .. }
+                    | Self::ForgetMemory { .. }
             )
     }
 }
@@ -2041,6 +2067,47 @@ impl Worker {
                 let path = format!("/v1/sessions/search?q={}", urlencode(&query));
                 match self.get::<Value>(&path) {
                     Ok(value) => self.reply(Response::SessionSearch(query, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::ListMemory { repository } => {
+                let path = format!("/v1/memory?repository={}", urlencode(&repository));
+                match self.get::<Value>(&path) {
+                    Ok(value) => self.reply(Response::Memory(value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::CreateMemory {
+                repository,
+                kind,
+                content,
+                source,
+            } => {
+                let body = serde_json::json!({
+                    "repository": repository,
+                    "kind": kind,
+                    "content": content,
+                    "source": source,
+                });
+                match self.post::<Value>("/v1/memory", &body) {
+                    Ok(_) => {
+                        self.reply(Response::SettingsMutated);
+                        self.handle(Request::ListMemory { repository });
+                    }
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::UpdateMemory { id, content } => {
+                let path = format!("/v1/memory/{}", urlencode(&id));
+                match self.patch::<Value>(&path, &serde_json::json!({"content": content})) {
+                    Ok(_) => self.reply(Response::SettingsMutated),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::ForgetMemory { id } => {
+                let path = format!("/v1/memory/{}", urlencode(&id));
+                match self.delete::<Value>(&path) {
+                    Ok(_) => self.reply(Response::SettingsMutated),
                     Err(error) => self.reply_failure(error),
                 }
             }

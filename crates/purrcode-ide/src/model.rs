@@ -1311,6 +1311,85 @@ pub fn panel_availability_label(availability: &PanelAvailability) -> &'static st
     }
 }
 
+// ── Project memory ─────────────────────────────────────────────────────
+
+/// One durable thing PurrCode knows about this project.
+///
+/// Every field except the content is provenance, and that is the point: this
+/// is auditable knowledge, not a black box. A user must be able to ask "why
+/// does it believe this?" and get an answer — where it came from, when, how
+/// sure it is, and whether anything has used it since.
+#[derive(Clone, Debug)]
+pub struct MemoryEntry {
+    pub id: String,
+    /// The bucket it belongs to: build, architecture, learnings, user rules.
+    pub kind: String,
+    pub content: String,
+    /// Where the knowledge came from — a session, a document, the user.
+    pub source: String,
+    pub confidence: String,
+    pub scope: String,
+    pub created_at: String,
+    /// When something last drew on this. `None` means nothing has, which is
+    /// worth seeing: unused memory is a candidate for forgetting.
+    pub last_used_at: Option<String>,
+}
+
+impl MemoryEntry {
+    /// Parses the daemon's `{"entries": {kind: [...]}}` shape into a flat,
+    /// kind-ordered list.
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        let Some(groups) = value["entries"].as_object() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (kind, entries) in groups {
+            for entry in entries.as_array().unwrap_or(&Vec::new()) {
+                let Some(id) = entry["id"].as_str() else {
+                    continue;
+                };
+                out.push(Self {
+                    id: id.to_owned(),
+                    kind: kind.clone(),
+                    content: entry["content"].as_str().unwrap_or_default().to_owned(),
+                    source: entry["source"].as_str().unwrap_or_default().to_owned(),
+                    confidence: entry["confidence"]
+                        .as_str()
+                        .unwrap_or("unverified")
+                        .to_owned(),
+                    scope: entry["scope"].as_str().unwrap_or("repository").to_owned(),
+                    created_at: entry["created_at"].as_str().unwrap_or_default().to_owned(),
+                    last_used_at: entry["last_used_at"].as_str().map(str::to_owned),
+                });
+            }
+        }
+        out
+    }
+
+    /// The provenance line shown under every entry.
+    pub fn provenance(&self) -> String {
+        let used = match &self.last_used_at {
+            Some(when) => format!("last used {}", relative_time(when)),
+            None => "never used".to_owned(),
+        };
+        format!(
+            "{} · {} · {} · added {} · {used}",
+            self.source,
+            self.confidence,
+            self.scope,
+            relative_time(&self.created_at),
+        )
+    }
+}
+
+/// The kinds of project memory, in the order the panel lists them.
+pub const MEMORY_KINDS: &[(&str, &str)] = &[
+    ("build", "How to build, test, and run this project"),
+    ("architecture", "How the project is put together"),
+    ("learnings", "Things discovered while working on it"),
+    ("user_rules", "Standing instructions from the user"),
+];
+
 /// One hit from full-text search across session event logs.
 #[derive(Clone, Debug)]
 pub struct SessionHit {
@@ -2296,5 +2375,82 @@ mod tests {
             "stages": [{"stage": "Build", "outcome": "failed", "detail": "it broke"}],
         }));
         assert_eq!(problems_from(&validation)[0].location, None);
+    }
+
+    #[test]
+    fn memory_entries_flatten_out_of_their_kind_groups() {
+        let parsed = MemoryEntry::parse_all(&json!({
+            "entries": {
+                "build": [{
+                    "id": "m1",
+                    "content": "cargo test --workspace",
+                    "source": "README.md",
+                    "confidence": "verified",
+                    "scope": "repository",
+                    "created_at": "2026-08-08T10:00:00Z",
+                    "last_used_at": "2026-08-08T11:00:00Z",
+                }],
+                "learnings": [{
+                    "id": "m2",
+                    "content": "Integration tests need Redis",
+                    "source": "Session \"Fix auth test\"",
+                    "confidence": "unverified",
+                    "scope": "repository",
+                    "created_at": "2026-08-07T09:00:00Z",
+                }],
+            }
+        }));
+        assert_eq!(parsed.len(), 2);
+        let build = parsed
+            .iter()
+            .find(|e| e.kind == "build")
+            .expect("build entry");
+        assert_eq!(build.content, "cargo test --workspace");
+        let learning = parsed
+            .iter()
+            .find(|e| e.kind == "learnings")
+            .expect("learning");
+        // Nothing has drawn on it yet, which is worth being able to see.
+        assert!(learning.last_used_at.is_none());
+        assert!(learning.provenance().contains("never used"));
+        assert!(build.provenance().contains("last used"));
+    }
+
+    #[test]
+    fn a_memory_entry_with_no_id_is_dropped() {
+        // Edit and forget both address an entry by id, so an entry without
+        // one would render two buttons that cannot work.
+        let parsed = MemoryEntry::parse_all(&json!({
+            "entries": {"build": [{"content": "no id"}]}
+        }));
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn every_memory_entry_carries_its_provenance() {
+        // The reason this surface exists: a fact with no visible source is a
+        // fact nobody can check or correct.
+        let parsed = MemoryEntry::parse_all(&json!({
+            "entries": {"user_rules": [{
+                "id": "m3",
+                "content": "Never modify generated files",
+                "source": "Added by you in Settings",
+                "confidence": "unverified",
+                "scope": "repository",
+                "created_at": "2026-08-08T10:00:00Z",
+            }]}
+        }));
+        let provenance = parsed[0].provenance();
+        assert!(provenance.contains("Added by you in Settings"));
+        assert!(provenance.contains("unverified"));
+        assert!(provenance.contains("repository"));
+    }
+
+    #[test]
+    fn an_unparseable_timestamp_is_shown_rather_than_hidden() {
+        // A placeholder would hide a format problem; the raw value lets
+        // somebody recognise it.
+        assert_eq!(relative_time("not a date"), "not a date");
+        assert_eq!(relative_time(""), "");
     }
 }

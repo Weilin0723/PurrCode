@@ -450,6 +450,15 @@ pub struct PurrCodeIde {
     /// has nothing to report" (show the file tree).
     pub(crate) workspace_changes_checked: bool,
 
+    // ── Project memory ─────────────────────────────────────────────────
+    /// Durable project knowledge for the open folder.
+    pub(crate) memory: Vec<model::MemoryEntry>,
+    /// Which bucket the "remember something" form writes to.
+    pub(crate) memory_kind: String,
+    pub(crate) memory_content: String,
+    /// An entry being edited, as `(id, draft content)`.
+    pub(crate) editing_memory: Option<(String, String)>,
+
     // ── Session workspace ──────────────────────────────────────────────
     /// The sidebar's search box. Non-empty means the list is replaced by hits.
     pub(crate) session_query: String,
@@ -693,6 +702,11 @@ impl PurrCodeIde {
             workspace_changes_loading: false,
             workspace_changes_checked: false,
 
+            memory: Vec::new(),
+            memory_kind: "learnings".to_owned(),
+            memory_content: String::new(),
+            editing_memory: None,
+
             session_query: String::new(),
             session_hits: Vec::new(),
             session_hits_for: None,
@@ -840,6 +854,12 @@ impl PurrCodeIde {
             }
             SettingsPage::Codex => {
                 self.client.send(Request::CodexGet);
+            }
+            SettingsPage::Memory => {
+                let repository = self.repository_string();
+                if !repository.is_empty() {
+                    self.client.send(Request::ListMemory { repository });
+                }
             }
             SettingsPage::Authority
             | SettingsPage::Agent
@@ -1513,6 +1533,9 @@ impl PurrCodeIde {
                 self.apply_format_edits(&path, &value, then_save)
             }
             Response::LspDiagnostics(value) => self.language.absorb_diagnostics(&value),
+            Response::Memory(value) => {
+                self.memory = crate::model::MemoryEntry::parse_all(&value);
+            }
             Response::McpTested(id, value) => {
                 self.settings_state.mutation_succeeded();
                 self.settings_state.mcp_tests.insert(id, value);
@@ -1914,6 +1937,8 @@ impl eframe::App for PurrCodeIde {
         self.restore_dialog(ctx);
 
         self.session_dialogs(ctx);
+
+        self.memory_dialog(ctx);
 
         self.close_confirm_modal(ctx);
     }
