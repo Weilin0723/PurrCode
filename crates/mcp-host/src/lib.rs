@@ -278,10 +278,28 @@ fn validate_manifest(manifest: &SkillManifest) -> Result<(), HostError> {
     Ok(())
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+/// How an MCP server transports JSON-RPC.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpTransport {
+    /// A child process speaking JSON-RPC over stdio, sandboxed per call.
+    #[default]
+    Stdio,
+    /// A remote HTTP(S) endpoint speaking the MCP streamable-HTTP transport.
+    Http,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct McpServerConfig {
     pub id: String,
+    #[serde(default)]
+    pub transport: McpTransport,
+    /// For stdio servers: the child program. Ignored for HTTP transport.
+    #[serde(default = "default_program")]
     pub program: PathBuf,
+    /// For HTTP transport: the endpoint URL. Ignored for stdio.
+    #[serde(default)]
+    pub url: String,
     #[serde(default)]
     pub arguments: Vec<String>,
     #[serde(default)]
@@ -295,6 +313,17 @@ pub struct McpServerConfig {
     pub maximum_output_bytes: usize,
     #[serde(default = "default_memory_limit")]
     pub memory_limit_bytes: u64,
+    /// Tools on this server that are trusted for the session and bypass
+    /// per-call human approval (still audited and sandboxed).
+    #[serde(default)]
+    pub trusted_tools: Vec<String>,
+    /// Tools on this server that are hard-denied regardless of trust.
+    #[serde(default)]
+    pub deny_tools: Vec<String>,
+}
+
+fn default_program() -> PathBuf {
+    PathBuf::from("")
 }
 
 #[derive(Clone, Debug, JsonSchema, Serialize)]
@@ -384,6 +413,41 @@ impl McpHost {
             })
             .collect()
     }
+
+    /// Probes a server's connectivity without any session or authorization
+    /// state: initialize + `tools/list`, returning the discovered tools and a
+    /// human-readable diagnostics line. Used by the Settings MCP surface for
+    /// "Test Connection".
+    pub async fn test_connection(
+        server: &McpServerConfig,
+    ) -> Result<(Vec<McpToolDescriptor>, String), HostError> {
+        let (value, stderr, _) = run_rpc(server, "tools/list", json!({})).await?;
+        let tools = value["tools"]
+            .as_array()
+            .ok_or_else(|| HostError::InvalidRpc(value.clone()))?;
+        let mut descriptors = Vec::new();
+        for tool in tools {
+            let Some(name) = tool["name"].as_str().filter(|name| safe_identifier(name)) else {
+                continue;
+            };
+            descriptors.push(McpToolDescriptor {
+                server_id: server.id.clone(),
+                name: name.into(),
+                description: tool["description"].as_str().map(str::to_owned),
+                input_schema: tool["inputSchema"].clone(),
+            });
+        }
+        let diagnostics = if stderr.is_empty() {
+            format!("connected: {} tool(s) discovered", descriptors.len())
+        } else {
+            format!(
+                "connected: {} tool(s) discovered; server stderr: {}",
+                descriptors.len(),
+                stderr.chars().take(300).collect::<String>()
+            )
+        };
+        Ok((descriptors, diagnostics))
+    }
 }
 
 fn authorize_external<'a>(
@@ -411,6 +475,20 @@ fn authorize_external<'a>(
 }
 
 async fn run_rpc(
+    server: &McpServerConfig,
+    method: &str,
+    params: Value,
+) -> Result<(Value, String, String), HostError> {
+    server.validate()?;
+    match &server.transport {
+        McpTransport::Stdio => run_stdio_rpc(server, method, params).await,
+        McpTransport::Http { .. } => run_http_rpc(server, method, params).await,
+    }
+}
+
+/// One-shot stdio JSON-RPC: spawn a fresh sandboxed child, initialize, call,
+/// and terminate. Each call is isolated by a fresh capability token.
+async fn run_stdio_rpc(
     server: &McpServerConfig,
     method: &str,
     params: Value,
@@ -468,10 +546,91 @@ async fn run_rpc(
     ))
 }
 
+/// Streamable-HTTP JSON-RPC against a remote MCP server. Each call opens a
+/// fresh request/response exchange with its own capability token.
+async fn run_http_rpc(
+    server: &McpServerConfig,
+    method: &str,
+    params: Value,
+) -> Result<(Value, String, String), HostError> {
+    let McpTransport::Http = &server.transport else {
+        return Err(HostError::InvalidServer);
+    };
+    let url = &server.url;
+    let token_id = uuid::Uuid::new_v4().to_string();
+    let token_secret = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(server.timeout_seconds))
+        .build()
+        .map_err(|error| HostError::Http(error.to_string()))?;
+
+    let initialize = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2025-06-18")
+        .header("PURRCODE_CAPABILITY_ID", &token_id)
+        .header("PURRCODE_CAPABILITY_TOKEN", &token_secret)
+        .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "protocolVersion":"2025-06-18",
+            "capabilities":{},
+            "clientInfo":{"name":"purrcode","version":env!("CARGO_PKG_VERSION")}
+        }}))
+        .send()
+        .await
+        .map_err(|error| HostError::Http(error.to_string()))?;
+    let (initialize_value, _) = parse_http_response(initialize).await?;
+    ensure_rpc_success(&initialize_value, 1)?;
+
+    let response = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2025-06-18")
+        .header("PURRCODE_CAPABILITY_ID", &token_id)
+        .header("PURRCODE_CAPABILITY_TOKEN", &token_secret)
+        .json(&json!({"jsonrpc":"2.0","id":2,"method":method,"params":params}))
+        .send()
+        .await
+        .map_err(|error| HostError::Http(error.to_string()))?;
+    let (response_value, _) = parse_http_response(response).await?;
+    ensure_rpc_success(&response_value, 2)?;
+    Ok((
+        response_value["result"].clone(),
+        String::new(),
+        token_id,
+    ))
+}
+
+/// Reads a streamable-HTTP response, accepting either a bare JSON body or a
+/// single SSE `data:` line carrying the JSON-RPC envelope.
+async fn parse_http_response(
+    response: reqwest::Response,
+) -> Result<(Value, String), HostError> {
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| HostError::Http(error.to_string()))?;
+    let text = String::from_utf8_lossy(&bytes);
+    if let Ok(value) = serde_json::from_str::<Value>(&text) {
+        return Ok((value, text.into_owned()));
+    }
+    // SSE framing: a streamable-HTTP server may reply with `event: message\ndata: {...}`.
+    if let Some(data) = text.lines().find_map(|line| line.strip_prefix("data:")) {
+        if let Ok(value) = serde_json::from_str::<Value>(data.trim()) {
+            return Ok((value, text.into_owned()));
+        }
+    }
+    Err(HostError::InvalidRpc(Value::String(text.into_owned())))
+}
+
 impl McpServerConfig {
     fn validate(&self) -> Result<(), HostError> {
         if !safe_identifier(&self.id)
-            || self.program.as_os_str().is_empty()
             || self.timeout_seconds == 0
             || self.maximum_output_bytes == 0
             || self.memory_limit_bytes < 16 * 1024 * 1024
@@ -481,7 +640,30 @@ impl McpServerConfig {
         if !self.working_directory.is_absolute() || !self.working_directory.is_dir() {
             return Err(HostError::InvalidServer);
         }
+        match &self.transport {
+            McpTransport::Stdio => {
+                if self.program.as_os_str().is_empty() {
+                    return Err(HostError::InvalidServer);
+                }
+            }
+            McpTransport::Http => {
+                let url = reqwest::Url::parse(&self.url).map_err(|_| HostError::InvalidServer)?;
+                if !matches!(url.scheme(), "http" | "https") {
+                    return Err(HostError::InvalidServer);
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Whether a tool is hard-denied on this server.
+    pub fn denies(&self, tool: &str) -> bool {
+        self.deny_tools.iter().any(|denied| denied == tool)
+    }
+
+    /// Whether a tool is trusted and therefore bypasses per-call approval.
+    pub fn trusts(&self, tool: &str) -> bool {
+        !self.denies(tool) && self.trusted_tools.iter().any(|trusted| trusted == tool)
     }
 }
 
@@ -684,6 +866,8 @@ pub enum HostError {
     WrongActionType,
     #[error("MCP child process pipe is unavailable")]
     MissingPipe,
+    #[error("MCP HTTP transport failed: {0}")]
+    Http(String),
     #[error("MCP response exceeded the authorized output limit")]
     OutputLimit,
     #[error("MCP request timed out")]
@@ -1268,6 +1452,30 @@ mod tests {
     };
 
     #[test]
+    fn http_transport_serializes_and_deserializes_as_tagged_json() {
+        let server = McpServerConfig {
+            id: "github".into(),
+            transport: McpTransport::Http,
+            program: PathBuf::from(""),
+            url: "https://example.invalid/mcp".into(),
+            arguments: Vec::new(),
+            environment_from: BTreeMap::new(),
+            working_directory: PathBuf::from("/tmp"),
+            network: true,
+            timeout_seconds: 30,
+            maximum_output_bytes: 1048576,
+            memory_limit_bytes: 536870912,
+            trusted_tools: vec!["github_search".into()],
+            deny_tools: vec!["github_delete_repo".into()],
+        };
+        let value = serde_json::to_value(&server).unwrap();
+        assert_eq!(value["transport"], "http");
+        assert_eq!(value["url"], "https://example.invalid/mcp");
+        let round_tripped: McpServerConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(round_tripped.transport, server.transport);
+    }
+
+    #[test]
     fn skill_discovery_rejects_traversing_entrypoints() {
         let root = tempfile::tempdir().unwrap();
         let skill = root.path().join("unsafe");
@@ -1462,13 +1670,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn trust_policy_denies_overrides_and_trusts_only_listed_tools() {
+        let server = McpServerConfig {
+            id: "fixture".into(),
+            transport: McpTransport::Stdio,
+            program: "/bin/sh".into(),
+            url: String::new(),
+            arguments: Vec::new(),
+            environment_from: BTreeMap::new(),
+            working_directory: PathBuf::from("/tmp"),
+            network: false,
+            timeout_seconds: 20,
+            maximum_output_bytes: 4096,
+            memory_limit_bytes: 64 * 1024 * 1024,
+            trusted_tools: vec!["read".into()],
+            deny_tools: vec!["rm".into()],
+        };
+        assert!(server.trusts("read"));
+        assert!(!server.trusts("write"));
+        assert!(server.denies("rm"));
+        // A tool that is both trusted and denied must be denied — deny wins.
+        let server = McpServerConfig {
+            trusted_tools: vec!["read".into(), "rm".into()],
+            deny_tools: vec!["rm".into()],
+            ..server
+        };
+        assert!(server.denies("rm"));
+        assert!(!server.trusts("rm"));
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn external_call_requires_and_consumes_exact_authorization() {
         let repository = tempfile::tempdir().unwrap();
         let server = McpServerConfig {
             id: "fixture".into(),
+            transport: McpTransport::Stdio,
             program: "/bin/sh".into(),
+            url: String::new(),
             arguments: vec![
                 "-c".into(),
                 "read init; printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'; read notification; read call; printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}'"
@@ -1480,6 +1720,8 @@ mod tests {
             timeout_seconds: 20,
             maximum_output_bytes: 4096,
             memory_limit_bytes: 64 * 1024 * 1024,
+            trusted_tools: Vec::new(),
+            deny_tools: Vec::new(),
         };
         let action = McpHost::translate(
             "fixture",

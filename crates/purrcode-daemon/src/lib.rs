@@ -578,6 +578,7 @@ pub async fn bind_and_report(
             get(list_mcp_servers).post(upsert_mcp_server),
         )
         .route("/v1/mcp/servers/{id}", delete(remove_mcp_server))
+        .route("/v1/mcp/servers/{id}/test", post(test_mcp_server))
         .route("/v1/codex", get(get_codex_config).post(update_codex_config))
         .route("/v1/codex/doctor", post(run_codex_doctor))
         .with_state(state.clone());
@@ -3249,6 +3250,16 @@ async fn invoke_mcp(
         ));
     }
     let discovery = request.tool == "__discover__";
+    // Per-server tool trust policy. A deny-listed tool is a hard deny that
+    // overrides any approval; a trusted tool auto-authorizes with a
+    // DeterministicPolicy authority instead of waiting for human approval.
+    if server.denies(&request.tool) {
+        return Err(ApiError::Conflict(format!(
+            "MCP tool `{}/{}` is denied by the server trust policy",
+            request.server, request.tool
+        )));
+    }
+    let trusted = !discovery && server.trusts(&request.tool);
     let action = McpHost::translate(
         &request.server,
         &request.tool,
@@ -3257,8 +3268,44 @@ async fn invoke_mcp(
     );
     let policy = effective_policy(&config, &repository)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let decision = policy.evaluate(&action, &repository);
+    let policy_decision = policy.evaluate(&action, &repository);
+    let decision = if trusted {
+        // Trust bypasses PawGate's per-call approval but keeps the same
+        // isolation constraints the sandbox enforces.
+        JudgmentDecision::AllowWithConstraints(ActionConstraints {
+            working_directory: repository.clone(),
+            network: server.network,
+            timeout_seconds: server.timeout_seconds,
+            maximum_output_bytes: server.maximum_output_bytes,
+            allowed_write_globs: Vec::new(),
+            maximum_changed_files: 0,
+        })
+    } else {
+        policy_decision
+    };
     let action_id = if let Some(action_id) = requested_action_id {
+        action_id
+    } else if trusted {
+        // Auto-authorized trusted tool: propose and judge, then fall through
+        // to the shared execution path below (no early return to the client).
+        let action_id = ActionId::new();
+        let mut store = SessionStore::open(&state.database)?;
+        store.append(
+            id,
+            &SessionEvent::ActionProposed {
+                action_id,
+                action: action.clone(),
+                turn_id: None,
+            },
+        )?;
+        store.append(
+            id,
+            &SessionEvent::JudgmentRecorded {
+                action_id,
+                decision: decision.clone(),
+                turn_id: None,
+            },
+        )?;
         action_id
     } else {
         let action_id = ActionId::new();
@@ -3304,8 +3351,9 @@ async fn invoke_mcp(
             ))),
         };
     };
-    let current_constraints = match decision {
+    let current_constraints = match decision.clone() {
         JudgmentDecision::RequireApproval { constraints, .. } => constraints,
+        JudgmentDecision::AllowWithConstraints(constraints) => constraints,
         JudgmentDecision::Deny { reason } => {
             return Err(ApiError::Conflict(format!(
                 "MCP action is now denied by PawGate: {reason}"
@@ -3325,8 +3373,13 @@ async fn invoke_mcp(
         ));
     }
     let mut store = SessionStore::open(&state.database)?;
-    let (constraints, _) =
-        authorize_exact_human_action(&mut store, id, action_id, &action, "MCP invocation", false)?;
+    let constraints = if trusted {
+        authorize_deterministic_action(&mut store, id, action_id, &action, "trusted MCP tool")?
+    } else {
+        let (constraints, _) =
+            authorize_exact_human_action(&mut store, id, action_id, &action, "MCP invocation", false)?;
+        constraints
+    };
     reserve_mcp_call(&mut store, id, &request.server, &request.tool)?;
     let skill_started = std::time::Instant::now();
     let skill_parent = state.database.parent().unwrap_or(Path::new("."));
@@ -3412,6 +3465,40 @@ async fn list_mcp_servers(
     let config = AppConfig::load(&state.app_config)
         .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
     Ok(Json(mcp_section(&config)?.servers))
+}
+
+/// Probes a configured MCP server (initialize + tools/list) without any
+/// session or authorization state. The Settings MCP surface calls this for
+/// "Test Connection" before trusting a server.
+async fn test_mcp_server(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let section = mcp_section(&config)?;
+    let server = section
+        .servers
+        .get(&id)
+        .ok_or(ApiError::NotFound)?;
+    match McpHost::test_connection(server).await {
+        Ok((tools, diagnostics)) => Ok(Json(serde_json::json!({
+            "connected": true,
+            "server_id": id,
+            "tools": tools,
+            "tool_count": tools.len(),
+            "diagnostics": diagnostics,
+        }))),
+        Err(error) => Ok(Json(serde_json::json!({
+            "connected": false,
+            "server_id": id,
+            "tools": [],
+            "tool_count": 0,
+            "diagnostics": error.to_string(),
+        }))),
+    }
 }
 
 async fn upsert_mcp_server(
@@ -9172,6 +9259,62 @@ fn authorize_exact_human_action(
     Ok((constraints, action_digest))
 }
 
+/// Authorizes a pre-approved action whose judgment was an
+/// `AllowWithConstraints` (a trusted MCP tool). The authority is
+/// `DeterministicPolicy` — the same non-human authority a read-only command
+/// gets from PawGate — never a fabricated human approval. The exact
+/// authorization is still persisted, consumed at the boundary, and audited.
+fn authorize_deterministic_action(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    action_id: ActionId,
+    expected_action: &ProposedAction,
+    purpose: &str,
+) -> Result<ActionConstraints, ApiError> {
+    let session = store.load(session_id)?;
+    let persisted_action = session
+        .proposed_actions
+        .get(&action_id)
+        .ok_or(ApiError::NotFound)?;
+    if persisted_action != expected_action {
+        return Err(ApiError::Conflict(format!(
+            "{purpose} does not match the exact proposed action"
+        )));
+    }
+    let constraints = match session.judgments.get(&action_id) {
+        Some(JudgmentDecision::AllowWithConstraints(constraints)) => constraints.clone(),
+        _ => {
+            return Err(ApiError::Conflict(format!(
+                "{purpose} is not a deterministic-policy allow decision"
+            )));
+        }
+    };
+    let action_digest = persisted_action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    store
+        .authorize(&Authorization {
+            action_id,
+            session_id,
+            action_digest: action_digest.clone(),
+            constraints: constraints.clone(),
+            authorized_at: Utc::now(),
+            approved_by: ApprovalAuthority::DeterministicPolicy,
+        })
+        .map_err(|_| {
+            ApiError::Conflict(format!("{purpose} authorization is unavailable or was already approved"))
+        })?;
+    store
+        .consume_authorization(action_id, &action_digest)
+        .map_err(|_| {
+            ApiError::Conflict(format!(
+                "{purpose} authorization is unavailable or was already consumed"
+            ))
+        })?;
+    store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+    Ok(constraints)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SearchSkillsRequest {
@@ -14513,6 +14656,68 @@ judge = "openai/judge-model"
         // round-trips and the server survives a fresh load.
         let reloaded = AppConfig::load(&app_config).unwrap();
         assert_eq!(mcp_section(&reloaded).unwrap().servers.len(), 0);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn mcp_trust_policy_round_trips_transport_and_tool_allow_deny() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(&app_config, "schema_version = 1\n").unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: app_config.clone(),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", report.bind);
+
+        // HTTP transport + trust/deny lists persist and round-trip.
+        let added = client
+            .post(format!("{base}/v1/mcp/servers"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "id": "github",
+                "transport": "http",
+                "url": "https://example.invalid/mcp",
+                "program": "",
+                "working_directory": temporary.path(),
+                "network": true,
+                "timeout_seconds": 30,
+                "maximum_output_bytes": 1048576,
+                "memory_limit_bytes": 536870912,
+                "trusted_tools": ["github_search", "github_issue"],
+                "deny_tools": ["github_delete_repo"],
+                "environment_from": {}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(added.status(), StatusCode::OK);
+
+        let listed: serde_json::Value = client
+            .get(format!("{base}/v1/mcp/servers"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let github = &listed["github"];
+        assert_eq!(github["transport"], "http");
+        assert_eq!(github["url"], "https://example.invalid/mcp");
+        assert_eq!(github["trusted_tools"][0], "github_search");
+        assert_eq!(github["trusted_tools"][1], "github_issue");
+        assert_eq!(github["deny_tools"][0], "github_delete_repo");
 
         handle.abort();
     }

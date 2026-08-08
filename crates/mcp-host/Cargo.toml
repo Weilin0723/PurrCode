@@ -11,6 +11,7 @@ libc.workspace = true
 purrcode-runtime-core = { path = "../runtime-core" }
 purrcode-ninelives = { path = "../ninelives-recovery" }
 purrcode-claw = { path = "../claw-sandbox" }
+reqwest.workspace = true
 schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
