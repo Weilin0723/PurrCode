@@ -223,9 +223,9 @@ mod tests {
             pull_jobs: std::sync::Arc::new(TokioMutex::new(BTreeMap::new())),
             live_streams: std::sync::Arc::new(TokioMutex::new(BTreeMap::new())),
             supervisor_runs: std::sync::Arc::new(TokioMutex::new(BTreeMap::new())),
-            lsp: std::sync::Arc::new(TokioMutex::new(
-                purrcode_lsp::LspManager::new(purrcode_lsp::default_server_commands()),
-            )),
+            lsp: std::sync::Arc::new(TokioMutex::new(purrcode_lsp::LspManager::new(
+                purrcode_lsp::default_server_commands(),
+            ))),
             terminals: crate::TerminalRuntime::default(),
         }
     }

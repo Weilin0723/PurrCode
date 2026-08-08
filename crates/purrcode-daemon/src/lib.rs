@@ -574,7 +574,13 @@ pub async fn bind_and_report(
         .route("/v1/lsp/definition", post(lsp_definition))
         .route("/v1/lsp/references", post(lsp_references))
         .route("/v1/lsp/symbols", post(lsp_symbols))
+        .route("/v1/lsp/workspace-symbols", post(lsp_workspace_symbols))
+        .route("/v1/lsp/rename", post(lsp_rename))
         .route("/v1/lsp/format", post(lsp_format))
+        .route(
+            "/v1/lsp/diagnostics",
+            get(lsp_all_diagnostics).post(lsp_diagnostics),
+        )
         .route("/v1/memory", get(list_memory).post(create_memory))
         .route(
             "/v1/memory/{id}",
@@ -9281,6 +9287,10 @@ async fn list_lsp_servers(
 struct LspDocumentRequest {
     /// Absolute path of the document to reason about.
     path: PathBuf,
+    /// The project root to start the language server in. Optional so existing
+    /// callers keep working, but supplying it matters: see [`lsp_root`].
+    #[serde(default)]
+    root: Option<PathBuf>,
     /// Optional text content for open/format (the full current file).
     #[serde(default)]
     text: Option<String>,
@@ -9288,6 +9298,56 @@ struct LspDocumentRequest {
     language_id: Option<String>,
     #[serde(default)]
     position: Option<LspPosition>,
+    /// The replacement identifier, for `textDocument/rename`.
+    #[serde(default)]
+    new_name: Option<String>,
+    /// The search string, for `workspace/symbol`.
+    #[serde(default)]
+    query: Option<String>,
+}
+
+/// How long to wait for a language server to push diagnostics before
+/// answering. Analysis is asynchronous, so this is a courtesy window, not a
+/// guarantee that analysis finished.
+const DIAGNOSTIC_BUDGET: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// The directory a language server should be started in.
+///
+/// The document's own parent directory is the wrong answer for every
+/// project-aware server: rust-analyzer started in `crates/foo/src/app` sees no
+/// workspace, resolves no dependencies, and returns nothing useful. Worse, the
+/// manager caches one server per language, so whichever file was opened first
+/// would pin that root for the rest of the session.
+///
+/// So: honour an explicit root when the caller knows it, otherwise walk up
+/// looking for a project marker, and only fall back to the parent directory
+/// when there is no marker to be found.
+fn lsp_root(body: &LspDocumentRequest) -> Result<PathBuf, ApiError> {
+    if let Some(root) = &body.root {
+        return root
+            .canonicalize()
+            .map_err(|_| ApiError::BadRequest("project root does not exist".into()));
+    }
+    let start = body
+        .path
+        .parent()
+        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    const MARKERS: &[&str] = &[
+        ".git",
+        "Cargo.toml",
+        "package.json",
+        "go.mod",
+        "pyproject.toml",
+        "tsconfig.json",
+    ];
+    let mut cursor = Some(start);
+    while let Some(directory) = cursor {
+        if MARKERS.iter().any(|marker| directory.join(marker).exists()) {
+            return Ok(directory.to_path_buf());
+        }
+        cursor = directory.parent();
+    }
+    Ok(start.to_path_buf())
 }
 
 /// Opens a document in its language server, enabling hover/definition/etc.
@@ -9297,19 +9357,17 @@ async fn lsp_open(
     Json(body): Json<LspDocumentRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let text = body.text.unwrap_or_default();
+    let root = lsp_root(&body)?;
+    let text = body.text.clone().unwrap_or_default();
     let language_id = body
         .language_id
+        .clone()
         .unwrap_or_else(|| language_id_for(&body.path));
-    let root = body
-        .path
-        .parent()
-        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
     state
         .lsp
         .lock()
         .await
-        .open(&body.path, root, &language_id, &text)
+        .open(&body.path, &root, &language_id, &text)
         .await
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(Json(
@@ -9323,18 +9381,16 @@ async fn lsp_hover(
     Json(body): Json<LspDocumentRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
     let position = body
         .position
+        .clone()
         .ok_or_else(|| ApiError::BadRequest("hover requires a position".into()))?;
-    let root = body
-        .path
-        .parent()
-        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
     let hover = state
         .lsp
         .lock()
         .await
-        .hover(&body.path, root, position)
+        .hover(&body.path, &root, position)
         .await
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(Json(serde_json::to_value(&hover).unwrap_or_default()))
@@ -9346,18 +9402,16 @@ async fn lsp_definition(
     Json(body): Json<LspDocumentRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
     let position = body
         .position
+        .clone()
         .ok_or_else(|| ApiError::BadRequest("definition requires a position".into()))?;
-    let root = body
-        .path
-        .parent()
-        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
     let definitions = state
         .lsp
         .lock()
         .await
-        .definition(&body.path, root, position)
+        .definition(&body.path, &root, position)
         .await
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(Json(serde_json::to_value(&definitions).unwrap_or_default()))
@@ -9369,18 +9423,16 @@ async fn lsp_references(
     Json(body): Json<LspDocumentRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
     let position = body
         .position
+        .clone()
         .ok_or_else(|| ApiError::BadRequest("references requires a position".into()))?;
-    let root = body
-        .path
-        .parent()
-        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
     let references = state
         .lsp
         .lock()
         .await
-        .references(&body.path, root, position)
+        .references(&body.path, &root, position)
         .await
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(Json(serde_json::to_value(&references).unwrap_or_default()))
@@ -9392,18 +9444,128 @@ async fn lsp_symbols(
     Json(body): Json<LspDocumentRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let root = body
-        .path
-        .parent()
-        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    let root = lsp_root(&body)?;
     let symbols = state
         .lsp
         .lock()
         .await
-        .symbols(&body.path, root)
+        .symbols(&body.path, &root)
         .await
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(Json(serde_json::to_value(&symbols).unwrap_or_default()))
+}
+
+/// Searches the whole project for symbols matching a query — the backing
+/// contract for workspace-wide "go to symbol". `path` names any file in the
+/// project, which is how the right language server is chosen.
+async fn lsp_workspace_symbols(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let query = body.query.clone().unwrap_or_default();
+    let symbols = state
+        .lsp
+        .lock()
+        .await
+        .workspace_symbols(&body.path, &root, &query)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&symbols).unwrap_or_default()))
+}
+
+/// Renames the symbol under the cursor across the project.
+///
+/// This returns the edits; it does **not** write them. Applying them is a
+/// mutation the user reviews like any other change, so the edit set travels
+/// back through the normal review path instead of being applied behind the
+/// user's back.
+async fn lsp_rename(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let position = body
+        .position
+        .clone()
+        .ok_or_else(|| ApiError::BadRequest("rename requires a position".into()))?;
+    let new_name = body
+        .new_name
+        .clone()
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| ApiError::BadRequest("rename requires a new name".into()))?;
+    let edit = state
+        .lsp
+        .lock()
+        .await
+        .rename(&body.path, &root, position, &new_name)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&edit).unwrap_or_default()))
+}
+
+/// The diagnostics a language server has published for one document.
+///
+/// Diagnostics are pushed by the server whenever it finishes analysing, so
+/// this reports what has arrived rather than forcing a fresh analysis. The
+/// `published` flag exists so the UI can distinguish "this file is clean" from
+/// "the server has not said anything about this file yet" — rendering the
+/// second as a clean bill of health would be a lie.
+async fn lsp_diagnostics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let mut lsp = state.lsp.lock().await;
+    // Opening is idempotent and is what makes a server start analysing, so a
+    // caller that asks for diagnostics on a file it has not opened still gets
+    // an answer instead of silence.
+    if let Some(text) = body.text.clone() {
+        let language_id = body
+            .language_id
+            .clone()
+            .unwrap_or_else(|| language_id_for(&body.path));
+        let _ = lsp.open(&body.path, &root, &language_id, &text).await;
+    }
+    let diagnostics = lsp
+        .diagnostics(&body.path, &root, DIAGNOSTIC_BUDGET)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "path": body.path,
+        "published": !diagnostics.is_empty(),
+        "diagnostics": diagnostics,
+    })))
+}
+
+/// Every document any live language server has published diagnostics for.
+///
+/// This is the Problems panel's feed. It reports only what servers have
+/// already published: a project whose servers are still warming up shows
+/// fewer problems than it has, and the panel says so rather than implying the
+/// project is clean.
+async fn lsp_all_diagnostics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let files = state
+        .lsp
+        .lock()
+        .await
+        .all_diagnostics(DIAGNOSTIC_BUDGET)
+        .await;
+    let total: usize = files.iter().map(|file| file.diagnostics.len()).sum();
+    Ok(Json(serde_json::json!({
+        "files": files,
+        "total": total,
+    })))
 }
 
 async fn lsp_format(
@@ -9412,15 +9574,12 @@ async fn lsp_format(
     Json(body): Json<LspDocumentRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authorize(&state, &headers)?;
-    let root = body
-        .path
-        .parent()
-        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    let root = lsp_root(&body)?;
     let edits = state
         .lsp
         .lock()
         .await
-        .format(&body.path, root)
+        .format(&body.path, &root)
         .await
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     Ok(Json(serde_json::to_value(&edits).unwrap_or_default()))
