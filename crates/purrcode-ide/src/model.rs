@@ -1262,6 +1262,41 @@ pub fn panel_availability_label(availability: &PanelAvailability) -> &'static st
     }
 }
 
+/// One composer reference, as the daemon resolved it.
+///
+/// `resolved` is the daemon's answer, not an inference from whether a preview
+/// came back: a reference can resolve to genuinely empty content, and treating
+/// that as failure would tell the user their file was not found.
+#[derive(Clone, Debug)]
+pub struct ResolvedReference {
+    pub display: String,
+    pub resolved: bool,
+    pub preview: Option<String>,
+    /// Why it did not resolve, in the daemon's words.
+    pub diagnostics: Option<String>,
+}
+
+impl ResolvedReference {
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(Self {
+                            display: item["display"].as_str()?.to_owned(),
+                            resolved: item["resolved"].as_bool().unwrap_or(false),
+                            preview: item["preview"].as_str().map(str::to_owned),
+                            diagnostics: item["diagnostics"].as_str().map(str::to_owned),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
 // ── Language intelligence (LSP) ────────────────────────────────────────
 
 /// A 0-based position in a document, matching the LSP wire shape.

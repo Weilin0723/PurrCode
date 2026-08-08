@@ -273,6 +273,28 @@ pub struct OpenFile {
     pub external_change: bool,
 }
 
+/// One entry in the command palette.
+#[derive(Clone, Debug)]
+pub(crate) struct PaletteCommand {
+    pub label: String,
+    pub description: String,
+    pub action: PaletteAction,
+}
+
+/// What choosing a palette entry does.
+#[derive(Clone, Debug)]
+pub(crate) enum PaletteAction {
+    QuickOpen,
+    Outline,
+    Format,
+    Search,
+    Terminal,
+    Problems,
+    Settings,
+    /// Place a daemon session command in the composer, ready to send.
+    Compose(String),
+}
+
 /// The size and modification time of a file, for change detection.
 ///
 /// `None` when the file cannot be stated (deleted, or on a filesystem that
@@ -352,6 +374,23 @@ pub struct PurrCodeIde {
     /// Enter confirms a candidate and Esc cancels the composition, so the
     /// composer's Enter-to-send / Esc-to-clear must not fire during it.
     pub(crate) ime_composing: bool,
+    /// The caret's byte offset in the composer, for `/ @ #` completion.
+    pub(crate) composer_caret: usize,
+    /// The token the completion popup is offering suggestions for.
+    pub(crate) active_completion: Option<composer::ActiveToken>,
+    /// Which suggestion the arrow keys have landed on.
+    pub(crate) completion_index: usize,
+    /// Commands the daemon publishes, as `(name, description, group)`.
+    pub(crate) commands: Vec<(String, String, String)>,
+    /// Project-wide symbols for `#` completion, as `(name, kind, container)`.
+    pub(crate) workspace_symbols: Vec<(String, String, Option<String>)>,
+    /// The query `workspace_symbols` answers, so a stale reply is discarded.
+    pub(crate) workspace_symbols_for: Option<String>,
+    /// The draft's references, resolved by the daemon.
+    pub(crate) resolved_references: Vec<model::ResolvedReference>,
+    /// The draft `resolved_references` describes, so a reply for text the
+    /// user has since edited cannot be shown as current.
+    pub(crate) references_requested_for: Option<String>,
 
     // ── IDE Shell ────────────────────────────────────────────────────────
     /// The selected Activity Bar item — drives the primary sidebar.
@@ -593,6 +632,14 @@ impl PurrCodeIde {
             aux_panel: Some(AuxView::Source),
             bottom_panel: None,
             dirty: BTreeSet::new(),
+            composer_caret: 0,
+            active_completion: None,
+            completion_index: 0,
+            commands: Vec::new(),
+            workspace_symbols: Vec::new(),
+            workspace_symbols_for: None,
+            resolved_references: Vec::new(),
+            references_requested_for: None,
             command_palette: None,
             quick_open: None,
             title_visible: false,
@@ -681,6 +728,10 @@ impl PurrCodeIde {
 
         app.client.send(Request::Bootstrap);
         app.client.send(Request::ListModels);
+        // The palette and the composer's `/` completion are both driven by
+        // the daemon's command contract, so fetch it once at startup rather
+        // than hard-coding a list that would drift from the daemon's.
+        app.client.send(Request::ListCommands);
         if app.stage == Stage::Workspace {
             app.refresh_workspace();
         }
@@ -1418,6 +1469,55 @@ impl PurrCodeIde {
                 self.apply_format_edits(&path, &value, then_save)
             }
             Response::LspDiagnostics(value) => self.language.absorb_diagnostics(&value),
+            Response::LspWorkspaceSymbols(query, value) => {
+                // Only accept the answer to the query still being typed.
+                if self.workspace_symbols_for.as_deref() == Some(query.as_str()) {
+                    self.workspace_symbols = value
+                        .as_array()
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|item| {
+                                    let symbol = crate::model::Symbol::parse(&serde_json::json!({
+                                        "name": item["name"],
+                                        "kind": item["kind"],
+                                    }))?;
+                                    Some((
+                                        symbol.name.clone(),
+                                        symbol.kind_label().to_owned(),
+                                        item["container"].as_str().map(str::to_owned),
+                                    ))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                }
+            }
+            Response::Commands(value) => {
+                self.commands = value
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| {
+                                Some((
+                                    item["name"].as_str()?.to_owned(),
+                                    item["description"].as_str().unwrap_or_default().to_owned(),
+                                    item["group"].as_str().unwrap_or_default().to_owned(),
+                                ))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
+            Response::References(text, value) => {
+                // The draft may have moved on while this was in flight; a
+                // chip row describing text the user has edited past would
+                // claim the wrong files are attached.
+                if self.composer == text {
+                    self.resolved_references = crate::model::ResolvedReference::parse_all(&value);
+                }
+            }
             Response::LspUnavailable(error) => {
                 // Recorded, not raised: a missing language server is a normal
                 // state for a machine, and a modal per hover would be worse
@@ -2259,59 +2359,95 @@ impl PurrCodeIde {
         }
     }
 
-    /// Command center overlay: Cmd+P quick-open and Cmd+Shift+P palette share
-    /// one search box over the file list.
+    /// Command center overlay: ⌘P opens a file, ⌘⇧P runs a command.
+    ///
+    /// These were one surface over one file list, so "Command Palette" was a
+    /// window titled after commands that only ever listed files. They are two
+    /// surfaces now, because they answer two different questions.
     fn command_center(&mut self, ctx: &egui::Context) {
-        // Snapshot the open box and its query so no borrow of self spans the
-        // closure below (which calls other self methods).
         let is_palette = self.command_palette.is_some();
-        let mut query = if let Some(q) = &self.command_palette {
-            q.clone()
-        } else if let Some(q) = &self.quick_open {
-            q.clone()
+        let mut query = if let Some(query) = &self.command_palette {
+            query.clone()
+        } else if let Some(query) = &self.quick_open {
+            query.clone()
         } else {
             return;
         };
         let mut close = false;
         let mut open: Option<PathBuf> = None;
+        let mut run: Option<PaletteCommand> = None;
+        let commands = is_palette.then(|| self.palette_commands(&query));
+
         egui::Window::new(if is_palette {
             "Command Palette"
         } else {
             "Quick Open"
         })
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 40.0))
-        .default_width(480.0)
+        .default_width(520.0)
         .resizable(false)
         .collapsible(false)
         .show(ctx, |ui| {
-            let response = ui.add(egui::TextEdit::singleline(&mut query).hint_text(
-                if is_palette {
-                    "Type a command or file…"
-                } else {
-                    "Type a file name…"
-                },
-            ));
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut query)
+                    .desired_width(f32::INFINITY)
+                    .hint_text(if is_palette {
+                        "Type a command…"
+                    } else {
+                        "Type a file name…"
+                    }),
+            );
             response.request_focus();
-            let results = self.fuzzy_files(&query);
             ui.separator();
-            for (path, _) in results.iter().take(10) {
-                if ui
-                    .selectable_label(false, path.display().to_string())
-                    .clicked()
-                {
-                    open = Some(path.clone());
+
+            if let Some(commands) = &commands {
+                if commands.is_empty() {
+                    ui.label(
+                        RichText::new("No command matches.")
+                            .small()
+                            .color(self.tokens.text_muted),
+                    );
                 }
-            }
-            if ui.input(|input| input.key_pressed(egui::Key::Enter))
-                && let Some(first) = results.first()
-            {
-                open = Some(first.0.clone());
+                for command in commands.iter().take(12) {
+                    let row = ui.selectable_label(false, &command.label);
+                    if row.on_hover_text(&command.description).clicked() {
+                        run = Some(command.clone());
+                    }
+                }
+                if ui.input(|input| input.key_pressed(egui::Key::Enter))
+                    && let Some(first) = commands.first()
+                {
+                    run = Some(first.clone());
+                }
+            } else {
+                let results = self.fuzzy_files(&query);
+                if results.is_empty() && !query.trim().is_empty() {
+                    ui.label(
+                        RichText::new("No file matches.")
+                            .small()
+                            .color(self.tokens.text_muted),
+                    );
+                }
+                for (path, _) in results.iter().take(12) {
+                    let shown = path.strip_prefix(&self.repository).unwrap_or(path);
+                    if ui
+                        .selectable_label(false, shown.display().to_string())
+                        .clicked()
+                    {
+                        open = Some(path.clone());
+                    }
+                }
+                if ui.input(|input| input.key_pressed(egui::Key::Enter))
+                    && let Some(first) = results.first()
+                {
+                    open = Some(first.0.clone());
+                }
             }
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 close = true;
             }
         });
-        // Commit the snapshot back to state after the window closes.
+
         if is_palette {
             self.command_palette = Some(query);
         } else {
@@ -2319,12 +2455,124 @@ impl PurrCodeIde {
         }
         if let Some(path) = open {
             self.open_file(path);
+            close = true;
+        }
+        // Dismiss before running: a command that opens another overlay (Go to
+        // file) would otherwise have its own state cleared a line later.
+        if close || run.is_some() {
             self.command_palette = None;
             self.quick_open = None;
         }
-        if close {
-            self.command_palette = None;
-            self.quick_open = None;
+        if let Some(command) = run {
+            self.run_palette_command(&command);
+        }
+    }
+
+    /// The palette's entries: the window's own actions, then the daemon's
+    /// session commands.
+    ///
+    /// Both are real. A window action does what it says immediately; a session
+    /// command is placed in the composer for the agent, which is where the
+    /// daemon's command contract is actually interpreted. Commands that need a
+    /// session are not offered when none is selected, rather than being listed
+    /// and then doing nothing.
+    fn palette_commands(&self, query: &str) -> Vec<PaletteCommand> {
+        let query = query.trim().to_lowercase();
+        let mut out: Vec<PaletteCommand> = Vec::new();
+        for (label, description, action) in [
+            (
+                "Go to file…",
+                "Open a file by name",
+                PaletteAction::QuickOpen,
+            ),
+            (
+                "Go to symbol in file…",
+                "List the symbols in the active file",
+                PaletteAction::Outline,
+            ),
+            (
+                "Format document",
+                "Run the language server's formatter",
+                PaletteAction::Format,
+            ),
+            (
+                "Find in project…",
+                "Search every file for text",
+                PaletteAction::Search,
+            ),
+            (
+                "Toggle terminal",
+                "Show or hide the terminal panel",
+                PaletteAction::Terminal,
+            ),
+            (
+                "Show problems",
+                "Diagnostics and validation failures",
+                PaletteAction::Problems,
+            ),
+            (
+                "Open settings",
+                "Providers, models, MCP, skills",
+                PaletteAction::Settings,
+            ),
+        ] {
+            if label.to_lowercase().contains(&query) {
+                out.push(PaletteCommand {
+                    label: label.to_owned(),
+                    description: description.to_owned(),
+                    action,
+                });
+            }
+        }
+        if self.selected.is_some() {
+            for (name, description, _) in &self.commands {
+                if name.to_lowercase().contains(&query) {
+                    out.push(PaletteCommand {
+                        label: name.clone(),
+                        description: description.clone(),
+                        action: PaletteAction::Compose(name.clone()),
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    fn run_palette_command(&mut self, command: &PaletteCommand) {
+        match &command.action {
+            // The caller closes the palette after this returns, so setting
+            // `quick_open` here hands the overlay straight to the file picker.
+            PaletteAction::QuickOpen => self.quick_open = Some(String::new()),
+            PaletteAction::Outline => {
+                self.aux_panel = Some(AuxView::Outline);
+                if let Some(path) = self.active_file_path() {
+                    self.request_symbols(&path);
+                }
+            }
+            PaletteAction::Format => {
+                if let Some(path) = self.active_file_path() {
+                    self.format_document(&path, false);
+                }
+            }
+            PaletteAction::Search => self.activity = ActivityBar::Search,
+            PaletteAction::Terminal => {
+                self.bottom_panel = if self.bottom_panel == Some(DockTab::Terminal) {
+                    None
+                } else {
+                    Some(DockTab::Terminal)
+                };
+            }
+            PaletteAction::Problems => self.bottom_panel = Some(DockTab::Problems),
+            PaletteAction::Settings => self.settings_open = true,
+            PaletteAction::Compose(name) => {
+                // Session commands are interpreted by the daemon from the
+                // request text, so the palette puts the command where the user
+                // can see it and add an argument before sending — rather than
+                // firing it silently on their behalf.
+                self.composer = format!("{name} ");
+                self.composer_caret = self.composer.len();
+                self.focus_composer = true;
+            }
         }
     }
 
@@ -2333,37 +2581,82 @@ impl PurrCodeIde {
         if query.trim().is_empty() {
             return Vec::new();
         }
-        let lower = query.to_ascii_lowercase();
-        let mut scored: Vec<(PathBuf, i64)> = Vec::new();
-        let mut entries = vec![self.repository.clone()];
-        while let Some(dir) = entries.pop() {
-            let Ok(read) = std::fs::read_dir(&dir) else {
+        self.matching_paths(&query.to_ascii_lowercase(), false, 20)
+            .into_iter()
+            .map(|path| (path, 0))
+            .collect()
+    }
+
+    /// Paths under the open folder matching a lowercase query.
+    ///
+    /// Matching is done against the repository-relative path, not the bare
+    /// filename, so `app/mod` finds `src/app/mod.rs` while `mod` alone does
+    /// not drown the list in every `mod.rs` in the tree. Results are ranked
+    /// by where the match landed and how much path surrounds it, so the
+    /// shortest, earliest match wins.
+    pub(crate) fn matching_paths(
+        &self,
+        query: &str,
+        directories: bool,
+        limit: usize,
+    ) -> Vec<PathBuf> {
+        if self.repository.as_os_str().is_empty() {
+            return Vec::new();
+        }
+        // A bounded walk. A repository with a pathological tree must not make
+        // the composer stutter on every keystroke, so the crawl stops once it
+        // has seen enough to rank a good answer.
+        const MAX_VISITED: usize = 20_000;
+        let mut scored: Vec<(i64, PathBuf)> = Vec::new();
+        let mut queue = std::collections::VecDeque::from([self.repository.clone()]);
+        let mut visited = 0_usize;
+        while let Some(directory) = queue.pop_front() {
+            let Ok(entries) = std::fs::read_dir(&directory) else {
                 continue;
             };
-            for entry in read.flatten() {
+            for entry in entries.flatten() {
+                visited += 1;
+                if visited > MAX_VISITED {
+                    break;
+                }
                 let path = entry.path();
                 let name = path
                     .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default();
+                // The same exclusions the file tree uses, so completion and
+                // the Explorer agree about what is in the project.
                 if name.starts_with('.') || name == "target" || name == "node_modules" {
                     continue;
                 }
-                let Some(pos) = name.find(&lower) else {
+                let is_directory = path.is_dir();
+                if is_directory {
+                    queue.push_back(path.clone());
+                }
+                if is_directory != directories {
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(&self.repository)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .to_ascii_lowercase();
+                // An empty query lists what is nearest the root rather than
+                // nothing: opening `@` with no text should show something.
+                let position = if query.is_empty() {
+                    Some(0)
+                } else {
+                    relative.find(query)
+                };
+                let Some(position) = position else {
                     continue;
                 };
-                let score = -(pos as i64) - name.len() as i64;
-                if path.is_dir() {
-                    entries.push(path.clone());
-                } else {
-                    scored.push((path, score));
-                }
+                scored.push((position as i64 + relative.len() as i64, path));
             }
         }
-        scored.sort_by_key(|(_, score)| *score);
-        scored.truncate(20);
-        scored
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        scored.truncate(limit);
+        scored.into_iter().map(|(_, path)| path).collect()
     }
 }
 

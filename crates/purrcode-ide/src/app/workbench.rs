@@ -622,6 +622,9 @@ impl PurrCodeIde {
         let focused = ui
             .ctx()
             .memory(|memory| memory.has_focus(egui::Id::new("universal_composer")));
+        let completion_open = self.active_completion.is_some();
+        // Set by the completion popup when it consumes the frame's Enter.
+        let mut completion_took_enter = false;
 
         egui::Frame::new()
             .fill(self.tokens.background_raised)
@@ -639,7 +642,7 @@ impl PurrCodeIde {
                 // Measured *inside* the frame, so the field stops at the
                 // padding instead of running off the right edge of the window.
                 let width = ui.available_width();
-                egui::TextEdit::multiline(&mut self.composer)
+                let output = egui::TextEdit::multiline(&mut self.composer)
                     .id(egui::Id::new("universal_composer"))
                     .hint_text(RichText::new(hint).color(self.tokens.text_muted))
                     .frame(false)
@@ -649,17 +652,40 @@ impl PurrCodeIde {
                     .show(ui);
                 self.focus_composer = false;
 
+                // Track the caret so `/ @ #` completion knows which token is
+                // being typed. egui counts characters; the token grammar is
+                // byte-indexed, so convert once here rather than at each use.
+                if let Some(range) = output.state.cursor.char_range() {
+                    self.composer_caret = self
+                        .composer
+                        .char_indices()
+                        .nth(range.primary.index)
+                        .map_or(self.composer.len(), |(index, _)| index);
+                }
+                self.active_completion = if output.response.has_focus() {
+                    super::composer::active_token(&self.composer, self.composer_caret)
+                } else {
+                    None
+                };
+
+                // Completions for the token being typed, and the references
+                // the daemon resolved out of the draft. The popup owns Enter
+                // while it is open, so accepting a suggestion cannot also
+                // send the request.
+                if completion_open {
+                    ui.add_space(4.0);
+                    completion_took_enter = self.completion_popup(ui);
+                }
+                self.reference_chips(ui);
+
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     self.bypass_chip(ui);
-                    // Intent legend: / commands, @ files, # symbols are typed
-                    // directly into the composer text. There is no fuzzy
-                    // picker or click dispatch behind these yet (that lands
-                    // with the Whisker-backed resolver + command palette in
-                    // a follow-up Context UX pass), so this is plain static
-                    // text — no hover affordance that would promise a click
-                    // does something.
+                    // Intent legend: / commands, @ files, # symbols. These are
+                    // now live — typing a prefix opens the completion list
+                    // above — so the pills say what to type rather than
+                    // pretending to be buttons.
                     if self.composer.trim().is_empty() && !submitting {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
@@ -711,11 +737,18 @@ impl PurrCodeIde {
         }
         self.ime_composing = composing;
 
-        // Submit on Enter (not Shift+Enter, and never mid-composition).
+        // Keep the resolved-reference row in step with the draft. Debounced
+        // inside `refresh_references`, which ignores an unchanged draft.
+        self.refresh_references();
+
+        // Submit on Enter (not Shift+Enter, never mid-composition, and never
+        // when the completion popup already used that Enter to accept a
+        // suggestion — the user was picking a file, not sending).
         if ui.input(|input| input.key_pressed(egui::Key::Enter))
             && !ui.input(|input| input.modifiers.shift)
             && can_submit
             && !self.ime_composing
+            && !completion_took_enter
         {
             self.submit();
         }

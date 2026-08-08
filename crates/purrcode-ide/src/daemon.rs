@@ -379,6 +379,24 @@ pub enum Request {
     },
     /// `GET /v1/lsp/diagnostics` — everything the servers have published.
     LspDiagnostics,
+    /// `POST /v1/lsp/workspace-symbols` — project-wide symbol search, which
+    /// backs `#symbol` completion in the composer.
+    LspWorkspaceSymbols {
+        /// Any file in the project, used to pick the language server.
+        path: PathBuf,
+        root: PathBuf,
+        query: String,
+    },
+    // ── Composer ─────────────────────────────────────────────────────
+    /// `GET /v1/commands` — the command palette's contract.
+    ListCommands,
+    /// `POST /v1/references/resolve` — turn the composer's `@`/`#` tokens into
+    /// resolved references with previews, so the user can see exactly what the
+    /// agent will be given before sending.
+    ResolveReferences {
+        repository: String,
+        text: String,
+    },
 }
 
 /// A panel in the session presentation snapshot.
@@ -726,6 +744,17 @@ pub enum Response {
     /// path so a missing rust-analyzer explains itself in the editor instead
     /// of raising a modal notice on every keystroke.
     LspUnavailable(String),
+    /// `POST /v1/lsp/workspace-symbols` — the query that was asked, and its
+    /// matches. The query is echoed so a reply for a prefix the user has
+    /// already typed past is discarded rather than shown as current.
+    LspWorkspaceSymbols(String, Value),
+    // ── Composer ─────────────────────────────────────────────────────
+    /// `GET /v1/commands` — the available commands.
+    Commands(Value),
+    /// `POST /v1/references/resolve` — the text that was resolved, and the
+    /// resolved references. The text is echoed so a stale reply cannot label
+    /// a draft the user has since edited.
+    References(String, Value),
     /// A settings mutation landed; the UI refetches the affected page.
     SettingsMutated,
     /// Connectivity changed. `false` means every view should say so rather than
@@ -1820,6 +1849,25 @@ impl Worker {
                 Ok(value) => self.reply(Response::LspDiagnostics(value)),
                 Err(error) => self.reply(Response::LspUnavailable(error)),
             },
+            Request::LspWorkspaceSymbols { path, root, query } => {
+                let body = serde_json::json!({"path": path, "root": root, "query": query});
+                match self.post::<Value>("/v1/lsp/workspace-symbols", &body) {
+                    Ok(value) => self.reply(Response::LspWorkspaceSymbols(query, value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::ListCommands => match self.get::<Value>("/v1/commands") {
+                Ok(value) => self.reply(Response::Commands(value)),
+                Err(error) => self.reply_failure(error),
+            },
+            Request::ResolveReferences { repository, text } => {
+                let body = serde_json::json!({"repository": repository, "text": text});
+                // A reference that cannot be resolved is not a transport
+                // failure worth a notice: the chip row shows it unresolved.
+                if let Ok(value) = self.post::<Value>("/v1/references/resolve", &body) {
+                    self.reply(Response::References(text, value));
+                }
+            }
             Request::CodexGet => match self.get::<Value>("/v1/codex") {
                 Ok(value) => self.reply(Response::Codex(value)),
                 Err(error) => self.reply_failure(error),
