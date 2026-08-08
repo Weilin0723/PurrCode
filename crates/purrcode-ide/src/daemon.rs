@@ -108,6 +108,20 @@ pub enum Request {
         action: &'static str,
         body: Value,
     },
+    /// Run a deterministic composer command at the route the daemon itself
+    /// published for it (`CommandExecution::Daemon`).
+    ///
+    /// The path comes from `GET /v1/commands` rather than being hardcoded here,
+    /// so the IDE cannot dispatch `/undo` to a route the daemon does not serve —
+    /// and cannot quietly fall back to sending it as a chat message, which is
+    /// the defect this request exists to remove.
+    SessionCommand {
+        session: String,
+        /// The command name, for the outcome notice.
+        name: String,
+        /// Already resolved: `{id}` substituted with the session id.
+        path: String,
+    },
     SetModel {
         session: String,
         model: String,
@@ -376,6 +390,22 @@ pub enum Request {
         /// `true` when the format was triggered by a save, so the editor
         /// writes the formatted text back to disk once the edits land.
         then_save: bool,
+    },
+    /// `POST /v1/lsp/rename` — the workspace edit that renames the symbol at a
+    /// position.
+    ///
+    /// A rename is a write, not a read, so unlike the other language requests
+    /// it takes the serial control lane: two renames applied concurrently would
+    /// each compute their edits against a tree the other is changing.
+    LspRename {
+        path: PathBuf,
+        root: PathBuf,
+        line: u64,
+        character: u64,
+        new_name: String,
+        /// The identifier being replaced, echoed back so the confirmation can
+        /// name it.
+        old_name: String,
     },
     /// `GET /v1/lsp/diagnostics` — everything the servers have published.
     LspDiagnostics,
@@ -735,6 +765,11 @@ pub enum Response {
     SessionStarted(String),
     /// A mutation completed and the named session should be reloaded.
     Mutated(String),
+    /// A deterministic command ran: `(session, command name, daemon response)`.
+    /// The response body is carried so the UI can report what actually
+    /// happened — which checkpoint an undo landed on — rather than a generic
+    /// success.
+    CommandExecuted(String, String, Value),
     Diff(String, String),
     Hunks(String, Value),
     Models(Vec<Value>),
@@ -827,6 +862,8 @@ pub enum Response {
     /// `POST /v1/lsp/format` — the edits, the document, and whether the editor
     /// should save once they are applied.
     LspFormat(PathBuf, Value, bool),
+    /// A rename's workspace edit: `(old name, new name, changes by file)`.
+    LspRename(String, String, Value),
     /// `GET /v1/lsp/diagnostics` — every published diagnostic.
     LspDiagnostics(Value),
     /// A language-server request failed. Separate from the generic failure
@@ -1062,6 +1099,12 @@ impl Request {
             Self::SessionAction { action, .. } => {
                 matches!(*action, "cancel" | "approve" | "reject")
             }
+            // `/approve`, `/reject` and `/pause` are the user taking control of
+            // a running agent. Queueing them behind that agent's own traffic is
+            // what makes a stop button feel broken.
+            Self::SessionCommand { path, .. } => {
+                path.ends_with("/approve") || path.ends_with("/reject") || path.ends_with("/pause")
+            }
             Self::SendTerminalInput { .. }
             | Self::StopTerminal { .. }
             | Self::SetTerminalOwner { .. }
@@ -1118,10 +1161,16 @@ impl Request {
                     | Self::RestoreCheckpoint { .. }
                     | Self::CreateCheckpoint { .. }
                     | Self::ForkSession { .. }
+                    // A command that walks the checkpoint timeline mutates the
+                    // worktree, so it shares the serial lane with restore.
+                    | Self::SessionCommand { .. }
                     | Self::UpdateSessionMeta { .. }
                     | Self::DeleteSession { .. }
                     | Self::McpTest { .. }
                     | Self::SkillSetEnabled { .. }
+                    // A rename writes across the tree, so it takes the serial
+                    // lane rather than the read lane the other LSP requests use.
+                    | Self::LspRename { .. }
                     | Self::CreateMemory { .. }
                     | Self::UpdateMemory { .. }
                     | Self::ForgetMemory { .. }
@@ -1432,6 +1481,14 @@ impl Worker {
                 body,
             } => match self.post::<Value>(&format!("/v1/sessions/{session}/{action}"), &body) {
                 Ok(_) => self.reply(Response::Mutated(session)),
+                Err(error) => self.reply_failure(error),
+            },
+            Request::SessionCommand {
+                session,
+                name,
+                path,
+            } => match self.post::<Value>(&path, &Value::Null) {
+                Ok(value) => self.reply(Response::CommandExecuted(session, name, value)),
                 Err(error) => self.reply_failure(error),
             },
             Request::SetModel { session, model } => {
@@ -1969,6 +2026,25 @@ impl Worker {
                 let body = serde_json::json!({"path": path, "root": root});
                 match self.post::<Value>("/v1/lsp/format", &body) {
                     Ok(value) => self.reply(Response::LspFormat(path, value, then_save)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspRename {
+                path,
+                root,
+                line,
+                character,
+                new_name,
+                old_name,
+            } => {
+                let body = serde_json::json!({
+                    "path": path,
+                    "root": root,
+                    "position": { "line": line, "character": character },
+                    "new_name": new_name,
+                });
+                match self.post::<Value>("/v1/lsp/rename", &body) {
+                    Ok(value) => self.reply(Response::LspRename(old_name, new_name, value)),
                     Err(error) => self.reply(Response::LspUnavailable(error)),
                 }
             }

@@ -1,6 +1,104 @@
 # Implementation status
 
-Updated: 2026-08-07 (v1.2 daily-driver backend complete on `feature/v1.2-daily-driver-backend`)
+Updated: 2026-08-08 (v1.2 semantic-gap closure on `feature/v1.2-daily-driver-backend`)
+
+## v1.2 semantic-gap closure — UI affordances now match runtime semantics
+
+An IDE → daemon → runtime trace of the v1.2 branch found four places where a
+capability existed on both the UI side and the backend side without being
+connected, so the product claimed something the runtime did not do. These are
+not missing features; they are **false affordances**, which are worse than
+absent ones because they read as success. Each is now closed end to end.
+
+### 1. Composer references reach the model (was: resolved preview only)
+
+- `PinnedContext` / `PinnedSection` / `PinnedOrigin` in `runtime-core` are the
+  single channel by which pinned content reaches a turn. `NativeAgent::with_pinned_context`
+  carries it, and `build_messages` assembles it directly after the current
+  request — before the plan — so an attached file is not the least salient
+  thing in the prompt.
+- New `purrcode-daemon/src/project_context.rs` resolves references from the text
+  the turn is answering (objective for a new session, the follow-up message for
+  a continuation) and attaches bounded content. **The daemon resolves, not the
+  client**: no client-supplied content is trusted, and the TUI and CLI get the
+  behaviour without shipping their own resolver.
+- Attachments are bounded (24 KiB each, 96 KiB per turn) and **declare their own
+  truncation inline**. Repository content is framed as `UNTRUSTED` data so a
+  file whose contents address the model stays a file being read.
+- A reference that cannot be attached is recorded as a system message in the
+  conversation rather than dropped, so the user is told which of their chips
+  did not land.
+- `POST /v1/references/resolve` (the chip's own source of truth) now delegates to
+  the *same* resolution path used for attachment, with a smaller budget. A chip
+  therefore cannot report "resolved" for something the runtime would refuse —
+  which is exactly how `@context` came to show a green chip for content that
+  could never be attached.
+
+### 2. Composer commands execute (was: `/undo` sent to the language model)
+
+- `purrcode-daemon/src/commands.rs` is the registry, and every command declares
+  its `CommandExecution`: `daemon` (a named deterministic route), `client` (the
+  UI performs it), or `prompt` (declared explicitly, never by omission, as text
+  the agent receives). `GET /v1/commands` publishes it.
+- `POST /v1/sessions/{id}/messages` **refuses** a built-in command instead of
+  storing it as user prose, and names the route that performs it. The refusal
+  lives in the daemon so no client can reintroduce the bug. Prose that merely
+  mentions a command (`what does /undo do?`) is still an ordinary message.
+- Real `POST /v1/sessions/{id}/undo` and `/redo` walk the checkpoint timeline.
+  The cursor is derived from the event log (whichever of `CheckpointRestored` /
+  `CheckpointCreated` came last), so it survives a restart. Undo first captures
+  work that exists in the worktree but in no checkpoint, which is what makes it
+  recoverable rather than destructive.
+- The IDE dispatches on the published contract: deterministic commands go to
+  their route, client commands open the owning panel, prompt commands are
+  expanded to their instruction text before sending. An execution kind the build
+  does not implement is reported, never degraded into "send it as a message".
+
+### 3. Project memory and instructions enter agent context
+
+- `run_agent_operation` selects project memory and repository instruction files
+  (`AGENTS.md`, `CLAUDE.md`, `.purrcode.md`) into the same pinned channel.
+- Selection is bounded and ranked, not a database dump: standing rules
+  (`user_rules`) and build knowledge always apply; architecture and learnings are
+  carried when the request touches them. Provenance (source, confidence, scope)
+  travels with each entry so the model can weigh a remembered claim against what
+  it reads.
+- `last_used_at` is written when an entry is **actually pinned into a turn**, so
+  it means "the agent used this" rather than "someone opened Settings".
+
+### 4. The agent workspace shows every subagent
+
+- New `ScoutStarted` event, and `ScoutFailed` now carries its `scout_id`, so a
+  running Scout is visible while it runs rather than only after it finishes.
+- `GET /v1/supervisor/{session}` projects Scouts alongside supervisor workers and
+  reports each unit's `kind`, `role`, and `stoppable`. Only supervisor workers
+  have a cancellation handle, so the IDE draws Stop only where the daemon says it
+  can honour it.
+- The IDE keeps polling while the session is executing, not only while a unit is
+  already known to be running — otherwise a subagent that started after the
+  first read was never noticed.
+
+### Also: LSP rename closed (backend existed, IDE could not reach it)
+
+- `POST /v1/lsp/rename` and the language client's `textDocument/rename` shipped
+  with v1.2, but the IDE had no request for them. F2 and a palette entry now open
+  a rename prompt; the workspace edit is applied to open buffers (left unsaved
+  for review) and written to closed files (so the project still builds).
+- Every path in the edit is confined to the open folder first — a language server
+  is an external process — and partial application is reported as partial rather
+  than rounded up to success.
+
+### Ledger integrity
+
+Pinned sections are ledgered individually with `WhyIncluded::Pinned` under the
+new `ContextClass::PinnedContext`, from the same rendered bytes the prompt
+carries (`PinnedContext::render_parts` is the single source of truth for both).
+The existing invariant that the ledger sum equals the request's aggregate token
+estimate is preserved and is covered by an extended test.
+
+Gates: `cargo fmt --check`, `clippy --workspace --all-targets -- -D warnings`,
+and `cargo test --workspace` all pass. See the note at the end of the v1.2
+backend section about one pre-existing flaky test.
 
 ## v1.2 daily-driver backend — implemented on branch
 
@@ -54,33 +152,20 @@ Nine backend workstreams that turn the v1.1 agent-runtime correctness into daily
 - New crate `purrcode-lsp`: a dependency-light LSP client (stdio, `Content-Length` framing) that spawns rust-analyzer / typescript-language-server / pyright / gopls and covers initialize/didOpen/didChange, hover, definition, references, document symbols, formatting.
 - Daemon routes: `GET /v1/lsp/servers`, `POST /v1/lsp/{open,hover,definition,references,symbols,format}`. Missing language servers degrade gracefully.
 
-All verification gates pass on the branch: `cargo fmt --check`, stable-toolchain `clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`.
+`cargo fmt --check`, stable-toolchain `clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` pass on the branch.
 
-## v1.0 UX optimization — implemented locally, awaiting user acceptance
-
-### Session workspace (metadata, search, lifecycle routes)
-
-- Migration `0003_session_workspace.sql`: `session_meta` (title/archived/pinned/parent/deleted), `session_checkpoints`, `project_memory`, and a `session_search` FTS5 index over the durable event log, backfilled from existing events.
-- `SessionStore`: metadata CRUD, live FTS indexing inside the append transaction, `search_sessions` with snippets, and `fork_session_events` to copy an event prefix into a child session.
-- Daemon: `PATCH /v1/sessions/{id}` (title/archive/pin), `DELETE /v1/sessions/{id}` (soft delete, event log preserved), `GET /v1/sessions/search?q=`. `SessionView` now carries title/archived/pinned/parent_id.
-
-### Restorable checkpoints and session fork
-
-- Checkpoint capture persists the patch blob into `session_checkpoints` (the `CheckpointCreated` event stays audit-only), deduped on patch digest. Auto-checkpoint after each completed agent turn.
-- Restore = rollback to base HEAD + forward-apply the checkpoint patch (`RepositoryEngine::apply_patch`); routes `GET /v1/sessions/{id}/checkpoints`, `GET .../checkpoints/{id}` preview, `POST .../checkpoints/{id}/restore` with explicit discard acknowledgement, audited by a new `CheckpointRestored` event.
-- Fork = copy the parent's event prefix up to an anchor message into a fresh child session with its own isolated worktree and reproduced code state at the anchor; new `SessionForked` audit event and `parent_id` linkage.
-
-### Composer references
-
-- New dependency-light crate `purrcode-reference-resolver`: pure grammar parser for `@file`, `@file#L42-L91`, `@folder:path`, `@diff`, `@git:ref`, `@context`, `#symbol`, with byte-span tracking.
-- Daemon `POST /v1/references/resolve` resolves references against a repository (bounded path-checked reads, git diff/numstat for `@diff`, `git show` for `@git`, definition grep for `#symbol`); `GET /v1/commands` returns the daemon-authoritative command palette contract.
-
-### Project memory
-
-- `SessionStore`: insert/list (repository-scoped, kind-filtered)/edit/touch/forget over `project_memory`, each entry carrying source, confidence, scope, created_at, last_used_at.
-- Daemon `GET /v1/memory` (grouped by kind), `POST /v1/memory` (secret-scanned, repository canonicalized), `PATCH /v1/memory/{id}`, `DELETE /v1/memory/{id}`. Entries are user-authored and auditable, never silently inferred.
-
-All verification gates pass on the branch: `cargo fmt --check`, stable-toolchain `clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`.
+**Known flaky test, pre-existing.** `purrcode-daemon`'s
+`skill_install_requires_exact_single_use_authorization_and_rechecks_digest` failed
+repeatedly during one stretch of development — including on a clean checkout of
+this branch, so it was never related to a code change — and then passed reliably
+again, which is how the run above is green. When it fails it takes its
+`network_isolation == true` branch (macOS, `/usr/bin/sandbox-exec` present) and
+gets 400 from `POST /v1/skills/install/propose` where it expects 200, so the
+qualification step is sensitive to something in the ambient sandbox or network
+environment rather than to the code under test. Nothing gates the test on that
+environment, so it can fail in CI for reasons unrelated to the change under
+review. Worth making the dependency explicit in the test rather than leaving it
+to chance.
 
 ## v1.0 UX optimization — implemented locally, awaiting user acceptance
 

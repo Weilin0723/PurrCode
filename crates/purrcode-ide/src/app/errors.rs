@@ -131,6 +131,90 @@ pub(crate) fn disconnected_notice() -> Notice {
     .transient()
 }
 
+/// A command was typed with no session selected.
+pub(crate) fn command_needs_session(name: &str) -> Notice {
+    Notice::new(
+        NoticeKind::AgentRecoverable,
+        format!("{name} needs an open session"),
+        "Nothing was changed and nothing was sent.",
+    )
+    .next("Select or start a session, then run the command again.")
+}
+
+/// A command the daemon publishes that this build cannot perform.
+///
+/// Said plainly rather than silently forwarded to the agent: a command that
+/// reaches the model as prose produces an agreeable reply and no action, which
+/// reads as success.
+pub(crate) fn command_not_available(name: &str) -> Notice {
+    Notice::new(
+        NoticeKind::AgentRecoverable,
+        format!("{name} isn't available in this window yet"),
+        "Nothing was changed, and it was not sent to the agent as a message.",
+    )
+    .next("Use the matching panel or Settings page directly.")
+}
+
+/// What a deterministic command actually did.
+///
+/// Reported as a notice because the alternative is a command that changes the
+/// worktree with no visible acknowledgement, leaving the user to guess whether
+/// it ran.
+pub(crate) fn command_outcome(headline: impl Into<String>, impact: impl Into<String>) -> Notice {
+    Notice::new(NoticeKind::AgentRecoverable, headline, impact)
+}
+
+/// A rename landed. States the scope, because a rename that silently touched
+/// forty files is one the user needs to know to review.
+pub(crate) fn rename_applied(old_name: &str, new_name: &str, edits: usize, files: usize) -> Notice {
+    Notice::new(
+        NoticeKind::AgentRecoverable,
+        format!("Renamed {old_name} to {new_name}"),
+        format!(
+            "{edits} occurrence{} across {files} file{} changed. Open files are unsaved so you can \
+             review them; files that were not open were written to disk.",
+            if edits == 1 { "" } else { "s" },
+            if files == 1 { "" } else { "s" },
+        ),
+    )
+    .next("Review the changes in Source Control before committing.")
+}
+
+/// The server accepted the rename but returned no edits.
+pub(crate) fn rename_produced_nothing(old_name: &str) -> Notice {
+    Notice::new(
+        NoticeKind::AgentRecoverable,
+        format!("Nothing was renamed for {old_name}"),
+        "No files were changed.",
+    )
+    .next(
+        "The language server may not support renaming this symbol, or the caret may not have been \
+         on one. Try placing the caret on the identifier itself.",
+    )
+}
+
+/// Some of a rename's edits could not be applied, so the project is now
+/// partially renamed. Never folded into the success notice.
+pub(crate) fn rename_incomplete(refused: &[String], unwritable: &[String]) -> Notice {
+    let mut detail = String::new();
+    if !refused.is_empty() {
+        detail.push_str(&format!(
+            "Outside the open folder, so refused: {}\n",
+            refused.join(", ")
+        ));
+    }
+    if !unwritable.is_empty() {
+        detail.push_str(&format!("Could not be written: {}", unwritable.join(", ")));
+    }
+    Notice::new(
+        NoticeKind::Environment,
+        "The rename was only partly applied",
+        "Some files were changed and some were not, so the project may not build.",
+    )
+    .next("Review Source Control, then finish or revert the rename by hand.")
+    .detailed(detail)
+}
+
 /// Classify a raw transport or API failure.
 ///
 /// Returns `None` for failures that are already represented elsewhere on

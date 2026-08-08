@@ -299,6 +299,7 @@ pub(crate) enum PaletteAction {
     QuickOpen,
     Outline,
     Format,
+    Rename,
     Search,
     Terminal,
     Problems,
@@ -415,8 +416,8 @@ pub struct PurrCodeIde {
     pub(crate) active_completion: Option<composer::ActiveToken>,
     /// Which suggestion the arrow keys have landed on.
     pub(crate) completion_index: usize,
-    /// Commands the daemon publishes, as `(name, description, group)`.
-    pub(crate) commands: Vec<(String, String, String)>,
+    /// Commands the daemon publishes, including how each one executes.
+    pub(crate) commands: Vec<model::Command>,
     /// Project-wide symbols for `#` completion, as `(name, kind, container)`.
     pub(crate) workspace_symbols: Vec<(String, String, Option<String>)>,
     /// The query `workspace_symbols` answers, so a stale reply is discarded.
@@ -526,6 +527,8 @@ pub struct PurrCodeIde {
     pub(crate) language: crate::model::LanguageIntelligence,
     /// Where the pointer is resting in the editor, for delayed hover.
     pub(crate) hover_probe: Option<language::HoverProbe>,
+    /// A rename the user is naming, if the prompt is open.
+    pub(crate) pending_rename: Option<language::PendingRename>,
     /// The caret's document position, kept per frame so keyboard actions
     /// (definition, references, rename) know what the user means by "here".
     pub(crate) caret: Option<crate::model::DocumentPosition>,
@@ -763,6 +766,7 @@ impl PurrCodeIde {
 
             language: crate::model::LanguageIntelligence::default(),
             hover_probe: None,
+            pending_rename: None,
             caret: None,
 
             file_operation: None,
@@ -1021,13 +1025,40 @@ impl PurrCodeIde {
     /// the request itself (PRD §5, §7, FR-002, FR-004) — a greeting stays a
     /// greeting and never creates a worktree, a plan or a validation run.
     pub(crate) fn submit(&mut self) {
-        let text = self.composer.trim().to_owned();
+        let mut text = self.composer.trim().to_owned();
         if text.is_empty() || self.submitting {
             return;
         }
         if !self.connected {
             self.push_notice(errors::disconnected_notice());
             return;
+        }
+        // A command is executed, not said. Before this dispatch, `/undo` was
+        // sent as conversation text and the model replied "Sure, I'll undo
+        // that" while nothing was restored. The daemon now refuses commands as
+        // messages, so anything not handled here would surface as an error
+        // rather than a silent lie — but the point is to actually run it.
+        if let Some(command) = crate::model::command_in_draft(&self.commands, &text).cloned() {
+            match command.execution {
+                crate::model::CommandExecution::Prompt { ref prompt } => {
+                    // Expanded here, so what reaches the agent (and what is
+                    // recorded in the conversation) is the instruction itself
+                    // rather than the shorthand.
+                    text = match crate::model::command_argument(&text) {
+                        Some(argument) => format!("{prompt}\n\n{argument}"),
+                        None => prompt.clone(),
+                    };
+                }
+                _ => {
+                    self.run_session_command(&command, &text);
+                    self.composer.clear();
+                    self.composer_caret = 0;
+                    self.resolved_references.clear();
+                    self.references_requested_for = None;
+                    self.focus_composer = true;
+                    return;
+                }
+            }
         }
         self.submitting = true;
         self.pending_submission = Some(text.clone());
@@ -1052,6 +1083,74 @@ impl PurrCodeIde {
         }
         self.composer.clear();
         self.focus_composer = true;
+    }
+
+    /// Execute a composer command.
+    ///
+    /// Every branch here either performs the operation or says why it cannot.
+    /// Nothing falls through to the message path: a command the IDE cannot
+    /// dispatch must report that, because the alternative — quietly sending it
+    /// to the model — is what made `/undo` look like it worked.
+    fn run_session_command(&mut self, command: &crate::model::Command, draft: &str) {
+        use crate::model::CommandExecution;
+        let Some(session) = self.selected.clone() else {
+            self.push_notice(errors::command_needs_session(&command.name));
+            return;
+        };
+        match &command.execution {
+            CommandExecution::Daemon { path } => {
+                // `/checkpoint` is the one deterministic command with a payload
+                // (its label), and the IDE already has a typed request for it.
+                if command.name == "/checkpoint" {
+                    let label = crate::model::command_argument(draft)
+                        .unwrap_or_else(|| "manual".to_owned());
+                    self.client
+                        .send(Request::CreateCheckpoint { session, label });
+                    return;
+                }
+                self.client.send(Request::SessionCommand {
+                    session: session.clone(),
+                    name: command.name.clone(),
+                    path: path.replace("{id}", &session),
+                });
+            }
+            CommandExecution::Client => match command.name.as_str() {
+                "/context" => {
+                    self.bottom_panel = Some(DockTab::Activity);
+                    self.aux_panel = Some(AuxView::Agent);
+                }
+                "/diff" => {
+                    self.aux_panel = Some(AuxView::Source);
+                    self.code_panel = CodePanel::Changes;
+                    self.refresh_diff();
+                }
+                // A fork needs an anchor message, so this opens the surface that
+                // shows the anchors rather than picking one for the user.
+                "/fork" | "/checkpoints" => {
+                    self.aux_panel = Some(AuxView::Checkpoints);
+                    self.client.send(Request::ListCheckpoints { session });
+                }
+                "/model" => self.open_settings_page(settings::SettingsPage::Models),
+                "/agent" => self.open_settings_page(settings::SettingsPage::Agent),
+                "/mcp" => self.open_settings_page(settings::SettingsPage::Mcp),
+                "/skills" => self.open_settings_page(settings::SettingsPage::Skills),
+                "/memory" => self.open_settings_page(settings::SettingsPage::Memory),
+                other => self.push_notice(errors::command_not_available(other)),
+            },
+            // Expanded by `submit` before it gets here.
+            CommandExecution::Prompt { .. } => {}
+            // The daemon published an execution kind this build does not
+            // implement. Reported rather than guessed at.
+            CommandExecution::Unknown => {
+                self.push_notice(errors::command_not_available(&command.name))
+            }
+        }
+    }
+
+    /// Open Settings directly on one page.
+    fn open_settings_page(&mut self, page: settings::SettingsPage) {
+        self.settings_page = page;
+        self.open_settings();
     }
 
     pub(crate) fn open_workspace(&mut self, path: PathBuf) {
@@ -1287,6 +1386,36 @@ impl PurrCodeIde {
                 if self.selected.as_deref() == Some(id.as_str()) {
                     self.reload_session();
                     self.refresh_diff();
+                }
+                let repository = self.repository_string();
+                self.client.send(Request::ListSessions { repository });
+            }
+            Response::CommandExecuted(id, name, value) => {
+                self.submitting = false;
+                self.pending_submission = None;
+                // The daemon reports where an undo/redo landed; that is what the
+                // user needs to see, not a generic "done".
+                let headline = match (value["position"].as_u64(), value["of"].as_u64()) {
+                    (Some(position), Some(total)) => {
+                        format!("{name} — checkpoint {position} of {total}")
+                    }
+                    _ => format!("{name} ran"),
+                };
+                let impact = match value["label"].as_str() {
+                    Some(label) if !label.is_empty() => {
+                        format!("The worktree now matches the checkpoint “{label}”.")
+                    }
+                    _ => "The session was updated.".to_owned(),
+                };
+                self.push_notice(errors::command_outcome(headline, impact));
+                if self.selected.as_deref() == Some(id.as_str()) {
+                    self.reload_session();
+                    self.refresh_diff();
+                    // The timeline moved, so a Checkpoints panel showing the old
+                    // position would be describing a state that no longer exists.
+                    self.client.send(Request::ListCheckpoints {
+                        session: id.clone(),
+                    });
                 }
                 let repository = self.repository_string();
                 self.client.send(Request::ListSessions { repository });
@@ -1538,6 +1667,9 @@ impl PurrCodeIde {
             Response::LspFormat(path, value, then_save) => {
                 self.apply_format_edits(&path, &value, then_save)
             }
+            Response::LspRename(old_name, new_name, value) => {
+                self.apply_rename_edits(&old_name, &new_name, &value)
+            }
             Response::LspDiagnostics(value) => self.language.absorb_diagnostics(&value),
             Response::Supervisor(session, value) => {
                 if self.selected.as_deref() == Some(session.as_str()) {
@@ -1623,13 +1755,7 @@ impl PurrCodeIde {
                 }
             }
             Response::Commands(value) => {
-                self.commands = crate::model::objects(&value, |item| {
-                    Some((
-                        item["name"].as_str()?.to_owned(),
-                        item["description"].as_str().unwrap_or_default().to_owned(),
-                        item["group"].as_str().unwrap_or_default().to_owned(),
-                    ))
-                });
+                self.commands = crate::model::Command::parse_all(&value);
             }
             Response::References(text, value) => {
                 // The draft may have moved on while this was in flight; a
@@ -1929,6 +2055,8 @@ impl eframe::App for PurrCodeIde {
         self.settings_window(ctx);
 
         self.file_operation_dialog(ctx);
+
+        self.rename_dialog(ctx);
 
         self.restore_dialog(ctx);
 
@@ -2444,18 +2572,24 @@ impl PurrCodeIde {
                 input.consume_key(Modifiers::NONE, Key::F12),
                 input.consume_key(Modifiers::SHIFT, Key::F12),
                 input.consume_key(Modifiers::ALT.plus(Modifiers::SHIFT), Key::F),
+                // F2 is the rename idiom every editor shares.
+                input.consume_key(Modifiers::NONE, Key::F2),
             )
         });
         if let Some((path, position)) = self.caret_target() {
             match language_keys {
-                (true, _, _) => self.go_to_definition(&path, position),
-                (_, true, _) => {
+                (true, ..) => self.go_to_definition(&path, position),
+                (_, true, ..) => {
                     // Read the identifier here rather than every frame: it is
                     // only ever needed to label this one panel.
                     let word = self.word_at_caret(position);
                     self.find_references(&path, position, &word);
                 }
-                (_, _, true) => self.format_document(&path, false),
+                (_, _, true, _) => self.format_document(&path, false),
+                (.., true) => {
+                    let word = self.word_at_caret(position);
+                    self.start_rename(&path, position, &word);
+                }
                 _ => {}
             }
         }
@@ -2612,10 +2746,10 @@ impl PurrCodeIde {
     /// session commands.
     ///
     /// Both are real. A window action does what it says immediately; a session
-    /// command is placed in the composer for the agent, which is where the
-    /// daemon's command contract is actually interpreted. Commands that need a
-    /// session are not offered when none is selected, rather than being listed
-    /// and then doing nothing.
+    /// command is placed in the composer, where submitting it dispatches it to
+    /// the route the daemon published for it. Commands that need a session are
+    /// not offered when none is selected, rather than being listed and then
+    /// doing nothing.
     fn palette_commands(&self, query: &str) -> Vec<PaletteCommand> {
         let query = query.trim().to_lowercase();
         let mut out: Vec<PaletteCommand> = Vec::new();
@@ -2634,6 +2768,11 @@ impl PurrCodeIde {
                 "Format document",
                 "Run the language server's formatter",
                 PaletteAction::Format,
+            ),
+            (
+                "Rename symbol",
+                "Rename every use of the symbol at the caret (F2)",
+                PaletteAction::Rename,
             ),
             (
                 "Find in project…",
@@ -2665,12 +2804,12 @@ impl PurrCodeIde {
             }
         }
         if self.selected.is_some() {
-            for (name, description, _) in &self.commands {
-                if name.to_lowercase().contains(&query) {
+            for command in &self.commands {
+                if command.name.to_lowercase().contains(&query) {
                     out.push(PaletteCommand {
-                        label: name.clone(),
-                        description: description.clone(),
-                        action: PaletteAction::Compose(name.clone()),
+                        label: command.name.clone(),
+                        description: command.description.clone(),
+                        action: PaletteAction::Compose(command.name.clone()),
                     });
                 }
             }
@@ -2694,6 +2833,12 @@ impl PurrCodeIde {
                     self.format_document(&path, false);
                 }
             }
+            PaletteAction::Rename => {
+                if let Some((path, position)) = self.caret_target() {
+                    let word = self.word_at_caret(position);
+                    self.start_rename(&path, position, &word);
+                }
+            }
             PaletteAction::Search => self.activity = ActivityBar::Search,
             PaletteAction::Terminal => {
                 self.bottom_panel = if self.bottom_panel == Some(DockTab::Terminal) {
@@ -2705,10 +2850,11 @@ impl PurrCodeIde {
             PaletteAction::Problems => self.bottom_panel = Some(DockTab::Problems),
             PaletteAction::Settings => self.settings_open = true,
             PaletteAction::Compose(name) => {
-                // Session commands are interpreted by the daemon from the
-                // request text, so the palette puts the command where the user
-                // can see it and add an argument before sending — rather than
-                // firing it silently on their behalf.
+                // The palette puts the command in the composer rather than
+                // firing it, so the user can add an argument and can see what
+                // they are about to run. Submitting it then dispatches it
+                // deterministically (see `run_session_command`) — the palette
+                // is a shortcut to typing, not a second execution path.
                 self.composer = format!("{name} ");
                 self.composer_caret = self.composer.len();
                 self.focus_composer = true;

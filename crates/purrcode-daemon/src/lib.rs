@@ -121,7 +121,11 @@ use crate::ollama_pull::{
     validate_model_name as validate_pull_model_name, validate_pull_action,
 };
 
+mod commands;
 mod file_watcher;
+mod project_context;
+
+use crate::commands::{CommandDescriptor, CommandExecution, builtin_commands, command_for};
 use file_watcher::run_worktree_watcher;
 
 #[derive(Clone)]
@@ -487,6 +491,8 @@ pub async fn bind_and_report(
             "/v1/sessions/{id}/checkpoints/{checkpoint_id}/restore",
             post(restore_checkpoint),
         )
+        .route("/v1/sessions/{id}/undo", post(undo_session))
+        .route("/v1/sessions/{id}/redo", post(redo_session))
         .route("/v1/sessions/{id}/fork", post(fork_session))
         .route(
             "/v1/sessions/{id}/rollback",
@@ -1083,6 +1089,22 @@ struct SupervisorWorkerView {
     worktree: Option<PathBuf>,
     changed_paths: Vec<PathBuf>,
     summary: Option<String>,
+    /// What kind of work unit this is: `supervisor_worker` or `scout`.
+    ///
+    /// The agent workspace showed only supervisor workers, so a user who asked
+    /// PurrCode to "understand this repo, then change it" saw an empty workspace
+    /// while a Scout was doing exactly the work the panel claims to show. Both
+    /// kinds are reported here; the label tells the user which is which rather
+    /// than presenting them as interchangeable.
+    kind: &'static str,
+    /// A human-facing role for the unit ("Scout", "Worker").
+    role: &'static str,
+    /// Whether the per-worker stop route can actually stop this unit.
+    ///
+    /// Only supervisor workers have a cancellation handle. Offering Stop on a
+    /// Scout would be a button that cannot work, so the client is told plainly
+    /// which units it may offer to stop.
+    stoppable: bool,
 }
 
 #[derive(Serialize)]
@@ -1590,6 +1612,9 @@ async fn supervisor_status(
                     worktree: None,
                     changed_paths: Vec::new(),
                     summary: None,
+                    kind: "supervisor_worker",
+                    role: "Worker",
+                    stoppable: true,
                 });
             }
             SessionEvent::WorkerFinished {
@@ -1599,10 +1624,16 @@ async fn supervisor_status(
             } => {
                 // Complete the entry the Started event opened, so a worker
                 // appears once with its final status rather than twice.
-                match workers.iter_mut().find(|worker| worker.id == worker_id) {
+                match workers
+                    .iter_mut()
+                    .find(|worker| worker.id == worker_id && worker.kind == "supervisor_worker")
+                {
                     Some(worker) => {
                         worker.status = status;
                         worker.changed_paths = changed_paths;
+                        // Finished work cannot be stopped, and a Stop button on
+                        // it is a button that cannot do anything.
+                        worker.stoppable = false;
                     }
                     // A run recorded before WorkerStarted existed has only
                     // the Finished event; keep showing it.
@@ -1612,7 +1643,101 @@ async fn supervisor_status(
                         worktree: None,
                         changed_paths,
                         summary: None,
+                        kind: "supervisor_worker",
+                        role: "Worker",
+                        stoppable: false,
                     }),
+                }
+            }
+            // ── Scout work units ──────────────────────────────────────
+            // The Scout is a subagent an ordinary coding turn delegates to. It
+            // belongs in the same workspace as a supervisor worker: from the
+            // user's side both are "PurrCode has something else working on
+            // this", and only one of them being visible is what made the
+            // workspace describe the Supervisor API rather than the product.
+            SessionEvent::ScoutStarted { scout_id, .. } => {
+                workers.push(SupervisorWorkerView {
+                    id: scout_id,
+                    status: "running".into(),
+                    worktree: None,
+                    changed_paths: Vec::new(),
+                    summary: Some("Reading the repository".into()),
+                    kind: "scout",
+                    role: "Scout",
+                    // A Scout has no cancellation handle of its own; it ends
+                    // with the turn that delegated to it.
+                    stoppable: false,
+                });
+            }
+            SessionEvent::ScoutCompleted {
+                scout_id,
+                evidence_count,
+                conclusions,
+                ..
+            } => {
+                let summary = if conclusions.is_empty() {
+                    format!("{evidence_count} pieces of evidence")
+                } else {
+                    conclusions.join("; ")
+                };
+                match workers
+                    .iter_mut()
+                    .find(|worker| worker.id == scout_id && worker.kind == "scout")
+                {
+                    Some(worker) => {
+                        worker.status = "completed".into();
+                        worker.summary = Some(summary);
+                    }
+                    // Sessions from before `ScoutStarted` existed have only the
+                    // completion; showing it is better than hiding the work.
+                    None => workers.push(SupervisorWorkerView {
+                        id: scout_id,
+                        status: "completed".into(),
+                        worktree: None,
+                        changed_paths: Vec::new(),
+                        summary: Some(summary),
+                        kind: "scout",
+                        role: "Scout",
+                        stoppable: false,
+                    }),
+                }
+            }
+            SessionEvent::ScoutFailed { reason, scout_id } => {
+                let entry = scout_id.as_ref().and_then(|scout_id| {
+                    workers
+                        .iter_mut()
+                        .find(|worker| &worker.id == scout_id && worker.kind == "scout")
+                });
+                match entry {
+                    Some(worker) => {
+                        worker.status = "failed".into();
+                        worker.summary = Some(reason);
+                    }
+                    // An unidentified failure still closes the most recent
+                    // running Scout: leaving it "running" forever would keep a
+                    // finished session polling and reporting live work.
+                    None => {
+                        match workers
+                            .iter_mut()
+                            .rev()
+                            .find(|worker| worker.kind == "scout" && worker.status == "running")
+                        {
+                            Some(worker) => {
+                                worker.status = "failed".into();
+                                worker.summary = Some(reason);
+                            }
+                            None => workers.push(SupervisorWorkerView {
+                                id: "scout".into(),
+                                status: "failed".into(),
+                                worktree: None,
+                                changed_paths: Vec::new(),
+                                summary: Some(reason),
+                                kind: "scout",
+                                role: "Scout",
+                                stoppable: false,
+                            }),
+                        }
+                    }
                 }
             }
             SessionEvent::SupervisorReviewRequired {
@@ -1621,14 +1746,19 @@ async fn supervisor_status(
             _ => {}
         }
     }
-    // A run that is no longer in flight cannot have running workers: the
-    // process is gone, so reporting one as live would offer a stop button
-    // that can never succeed.
-    if !in_flight {
-        for worker in &mut workers {
-            if worker.status == "running" {
-                worker.status = "interrupted".into();
-            }
+    // Work that is no longer in flight cannot still be running: the process is
+    // gone, so reporting a live unit would offer a stop button that can never
+    // succeed. A Scout is bound to its turn, so it is settled once the session
+    // itself is no longer active.
+    let session_running = session.status == SessionStatus::Active;
+    for worker in &mut workers {
+        let settled = match worker.kind {
+            "scout" => !session_running,
+            _ => !in_flight,
+        };
+        if settled && worker.status == "running" {
+            worker.status = "interrupted".into();
+            worker.stoppable = false;
         }
     }
     Ok(Json(SupervisorView {
@@ -2270,6 +2400,32 @@ async fn append_message(
         return Err(ApiError::BadRequest(
             "message content cannot be empty".into(),
         ));
+    }
+    // A built-in command is not a message. Forwarding `/undo` here would store
+    // it as user prose and hand it to the model, which answers "Sure, I'll undo
+    // that" while nothing is undone — the failure this refusal exists to
+    // prevent. The error names the route that actually performs the operation
+    // so a client can dispatch it correctly instead of guessing.
+    if let Some(command) = command_for(&request.content) {
+        return Err(match command.execution {
+            CommandExecution::Daemon { method, path } => ApiError::BadRequest(format!(
+                "`{}` is a command, not a message: {} {}",
+                command.name,
+                method,
+                path.replace("{id}", &id.0.to_string())
+            )),
+            CommandExecution::Client => ApiError::BadRequest(format!(
+                "`{}` is handled by the client interface, not by sending it as a message",
+                command.name
+            )),
+            // A prompt command has to arrive expanded. Accepting the shorthand
+            // would send the model the literal word `/review`, which is the same
+            // class of bug as the two above.
+            CommandExecution::Prompt { .. } => ApiError::BadRequest(format!(
+                "`{}` must be expanded into its instruction text before it is sent",
+                command.name
+            )),
+        });
     }
     reject_secret_content(&request.content)?;
     let content = request.content.trim_end_matches([' ', '\t']);
@@ -3027,6 +3183,189 @@ async fn restore_checkpoint(
         id: id.0.to_string(),
         status: "restored",
     }))
+}
+
+/// Where on the checkpoint timeline the worktree currently sits.
+///
+/// Derived from the event log rather than stored, so it survives a daemon
+/// restart and cannot drift from what actually happened: whichever of
+/// `CheckpointRestored` / `CheckpointCreated` came last decides. A restore puts
+/// the worktree at that checkpoint; a creation makes the newest checkpoint the
+/// current state. Returns `None` for a session with no checkpoints at all.
+fn checkpoint_cursor(checkpoints: &[SessionCheckpoint], events: &[SessionEvent]) -> Option<usize> {
+    if checkpoints.is_empty() {
+        return None;
+    }
+    for event in events.iter().rev() {
+        match event {
+            SessionEvent::CheckpointRestored { checkpoint_id, .. } => {
+                // A restored checkpoint that is no longer in the table (a
+                // pruned history) tells us nothing; keep looking back.
+                if let Some(index) = checkpoints
+                    .iter()
+                    .position(|checkpoint| checkpoint.id.to_string() == *checkpoint_id)
+                {
+                    return Some(index);
+                }
+            }
+            SessionEvent::CheckpointCreated { .. } => return Some(checkpoints.len() - 1),
+            _ => {}
+        }
+    }
+    Some(checkpoints.len() - 1)
+}
+
+/// Which checkpoint a step lands on.
+///
+/// Split out from [`step_checkpoint`] because the `captured` case is the subtle
+/// one and deserves to be tested without a real worktree.
+///
+/// When divergent work was just captured, the new tip *is* the current state, so
+/// one step back is the position the cursor already held. Stepping relative to
+/// the new tip (`len - 2`) would walk the user *forward* through the timeline —
+/// the opposite of what they asked for.
+fn checkpoint_step_target(
+    cursor: usize,
+    direction: i64,
+    captured: bool,
+    total: usize,
+) -> Result<usize, ApiError> {
+    let target = if captured {
+        cursor as i64
+    } else {
+        cursor as i64 + direction
+    };
+    if target < 0 {
+        return Err(ApiError::Conflict(
+            "there is nothing earlier to undo to — this is the first checkpoint".into(),
+        ));
+    }
+    let target = target as usize;
+    if target >= total {
+        return Err(ApiError::Conflict(
+            "there is nothing to redo — this is the most recent checkpoint".into(),
+        ));
+    }
+    Ok(target)
+}
+
+/// One step along the checkpoint timeline: `/undo` walks back, `/redo` walks
+/// forward. Both are deterministic worktree operations that never involve a
+/// model.
+///
+/// Before stepping back, work that exists in the worktree but in no checkpoint
+/// is captured, so `/undo` is recoverable rather than destructive: the state the
+/// user was in becomes the checkpoint `/redo` returns to.
+async fn step_checkpoint(
+    state: &AppState,
+    id: SessionId,
+    direction: i64,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_idle(state, id).await?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let effects = RepositoryEngine::effects(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+
+    let (checkpoints, events) = {
+        let store = state.store.lock().await;
+        (store.checkpoints(id)?, store.events(id)?)
+    };
+    let Some(cursor) = checkpoint_cursor(&checkpoints, &events) else {
+        return Err(ApiError::Conflict(
+            "this session has no checkpoints to move between".into(),
+        ));
+    };
+    let mut checkpoints = checkpoints;
+
+    // Work that exists in the worktree but in no checkpoint is captured before
+    // stepping back, so `/undo` is recoverable rather than destructive: the
+    // state the user is in becomes a checkpoint they can return to.
+    let mut captured_divergent_work = false;
+    if direction < 0 {
+        let live_digest = blake3::hash(&effects.binary_patch).to_hex().to_string();
+        if checkpoints[cursor].patch_digest != live_digest {
+            let checkpoint = SessionCheckpoint {
+                id: Uuid::new_v4(),
+                session_id: id,
+                sequence: events.len() as u64 + 1,
+                label: "before undo".into(),
+                head: worktree.base_head.clone(),
+                patch: effects.binary_patch.clone(),
+                patch_digest: live_digest.clone(),
+                created_at: Utc::now(),
+            };
+            let mut store = state.store.lock().await;
+            store.insert_checkpoint(&checkpoint)?;
+            store.append(
+                id,
+                &SessionEvent::CheckpointCreated {
+                    label: "before undo".into(),
+                    head: worktree.base_head.clone(),
+                    patch_digest: live_digest,
+                },
+            )?;
+            drop(store);
+            checkpoints.push(checkpoint);
+            captured_divergent_work = true;
+        }
+    }
+
+    let target = checkpoint_step_target(
+        cursor,
+        direction,
+        captured_divergent_work,
+        checkpoints.len(),
+    )?;
+    let checkpoint = checkpoints[target].clone();
+
+    RepositoryEngine::rollback_all(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    RepositoryEngine::apply_patch(&worktree, &checkpoint.patch)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    state.store.lock().await.append(
+        id,
+        &SessionEvent::CheckpointRestored {
+            checkpoint_id: checkpoint.id.to_string(),
+            head: checkpoint.head.clone(),
+            patch_digest: checkpoint.patch_digest.clone(),
+        },
+    )?;
+    Ok(Json(serde_json::json!({
+        "id": id.0.to_string(),
+        "status": if direction < 0 { "undone" } else { "redone" },
+        "checkpoint_id": checkpoint.id.to_string(),
+        "label": checkpoint.label,
+        "position": target + 1,
+        "of": checkpoints.len(),
+        "can_undo": target > 0,
+        "can_redo": target + 1 < checkpoints.len(),
+    })))
+}
+
+/// `POST /v1/sessions/{id}/undo` — step one checkpoint back.
+async fn undo_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    step_checkpoint(&state, id, -1).await
+}
+
+/// `POST /v1/sessions/{id}/redo` — step one checkpoint forward.
+async fn redo_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    step_checkpoint(&state, id, 1).await
 }
 
 async fn load_checkpoint(
@@ -4528,12 +4867,72 @@ async fn run_agent_operation(
         .ok_or_else(|| DaemonError::AgentConfiguration("session repository is missing".into()))?;
     let policy = effective_policy(&config, &repository)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    // ── Pinned context for this turn ──────────────────────────────────
+    // The composer's `@file` chips and the Project Memory settings page both
+    // promise the user that content is attached to the agent. This is where
+    // that promise is kept: references are re-resolved from the text this turn
+    // is answering, project instruction files and relevant project memory are
+    // selected, and all of it is pinned into the agent's context and ledgered.
+    // Resolving here rather than trusting client-supplied content means the
+    // attached bytes are the repository's own, and the TUI and CLI get the same
+    // behaviour without shipping their own resolver.
+    let request_text = match &operation {
+        AgentOperation::Continue { message } => message.clone(),
+        AgentOperation::RevisePlan { feedback } => feedback.clone(),
+        AgentOperation::Start
+        | AgentOperation::Plan
+        | AgentOperation::Resume
+        | AgentOperation::Approve => objective.clone(),
+    };
+    let memory_entries = store.memory(&repository, None).unwrap_or_default();
+    let assembled = project_context::assemble(&repository, &request_text, &memory_entries).await;
+    // A reference the user typed and the daemon could not attach is recorded in
+    // the conversation, not swallowed. Silence here is what let the composer
+    // show a chip for context the model never received.
+    let unattached: Vec<String> = assembled
+        .references
+        .iter()
+        .filter(|outcome| !outcome.attached)
+        .map(|outcome| match &outcome.detail {
+            Some(detail) => format!("{} — {detail}", outcome.display),
+            None => outcome.display.clone(),
+        })
+        .collect();
+    if !unattached.is_empty() {
+        store.append(
+            id,
+            &SessionEvent::ConversationMessageAdded {
+                message: ConversationMessage {
+                    id: Uuid::new_v4().to_string(),
+                    role: "system".into(),
+                    content: format!(
+                        "These references could not be attached to this turn:\n{}",
+                        unattached.join("\n")
+                    ),
+                    timestamp: Utc::now(),
+                    tool_calls: Vec::new(),
+                    tool_results: Vec::new(),
+                    model: None,
+                    turn_id: None,
+                },
+            },
+        )?;
+    }
+    // Memory is marked used only when it was actually pinned into a turn, which
+    // is what makes `last_used_at` mean "the agent used this" rather than
+    // "someone opened the settings page".
+    for used in assembled.pinned.used_memory_ids() {
+        if let Ok(memory_id) = Uuid::parse_str(&used) {
+            let _ = store.touch_memory(memory_id);
+        }
+    }
     let agent = NativeAgent::new(role_providers, policy)
         .with_controls(controls)
         .with_usage_records(existing_usage)
         .with_contextual_judge(judge_provider.as_ref(), judge_model)
         .with_stream_observer(observer)
-        .with_cancellation(cancellation);
+        .with_cancellation(cancellation)
+        .with_pinned_context(assembled.pinned);
     let resolver = DaemonSkillResolver::new(state).await;
     let capability = infer_capability(&objective);
     if let CapabilityResolution::InstalledSkill { skill_id, .. } = agent
@@ -8898,208 +9297,16 @@ async fn resolve_references(
     Ok(Json(views))
 }
 
+/// Resolves one reference for display in the composer.
+///
+/// Delegates to the same path that decides what gets attached to a turn, so a
+/// chip can never claim a reference resolves when the runtime would refuse to
+/// attach it.
 async fn resolve_one_reference(
     repository: &std::path::Path,
     reference: &Reference,
 ) -> (bool, Option<String>, Option<String>) {
-    match reference {
-        Reference::File { path, range } => resolve_file_reference(repository, path, *range),
-        Reference::Folder { path } => {
-            let absolute = repository.join(path);
-            let resolved = absolute.is_dir();
-            (
-                resolved,
-                resolved
-                    .then(|| bounded_directory_summary(&absolute))
-                    .flatten(),
-                None,
-            )
-        }
-        Reference::Diff => match git_diff_summary(repository).await {
-            Some(summary) => (true, Some(summary), None),
-            None => (
-                false,
-                None,
-                Some("no uncommitted changes in the repository".into()),
-            ),
-        },
-        Reference::Git { reference } => match git_show(repository, reference).await {
-            Ok(Some(content)) => (true, Some(content.chars().take(500).collect()), None),
-            Ok(None) => (
-                false,
-                None,
-                Some(format!("git reference `{reference}` not found")),
-            ),
-            Err(error) => (false, None, Some(error)),
-        },
-        Reference::Symbol { name } => {
-            // Symbols resolve against a repository-wide definition scan. A
-            // whisker-index-backed lookup can replace this in a later workstream.
-            match find_symbol(repository, name).await {
-                Some(preview) => (true, Some(preview), None),
-                None => (false, None, Some(format!("symbol `{name}` not found"))),
-            }
-        }
-        Reference::Context => (true, Some("session context summary".into()), None),
-    }
-}
-
-/// Bounded read of a file, honoring a line range. Paths are contained inside
-/// the repository and never escape it.
-fn resolve_file_reference(
-    repository: &std::path::Path,
-    path: &str,
-    range: Option<(u64, u64)>,
-) -> (bool, Option<String>, Option<String>) {
-    use std::io::Read as _;
-    let relative = std::path::Path::new(path);
-    let mut safe = std::path::PathBuf::new();
-    for component in relative.components() {
-        match component {
-            std::path::Component::Normal(value) => safe.push(value),
-            _ => {
-                return (false, None, Some("path escapes the repository".into()));
-            }
-        }
-    }
-    let absolute = repository.join(&safe);
-    if !absolute.exists() {
-        return (false, None, Some(format!("file `{path}` not found")));
-    }
-    if !absolute.is_file() {
-        return (false, None, Some(format!("`{path}` is not a file")));
-    }
-    let mut content = String::new();
-    if std::fs::File::open(&absolute)
-        .and_then(|file| {
-            file.take(64 * 1024).read_to_string(&mut content)?;
-            Ok(())
-        })
-        .is_err()
-    {
-        return (false, None, Some("file could not be read as text".into()));
-    }
-    let preview = match range {
-        Some((start, end)) => {
-            let lines: Vec<&str> = content.lines().collect();
-            let start = (start as usize).saturating_sub(1);
-            let end = (end as usize).min(lines.len());
-            if start >= end {
-                content.chars().take(200).collect()
-            } else {
-                lines[start..end].join("\n")
-            }
-        }
-        None => content.chars().take(400).collect(),
-    };
-    (true, Some(preview), None)
-}
-
-fn bounded_directory_summary(directory: &std::path::Path) -> Option<String> {
-    let entries: Vec<String> = std::fs::read_dir(directory)
-        .ok()?
-        .filter_map(|entry| {
-            entry.ok().map(|entry| {
-                if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-                    format!("{}/", entry.file_name().to_string_lossy())
-                } else {
-                    entry.file_name().to_string_lossy().into_owned()
-                }
-            })
-        })
-        .take(20)
-        .collect();
-    Some(format!(
-        "{} entry(ies): {}",
-        entries.len(),
-        entries.join(", ")
-    ))
-}
-
-async fn git_show(repository: &std::path::Path, reference: &str) -> Result<Option<String>, String> {
-    let output = git_output(repository, &["show", reference])
-        .await
-        .map_err(|error| format!("git show failed: {error}"))?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
-}
-
-/// Summarizes the repository's uncommitted diff for an `@diff` reference.
-async fn git_diff_summary(repository: &std::path::Path) -> Option<String> {
-    let output = git_output(repository, &["diff", "--numstat", "-z", "HEAD", "--", "."])
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let bytes = output.stdout;
-    let mut fields = bytes.split(|byte| *byte == 0).filter(|f| !f.is_empty());
-    let mut added = 0_usize;
-    let mut removed = 0_usize;
-    let mut files = Vec::new();
-    while let Some(record) = fields.next() {
-        let text = String::from_utf8_lossy(record);
-        let mut parts = text.splitn(3, '\t');
-        let (Some(add), Some(remove), path) = (parts.next(), parts.next(), parts.next()) else {
-            continue;
-        };
-        added += add.parse::<usize>().unwrap_or(0);
-        removed += remove.parse::<usize>().unwrap_or(0);
-        let path = match path {
-            Some(path) if !path.is_empty() => path.to_string(),
-            // rename: NUL-separated old and new paths follow
-            _ => {
-                let _old = fields.next();
-                match fields.next() {
-                    Some(new) => String::from_utf8_lossy(new).into_owned(),
-                    None => continue,
-                }
-            }
-        };
-        files.push(path);
-    }
-    if files.is_empty() {
-        return None;
-    }
-    Some(format!(
-        "{} changed file(s): +{} / -{}\n{}",
-        files.len(),
-        added,
-        removed,
-        files.join(", ")
-    ))
-}
-
-/// Finds a definition line for a symbol in the repository using a bounded
-/// `grep`-style scan over source files.
-async fn find_symbol(repository: &std::path::Path, name: &str) -> Option<String> {
-    let pattern = format!("\\b{name}\\b");
-    let output = tokio::process::Command::new("grep")
-        .args([
-            "-rn",
-            "-E",
-            "--include=*.rs",
-            "--include=*.ts",
-            "--include=*.js",
-            "--include=*.tsx",
-            "--include=*.py",
-            "--include=*.go",
-            &pattern,
-            ".",
-        ])
-        .current_dir(repository)
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines()
-        .next()
-        .map(|line| line.chars().take(300).collect())
+    project_context::preview_reference(repository, reference).await
 }
 
 /// The canonical set of built-in composer commands. This is the daemon's
@@ -9112,108 +9319,6 @@ async fn list_commands(
     authorize(&state, &headers)?;
     let commands = builtin_commands();
     Ok(Json(commands))
-}
-
-#[derive(Serialize)]
-struct CommandDescriptor {
-    name: &'static str,
-    description: &'static str,
-    group: &'static str,
-}
-
-fn builtin_commands() -> Vec<CommandDescriptor> {
-    vec![
-        CommandDescriptor {
-            name: "/context",
-            description: "Show the current context summary and token budget",
-            group: "context",
-        },
-        CommandDescriptor {
-            name: "/compact",
-            description: "Compact the session context into a checkpoint",
-            group: "context",
-        },
-        CommandDescriptor {
-            name: "/undo",
-            description: "Restore the worktree to the previous checkpoint",
-            group: "session",
-        },
-        CommandDescriptor {
-            name: "/redo",
-            description: "Re-apply the changes undone by the last restore",
-            group: "session",
-        },
-        CommandDescriptor {
-            name: "/fork",
-            description: "Fork this session at a conversation message",
-            group: "session",
-        },
-        CommandDescriptor {
-            name: "/checkpoint",
-            description: "Capture a restorable checkpoint",
-            group: "session",
-        },
-        CommandDescriptor {
-            name: "/diff",
-            description: "Review the current session diff",
-            group: "review",
-        },
-        CommandDescriptor {
-            name: "/test",
-            description: "Run the validation suite",
-            group: "review",
-        },
-        CommandDescriptor {
-            name: "/review",
-            description: "Review the proposed changes",
-            group: "review",
-        },
-        CommandDescriptor {
-            name: "/model",
-            description: "Select a model for this session",
-            group: "settings",
-        },
-        CommandDescriptor {
-            name: "/agent",
-            description: "Inspect or control the running agent",
-            group: "settings",
-        },
-        CommandDescriptor {
-            name: "/mcp",
-            description: "Manage MCP servers",
-            group: "settings",
-        },
-        CommandDescriptor {
-            name: "/skills",
-            description: "Search, install, and manage skills",
-            group: "settings",
-        },
-        CommandDescriptor {
-            name: "/memory",
-            description: "Inspect and edit project memory",
-            group: "settings",
-        },
-        CommandDescriptor {
-            name: "/approve",
-            description: "Approve an awaiting action or plan",
-            group: "authority",
-        },
-        CommandDescriptor {
-            name: "/reject",
-            description: "Reject an awaiting action or plan",
-            group: "authority",
-        },
-        CommandDescriptor {
-            name: "/pause",
-            description: "Pause the current session",
-            group: "session",
-        },
-        CommandDescriptor {
-            name: "/resume",
-            description: "Resume the current session",
-            group: "session",
-        },
-    ]
 }
 
 #[derive(Deserialize)]
@@ -11648,6 +11753,167 @@ mod tests {
             .find(|worker| worker.id == "worker-2")
             .expect("the unfinished worker is still listed");
         assert_eq!(unfinished.status, "interrupted");
+    }
+
+    /// Undo must never move the worktree forward.
+    ///
+    /// The case that matters: the user undoes once, edits a file by hand, then
+    /// undoes again. That second undo captures the hand-edit as a new tip, and a
+    /// naive `tip - 1` would land them on a checkpoint *ahead* of where they
+    /// were — an undo that redoes.
+    #[test]
+    fn undo_steps_back_from_where_the_user_is_not_from_the_new_tip() {
+        // Timeline [c0, c1, c2, c3] where c3 is the just-captured hand-edit and
+        // the user was sitting at c1.
+        assert_eq!(
+            checkpoint_step_target(1, -1, true, 4).unwrap(),
+            1,
+            "with divergent work captured, one step back is where the cursor already was"
+        );
+        // Without divergent work, undo is an ordinary step back.
+        assert_eq!(checkpoint_step_target(2, -1, false, 3).unwrap(), 1);
+        // Redo is an ordinary step forward.
+        assert_eq!(checkpoint_step_target(1, 1, false, 3).unwrap(), 2);
+
+        // Both ends refuse rather than clamping: silently restoring the oldest
+        // checkpoint when asked to go back past it would discard work while
+        // reporting success.
+        assert!(checkpoint_step_target(0, -1, false, 3).is_err());
+        assert!(checkpoint_step_target(2, 1, false, 3).is_err());
+    }
+
+    /// A Scout an ordinary coding turn delegated to is a work unit the agent
+    /// workspace shows, alongside supervisor workers.
+    ///
+    /// Before this, the workspace projected `WorkerStarted`/`WorkerFinished`
+    /// only — so it described the Supervisor API rather than the product, and a
+    /// user watching PurrCode explore their repository saw nothing at all.
+    #[tokio::test]
+    async fn a_scout_appears_in_the_agent_workspace_beside_supervisor_workers() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&temporary.path().join("sessions.db")).unwrap();
+        let session = SessionId::new();
+        let turn_id = TurnId::new();
+        store
+            .append(
+                session,
+                &SessionEvent::SessionCreated {
+                    objective: "understand this repository, then change it".into(),
+                    repository: temporary.path().to_path_buf(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::ScoutStarted {
+                    scout_id: "scout-1".into(),
+                    parent_turn_id: turn_id,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::ScoutCompleted {
+                    scout_id: "scout-1".into(),
+                    parent_turn_id: turn_id,
+                    evidence_count: 4,
+                    conclusions: vec!["auth lives in src/auth.rs".into()],
+                    confidence: "High".into(),
+                },
+            )
+            .unwrap();
+        // A second Scout that is still running, to prove a live unit is visible.
+        store
+            .append(
+                session,
+                &SessionEvent::ScoutStarted {
+                    scout_id: "scout-2".into(),
+                    parent_turn_id: turn_id,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::WorkerStarted {
+                    worker_id: "worker-1".into(),
+                },
+            )
+            .unwrap();
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
+            terminals: TerminalRuntime::default(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let view = supervisor_status(State(state), headers, AxumPath(session.0.to_string()))
+            .await
+            .expect("the workspace must be readable for an ordinary session");
+
+        assert_eq!(
+            view.0.workers.len(),
+            3,
+            "both Scouts and the supervisor worker are work units"
+        );
+        let scout = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "scout-1")
+            .expect("the completed Scout is listed");
+        assert_eq!(scout.kind, "scout");
+        assert_eq!(scout.role, "Scout");
+        assert_eq!(scout.status, "completed");
+        assert_eq!(
+            scout.summary.as_deref(),
+            Some("auth lives in src/auth.rs"),
+            "a Scout reports what it concluded, not just that it ran"
+        );
+        // A Scout has no cancellation handle, so the client must never be told
+        // it can stop one: that would be a button guaranteed to fail.
+        assert!(!scout.stoppable);
+
+        // The session is still Active, so the running Scout stays running.
+        let running_scout = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "scout-2")
+            .expect("the running Scout is listed");
+        assert_eq!(running_scout.status, "running");
+        assert!(!running_scout.stoppable);
+
+        // The supervisor worker keeps its own semantics: no run is in flight, so
+        // it is interrupted rather than presented as live.
+        let worker = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "worker-1")
+            .expect("the supervisor worker is listed");
+        assert_eq!(worker.kind, "supervisor_worker");
+        assert_eq!(worker.status, "interrupted");
+        assert!(!worker.stoppable);
     }
 
     #[test]
@@ -15901,14 +16167,204 @@ judge = "openai/judge-model"
             .unwrap();
         assert_eq!(commands.status(), StatusCode::OK);
         let commands: serde_json::Value = commands.json().await.unwrap();
+        let commands = commands.as_array().unwrap();
+        let undo = commands
+            .iter()
+            .find(|command| command["name"] == "/undo")
+            .expect("/undo is published");
+        assert_eq!(undo["group"], "session");
+        // The registry must say *how* a command runs, not only that it exists.
+        // A client told only the name is the client that sent `/undo` to a
+        // language model.
+        assert_eq!(undo["execution"]["kind"], "daemon");
+        assert_eq!(undo["execution"]["method"], "POST");
+        assert_eq!(undo["execution"]["path"], "/v1/sessions/{id}/undo");
         assert!(
             commands
-                .as_array()
-                .unwrap()
                 .iter()
-                .any(|command| { command["name"] == "/undo" && command["group"] == "session" })
+                .all(|command| command["execution"]["kind"].is_string()),
+            "every published command declares its execution kind"
         );
         handle.abort();
+    }
+
+    /// The four commands that must never be interpreted by a model, refused at
+    /// the message boundary.
+    ///
+    /// This is the regression test for the v1.2 defect where `/undo` was stored
+    /// as user prose and answered with "Sure, I'll undo that" while the worktree
+    /// was untouched. The refusal has to happen in the daemon, not only in one
+    /// client, or the TUI and CLI keep the bug.
+    #[tokio::test]
+    async fn built_in_commands_are_refused_as_conversation_messages() {
+        let temporary = tempfile::tempdir().unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        let session = client
+            .post(format!("{base}/v1/sessions"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "hello",
+                "repository": repository,
+                "task_mode": "ask",
+                "execution_style": "autonomous",
+                "permission_mode": "auto",
+                "plan_only": false,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(session.status(), StatusCode::ACCEPTED);
+        let session: serde_json::Value = session.json().await.unwrap();
+        let session_id = session["id"].as_str().unwrap().to_owned();
+
+        for command in ["/undo", "/redo", "/compact", "/checkpoint"] {
+            let response = client
+                .post(format!("{base}/v1/sessions/{session_id}/messages"))
+                .bearer_auth(token.trim())
+                .json(&serde_json::json!({ "content": command }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "{command} must never be accepted as a message"
+            );
+            let body = response.text().await.unwrap();
+            assert!(
+                body.contains(command),
+                "the refusal must name the command, got: {body}"
+            );
+            assert!(
+                body.contains("/v1/sessions/"),
+                "the refusal must name the route that performs it, got: {body}"
+            );
+        }
+
+        // A sentence that merely mentions a command is still an ordinary
+        // message: quoting `/undo` must remain possible.
+        let prose = client
+            .post(format!("{base}/v1/sessions/{session_id}/messages"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({ "content": "what does /undo do?" }))
+            .send()
+            .await
+            .unwrap();
+        // Asserted on the reason, not the status: this test configures no
+        // providers, so an accepted message still fails later in the pipeline.
+        // What matters is that it was never rejected *as a command*.
+        let prose_body = prose.text().await.unwrap();
+        assert!(
+            !prose_body.contains("is a command"),
+            "prose about a command must not be treated as an invocation: {prose_body}"
+        );
+
+        handle.abort();
+    }
+
+    /// The checkpoint cursor is what makes `/undo` and `/redo` land on the
+    /// right state. It is derived from the event log rather than stored, so
+    /// these cases are the whole contract.
+    #[test]
+    fn the_checkpoint_cursor_follows_the_most_recent_timeline_event() {
+        fn checkpoint(label: &str) -> SessionCheckpoint {
+            SessionCheckpoint {
+                id: Uuid::new_v4(),
+                session_id: SessionId::new(),
+                sequence: 0,
+                label: label.into(),
+                head: "head".into(),
+                patch: Vec::new(),
+                patch_digest: format!("digest-{label}"),
+                created_at: Utc::now(),
+            }
+        }
+        fn restored(checkpoint: &SessionCheckpoint) -> SessionEvent {
+            SessionEvent::CheckpointRestored {
+                checkpoint_id: checkpoint.id.to_string(),
+                head: checkpoint.head.clone(),
+                patch_digest: checkpoint.patch_digest.clone(),
+            }
+        }
+        fn created(label: &str) -> SessionEvent {
+            SessionEvent::CheckpointCreated {
+                label: label.into(),
+                head: "head".into(),
+                patch_digest: format!("digest-{label}"),
+            }
+        }
+
+        // No checkpoints: there is nowhere to step, and the caller must be told
+        // rather than defaulted to index 0.
+        assert_eq!(checkpoint_cursor(&[], &[]), None);
+
+        let checkpoints = vec![checkpoint("a"), checkpoint("b"), checkpoint("c")];
+
+        // Nothing restored: the newest checkpoint is the current state, so undo
+        // steps back to `b`.
+        assert_eq!(checkpoint_cursor(&checkpoints, &[]), Some(2));
+
+        // After restoring `a`, the worktree is at `a` — redo must step to `b`,
+        // not off the end of the list.
+        assert_eq!(
+            checkpoint_cursor(&checkpoints, &[restored(&checkpoints[0])]),
+            Some(0)
+        );
+
+        // A checkpoint created *after* a restore makes the new tip current.
+        // Getting this wrong would make undo jump back past work that was just
+        // captured.
+        assert_eq!(
+            checkpoint_cursor(&checkpoints, &[restored(&checkpoints[0]), created("c")]),
+            Some(2)
+        );
+
+        // The last restore wins over earlier ones.
+        assert_eq!(
+            checkpoint_cursor(
+                &checkpoints,
+                &[restored(&checkpoints[2]), restored(&checkpoints[1])]
+            ),
+            Some(1)
+        );
+
+        // A restore naming a checkpoint that is no longer in the table is
+        // skipped rather than collapsing the cursor to the tip: the next older
+        // timeline event still describes where the worktree is.
+        let pruned = checkpoint("gone");
+        assert_eq!(
+            checkpoint_cursor(
+                &checkpoints,
+                &[restored(&checkpoints[1]), restored(&pruned)]
+            ),
+            Some(1)
+        );
+
+        // Unrelated events never move the cursor.
+        assert_eq!(
+            checkpoint_cursor(
+                &checkpoints,
+                &[restored(&checkpoints[1]), SessionEvent::SessionResumed]
+            ),
+            Some(1)
+        );
     }
 
     #[tokio::test]

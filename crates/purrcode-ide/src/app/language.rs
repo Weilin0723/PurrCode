@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Align, Layout, RichText, ScrollArea, Ui};
 
-use super::PurrCodeIde;
+use super::{PurrCodeIde, errors};
 use crate::daemon::Request;
 use crate::model::{DocumentPosition, Location, Symbol};
 use crate::theme;
@@ -43,6 +43,19 @@ const HOVER_DELAY: Duration = Duration::from_millis(350);
 /// and a second is fast enough for that to feel immediate without stat-ing
 /// every open buffer on every frame.
 pub(crate) const DISK_CHECK: Duration = Duration::from_secs(1);
+
+/// A rename the user is naming but has not confirmed.
+///
+/// The position is captured when the prompt opens, not when it is submitted: a
+/// rename resolved against wherever the caret drifted to would rename a
+/// different symbol than the one the user asked about.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingRename {
+    pub path: PathBuf,
+    pub position: DocumentPosition,
+    pub old_name: String,
+    pub new_name: String,
+}
 
 /// Where the pointer is resting, and since when.
 #[derive(Clone, Debug)]
@@ -135,6 +148,193 @@ impl PurrCodeIde {
             character: position.character,
             label: word.to_owned(),
         });
+    }
+
+    /// Opens the rename prompt for the symbol under the cursor.
+    ///
+    /// The daemon has served `/v1/lsp/rename` and the language client has
+    /// supported `textDocument/rename` since v1.2 shipped the LSP layer; until
+    /// now the IDE had no way to ask for it, so a capability the product had was
+    /// one a user could not reach.
+    pub(crate) fn start_rename(&mut self, path: &Path, position: DocumentPosition, word: &str) {
+        if !self.announce_if_unsupported(path, "Rename symbol") {
+            return;
+        }
+        if word.is_empty() {
+            return;
+        }
+        self.pending_rename = Some(PendingRename {
+            path: path.to_path_buf(),
+            position,
+            old_name: word.to_owned(),
+            new_name: word.to_owned(),
+        });
+    }
+
+    /// The rename prompt.
+    ///
+    /// Deliberately states the scope before the user commits: a rename reaches
+    /// files they have not opened, and finding that out afterwards is how a
+    /// language feature becomes something people stop trusting.
+    pub(crate) fn rename_dialog(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.pending_rename.clone() else {
+            return;
+        };
+        let tokens = self.tokens;
+        let mut new_name = pending.new_name.clone();
+        let (choice, submitted) = super::primitives::dialog(
+            ctx,
+            &tokens,
+            "purrcode_rename_symbol",
+            &format!("Rename {}", pending.old_name),
+            ("Rename", super::primitives::Tone::Primary),
+            !new_name.trim().is_empty() && new_name.trim() != pending.old_name,
+            |ui| {
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut new_name)
+                        .hint_text("New name")
+                        .desired_width(f32::INFINITY),
+                );
+                response.request_focus();
+                let submitted =
+                    response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(
+                        "The language server finds every use across the project. Files you have \
+                         open are left unsaved for review; files that are not open are written to \
+                         disk.",
+                    )
+                    .size(theme::TYPE_META)
+                    .color(tokens.text_secondary),
+                );
+                submitted
+            },
+        );
+
+        if let Some(pending) = self.pending_rename.as_mut() {
+            pending.new_name = new_name;
+        }
+        if submitted || choice == Some(super::primitives::DialogChoice::Confirm) {
+            self.submit_rename();
+        } else if choice == Some(super::primitives::DialogChoice::Cancel) {
+            self.pending_rename = None;
+        }
+    }
+
+    /// Sends the rename the prompt collected.
+    pub(crate) fn submit_rename(&mut self) {
+        let Some(pending) = self.pending_rename.take() else {
+            return;
+        };
+        let new_name = pending.new_name.trim().to_owned();
+        if new_name.is_empty() || new_name == pending.old_name {
+            return;
+        }
+        self.client.send(Request::LspRename {
+            path: pending.path,
+            root: self.language_root(),
+            line: pending.position.line,
+            character: pending.position.character,
+            new_name,
+            old_name: pending.old_name,
+        });
+    }
+
+    /// Applies a rename's workspace edit across the project.
+    ///
+    /// Open buffers are edited in place and left dirty, so the user reviews and
+    /// saves them like any other change. Files that are not open are rewritten
+    /// on disk, because a rename that only fixed the tabs you happened to have
+    /// open would leave the project not compiling.
+    ///
+    /// Every path is confined to the open folder first: a language server is an
+    /// external process, and a workspace edit naming `../../etc/hosts` is not
+    /// something to apply on its word.
+    pub(crate) fn apply_rename_edits(
+        &mut self,
+        old_name: &str,
+        new_name: &str,
+        value: &serde_json::Value,
+    ) {
+        let Some(changes) = value["changes"].as_object() else {
+            self.push_notice(errors::rename_produced_nothing(old_name));
+            return;
+        };
+        if changes.is_empty() {
+            self.push_notice(errors::rename_produced_nothing(old_name));
+            return;
+        }
+        let workspace = self.language_root();
+        let mut files_changed = 0usize;
+        let mut edits_applied = 0usize;
+        let mut refused: Vec<String> = Vec::new();
+        let mut unwritable: Vec<String> = Vec::new();
+
+        for (raw_path, file_edits) in changes {
+            let path = PathBuf::from(raw_path);
+            if super::files::confine(&path, &workspace).is_err() {
+                refused.push(raw_path.clone());
+                continue;
+            }
+            let edits = file_edits.as_array().cloned().unwrap_or_default();
+            if edits.is_empty() {
+                continue;
+            }
+            match self.open_files.iter().position(|file| file.path == path) {
+                Some(index) => {
+                    let Ok(original) = self.open_files[index].body.clone() else {
+                        continue;
+                    };
+                    let renamed = apply_text_edits(&original, &edits);
+                    if renamed != original {
+                        self.open_files[index].set_body(renamed);
+                        self.open_files[index].modified = true;
+                        self.dirty.insert(path.clone());
+                        files_changed += 1;
+                        edits_applied += edits.len();
+                    }
+                }
+                None => {
+                    let Ok(original) = std::fs::read_to_string(&path) else {
+                        unwritable.push(raw_path.clone());
+                        continue;
+                    };
+                    let renamed = apply_text_edits(&original, &edits);
+                    if renamed == original {
+                        continue;
+                    }
+                    match std::fs::write(&path, &renamed) {
+                        Ok(()) => {
+                            files_changed += 1;
+                            edits_applied += edits.len();
+                            // The server's copy is stale now, and the next
+                            // diagnostics poll would otherwise report problems
+                            // against the pre-rename text.
+                            self.open_in_language_server(&path);
+                        }
+                        Err(_) => unwritable.push(raw_path.clone()),
+                    }
+                }
+            }
+        }
+
+        if files_changed == 0 {
+            self.push_notice(errors::rename_produced_nothing(old_name));
+        } else {
+            self.push_notice(errors::rename_applied(
+                old_name,
+                new_name,
+                edits_applied,
+                files_changed,
+            ));
+        }
+        // Partial application is reported, never rounded up to success: the
+        // user has to know the project is now half-renamed.
+        if !refused.is_empty() || !unwritable.is_empty() {
+            self.push_notice(errors::rename_incomplete(&refused, &unwritable));
+        }
+        self.request_workspace_changes();
     }
 
     /// Formats the active document. `then_save` writes the result to disk once

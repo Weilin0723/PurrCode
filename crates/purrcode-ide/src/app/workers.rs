@@ -1,14 +1,23 @@
 //! The agent workspace: what the subagents are doing, and how to stop one.
 //!
-//! v1.2 Pillar 4, with a deliberate ceiling. The supervisor can run several
-//! workers at once, and the user needs to see that and be able to interrupt
-//! one of them. What they do *not* need is an orchestration dashboard: a
-//! panel of agent windows turns an IDE into a monitoring console for its own
-//! machinery, and the conversation stops being the centre of the screen.
+//! v1.2 Pillar 4, with a deliberate ceiling. PurrCode can have several
+//! subagents working at once, and the user needs to see that and be able to
+//! interrupt one of them. What they do *not* need is an orchestration
+//! dashboard: a panel of agent windows turns an IDE into a monitoring console
+//! for its own machinery, and the conversation stops being the centre of the
+//! screen.
 //!
 //! So this is one collapsed line in the work log. It expands when the user
 //! asks, and it disappears entirely for the overwhelmingly common case of a
-//! session that never ran a worker at all.
+//! session that never delegated anything.
+//!
+//! Every kind of subagent belongs here, not only the ones the Supervisor API
+//! created. This panel used to render supervisor workers alone, so a user who
+//! asked PurrCode to "understand this repo, then change it" watched an empty
+//! workspace while a Scout did precisely the work the panel claims to show.
+//! The daemon now reports each unit's role and whether it can actually be
+//! stopped, and this module renders what it is told rather than assuming every
+//! unit is a stoppable supervisor worker.
 
 use egui::{RichText, Ui};
 
@@ -40,8 +49,19 @@ impl PurrCodeIde {
             self.client.send(Request::SupervisorStatus { session });
             return;
         }
-        // Once the tree is known, only a live run is worth re-reading.
-        if self.supervisor.running() == 0 || self.last_supervisor_poll.elapsed() < POLL {
+        // Re-read while there is something that could change: a unit already
+        // known to be running, or a session that is still executing and could
+        // therefore delegate to a Scout at any point. Polling only on
+        // `running() > 0` meant a subagent that started after the first read was
+        // never noticed — the tree stayed empty for exactly the turn the user
+        // wanted to watch.
+        let session_running = self
+            .sessions
+            .iter()
+            .any(|entry| entry.id == session && entry.state.execution_active());
+        if (self.supervisor.running() == 0 && !session_running)
+            || self.last_supervisor_poll.elapsed() < POLL
+        {
             return;
         }
         self.last_supervisor_poll = std::time::Instant::now();
@@ -103,19 +123,29 @@ impl PurrCodeIde {
                             let colour = worker_colour(&tokens, worker);
                             crate::icons::step_marker(ui, marker_for(worker), 9.0, colour);
                             ui.label(
-                                RichText::new(&worker.id)
+                                RichText::new(&worker.role)
                                     .size(theme::TYPE_META)
                                     .color(tokens.text_primary),
+                            );
+                            // The id identifies the unit but says nothing about
+                            // it, so it sits behind the role rather than in
+                            // front of it.
+                            ui.label(
+                                RichText::new(short_id(&worker.id))
+                                    .monospace()
+                                    .size(theme::TYPE_EYEBROW)
+                                    .color(tokens.text_muted),
                             );
                             ui.label(
                                 RichText::new(worker.outcome())
                                     .size(theme::TYPE_EYEBROW)
                                     .color(tokens.text_muted),
                             );
-                            // Stop is offered only for a worker that is actually
-                            // running: the daemon rejects the rest, and a button
-                            // that always fails is worse than no button.
-                            if worker.is_running() {
+                            // Stop is offered only for a unit the daemon says it
+                            // can actually stop. A Scout has no cancellation
+                            // handle of its own, and a button that always fails
+                            // is worse than no button.
+                            if worker.is_running() && worker.stoppable {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
@@ -207,7 +237,7 @@ fn summary_line(supervisor: &crate::model::Supervisor) -> String {
     let running = supervisor.running();
     if running > 0 {
         return format!(
-            "{running} of {total} worker{} still running",
+            "{running} of {total} subagent{} still running",
             if total == 1 { "" } else { "s" }
         );
     }
@@ -217,10 +247,16 @@ fn summary_line(supervisor: &crate::model::Supervisor) -> String {
         .map(|worker| worker.changed_paths.len())
         .sum();
     format!(
-        "{total} worker{} finished · {changed} file{} changed",
+        "{total} subagent{} finished · {changed} file{} changed",
         if total == 1 { "" } else { "s" },
         if changed == 1 { "" } else { "s" }
     )
+}
+
+/// The leading segment of a unit id, which is all a person needs to tell two
+/// units apart in a list.
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
 }
 
 fn marker_for(worker: &Worker) -> &'static str {
@@ -265,7 +301,7 @@ mod tests {
             ],
         }));
         assert_eq!(supervisor.running(), 1);
-        assert_eq!(summary_line(&supervisor), "1 of 2 workers still running");
+        assert_eq!(summary_line(&supervisor), "1 of 2 subagents still running");
     }
 
     #[test]
@@ -279,7 +315,7 @@ mod tests {
         assert_eq!(supervisor.running(), 0);
         assert_eq!(
             summary_line(&supervisor),
-            "2 workers finished · 2 files changed"
+            "2 subagents finished · 2 files changed"
         );
     }
 
@@ -317,5 +353,54 @@ mod tests {
         }));
         assert_eq!(supervisor.conflicts, vec!["src/lib.rs".to_owned()]);
         assert!(supervisor.review_required);
+    }
+
+    #[test]
+    fn a_scout_is_a_visible_work_unit_but_not_a_stoppable_one() {
+        // The unified workspace: a Scout an ordinary turn delegated to appears
+        // beside a supervisor worker, labelled for what it is. The Stop control
+        // keys off `stoppable`, so the Scout never gets a button the daemon
+        // cannot honour.
+        let supervisor = Supervisor::parse(&json!({
+            "workers": [
+                {
+                    "id": "3f2a91c4-dead-beef",
+                    "status": "running",
+                    "changed_paths": [],
+                    "summary": "Reading the repository",
+                    "role": "Scout",
+                    "kind": "scout",
+                    "stoppable": false,
+                },
+                {
+                    "id": "worker-1",
+                    "status": "running",
+                    "changed_paths": [],
+                    "role": "Worker",
+                    "kind": "supervisor_worker",
+                    "stoppable": true,
+                },
+            ],
+        }));
+        assert_eq!(supervisor.running(), 2);
+        let scout = &supervisor.workers[0];
+        assert_eq!(scout.role, "Scout");
+        assert!(!scout.stoppable);
+        // A running read-only unit says what it is doing rather than falling
+        // back to a generic phrase.
+        assert_eq!(scout.outcome(), "Reading the repository");
+        assert_eq!(short_id(&scout.id), "3f2a91c4");
+        assert!(supervisor.workers[1].stoppable);
+    }
+
+    #[test]
+    fn a_unit_with_no_stoppable_flag_is_not_assumed_stoppable() {
+        // A daemon that does not declare it must not have a Stop button
+        // inferred for it: the button would fail every time it was pressed.
+        let supervisor = Supervisor::parse(&json!({
+            "workers": [{"id": "w", "status": "running", "changed_paths": []}],
+        }));
+        assert!(!supervisor.workers[0].stoppable);
+        assert_eq!(supervisor.workers[0].role, "Worker");
     }
 }

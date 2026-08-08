@@ -115,12 +115,25 @@ impl PurrCodeIde {
             Some('/') => self
                 .commands
                 .iter()
-                .filter(|(name, _, _)| name.trim_start_matches('/').starts_with(&query))
+                .filter(|command| command.name.trim_start_matches('/').starts_with(&query))
                 .take(MAX_SUGGESTIONS)
-                .map(|(name, description, group)| Suggestion {
-                    insert: name.clone(),
-                    label: name.clone(),
-                    detail: format!("{description} · {group}"),
+                .map(|command| Suggestion {
+                    insert: command.name.clone(),
+                    label: command.name.clone(),
+                    // The completion says whether the command runs or is said.
+                    // A user picking `/undo` from this list should not have to
+                    // wonder whether it will be interpreted.
+                    detail: format!(
+                        "{} · {}",
+                        command.description,
+                        match command.execution {
+                            crate::model::CommandExecution::Prompt { .. } =>
+                                "sent to the agent".to_owned(),
+                            crate::model::CommandExecution::Unknown =>
+                                "unavailable here".to_owned(),
+                            _ => command.group.clone(),
+                        }
+                    ),
                 })
                 .collect(),
             Some('@') => self.reference_suggestions(&query),

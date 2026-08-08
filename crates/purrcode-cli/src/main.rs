@@ -4235,6 +4235,7 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         WorkerFinished { .. } => "worker_finished",
         SupervisorReviewRequired { .. } => "supervisor_review_required",
         ContextIndexed { .. } => "context_indexed",
+        ScoutStarted { .. } => "scout_started",
         ScoutCompleted { .. } => "scout_completed",
         ScoutFailed { .. } => "scout_failed",
         ModelRequestStarted { .. } => "model_request_started",

@@ -7,9 +7,9 @@ use purrcode_provider_gateway::ModelMessage;
 use purrcode_repository_engine::{RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
     ActionId, ContextClass, ContextLedgerEntry, ContextLedgerSection, ContextualJudgmentRequest,
-    DiffSummary, JudgmentEvidence, OutcomeEvidence, OutcomeJudgmentRequest, PlanSnapshot, PlanStep,
-    PriorActionResult, ProposedAction, RiskClass, SessionEvent, SessionId, SessionState,
-    TaskIntent, TurnId, ValidationStatus, WhyIncluded,
+    DiffSummary, JudgmentEvidence, OutcomeEvidence, OutcomeJudgmentRequest, PinnedContext,
+    PlanSnapshot, PlanStep, PriorActionResult, ProposedAction, RiskClass, SessionEvent, SessionId,
+    SessionState, TaskIntent, TurnId, ValidationStatus, WhyIncluded,
 };
 use purrcode_validation_runtime::{
     EvidenceStatus, ValidationEvidence, ValidationReport, classify_failure,
@@ -604,6 +604,10 @@ fn insert_filename_term(terms: &mut BTreeSet<String>, term: &str) {
     }
 }
 
+// Each parameter is a distinct input to prompt assembly with no natural
+// grouping: bundling them into a struct would add a type whose only purpose is
+// to satisfy the lint, and every call site would still name all eight fields.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_messages(
     turn_id: TurnId,
     session_id: SessionId,
@@ -612,6 +616,7 @@ pub(crate) fn build_messages(
     state: &SessionState,
     context_hits: &[ContextHit],
     session_events: &[SessionEvent],
+    pinned: &PinnedContext,
 ) -> (Vec<ModelMessage>, ContextLedgerEntry) {
     let action_outputs = session_events
         .iter()
@@ -844,6 +849,17 @@ Return EXACTLY the JSON structure specified. No markdown wrappers, no extra text
 ## WORKTREE: {}\n",
         worktree.display(),
     );
+    // Pinned context sits immediately after the request and before the plan:
+    // it is the content the user explicitly attached to *this* turn (and the
+    // project's standing knowledge), so burying it under the action history
+    // would make an `@file` the model most needs the least salient thing it
+    // reads. Rendered from `render_parts()` so the ledger below accounts for
+    // the exact same bytes.
+    let pinned_parts = pinned.render_parts();
+    let pinned_block: String = pinned_parts
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect::<String>();
     let plan_block = format!(
         "## CURRENT PLAN (revision {}):\n{:?}\n\n",
         state.plan_revision, state.plan_steps,
@@ -890,7 +906,7 @@ CRITICAL RULES:\n\
 - A mutating action (write_file, delete_file) must be the ONLY action in `actions`\n\
 - Read-only actions may be batched together in `actions` for parallel exploration";
     let final_user_content = format!(
-        "{request_and_worktree}{plan_block}{recent_actions_block}{validation_block}\
+        "{request_and_worktree}{pinned_block}{plan_block}{recent_actions_block}{validation_block}\
 {retrieved_block}{compacted_block}{output_format_and_schema}"
     );
     messages.push(ModelMessage {
@@ -915,7 +931,7 @@ CRITICAL RULES:\n\
         .collect::<Vec<_>>()
         .concat();
 
-    let raw_sections: Vec<(ContextClass, String, &str, WhyIncluded)> = vec![
+    let mut raw_sections: Vec<(ContextClass, String, &str, WhyIncluded)> = vec![
         (
             ContextClass::Instructions,
             "developer_instructions".into(),
@@ -937,6 +953,23 @@ CRITICAL RULES:\n\
             request_and_worktree.as_str(),
             WhyIncluded::AlwaysPresent,
         ),
+    ];
+    // One ledger section per pinned reference / instruction file / memory
+    // entry, spliced in at exactly the position the pinned block occupies in
+    // `final_user_content`. Order matters: the cumulative-ceiling allocation
+    // below only telescopes to the aggregate estimate when the sections are in
+    // the same order as the text they describe. Per-section (rather than one
+    // merged "pinned_context" section) is what lets a user see that the
+    // reference they attached cost 1.2k tokens and actually landed.
+    raw_sections.extend(pinned_parts.iter().map(|(label, text)| {
+        (
+            ContextClass::PinnedContext,
+            label.clone(),
+            text.as_str(),
+            WhyIncluded::Pinned,
+        )
+    }));
+    raw_sections.extend([
         (
             ContextClass::TaskState,
             "plan".into(),
@@ -975,7 +1008,7 @@ CRITICAL RULES:\n\
             output_format_and_schema,
             WhyIncluded::AlwaysPresent,
         ),
-    ];
+    ]);
 
     // Cumulative-ceiling allocation: each section's `estimated_tokens` is the
     // *increment* in `ceil(running_char_total / 4)` it contributes, not an
@@ -1236,6 +1269,27 @@ mod tests {
             reason: purrcode_whisker::HitReason::default(),
         }];
 
+        // Pinned context participates in the same accounting. Two origins so
+        // the grouped-heading rendering (one heading per origin, charged to the
+        // group's first section) is covered by the invariant below rather than
+        // only by the single-origin happy path.
+        let pinned = PinnedContext {
+            sections: vec![
+                purrcode_runtime_core::PinnedSection {
+                    origin: purrcode_runtime_core::PinnedOrigin::ComposerReference,
+                    label: "@src/retry.rs".into(),
+                    content: "fn retry() { loop { attempt(); } }".into(),
+                    memory_id: None,
+                },
+                purrcode_runtime_core::PinnedSection {
+                    origin: purrcode_runtime_core::PinnedOrigin::ProjectMemory,
+                    label: "build".into(),
+                    content: "cargo test --workspace".into(),
+                    memory_id: Some("mem-1".into()),
+                },
+            ],
+        };
+
         let (messages, entry) = build_messages(
             turn_id,
             session_id,
@@ -1244,6 +1298,7 @@ mod tests {
             &state,
             &context_hits,
             &[],
+            &pinned,
         );
 
         // The same estimator `prepare_model_request` applies to the whole
@@ -1265,6 +1320,45 @@ mod tests {
             section_sum, aggregate_tokens,
             "ledger section sum must equal prepare_model_request's aggregate estimate for the \
              same turn's ModelRequest.messages, or the inspector and budget enforcement disagree"
+        );
+
+        // The pinned content must actually be in the prompt, and be ledgered as
+        // pinned. Without both halves the composer's "attached" chip is a claim
+        // about something that never reached the model.
+        let prompt = messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<String>();
+        assert!(
+            prompt.contains("fn retry() { loop { attempt(); } }"),
+            "a pinned composer reference must appear in the assembled prompt"
+        );
+        assert!(
+            prompt.contains("cargo test --workspace"),
+            "a pinned project-memory entry must appear in the assembled prompt"
+        );
+        let pinned_sections: Vec<_> = entry
+            .sections
+            .iter()
+            .filter(|section| section.class == ContextClass::PinnedContext)
+            .collect();
+        assert_eq!(
+            pinned_sections.len(),
+            2,
+            "each pinned section is ledgered independently so a user can see which landed"
+        );
+        assert!(
+            pinned_sections
+                .iter()
+                .all(|section| section.why_included == WhyIncluded::Pinned),
+            "pinned context is included because someone asked for it, not because retrieval matched"
+        );
+        assert_eq!(
+            pinned_sections
+                .iter()
+                .map(|section| section.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["reference/@src/retry.rs", "project_memory/build"],
         );
     }
 }

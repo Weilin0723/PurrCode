@@ -42,9 +42,9 @@ use purrcode_runtime_core::work::{
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, Authorization, CheckpointDecision,
     CheckpointId, ContextClass, ContextLedgerEntry, ContextLedgerSection, ContextualDecision,
-    ContextualJudgment, ConversationMessage, FailedAttempt, JudgmentDecision, ProposedAction,
-    RepositoryReadAction, SemanticCheckpoint, SessionEvent, SessionId, SessionState, SessionStatus,
-    TestResultSummary, TurnId, ValidationStatus, WhyIncluded,
+    ContextualJudgment, ConversationMessage, FailedAttempt, JudgmentDecision, PinnedContext,
+    ProposedAction, RepositoryReadAction, SemanticCheckpoint, SessionEvent, SessionId,
+    SessionState, SessionStatus, TestResultSummary, TurnId, ValidationStatus, WhyIncluded,
 };
 use purrcode_validation_runtime::{
     EvidenceStatus, ValidationDetector, ValidationEvidence, ValidationPlan, ValidationRunner,
@@ -222,6 +222,12 @@ pub struct NativeAgent<'a> {
     contextual_judge: Option<ContextualJudge<'a>>,
     stream_observer: Option<AgentStreamObserver>,
     cancellation: Option<AgentCancellation>,
+    /// Context the caller pinned to this operation: resolved composer
+    /// references, project instruction files, selected project memory. Held on
+    /// the agent rather than passed per-call so every message-assembly site —
+    /// the main turn, the compaction rebuild, the scout — sees the same pinned
+    /// set and none of them can silently drop it.
+    pinned_context: PinnedContext,
 }
 
 impl<'a> NativeAgent<'a> {
@@ -240,6 +246,7 @@ impl<'a> NativeAgent<'a> {
             contextual_judge: None,
             stream_observer: None,
             cancellation: None,
+            pinned_context: PinnedContext::default(),
         }
     }
 
@@ -300,6 +307,17 @@ impl<'a> NativeAgent<'a> {
 
     pub fn with_cancellation(mut self, cancellation: AgentCancellation) -> Self {
         self.cancellation = Some(cancellation);
+        self
+    }
+
+    /// Pin context to every turn this agent runs.
+    ///
+    /// This is the only path by which a resolved `@file`, a project
+    /// instruction file, or a project-memory entry reaches the model. A caller
+    /// that shows the user an "attached" affordance without calling this is
+    /// describing something the runtime never did.
+    pub fn with_pinned_context(mut self, pinned: PinnedContext) -> Self {
+        self.pinned_context = pinned;
         self
     }
 
@@ -400,6 +418,7 @@ impl<'a> NativeAgent<'a> {
             &rebuilt_state,
             &context_hits,
             &session_events,
+            &self.pinned_context,
         );
         Ok((messages, ledger))
     }
@@ -2136,6 +2155,16 @@ impl<'a> NativeAgent<'a> {
                     max_tokens: 32_768,
                     allowed_action_kinds: vec!["read".into()],
                 };
+                let scout_id = scout_request.scout_id.0.to_string();
+                // Recorded before the Scout runs, so the agent workspace can
+                // show it working rather than only reporting it afterwards.
+                store.append(
+                    session_id,
+                    &SessionEvent::ScoutStarted {
+                        scout_id: scout_id.clone(),
+                        parent_turn_id: turn_id,
+                    },
+                )?;
                 match self.run_scout(store, session_id, scout_request).await {
                     Ok(finding) => {
                         store.append(
@@ -2155,6 +2184,7 @@ impl<'a> NativeAgent<'a> {
                             session_id,
                             &SessionEvent::ScoutFailed {
                                 reason: scout_error.to_string(),
+                                scout_id: Some(scout_id.clone()),
                             },
                         )?;
                     }
@@ -2181,6 +2211,7 @@ impl<'a> NativeAgent<'a> {
                 &state,
                 &context_hits,
                 &session_events,
+                &self.pinned_context,
             );
             // ── P0: Preflight the FINAL ModelRequest ─────────────────
             // Move contract + warning injection BEFORE compaction so the
@@ -2252,6 +2283,7 @@ impl<'a> NativeAgent<'a> {
                     &rebuilt_state,
                     &context_hits,
                     &session_events,
+                    &self.pinned_context,
                 );
                 let (rebuilt_msgs, rebuilt_ledger) = rebuilt;
                 // P0: Re-inject contract+warning with freshly computed

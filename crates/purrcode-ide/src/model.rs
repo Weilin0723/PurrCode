@@ -1346,6 +1346,14 @@ pub struct Worker {
     pub status: String,
     pub changed_paths: Vec<String>,
     pub summary: Option<String>,
+    /// What the daemon calls this unit — "Scout", "Worker". Shown so the tree
+    /// names the kind of work rather than presenting every unit as a supervisor
+    /// worker.
+    pub role: String,
+    /// Whether the daemon can actually stop it. A Stop control is only drawn
+    /// when this is true; a stop button that cannot stop anything is the exact
+    /// affordance this panel is meant not to have.
+    pub stoppable: bool,
 }
 
 impl Worker {
@@ -1356,7 +1364,12 @@ impl Worker {
     /// A one-line result: what it did, in files.
     pub fn outcome(&self) -> String {
         if self.is_running() {
-            return "working…".to_owned();
+            // A read-only unit reports what it is reading; a mutating one has
+            // no files yet. Both beat a bare "working…".
+            return match self.summary.as_deref() {
+                Some(summary) if !summary.is_empty() => summary.to_owned(),
+                _ => "working…".to_owned(),
+            };
         }
         match self.changed_paths.len() {
             0 => self.status.clone(),
@@ -1385,6 +1398,11 @@ impl Supervisor {
                     status: item["status"].as_str().unwrap_or("unknown").to_owned(),
                     changed_paths: strings(item, "changed_paths"),
                     summary: item["summary"].as_str().map(str::to_owned),
+                    role: item["role"].as_str().unwrap_or("Worker").to_owned(),
+                    // Defaults to false: a daemon that does not say whether a
+                    // unit can be stopped must not have a Stop button inferred
+                    // for it.
+                    stoppable: item["stoppable"].as_bool().unwrap_or(false),
                 })
             }),
             conflicts: strings(value, "conflicts"),
@@ -1620,6 +1638,78 @@ impl ResolvedReference {
             })
         })
     }
+}
+
+/// How a published command runs, as the daemon declares it.
+///
+/// The IDE must never guess this. A command whose execution it does not
+/// recognise is left alone rather than sent to the model as prose: sending
+/// `/undo` into a conversation produces an agent that agrees to undo something
+/// and a worktree that is unchanged, which is worse than doing nothing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommandExecution {
+    /// The daemon performs it at this route. Deterministic; never a model call.
+    Daemon { path: String },
+    /// This client performs it in its own UI.
+    Client,
+    /// Shorthand for an instruction; `prompt` is what the agent receives.
+    Prompt { prompt: String },
+    /// The daemon declared an execution kind this build does not know. Offered
+    /// for completion but not dispatched, because dispatching an unknown
+    /// contract is how a client invents behaviour the daemon never promised.
+    Unknown,
+}
+
+/// One command from `GET /v1/commands`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Command {
+    pub name: String,
+    pub description: String,
+    pub group: String,
+    pub execution: CommandExecution,
+}
+
+impl Command {
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        objects(value, |item| {
+            let execution = match item["execution"]["kind"].as_str() {
+                Some("daemon") => CommandExecution::Daemon {
+                    path: item["execution"]["path"].as_str()?.to_owned(),
+                },
+                Some("client") => CommandExecution::Client,
+                Some("prompt") => CommandExecution::Prompt {
+                    prompt: item["execution"]["prompt"].as_str()?.to_owned(),
+                },
+                _ => CommandExecution::Unknown,
+            };
+            Some(Self {
+                name: item["name"].as_str()?.to_owned(),
+                description: item["description"].as_str().unwrap_or_default().to_owned(),
+                group: item["group"].as_str().unwrap_or_default().to_owned(),
+                execution,
+            })
+        })
+    }
+}
+
+/// The command a draft invokes, if any.
+///
+/// A command is only a command when it leads the draft, mirroring the daemon's
+/// own rule so the two cannot disagree about what "what does /undo do?" means.
+pub fn command_in_draft<'a>(commands: &'a [Command], draft: &str) -> Option<&'a Command> {
+    let trimmed = draft.trim_start();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+    let word = trimmed.split_whitespace().next()?.to_ascii_lowercase();
+    commands.iter().find(|command| command.name == word)
+}
+
+/// Whatever follows the command word, for commands that take an argument.
+pub fn command_argument(draft: &str) -> Option<String> {
+    let trimmed = draft.trim_start();
+    let rest = trimmed.split_once(char::is_whitespace)?.1.trim();
+    (!rest.is_empty()).then(|| rest.to_owned())
 }
 
 // ── Language intelligence (LSP) ────────────────────────────────────────
@@ -2534,5 +2624,81 @@ mod tests {
         // somebody recognise it.
         assert_eq!(relative_time("not a date"), "not a date");
         assert_eq!(relative_time(""), "");
+    }
+
+    /// The composer's command routing. These are the decisions that used to be
+    /// absent: before it existed, `/undo` was sent as conversation text.
+    #[test]
+    fn a_published_command_carries_how_it_runs() {
+        let commands = Command::parse_all(&serde_json::json!([
+            {
+                "name": "/undo",
+                "description": "Restore the previous checkpoint",
+                "group": "session",
+                "execution": { "kind": "daemon", "method": "POST", "path": "/v1/sessions/{id}/undo" }
+            },
+            {
+                "name": "/memory",
+                "description": "Inspect project memory",
+                "group": "settings",
+                "execution": { "kind": "client" }
+            },
+            {
+                "name": "/review",
+                "description": "Review the changes",
+                "group": "review",
+                "execution": { "kind": "prompt", "prompt": "Review the changes." }
+            },
+            {
+                "name": "/future",
+                "description": "Something newer than this build",
+                "group": "session",
+                "execution": { "kind": "telepathy" }
+            },
+        ]));
+        assert_eq!(commands.len(), 4);
+        assert_eq!(
+            commands[0].execution,
+            CommandExecution::Daemon {
+                path: "/v1/sessions/{id}/undo".into()
+            }
+        );
+        assert_eq!(commands[1].execution, CommandExecution::Client);
+        assert_eq!(
+            commands[2].execution,
+            CommandExecution::Prompt {
+                prompt: "Review the changes.".into()
+            }
+        );
+        // An execution kind this build does not implement must not be guessed
+        // at — and specifically must not degrade into "send it as a message".
+        assert_eq!(commands[3].execution, CommandExecution::Unknown);
+    }
+
+    #[test]
+    fn a_command_is_only_a_command_when_it_leads_the_draft() {
+        let commands = Command::parse_all(&serde_json::json!([{
+            "name": "/undo",
+            "description": "",
+            "group": "session",
+            "execution": { "kind": "daemon", "method": "POST", "path": "/v1/sessions/{id}/undo" }
+        }]));
+        assert!(command_in_draft(&commands, "/undo").is_some());
+        assert!(command_in_draft(&commands, "  /undo  ").is_some());
+        assert!(command_in_draft(&commands, "/UNDO").is_some());
+        // Prose about a command, and an unrelated path, both stay messages.
+        assert!(command_in_draft(&commands, "what does /undo do?").is_none());
+        assert!(command_in_draft(&commands, "/usr/bin/env").is_none());
+        assert!(command_in_draft(&commands, "fix @src/undo.rs").is_none());
+    }
+
+    #[test]
+    fn a_command_argument_is_whatever_follows_the_command_word() {
+        assert_eq!(
+            command_argument("/checkpoint before the refactor"),
+            Some("before the refactor".to_owned())
+        );
+        assert_eq!(command_argument("/checkpoint"), None);
+        assert_eq!(command_argument("/checkpoint   "), None);
     }
 }

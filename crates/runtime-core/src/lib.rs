@@ -777,6 +777,14 @@ pub enum ContextClass {
     CompactedCheckpoint,
     ToolEvidence,
     Reserve,
+    /// Context a person or the project pinned for this turn, rather than
+    /// something retrieval chose: resolved composer references (`@file`,
+    /// `#symbol`), project instruction files, and selected project memory.
+    /// Classed separately from `RetrievedContext` because the two answer
+    /// different questions — "why did the index surface this?" versus "who
+    /// asked for this to be here?" — and a context inspector that merges them
+    /// cannot tell a user which of their references actually landed.
+    PinnedContext,
 }
 
 /// Why one [`ContextLedgerSection`] was included in a turn's prompt.
@@ -842,6 +850,131 @@ pub struct ContextLedgerEntry {
     #[serde(default)]
     pub estimator: TokenEstimator,
     pub recorded_at: DateTime<Utc>,
+}
+
+/// Where one [`PinnedSection`]'s content came from.
+///
+/// The origin is carried into the ledger's section label so a user reading the
+/// context inspector can tell "I typed `@src/auth.rs` and it was attached"
+/// apart from "the project's AGENTS.md was attached" — both are pinned, but
+/// only one of them is something the user asked for in this turn.
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PinnedOrigin {
+    /// A composer reference the user typed (`@file`, `@folder:`, `@diff`,
+    /// `@git:`, `#symbol`), resolved against the repository.
+    ComposerReference,
+    /// A project instruction file in the repository root (AGENTS.md,
+    /// CLAUDE.md, .purrcode.md).
+    ProjectInstructions,
+    /// A durable project-memory entry selected for this turn.
+    ProjectMemory,
+}
+
+impl PinnedOrigin {
+    /// The prefix used to build a ledger section label, so labels group by
+    /// origin when the inspector sorts them.
+    pub const fn label_prefix(self) -> &'static str {
+        match self {
+            Self::ComposerReference => "reference",
+            Self::ProjectInstructions => "project_instructions",
+            Self::ProjectMemory => "project_memory",
+        }
+    }
+
+    /// How the section is introduced to the model. Composer references are the
+    /// user's own words made concrete; instructions and memory are the
+    /// project's standing knowledge, and labelling them as such is what stops
+    /// the model from reading a remembered build command as a fresh request.
+    pub const fn heading(self) -> &'static str {
+        match self {
+            Self::ComposerReference => "ATTACHED REFERENCES (the user pinned these to this turn)",
+            Self::ProjectInstructions => "PROJECT INSTRUCTIONS (from the repository)",
+            Self::ProjectMemory => "PROJECT MEMORY (durable, auditable project knowledge)",
+        }
+    }
+}
+
+/// One piece of context pinned to a turn by a person or by the project.
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct PinnedSection {
+    pub origin: PinnedOrigin,
+    /// What the user or project calls this: `@src/auth.rs`, `AGENTS.md`,
+    /// `architecture`.
+    pub label: String,
+    /// The bounded content itself. Callers truncate before constructing this;
+    /// the runtime does not silently shrink it, because a section that claims
+    /// to be a file and is half a file is the same lie as a chip that claims
+    /// to be attached and is not.
+    pub content: String,
+    /// A memory entry's id, so the daemon can record that it was actually used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_id: Option<String>,
+}
+
+/// The context a turn had pinned to it, in the order it is presented.
+///
+/// This is the channel that makes `@file` and project memory real: a section
+/// here is assembled into the model request and accounted for in the turn's
+/// [`ContextLedgerEntry`] with [`WhyIncluded::Pinned`]. Anything that shows a
+/// user an "attached" affordance must put content through here, or the
+/// affordance is describing something that did not happen.
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct PinnedContext {
+    pub sections: Vec<PinnedSection>,
+}
+
+impl PinnedContext {
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty()
+    }
+
+    /// The pinned block split into one `(ledger_label, text)` pair per pinned
+    /// section, grouped by origin with each group's heading emitted once (on
+    /// the first section of the group, so every byte belongs to exactly one
+    /// pair).
+    ///
+    /// This is the single source of truth for both the prompt text and the
+    /// ledger: concatenating every `text` yields exactly [`Self::render`], so
+    /// the per-section token accounting can never drift from what the model
+    /// actually saw — the invariant the context ledger is built on.
+    pub fn render_parts(&self) -> Vec<(String, String)> {
+        let mut parts = Vec::with_capacity(self.sections.len());
+        let mut current: Option<PinnedOrigin> = None;
+        for section in &self.sections {
+            let mut text = String::new();
+            if current != Some(section.origin) {
+                text.push_str(&format!("## {}\n", section.origin.heading()));
+                current = Some(section.origin);
+            }
+            text.push_str(&format!("### {}\n{}\n\n", section.label, section.content));
+            parts.push((
+                format!("{}/{}", section.origin.label_prefix(), section.label),
+                text,
+            ));
+        }
+        parts
+    }
+
+    /// The whole pinned block as it appears in the prompt. Empty when nothing
+    /// is pinned, so the turn carries no empty heading for the model to
+    /// interpret.
+    pub fn render(&self) -> String {
+        self.render_parts()
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect()
+    }
+
+    /// The ids of the memory entries pinned into this turn, for recording that
+    /// they were actually used rather than merely stored.
+    pub fn used_memory_ids(&self) -> Vec<String> {
+        self.sections
+            .iter()
+            .filter(|section| section.origin == PinnedOrigin::ProjectMemory)
+            .filter_map(|section| section.memory_id.clone())
+            .collect()
+    }
 }
 
 /// How many of the most recent [`ContextLedgerEntry`] values `SessionState`
@@ -1081,6 +1214,17 @@ pub enum SessionEvent {
         symbols: usize,
         sensitive_files: usize,
     },
+    /// A read-only Scout subagent began exploring the repository.
+    ///
+    /// Recorded so a running Scout is visible while it runs. Without a Started
+    /// event, the only trace of a subagent is the record of it having finished,
+    /// which means the agent workspace can show work only after it is too late
+    /// to watch — the same gap `WorkerStarted` was added to close for
+    /// supervisor workers.
+    ScoutStarted {
+        scout_id: String,
+        parent_turn_id: TurnId,
+    },
     /// A read-only Scout subagent completed its repository exploration and
     /// returned structured evidence (PRD v1.1 §Phase 5, P0-7).
     ScoutCompleted {
@@ -1094,6 +1238,11 @@ pub enum SessionEvent {
     /// agent loop continues without them.
     ScoutFailed {
         reason: String,
+        /// Which Scout failed, so the workspace can close the entry its
+        /// `ScoutStarted` opened rather than leaving it running forever.
+        /// Defaulted for logs written before Scouts were identified here.
+        #[serde(default)]
+        scout_id: Option<String>,
     },
     ModelRequestStarted {
         role: String,
