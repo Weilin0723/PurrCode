@@ -424,6 +424,24 @@ pub enum Request {
         session: String,
         anchor_message_id: String,
     },
+    // ── Session workspace ────────────────────────────────────────────
+    /// `PATCH /v1/sessions/{id}` — rename, archive, or pin. This is workspace
+    /// metadata, not audit state, so it does not touch the event log.
+    UpdateSessionMeta {
+        session: String,
+        title: Option<String>,
+        archived: Option<bool>,
+        pinned: Option<bool>,
+    },
+    /// `DELETE /v1/sessions/{id}` — soft-delete. The event log is preserved
+    /// for audit; only the working list forgets it.
+    DeleteSession {
+        session: String,
+    },
+    /// `GET /v1/sessions/search?q=` — full-text search across session events.
+    SearchSessions {
+        query: String,
+    },
 }
 
 /// A panel in the session presentation snapshot.
@@ -793,6 +811,9 @@ pub enum Response {
     /// A fork completed, carrying the new child session's id so the window
     /// can select it.
     SessionForked(String),
+    /// `GET /v1/sessions/search` — the query and its hits, echoed together so
+    /// results for an abandoned query cannot be shown against a newer one.
+    SessionSearch(String, Value),
     /// A settings mutation landed; the UI refetches the affected page.
     SettingsMutated,
     /// Connectivity changed. `false` means every view should say so rather than
@@ -1044,6 +1065,8 @@ impl Request {
                     | Self::RestoreCheckpoint { .. }
                     | Self::CreateCheckpoint { .. }
                     | Self::ForkSession { .. }
+                    | Self::UpdateSessionMeta { .. }
+                    | Self::DeleteSession { .. }
             )
     }
 }
@@ -1967,6 +1990,44 @@ impl Worker {
                     Err(error) => self.reply_submission_failure(error),
                 }
             }
+            Request::UpdateSessionMeta {
+                session,
+                title,
+                archived,
+                pinned,
+            } => {
+                // Only the named fields travel: sending `null` for the others
+                // would be a request to clear them.
+                let mut body = serde_json::Map::new();
+                if let Some(title) = title {
+                    body.insert("title".into(), Value::String(title));
+                }
+                if let Some(archived) = archived {
+                    body.insert("archived".into(), Value::Bool(archived));
+                }
+                if let Some(pinned) = pinned {
+                    body.insert("pinned".into(), Value::Bool(pinned));
+                }
+                let path = format!("/v1/sessions/{}", urlencode(&session));
+                match self.patch::<Value>(&path, &Value::Object(body)) {
+                    Ok(_) => self.reply(Response::Mutated(session)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::DeleteSession { session } => {
+                let path = format!("/v1/sessions/{}", urlencode(&session));
+                match self.delete::<Value>(&path) {
+                    Ok(_) => self.reply(Response::Mutated(session)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::SearchSessions { query } => {
+                let path = format!("/v1/sessions/search?q={}", urlencode(&query));
+                match self.get::<Value>(&path) {
+                    Ok(value) => self.reply(Response::SessionSearch(query, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
             Request::ListCommands => match self.get::<Value>("/v1/commands") {
                 Ok(value) => self.reply(Response::Commands(value)),
                 Err(error) => self.reply_failure(error),
@@ -2061,6 +2122,21 @@ impl Worker {
             .map_err(|error| describe(&error))?;
         let response = client
             .post(&url)
+            .bearer_auth(&self.connection.token)
+            .json(body)
+            .send()
+            .map_err(|error| describe(&error))?;
+        decode(response, path)
+    }
+
+    /// A partial update. Distinct from `post` because the daemon's metadata
+    /// route treats an absent field as "leave it alone" and a present one as
+    /// "set it to this", which only a PATCH body can express.
+    fn patch<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T, String> {
+        let url = format!("{}{path}", self.connection.base_url);
+        let response = self
+            .http
+            .patch(&url)
             .bearer_auth(&self.connection.token)
             .json(body)
             .send()

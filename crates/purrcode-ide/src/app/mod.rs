@@ -450,6 +450,18 @@ pub struct PurrCodeIde {
     /// has nothing to report" (show the file tree).
     pub(crate) workspace_changes_checked: bool,
 
+    // ── Session workspace ──────────────────────────────────────────────
+    /// The sidebar's search box. Non-empty means the list is replaced by hits.
+    pub(crate) session_query: String,
+    pub(crate) session_hits: Vec<model::SessionHit>,
+    /// The query `session_hits` answers, so a reply for an abandoned query is
+    /// never shown against a newer one.
+    pub(crate) session_hits_for: Option<String>,
+    /// A rename in progress, as `(session id, draft title)`.
+    pub(crate) renaming_session: Option<(String, String)>,
+    /// A delete awaiting confirmation, as `(session id, title)`.
+    pub(crate) deleting_session: Option<(String, String)>,
+
     // ── Checkpoints ────────────────────────────────────────────────────
     /// Restorable points for the selected session, newest first.
     pub(crate) checkpoints: Vec<model::Checkpoint>,
@@ -673,6 +685,12 @@ impl PurrCodeIde {
             workspace_changes: model::Changes::default(),
             workspace_changes_loading: false,
             workspace_changes_checked: false,
+
+            session_query: String::new(),
+            session_hits: Vec::new(),
+            session_hits_for: None,
+            renaming_session: None,
+            deleting_session: None,
 
             checkpoints: Vec::new(),
             checkpoints_for: None,
@@ -1484,6 +1502,11 @@ impl PurrCodeIde {
                 self.apply_format_edits(&path, &value, then_save)
             }
             Response::LspDiagnostics(value) => self.language.absorb_diagnostics(&value),
+            Response::SessionSearch(query, value) => {
+                if self.session_hits_for.as_deref() == Some(query.as_str()) {
+                    self.session_hits = crate::model::SessionHit::parse_all(&value);
+                }
+            }
             Response::Checkpoints(session, value) => {
                 if self.selected.as_deref() == Some(session.as_str()) {
                     self.checkpoints = crate::model::Checkpoint::parse_all(&value);
@@ -1874,6 +1897,8 @@ impl eframe::App for PurrCodeIde {
         self.file_operation_dialog(ctx);
 
         self.restore_dialog(ctx);
+
+        self.session_dialogs(ctx);
 
         self.close_confirm_modal(ctx);
     }

@@ -30,6 +30,13 @@ pub struct SessionRow {
     pub needs_attention: bool,
     pub group: String,
     pub unread: bool,
+    /// Workspace metadata from `session_meta`. Archived sessions are hidden
+    /// behind a disclosure rather than deleted; pinned ones sort to the top.
+    pub archived: bool,
+    pub pinned: bool,
+    /// The session this one was forked from, so a fork is visibly a branch
+    /// rather than an unrelated session that appeared out of nowhere.
+    pub parent_id: Option<String>,
 }
 
 /// One conversation turn.
@@ -785,6 +792,15 @@ pub fn parse_session_rows(raw: &[Value]) -> Vec<SessionRow> {
                     .unwrap_or(false)
                     || needs_attention,
                 needs_attention,
+                archived: value
+                    .get("archived")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                pinned: value
+                    .get("pinned")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                parent_id: text(value, "parent_id"),
             }
         })
         .filter(|row| !row.id.is_empty())
@@ -1292,6 +1308,39 @@ pub fn panel_availability_label(availability: &PanelAvailability) -> &'static st
         PanelAvailability::Empty => "Empty",
         PanelAvailability::Unavailable => "Unavailable",
         PanelAvailability::Error => "Error",
+    }
+}
+
+/// One hit from full-text search across session event logs.
+#[derive(Clone, Debug)]
+pub struct SessionHit {
+    pub session_id: String,
+    pub event_type: String,
+    pub snippet: String,
+    pub occurred_at: String,
+}
+
+impl SessionHit {
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(Self {
+                            session_id: item["session_id"].as_str()?.to_owned(),
+                            event_type: item["event_type"].as_str().unwrap_or_default().to_owned(),
+                            snippet: item["snippet"].as_str().unwrap_or_default().to_owned(),
+                            occurred_at: item["occurred_at"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_owned(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 

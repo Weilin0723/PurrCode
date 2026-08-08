@@ -1708,6 +1708,13 @@ async fn sessions(
         });
         let timestamps = store.timestamped_events(id)?;
         let meta = store.session_meta(id)?;
+        // A soft-deleted session is gone from the working list. Its event log
+        // is deliberately preserved for audit and recovery, but leaving it in
+        // this response would make `DELETE /v1/sessions/{id}` look like it did
+        // nothing — the row would come straight back on the next poll.
+        if meta.deleted {
+            continue;
+        }
         views.push(SessionView {
             id: id.0.to_string(),
             status: format!("{:?}", session.status),
@@ -11399,6 +11406,71 @@ mod tests {
             status,
             evidence: format!("{action}: {evidence}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_deleted_session_leaves_the_working_list() {
+        // `DELETE /v1/sessions/{id}` is a soft delete: the event log survives
+        // for audit. The list has to honour the flag anyway, or the row comes
+        // straight back on the next poll and the delete looks broken.
+        let temporary = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&temporary.path().join("sessions.db")).unwrap();
+        let repository = temporary.path().to_path_buf();
+        let kept = SessionId::new();
+        let removed = SessionId::new();
+        for id in [kept, removed] {
+            store
+                .append(
+                    id,
+                    &SessionEvent::SessionCreated {
+                        objective: "work".into(),
+                        repository: repository.clone(),
+                        authority_mode: AuthorityMode::Governed,
+                    },
+                )
+                .unwrap();
+        }
+        store.set_session_deleted(removed, true).unwrap();
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
+            terminals: TerminalRuntime::default(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let listed = sessions(
+            State(state.clone()),
+            headers,
+            Query(SessionsQuery {
+                repository: Some(repository),
+            }),
+        )
+        .await
+        .expect("listing sessions must succeed");
+        let ids: Vec<&str> = listed.0.iter().map(|view| view.id.as_str()).collect();
+        assert!(ids.contains(&kept.0.to_string().as_str()));
+        assert!(
+            !ids.contains(&removed.0.to_string().as_str()),
+            "a soft-deleted session must not come back in the working list"
+        );
+        // The audit record is still there — that is the point of a soft delete.
+        assert!(!state.store.lock().await.events(removed).unwrap().is_empty());
     }
 
     #[test]

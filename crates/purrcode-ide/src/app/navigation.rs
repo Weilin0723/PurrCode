@@ -66,6 +66,12 @@ impl PurrCodeIde {
     // ── Session list ────────────────────────────────────────────────
 
     fn session_list(&mut self, ui: &mut Ui) {
+        self.session_search_field(ui);
+        if self.session_search_active() {
+            self.session_search_results(ui);
+            return;
+        }
+
         if self.sessions.is_empty() {
             ui.add_space(12.0);
             ui.label(
@@ -82,14 +88,23 @@ impl PurrCodeIde {
             return;
         }
 
-        // Group sessions by time (clone all data to avoid borrow issues)
-        let mut groups: std::collections::BTreeMap<String, Vec<(String, String, bool, String)>> =
+        // Group sessions by time (clone all data to avoid borrow issues).
+        //
+        // Pinned and Archived are lifecycle groups, so they outrank the time
+        // buckets: something the user pinned should not sink out of view
+        // because it was last touched on Tuesday, and something they archived
+        // should not keep appearing under Today.
+        let mut groups: std::collections::BTreeMap<String, Vec<SessionEntry>> =
             std::collections::BTreeMap::new();
-        let sessions_data: Vec<(String, String, bool, String, String)> = self
+        let sessions_data: Vec<(SessionEntry, String)> = self
             .sessions
             .iter()
             .map(|row| {
-                let group_key = if is_closed(row.state) {
+                let group_key = if row.archived {
+                    "Archived".to_owned()
+                } else if row.pinned {
+                    "Pinned".to_owned()
+                } else if is_closed(row.state) {
                     "Closed".to_owned()
                 } else if row.group == "Today" || row.group == "Yesterday" {
                     row.group.clone()
@@ -97,100 +112,94 @@ impl PurrCodeIde {
                     "Earlier".to_owned()
                 };
                 (
-                    row.id.clone(),
-                    row.title.clone(),
-                    row.needs_attention,
-                    row.relative_time.clone(),
+                    SessionEntry {
+                        id: row.id.clone(),
+                        title: row.title.clone(),
+                        needs_attention: row.needs_attention,
+                        relative_time: row.relative_time.clone(),
+                        pinned: row.pinned,
+                        archived: row.archived,
+                        forked: row.parent_id.is_some(),
+                        running: row.state.execution_active(),
+                    },
                     group_key,
                 )
             })
             .collect();
 
-        for (id, title, needs_attention, relative_time, group_key) in sessions_data {
-            groups
-                .entry(group_key)
-                .or_default()
-                .push((id, title, needs_attention, relative_time));
+        for (entry, group_key) in sessions_data {
+            groups.entry(group_key).or_default().push(entry);
         }
 
-        // Order: Today, Yesterday, Earlier, Closed
         let mut session_to_select: Option<String> = None;
-        let earlier_visibility_id = egui::Id::new("purrcode_show_earlier_sessions");
-        let mut show_earlier = ui.data_mut(|data| {
-            data.get_temp::<bool>(earlier_visibility_id)
-                .unwrap_or(false)
-        });
-        let closed_visibility_id = egui::Id::new("purrcode_show_closed_sessions");
-        let mut show_closed =
-            ui.data_mut(|data| data.get_temp::<bool>(closed_visibility_id).unwrap_or(false));
+        let mut action: Option<(SessionAction, SessionEntry)> = None;
+        // Collapsed groups keep their own flag, keyed by name: folding
+        // "Closed" must not also fold "Archived", which is a different
+        // decision about a different set of sessions.
+        let collapsed_id = |group: &str| egui::Id::new(("purrcode_session_group", group));
         egui::ScrollArea::vertical()
             .id_salt("session_list")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                for group_name in ["Today", "Yesterday", "Earlier", "Closed"] {
+                for group_name in [
+                    "Pinned",
+                    "Today",
+                    "Yesterday",
+                    "Earlier",
+                    "Closed",
+                    "Archived",
+                ] {
                     let Some(entries) = groups.get(group_name) else {
                         continue;
                     };
-                    let hidden = if group_name == "Earlier" {
-                        !show_earlier
-                    } else if group_name == "Closed" {
-                        !show_closed
+                    // Groups that are noise by default start folded; the ones
+                    // describing current work never do.
+                    let folds = matches!(group_name, "Earlier" | "Closed" | "Archived");
+                    let shown = if folds {
+                        ui.data_mut(|data| {
+                            data.get_temp::<bool>(collapsed_id(group_name)).unwrap_or(false)
+                        })
                     } else {
-                        false
+                        true
                     };
-                    if hidden {
+                    if !shown {
                         ui.add_space(4.0);
                         self.section_heading(ui, group_name);
                         let response = ui
                             .button(format!("Show {} {group_name} sessions", entries.len()))
-                            .on_hover_text(if group_name == "Earlier" {
-                                "Older durable runs are hidden from the working list. Their audit records are preserved."
-                            } else {
-                                "Finished sessions that cannot be resumed are folded up. Their audit records are preserved."
+                            .on_hover_text(match group_name {
+                                "Earlier" => "Older durable runs are hidden from the working list. Their audit records are preserved.",
+                                "Archived" => "Archived sessions are out of the way, not deleted. Their audit records are preserved.",
+                                _ => "Finished sessions that cannot be resumed are folded up. Their audit records are preserved.",
                             });
                         if response.clicked() {
-                            if group_name == "Earlier" {
-                                show_earlier = true;
-                                ui.data_mut(|data| {
-                                    data.insert_temp(earlier_visibility_id, true);
-                                });
-                            } else {
-                                show_closed = true;
-                                ui.data_mut(|data| {
-                                    data.insert_temp(closed_visibility_id, true);
-                                });
-                            }
+                            ui.data_mut(|data| data.insert_temp(collapsed_id(group_name), true));
                         }
                         continue;
                     }
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
                         self.section_heading_label(ui, group_name);
-                        if (group_name == "Earlier" && ui.small_button("Hide").clicked())
-                            || (group_name == "Closed" && ui.small_button("Hide").clicked())
-                        {
-                            if group_name == "Earlier" {
-                                show_earlier = false;
-                                ui.data_mut(|data| {
-                                    data.insert_temp(earlier_visibility_id, false);
-                                });
-                            } else {
-                                show_closed = false;
-                                ui.data_mut(|data| {
-                                    data.insert_temp(closed_visibility_id, false);
-                                });
-                            }
+                        if folds && ui.small_button("Hide").clicked() {
+                            ui.data_mut(|data| data.insert_temp(collapsed_id(group_name), false));
                         }
                     });
-                    for (id, title, needs_attention, relative_time) in entries {
-                        let selected = self.selected.as_deref() == Some(id);
-                        if self.session_row(ui, title, relative_time, *needs_attention, selected) {
-                            session_to_select = Some(id.clone());
+                    for entry in entries {
+                        let selected = self.selected.as_deref() == Some(entry.id.as_str());
+                        let outcome = self.session_row(ui, entry, selected);
+                        if outcome.selected {
+                            session_to_select = Some(entry.id.clone());
+                        }
+                        if let Some(chosen) = outcome.action {
+                            action = Some((chosen, entry.clone()));
                         }
                     }
                     ui.add_space(6.0);
                 }
             });
+        if let Some((chosen, entry)) = action {
+            self.apply_session_action(chosen, &entry);
+        }
         if let Some(id) = session_to_select {
             self.select_session(&id);
         }
@@ -201,14 +210,10 @@ impl PurrCodeIde {
     /// The whole row is the target — the previous version only accepted clicks
     /// on the title glyphs themselves, so half of a row that looked clickable
     /// was not. Returns `true` when it was chosen.
-    fn session_row(
-        &self,
-        ui: &mut Ui,
-        title: &str,
-        relative_time: &str,
-        needs_attention: bool,
-        selected: bool,
-    ) -> bool {
+    fn session_row(&self, ui: &mut Ui, entry: &SessionEntry, selected: bool) -> RowOutcome {
+        let title = entry.title.as_str();
+        let relative_time = entry.relative_time.as_str();
+        let needs_attention = entry.needs_attention;
         let width = ui.available_width();
         let response =
             ui.allocate_response(egui::vec2(width, crate::theme::ROW_HEIGHT), Sense::click());
@@ -228,8 +233,13 @@ impl PurrCodeIde {
             self.tokens.focus_ring(ui.painter(), rect);
         }
 
+        // A session that is still working shows it whether or not it is the
+        // one on screen: a background run the user switched away from is
+        // exactly the thing they need to be able to see from here.
         let dot = if needs_attention {
             self.tokens.status_warning
+        } else if entry.running {
+            self.tokens.status_running
         } else if selected {
             self.tokens.accent_primary
         } else {
@@ -237,14 +247,34 @@ impl PurrCodeIde {
         };
         ui.painter()
             .circle_filled(egui::pos2(rect.left() + 12.0, rect.center().y), 3.0, dot);
+        if entry.running && !selected {
+            // A ring around the dot, so "working elsewhere" is legible at a
+            // glance without adding a second column of chrome.
+            ui.painter().circle_stroke(
+                egui::pos2(rect.left() + 12.0, rect.center().y),
+                5.5,
+                egui::Stroke::new(1.0_f32, self.tokens.status_running.gamma_multiply(0.6)),
+            );
+        }
 
         // The timestamp is measured first so the title can be given exactly
         // the space that is left, and elided rather than overrun.
         let meta_font = egui::FontId::proportional(10.5);
-        let meta = if needs_attention {
-            format!("• {relative_time}")
-        } else {
-            relative_time.to_owned()
+        // Markers ride with the timestamp rather than beside the title, so a
+        // pinned or forked session is legible without stealing width from the
+        // one thing the user actually reads.
+        let mut marks = String::new();
+        if entry.pinned {
+            marks.push('📌');
+        }
+        if entry.forked {
+            marks.push('⑂');
+        }
+        let meta = match (needs_attention, marks.is_empty()) {
+            (true, true) => format!("• {relative_time}"),
+            (true, false) => format!("{marks} • {relative_time}"),
+            (false, true) => relative_time.to_owned(),
+            (false, false) => format!("{marks} {relative_time}"),
         };
         let meta_width = ui.fonts_mut(|fonts| {
             fonts
@@ -295,7 +325,263 @@ impl PurrCodeIde {
         } else {
             response
         };
-        response.clicked()
+
+        // Lifecycle actions live in the row's own context menu rather than in
+        // a row of icons: a sidebar where every session carries five buttons
+        // stops being a list of work and becomes a control panel.
+        let mut action = None;
+        response.context_menu(|ui| {
+            action = session_context_menu(ui, entry);
+        });
+        RowOutcome {
+            selected: response.clicked(),
+            action,
+        }
+    }
+
+    // ── Session workspace ───────────────────────────────────────────
+
+    /// Whether the sidebar is showing search results rather than the list.
+    fn session_search_active(&self) -> bool {
+        !self.session_query.trim().is_empty()
+    }
+
+    /// The search field above the session list.
+    fn session_search_field(&mut self, ui: &mut Ui) {
+        let mut query = self.session_query.clone();
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut query)
+                .hint_text("Search sessions…")
+                .desired_width(f32::INFINITY),
+        );
+        if query != self.session_query {
+            self.session_query = query;
+            // Results for the previous query would be shown against this one
+            // for a frame; clear them rather than mislabel them.
+            self.session_hits.clear();
+            self.session_hits_for = None;
+        }
+        if response.changed() || (response.lost_focus() && self.session_search_active()) {
+            self.run_session_search();
+        }
+        ui.add_space(4.0);
+    }
+
+    fn run_session_search(&mut self) {
+        let query = self.session_query.trim().to_owned();
+        if query.is_empty() || self.session_hits_for.as_deref() == Some(query.as_str()) {
+            return;
+        }
+        self.session_hits_for = Some(query.clone());
+        self.client
+            .send(crate::daemon::Request::SearchSessions { query });
+    }
+
+    /// Search results: a snippet per matching event, grouped by session.
+    ///
+    /// The search runs over the event log, so a hit is evidence — the actual
+    /// text that matched, with the event that carried it — rather than a
+    /// title guess.
+    fn session_search_results(&mut self, ui: &mut Ui) {
+        let tokens = self.tokens;
+        if self.session_hits_for.as_deref() != Some(self.session_query.trim()) {
+            ui.label(RichText::new("Searching…").small().color(tokens.text_muted));
+            return;
+        }
+        if self.session_hits.is_empty() {
+            ui.label(
+                RichText::new("Nothing matched.")
+                    .small()
+                    .color(tokens.text_muted),
+            );
+            return;
+        }
+        let hits = self.session_hits.clone();
+        let titles: std::collections::BTreeMap<String, String> = self
+            .sessions
+            .iter()
+            .map(|row| (row.id.clone(), row.title.clone()))
+            .collect();
+        let mut select = None;
+        egui::ScrollArea::vertical()
+            .id_salt("session_search_results")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for hit in &hits {
+                    let title = titles
+                        .get(&hit.session_id)
+                        .cloned()
+                        // A hit in a session this folder's list does not carry
+                        // is named by its event rather than silently dropped.
+                        .unwrap_or_else(|| {
+                            format!("Session {}", &hit.session_id[..8.min(hit.session_id.len())])
+                        });
+                    let response = ui
+                        .vertical(|ui| {
+                            ui.label(
+                                RichText::new(title)
+                                    .size(crate::theme::TYPE_LABEL)
+                                    .color(tokens.text_primary),
+                            );
+                            ui.label(
+                                RichText::new(&hit.snippet)
+                                    .size(crate::theme::TYPE_META)
+                                    .color(tokens.text_secondary),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} · {}",
+                                    hit.event_type,
+                                    crate::model::relative_time(&hit.occurred_at)
+                                ))
+                                .size(crate::theme::TYPE_EYEBROW)
+                                .color(tokens.text_muted),
+                            );
+                        })
+                        .response;
+                    if response.interact(Sense::click()).clicked() {
+                        select = Some(hit.session_id.clone());
+                    }
+                    ui.add_space(6.0);
+                }
+            });
+        if let Some(id) = select {
+            self.session_query.clear();
+            self.session_hits.clear();
+            self.session_hits_for = None;
+            self.select_session(&id);
+        }
+    }
+
+    /// Runs a lifecycle action against one session.
+    fn apply_session_action(&mut self, action: SessionAction, entry: &SessionEntry) {
+        use crate::daemon::Request;
+        let session = entry.id.clone();
+        match action {
+            SessionAction::Rename => {
+                self.renaming_session = Some((session, entry.title.clone()));
+            }
+            SessionAction::TogglePin => self.client.send(Request::UpdateSessionMeta {
+                session,
+                title: None,
+                archived: None,
+                pinned: Some(!entry.pinned),
+            }),
+            SessionAction::ToggleArchive => self.client.send(Request::UpdateSessionMeta {
+                session,
+                title: None,
+                archived: Some(!entry.archived),
+                pinned: None,
+            }),
+            SessionAction::Delete => self.deleting_session = Some((session, entry.title.clone())),
+        }
+    }
+
+    /// Rename and delete both need a word from the user before they commit.
+    pub(crate) fn session_dialogs(&mut self, ctx: &egui::Context) {
+        self.rename_session_dialog(ctx);
+        self.delete_session_dialog(ctx);
+    }
+
+    fn rename_session_dialog(&mut self, ctx: &egui::Context) {
+        let Some((session, title)) = self.renaming_session.clone() else {
+            return;
+        };
+        let mut next = title;
+        let mut close = false;
+        let mut commit = false;
+        egui::Modal::new(egui::Id::new("purrcode_rename_session")).show(ctx, |ui| {
+            ui.set_width(340.0);
+            ui.label(
+                RichText::new("Rename session")
+                    .size(crate::theme::TYPE_TITLE)
+                    .color(self.tokens.text_primary),
+            );
+            ui.add_space(8.0);
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut next)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Session name"),
+            );
+            response.request_focus();
+            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                commit = true;
+            }
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                ui.add_enabled_ui(!next.trim().is_empty(), |ui| {
+                    if ui.button("Rename").clicked() {
+                        commit = true;
+                    }
+                });
+            });
+        });
+        self.renaming_session = Some((session.clone(), next.clone()));
+        if commit && !next.trim().is_empty() {
+            self.client.send(crate::daemon::Request::UpdateSessionMeta {
+                session,
+                title: Some(next.trim().to_owned()),
+                archived: None,
+                pinned: None,
+            });
+            close = true;
+        }
+        if close {
+            self.renaming_session = None;
+        }
+    }
+
+    fn delete_session_dialog(&mut self, ctx: &egui::Context) {
+        let Some((session, title)) = self.deleting_session.clone() else {
+            return;
+        };
+        let mut close = false;
+        let mut confirm = false;
+        egui::Modal::new(egui::Id::new("purrcode_delete_session")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(
+                RichText::new("Delete session")
+                    .size(crate::theme::TYPE_TITLE)
+                    .color(self.tokens.text_primary),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(format!("“{title}” is removed from this list."))
+                    .color(self.tokens.text_primary),
+            );
+            ui.add_space(4.0);
+            // Stated because it is true and because it matters: this is a
+            // soft delete, and a user who believes they have erased an audit
+            // trail has been misled about what PurrCode keeps.
+            ui.label(
+                RichText::new(
+                    "Its audit record is preserved. Archive it instead if you only want it out \
+                     of the way.",
+                )
+                .size(crate::theme::TYPE_META)
+                .color(self.tokens.text_secondary),
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                if ui.button("Delete").clicked() {
+                    confirm = true;
+                }
+            });
+        });
+        if confirm {
+            self.client
+                .send(crate::daemon::Request::DeleteSession { session });
+            close = true;
+        }
+        if close {
+            self.deleting_session = None;
+        }
     }
 
     // ── File open ───────────────────────────────────────────────────
@@ -567,6 +853,74 @@ fn walk_dir(
 /// (`primary_action().is_some()`); `Failed` and `NeedsRecovery` keep their
 /// primary action and `needs_attention` already flags them, so they stay
 /// visible. `Cancelled` is the one truly closed terminal state today.
+/// One session as the sidebar needs it, flattened out of `SessionRow` so the
+/// list can be drawn while `self` is borrowed mutably elsewhere.
+#[derive(Clone, Debug)]
+pub(crate) struct SessionEntry {
+    pub id: String,
+    pub title: String,
+    pub relative_time: String,
+    pub needs_attention: bool,
+    pub pinned: bool,
+    pub archived: bool,
+    /// Forked from another session, so the row can say so.
+    pub forked: bool,
+    /// Still executing. True for a background run the user has switched away
+    /// from, which is the whole point of showing it.
+    pub running: bool,
+}
+
+/// What a session row's context menu asked for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionAction {
+    Rename,
+    TogglePin,
+    ToggleArchive,
+    Delete,
+}
+
+/// What one row reported this frame.
+pub(crate) struct RowOutcome {
+    pub selected: bool,
+    pub action: Option<SessionAction>,
+}
+
+fn session_context_menu(ui: &mut Ui, entry: &SessionEntry) -> Option<SessionAction> {
+    let mut chosen = None;
+    if ui.button("Rename…").clicked() {
+        chosen = Some(SessionAction::Rename);
+        ui.close();
+    }
+    if ui
+        .button(if entry.pinned { "Unpin" } else { "Pin" })
+        .clicked()
+    {
+        chosen = Some(SessionAction::TogglePin);
+        ui.close();
+    }
+    if ui
+        .button(if entry.archived {
+            "Unarchive"
+        } else {
+            "Archive"
+        })
+        .clicked()
+    {
+        chosen = Some(SessionAction::ToggleArchive);
+        ui.close();
+    }
+    ui.separator();
+    if ui
+        .button("Delete…")
+        .on_hover_text("Removes it from this list. The audit record is kept.")
+        .clicked()
+    {
+        chosen = Some(SessionAction::Delete);
+        ui.close();
+    }
+    chosen
+}
+
 pub(crate) fn is_closed(state: ProductState) -> bool {
     matches!(state, ProductState::Cancelled)
 }
