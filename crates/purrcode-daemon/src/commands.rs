@@ -151,7 +151,7 @@ pub(crate) fn builtin_commands() -> Vec<CommandDescriptor> {
         },
         CommandDescriptor {
             name: "/approve",
-            description: "Approve an awaiting action or plan",
+            description: "Approve the awaiting action, or the plan under review",
             group: "authority",
             execution: Daemon {
                 method: "POST",
@@ -159,8 +159,12 @@ pub(crate) fn builtin_commands() -> Vec<CommandDescriptor> {
             },
         },
         CommandDescriptor {
+            // Deliberately narrower than `/approve`. There is no "reject the
+            // plan" operation — revising a plan is done by saying what is wrong
+            // with it, which is an ordinary message — so claiming the symmetry
+            // would promise something the runtime does not have.
             name: "/reject",
-            description: "Reject an awaiting action or plan",
+            description: "Reject the action awaiting approval",
             group: "authority",
             execution: Daemon {
                 method: "POST",

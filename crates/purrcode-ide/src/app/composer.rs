@@ -160,9 +160,14 @@ impl PurrCodeIde {
         let mut out = Vec::new();
         // The non-path references are offered by name so they are
         // discoverable; a user cannot guess `@git:HEAD~1` from an empty field.
+        //
+        // `@context` is deliberately absent. `@` means "attach this to the
+        // turn", and a turn's own assembled context is the one thing that
+        // cannot be attached to itself — the runtime reports it as unattachable,
+        // so offering it here would complete straight into a warning chip.
+        // Inspecting the context is `/context`, which is a thing to *do*.
         for (insert, detail) in [
-            ("@diff", "Uncommitted changes in this repository"),
-            ("@context", "The session's current context summary"),
+            ("@diff", "Uncommitted changes in this session"),
             ("@git:HEAD~1", "A file or commit at a Git reference"),
             ("@folder:", "Every file in a folder"),
         ] {
@@ -242,6 +247,10 @@ impl PurrCodeIde {
         self.client.send(Request::ResolveReferences {
             repository: self.repository_string(),
             text,
+            // Resolve against the selected session's worktree, so the chip
+            // previews the tree the agent has been changing rather than the
+            // untouched source checkout.
+            session: self.selected.clone(),
         });
     }
 

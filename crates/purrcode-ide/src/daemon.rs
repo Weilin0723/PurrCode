@@ -426,6 +426,12 @@ pub enum Request {
     ResolveReferences {
         repository: String,
         text: String,
+        /// The session the draft will be sent to, when one is selected.
+        ///
+        /// The daemon resolves a session's references against its worktree, so
+        /// the preview has to name the session or it previews a different tree
+        /// than the one the turn will attach from.
+        session: Option<String>,
     },
     // ── Checkpoints and fork ─────────────────────────────────────────
     /// `GET /v1/sessions/{id}/checkpoints` — restorable points, newest first.
@@ -1487,10 +1493,19 @@ impl Worker {
                 session,
                 name,
                 path,
-            } => match self.post::<Value>(&path, &Value::Null) {
-                Ok(value) => self.reply(Response::CommandExecuted(session, name, value)),
-                Err(error) => self.reply_failure(error),
-            },
+            } => {
+                // An empty object, not `null`: the pause and reject routes take
+                // a request struct whose fields all default, and serde refuses
+                // to build a struct from `null`. Posting `null` made `/pause`
+                // and `/reject` fail with a deserialization error — a command
+                // that looks dispatched and does nothing, which is the exact
+                // failure this whole path exists to remove. Routes that take no
+                // body ignore this.
+                match self.post::<Value>(&path, &serde_json::json!({})) {
+                    Ok(value) => self.reply(Response::CommandExecuted(session, name, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
             Request::SetModel { session, model } => {
                 let body = serde_json::json!({ "model": model });
                 match self.post::<Value>(&format!("/v1/sessions/{session}/model"), &body) {
@@ -2242,8 +2257,16 @@ impl Worker {
                 Ok(value) => self.reply(Response::Commands(value)),
                 Err(error) => self.reply_failure(error),
             },
-            Request::ResolveReferences { repository, text } => {
-                let body = serde_json::json!({"repository": repository, "text": text});
+            Request::ResolveReferences {
+                repository,
+                text,
+                session,
+            } => {
+                let body = serde_json::json!({
+                    "repository": repository,
+                    "text": text,
+                    "session_id": session,
+                });
                 // A reference that cannot be resolved is not a transport
                 // failure worth a notice: the chip row shows it unresolved.
                 if let Ok(value) = self.post::<Value>("/v1/references/resolve", &body) {

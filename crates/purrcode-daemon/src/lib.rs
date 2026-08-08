@@ -2800,6 +2800,36 @@ async fn approve_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     ensure_session_exists(&state, id).await?;
+    // A plan awaiting review is a boundary awaiting approval, even though the
+    // session state is `Paused` rather than `AwaitingApproval`. Approving it is
+    // what the IDE's "Build this plan" button does, and it does it by resuming.
+    // Without this branch, `/approve` at a plan-review boundary answered "no
+    // action is awaiting approval" while an approval card was on screen — the
+    // command was published as approving "an awaiting action or plan" and could
+    // only ever do the first.
+    {
+        let session = state.store.lock().await.load(id)?;
+        if awaiting_plan_review(&session) {
+            state
+                .store
+                .lock()
+                .await
+                .append(id, &SessionEvent::SessionResumed)?;
+            let operation = if session.worktree.is_none() {
+                AgentOperation::Start
+            } else {
+                AgentOperation::Resume
+            };
+            resume_or_restore_pause(&state, id, true, None, operation).await?;
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(AcceptedSession {
+                    id: id.0.to_string(),
+                    status: "plan approved",
+                }),
+            ));
+        }
+    }
     require_approval_boundary(&state.store.lock().await.load(id)?)?;
     wait_for_agent_lease_release(&state, id).await?;
     // The operation that produced the boundary may settle while the lease is handed off.
@@ -4884,8 +4914,26 @@ async fn run_agent_operation(
         | AgentOperation::Resume
         | AgentOperation::Approve => objective.clone(),
     };
+    // Two different roots, for two different questions.
+    //
+    // References resolve against the *session worktree* when there is one,
+    // because that is the tree the agent has been changing and the tree the
+    // user is looking at. Resolving them against the source checkout instead
+    // hands the model two versions of the same file in one prompt — the
+    // worktree state it is working in, plus a stale `@src/auth.rs` pinned from
+    // a checkout the agent never touched — and makes `@diff` report "no
+    // uncommitted changes" for a session with six modified files.
+    //
+    // Memory stays keyed on the *source repository*, because that is the
+    // project's durable identity: a per-session worktree path would scatter one
+    // project's knowledge across every session that ever ran in it.
+    let reference_root = session
+        .worktree
+        .clone()
+        .unwrap_or_else(|| repository.clone());
     let memory_entries = store.memory(&repository, None).unwrap_or_default();
-    let assembled = project_context::assemble(&repository, &request_text, &memory_entries).await;
+    let assembled =
+        project_context::assemble(&reference_root, &request_text, &memory_entries).await;
     // A reference the user typed and the daemon could not attach is recorded in
     // the conversation, not swallowed. Silence here is what let the composer
     // show a chip for context the model never received.
@@ -9249,8 +9297,18 @@ async fn inspect_repository(
 struct ResolveReferencesRequest {
     /// The composer text containing `@file`, `#symbol`, `@diff`, etc.
     text: String,
-    /// The repository to resolve against (the session's repository).
+    /// The repository the draft belongs to.
     repository: std::path::PathBuf,
+    /// The session the draft will be sent to, when there is one.
+    ///
+    /// This is what makes the chip's preview and the runtime's attachment agree.
+    /// A session with a worktree resolves against that worktree — the tree the
+    /// agent has been changing — so a preview of `@src/auth.rs` shows the same
+    /// bytes the model will receive. Without it the composer previews the source
+    /// checkout while the turn attaches the worktree, and the chip is once again
+    /// describing something other than what happens.
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -9281,6 +9339,20 @@ async fn resolve_references(
         .repository
         .canonicalize()
         .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
+    // Same rule as `run_agent_operation`: prefer the session worktree, fall back
+    // to the source checkout. An unknown or worktree-less session falls back
+    // rather than failing — a draft is still previewable before the session has
+    // a worktree.
+    let mut root = repository;
+    if let Some(session_id) = body.session_id.as_deref()
+        && let Ok(session_id) = parse_session_id(session_id)
+        && let Ok(session) = state.store.lock().await.load(session_id)
+        && let Some(worktree) = session.worktree
+        && let Ok(canonical) = worktree.canonicalize()
+    {
+        root = canonical;
+    }
+    let repository = root;
     let parsed = resolve_refs(&body.text).unwrap_or_default();
     let mut views = Vec::new();
     for parsed in parsed {
@@ -11780,6 +11852,70 @@ mod tests {
         // reporting success.
         assert!(checkpoint_step_target(0, -1, false, 3).is_err());
         assert!(checkpoint_step_target(2, 1, false, 3).is_err());
+    }
+
+    /// `/approve` must not refuse the plan sitting in front of the user.
+    ///
+    /// The command is published as approving "the awaiting action, or the plan
+    /// under review", but the route required `AwaitingApproval(action_id)` —
+    /// so at a plan-review boundary it answered "no action is awaiting
+    /// approval" while an approval card was on screen.
+    #[tokio::test]
+    async fn approve_does_not_refuse_a_plan_awaiting_review() {
+        let temporary = tempfile::tempdir().unwrap();
+        let database = temporary.path().join("sessions.db");
+        let mut store = SessionStore::open(&database).unwrap();
+        let session = SessionId::new();
+        for event in [
+            SessionEvent::SessionCreated {
+                objective: "add a parser".into(),
+                repository: temporary.path().to_path_buf(),
+                authority_mode: AuthorityMode::Governed,
+            },
+            SessionEvent::PlanCreated {
+                steps: vec!["Add the parser".into()],
+            },
+            SessionEvent::SessionPaused {
+                reason: purrcode_runtime_core::PLAN_REVIEW_PAUSE.into(),
+            },
+        ] {
+            store.append(session, &event).unwrap();
+        }
+        assert!(awaiting_plan_review(&store.load(session).unwrap()));
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database,
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
+            terminals: TerminalRuntime::default(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let outcome = approve_session(State(state), headers, AxumPath(session.0.to_string())).await;
+
+        // No providers are configured here, so starting the approved work still
+        // fails — but it must fail on *running* the plan, never on the claim
+        // that there is nothing to approve.
+        if let Err(ApiError::Conflict(message)) = &outcome {
+            assert!(
+                !message.contains("no action is awaiting approval"),
+                "approve refused the plan under review: {message}"
+            );
+        }
     }
 
     /// A Scout an ordinary coding turn delegated to is a work unit the agent

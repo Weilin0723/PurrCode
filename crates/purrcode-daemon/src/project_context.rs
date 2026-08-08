@@ -20,6 +20,21 @@
 //! 3. **Repository content is data.** Attachments are labelled as untrusted
 //!    material so a `@file` whose contents say "ignore your instructions"
 //!    stays a file the model is reading, not an instruction it is following.
+//!
+//! ## Which root a reference resolves against
+//!
+//! [`assemble`] takes the root it should read from, and the caller must pass the
+//! **session worktree** whenever the session has one. PurrCode runs agent
+//! changes in an isolated worktree, so the source checkout is not the tree the
+//! turn is about: pinning `@src/auth.rs` from the source checkout puts a version
+//! the agent never wrote next to the worktree state the rest of the prompt
+//! describes, and makes `@diff` report a clean tree for a session with six
+//! modified files.
+//!
+//! Project memory is the exception, and stays keyed on the **source
+//! repository** — that is the project's durable identity, and keying it on a
+//! per-session worktree path would scatter one project's knowledge across every
+//! session that ever ran in it.
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -62,6 +77,10 @@ pub(crate) struct AssembledContext {
 }
 
 /// Build the pinned context for a turn.
+///
+/// `repository` is the tree references resolve against — the session worktree
+/// when the session has one, the source checkout otherwise (see the module
+/// docs; passing the wrong one is the defect this parameter's name understates).
 ///
 /// `request_text` is the text the turn is actually responding to — the
 /// objective for a new session, the follow-up message for a continuation.
@@ -683,6 +702,93 @@ mod tests {
                 .filter(|section| section.origin == PinnedOrigin::ComposerReference)
                 .count(),
             1
+        );
+    }
+
+    /// The bug this guards: a follow-up `@file` must attach the version the
+    /// agent has been working on, not the untouched source checkout.
+    ///
+    /// PurrCode runs agent changes in an isolated session worktree. Resolving a
+    /// reference against the source repository instead puts two versions of the
+    /// same file in one prompt — the worktree state the turn describes, plus a
+    /// stale pin the agent never wrote — and the model has no way to tell which
+    /// is current.
+    #[tokio::test]
+    async fn a_reference_attaches_the_worktree_version_not_the_source_checkout() {
+        let source = tempdir();
+        std::fs::create_dir_all(source.join("src")).unwrap();
+        std::fs::write(source.join("src/auth.rs"), "let retry = 3;\n").unwrap();
+
+        // The isolated worktree the agent has been changing.
+        let worktree = tempdir();
+        std::fs::create_dir_all(worktree.join("src")).unwrap();
+        std::fs::write(worktree.join("src/auth.rs"), "let retry = 5;\n").unwrap();
+
+        let assembled = assemble(&worktree, "Now refactor @src/auth.rs", &[]).await;
+        let attached = assembled
+            .pinned
+            .sections
+            .iter()
+            .find(|section| section.origin == PinnedOrigin::ComposerReference)
+            .expect("the file is attached");
+        assert!(
+            attached.content.contains("retry = 5"),
+            "the attached content must be the worktree version: {}",
+            attached.content
+        );
+        assert!(
+            !attached.content.contains("retry = 3"),
+            "the source checkout's stale version must not reach the model: {}",
+            attached.content
+        );
+    }
+
+    /// `@diff` must describe the session's changes, not the user's clean
+    /// checkout. Reporting "no uncommitted changes" for a session with modified
+    /// files contradicts the diff the user is looking at on screen.
+    #[tokio::test]
+    async fn diff_describes_the_worktree_the_agent_changed() {
+        let worktree = tempdir();
+        for arguments in [
+            &["init", "--quiet"][..],
+            &["config", "user.name", "PurrCode Tests"][..],
+            &["config", "user.email", "tests@purrcode.local"][..],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(&worktree)
+                    .args(arguments)
+                    .status()
+                    .is_ok_and(|status| status.success())
+            );
+        }
+        std::fs::write(worktree.join("a.rs"), "fn a() {}\n").unwrap();
+        for arguments in [
+            &["add", "a.rs"][..],
+            &["commit", "--quiet", "-m", "base"][..],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(&worktree)
+                    .args(arguments)
+                    .status()
+                    .is_ok_and(|status| status.success())
+            );
+        }
+        // The agent changes the file in its own worktree.
+        std::fs::write(worktree.join("a.rs"), "fn a() { changed(); }\n").unwrap();
+
+        let assembled = assemble(&worktree, "review @diff", &[]).await;
+        let attached = assembled
+            .pinned
+            .sections
+            .iter()
+            .find(|section| section.label == "@diff")
+            .expect("@diff resolves against a dirty worktree");
+        assert!(
+            attached.content.contains("changed()"),
+            "{}",
+            attached.content
         );
     }
 

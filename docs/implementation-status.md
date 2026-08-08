@@ -88,6 +88,37 @@ absent ones because they read as success. Each is now closed end to end.
   is an external process — and partial application is reported as partial rather
   than rounded up to success.
 
+### Follow-up fixes: session-aware roots and command payloads
+
+Found by a second IDE → daemon → runtime trace of the work above.
+
+- **References resolve against the session worktree, not the source checkout.**
+  PurrCode runs agent changes in an isolated worktree, so resolving a pinned
+  `@src/auth.rs` against `session.repository` put a version the agent never wrote
+  next to the worktree state the rest of the prompt describes, and made `@diff`
+  report a clean tree for a session with modified files. `run_agent_operation`
+  now resolves against `session.worktree` when there is one. Project memory
+  deliberately stays keyed on the source repository — that is the project's
+  durable identity, and keying it on a per-session path would scatter one
+  project's knowledge across every session that ran in it.
+- **The preview uses the same root.** `POST /v1/references/resolve` takes an
+  optional `session_id` and resolves against that session's worktree, so what a
+  chip previews is what the turn attaches. Without this the invariant the chip
+  rests on ("the preview is the proof") held only for sessions with no worktree.
+- **`/pause` and `/reject` actually run.** Their handlers take a request struct
+  whose fields all default, and the IDE was posting `null`, which serde refuses
+  to build a struct from. Both now post `{}` — a command that looked dispatched
+  and did nothing was the same defect class as the ones above, one layer down.
+- **`/approve` approves a plan.** It is published as approving "an awaiting
+  action or plan" but required `AwaitingApproval(action_id)`, so at a plan-review
+  boundary it answered "no action is awaiting approval" while an approval card
+  was on screen. It now takes the same path the IDE's "Build this plan" button
+  takes.
+- **`@context` is no longer offered as an attachment.** The runtime correctly
+  refuses to attach a turn's own assembled context to itself, so completing
+  `@context` led straight to a warning chip. `@` now means "attach something"
+  and `/` means "do something"; inspecting context is `/context`.
+
 ### Ledger integrity
 
 Pinned sections are ledgered individually with `WhyIncluded::Pinned` under the
