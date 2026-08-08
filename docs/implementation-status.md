@@ -1,10 +1,62 @@
 # Implementation status
 
-Updated: 2026-08-07 (v1.2 daily-driver backend workstreams on `feature/v1.2-daily-driver-backend`)
+Updated: 2026-08-07 (v1.2 daily-driver backend complete on `feature/v1.2-daily-driver-backend`)
 
 ## v1.2 daily-driver backend — implemented on branch
 
-Four backend workstreams that turn the v1.1 agent-runtime correctness into daily-driver workspace capabilities. UI surfaces consume these contracts in follow-up work.
+Nine backend workstreams that turn the v1.1 agent-runtime correctness into daily-driver workspace capabilities. UI surfaces consume these contracts in follow-up work.
+
+### Session workspace (metadata, search, lifecycle routes)
+
+- Migration `0003_session_workspace.sql`: `session_meta` (title/archived/pinned/parent/deleted), `session_checkpoints`, `project_memory`, and a `session_search` FTS5 index over the durable event log, backfilled from existing events.
+- `SessionStore`: metadata CRUD, live FTS indexing inside the append transaction, `search_sessions` with snippets, and `fork_session_events` to copy an event prefix into a child session.
+- Daemon: `PATCH /v1/sessions/{id}` (title/archive/pin), `DELETE /v1/sessions/{id}` (soft delete, event log preserved), `GET /v1/sessions/search?q=`. `SessionView` now carries title/archived/pinned/parent_id.
+
+### Restorable checkpoints and session fork
+
+- Checkpoint capture persists the patch blob into `session_checkpoints` (the `CheckpointCreated` event stays audit-only), deduped on patch digest. Auto-checkpoint after each completed agent turn.
+- Restore = rollback to base HEAD + forward-apply the checkpoint patch (`RepositoryEngine::apply_patch`); routes `GET /v1/sessions/{id}/checkpoints`, `GET .../checkpoints/{id}` preview, `POST .../checkpoints/{id}/restore` with explicit discard acknowledgement, audited by a new `CheckpointRestored` event.
+- Fork = copy the parent's event prefix up to an anchor message into a fresh child session with its own isolated worktree and reproduced code state at the anchor; new `SessionForked` audit event and `parent_id` linkage.
+
+### Composer references
+
+- New dependency-light crate `purrcode-reference-resolver`: pure grammar parser for `@file`, `@file#L42-L91`, `@folder:path`, `@diff`, `@git:ref`, `@context`, `#symbol`, with byte-span tracking.
+- Daemon `POST /v1/references/resolve` resolves references against a repository (bounded path-checked reads, git diff/numstat for `@diff`, `git show` for `@git`, definition grep for `#symbol`); `GET /v1/commands` returns the daemon-authoritative command palette contract.
+
+### Project memory
+
+- `SessionStore`: insert/list (repository-scoped, kind-filtered)/edit/touch/forget over `project_memory`, each entry carrying source, confidence, scope, created_at, last_used_at.
+- Daemon `GET /v1/memory` (grouped by kind), `POST /v1/memory` (secret-scanned, repository canonicalized), `PATCH /v1/memory/{id}`, `DELETE /v1/memory/{id}`. Entries are user-authored and auditable, never silently inferred.
+
+### MCP: HTTP transport, test-connection, per-tool trust
+
+- `McpServerConfig` gains a transport field (stdio | http) with a `url`, plus `trusted_tools` / `deny_tools` trust lists.
+- `McpHost::test_connection` probes a server (initialize + tools/list) with no session state; `POST /v1/mcp/servers/{id}/test` drives the Settings "Test Connection".
+- `invoke_mcp` enforces trust: a deny-listed tool is a hard deny; a trusted tool auto-authorizes with `ApprovalAuthority::DeterministicPolicy` (never a fabricated human) and still sandboxes + audits.
+
+### Skills: enable/disable toggle
+
+- `skill_store` gains an `enabled` column (migrated, default enabled). `set_enabled` / `is_enabled` round out the store API; a disabled skill is non-invocable and re-enables external search for its capability.
+- Daemon `POST /v1/skills/{id}/enable` and `/v1/skills/{id}/disable`; `list_skills` surfaces the flag.
+
+### Supervisor: background runs, live worker tree, stop-worker
+
+- `Supervisor::run_with_events` emits `WorkerEvent::{Started,Finished}` on a channel and consults per-worker `WorkerCancellation`. The legacy `run()` path is preserved.
+- Daemon `run_supervisor` returns immediately with the supervisor session id and streams worker lifecycle into the parent session log (new `WorkerStarted` event).
+- `GET /v1/supervisor/{session}` reports the live worker tree; `POST /v1/supervisor/{session}/workers/{id}/stop` cancels one worker cooperatively.
+
+### Backend worktree watcher
+
+- New `file_watcher` module: a background task watches each isolated worktree with `notify`, debounces bursts, and records an `ExternalChangeDetected` audit event + live-stream message when a change lands while the agent is not executing.
+
+### LSP client layer
+
+- New crate `purrcode-lsp`: a dependency-light LSP client (stdio, `Content-Length` framing) that spawns rust-analyzer / typescript-language-server / pyright / gopls and covers initialize/didOpen/didChange, hover, definition, references, document symbols, formatting.
+- Daemon routes: `GET /v1/lsp/servers`, `POST /v1/lsp/{open,hover,definition,references,symbols,format}`. Missing language servers degrade gracefully.
+
+All verification gates pass on the branch: `cargo fmt --check`, stable-toolchain `clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`.
+
+## v1.0 UX optimization — implemented locally, awaiting user acceptance
 
 ### Session workspace (metadata, search, lifecycle routes)
 
