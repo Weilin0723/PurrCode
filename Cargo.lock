@@ -4027,6 +4027,7 @@ dependencies = [
  "purrcode-claw",
  "purrcode-codex-bridge",
  "purrcode-environment-runtime",
+ "purrcode-lsp",
  "purrcode-mcp-host",
  "purrcode-ninelives",
  "purrcode-pawgate",
@@ -4135,6 +4136,18 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "purrcode-lsp"
+version = "1.0.0"
+dependencies = [
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
  "uuid",
 ]
 

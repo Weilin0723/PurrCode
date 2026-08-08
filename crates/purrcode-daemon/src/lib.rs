@@ -49,6 +49,7 @@ use purrcode_agent_runtime::{
 };
 use purrcode_claw::ToolRuntime;
 use purrcode_codex_bridge::{CodexBridge, CodexBridgeConfig, CodexDoctorReport};
+use purrcode_lsp::{LspManager, Position as LspPosition, default_server_commands, path_to_uri};
 use purrcode_mcp_host::{
     DynamicQualificationRequest, McpHost, McpServerConfig, Qualifier as SkillQualifier,
     read_skill_manifest, skill_digest,
@@ -140,6 +141,7 @@ struct AppState {
     pull_jobs: Arc<Mutex<BTreeMap<ActionId, PullJob>>>,
     live_streams: Arc<Mutex<BTreeMap<SessionId, Arc<LiveStreamHub>>>>,
     supervisor_runs: Arc<Mutex<BTreeMap<SessionId, SupervisorRunState>>>,
+    lsp: Arc<Mutex<LspManager>>,
     terminals: TerminalRuntime,
 }
 
@@ -412,6 +414,7 @@ pub async fn bind_and_report(
         pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
         live_streams: Arc::new(Mutex::new(BTreeMap::new())),
         supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+        lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
         terminals: TerminalRuntime::default(),
     };
     let router = Router::new()
@@ -565,6 +568,13 @@ pub async fn bind_and_report(
         .route("/v1/repository/inspect", post(inspect_repository))
         .route("/v1/references/resolve", post(resolve_references))
         .route("/v1/commands", get(list_commands))
+        .route("/v1/lsp/servers", get(list_lsp_servers))
+        .route("/v1/lsp/open", post(lsp_open))
+        .route("/v1/lsp/hover", post(lsp_hover))
+        .route("/v1/lsp/definition", post(lsp_definition))
+        .route("/v1/lsp/references", post(lsp_references))
+        .route("/v1/lsp/symbols", post(lsp_symbols))
+        .route("/v1/lsp/format", post(lsp_format))
         .route("/v1/memory", get(list_memory).post(create_memory))
         .route(
             "/v1/memory/{id}",
@@ -9253,6 +9263,176 @@ async fn forget_memory(
     ))
 }
 
+// ── Language intelligence (LSP client) ──────────────────────────────
+
+/// Reports which language servers are available on this machine and the
+/// languages they cover, so the IDE settings can show what intelligence is on.
+async fn list_lsp_servers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let available = state.lsp.lock().await.available_servers();
+    Ok(Json(serde_json::json!({ "servers": available })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LspDocumentRequest {
+    /// Absolute path of the document to reason about.
+    path: PathBuf,
+    /// Optional text content for open/format (the full current file).
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    language_id: Option<String>,
+    #[serde(default)]
+    position: Option<LspPosition>,
+}
+
+/// Opens a document in its language server, enabling hover/definition/etc.
+async fn lsp_open(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let text = body.text.unwrap_or_default();
+    let language_id = body
+        .language_id
+        .unwrap_or_else(|| language_id_for(&body.path));
+    let root = body
+        .path
+        .parent()
+        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    state
+        .lsp
+        .lock()
+        .await
+        .open(&body.path, root, &language_id, &text)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(
+        serde_json::json!({ "opened": path_to_uri(&body.path) }),
+    ))
+}
+
+async fn lsp_hover(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let position = body
+        .position
+        .ok_or_else(|| ApiError::BadRequest("hover requires a position".into()))?;
+    let root = body
+        .path
+        .parent()
+        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    let hover = state
+        .lsp
+        .lock()
+        .await
+        .hover(&body.path, root, position)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&hover).unwrap_or_default()))
+}
+
+async fn lsp_definition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let position = body
+        .position
+        .ok_or_else(|| ApiError::BadRequest("definition requires a position".into()))?;
+    let root = body
+        .path
+        .parent()
+        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    let definitions = state
+        .lsp
+        .lock()
+        .await
+        .definition(&body.path, root, position)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&definitions).unwrap_or_default()))
+}
+
+async fn lsp_references(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let position = body
+        .position
+        .ok_or_else(|| ApiError::BadRequest("references requires a position".into()))?;
+    let root = body
+        .path
+        .parent()
+        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    let references = state
+        .lsp
+        .lock()
+        .await
+        .references(&body.path, root, position)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&references).unwrap_or_default()))
+}
+
+async fn lsp_symbols(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = body
+        .path
+        .parent()
+        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    let symbols = state
+        .lsp
+        .lock()
+        .await
+        .symbols(&body.path, root)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&symbols).unwrap_or_default()))
+}
+
+async fn lsp_format(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = body
+        .path
+        .parent()
+        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    let edits = state
+        .lsp
+        .lock()
+        .await
+        .format(&body.path, root)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&edits).unwrap_or_default()))
+}
+
+fn language_id_for(path: &Path) -> String {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("plaintext")
+        .to_owned()
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AssignModelRoleRequest {
@@ -11358,6 +11538,7 @@ mod tests {
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
         };
         let mut headers = HeaderMap::new();
@@ -12570,6 +12751,7 @@ default = "ollama/small"
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
         };
         let session_id = SessionId::new();
@@ -12669,6 +12851,7 @@ default = "ollama/small"
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
         };
         let session_id = SessionId::new();

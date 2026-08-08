@@ -24,6 +24,7 @@ members = [
   "crates/skill-registry",
   "crates/web-research",
   "crates/reference-resolver",
+  "crates/lsp-client",
   "crates/golden-suite",
   "crates/evaluation-runtime",
   "crates/evidence-bundle",

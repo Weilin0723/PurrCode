@@ -33,6 +33,7 @@ purrcode-skill-store = { path = "../skill-store" }
 purrcode-skill-registry = { path = "../skill-registry" }
 purrcode-web-research = { path = "../web-research" }
 purrcode-reference-resolver = { path = "../reference-resolver" }
+purrcode-lsp = { path = "../lsp-client" }
 purrcode-ui-contracts = { path = "../ui-contracts" }
 purrcode-terminal-runtime = { path = "../terminal-runtime" }
 purrcode-environment-runtime = { path = "../environment-runtime" }
