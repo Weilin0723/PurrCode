@@ -1994,6 +1994,7 @@ mod tests {
             successful_uses: 0,
             failed_uses: 0,
             pinned: true,
+            enabled: true,
         }
     }
 

@@ -82,9 +82,7 @@ async fn reconcile_watches(state: &AppState, registry: &Arc<Mutex<WatchRegistry>
             tokio::spawn(async move {
                 consume_events(watch_state, watch_session, watch_path, rx).await;
             });
-            registry
-                .active
-                .insert(*session_id, (path.clone(), watcher));
+            registry.active.insert(*session_id, (path.clone(), watcher));
         }
     }
     // Drop finished sessions' watches.
@@ -225,6 +223,9 @@ mod tests {
             pull_jobs: std::sync::Arc::new(TokioMutex::new(BTreeMap::new())),
             live_streams: std::sync::Arc::new(TokioMutex::new(BTreeMap::new())),
             supervisor_runs: std::sync::Arc::new(TokioMutex::new(BTreeMap::new())),
+            lsp: std::sync::Arc::new(TokioMutex::new(
+                purrcode_lsp::LspManager::new(purrcode_lsp::default_server_commands()),
+            )),
             terminals: crate::TerminalRuntime::default(),
         }
     }
