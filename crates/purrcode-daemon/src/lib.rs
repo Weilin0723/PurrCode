@@ -120,6 +120,9 @@ use crate::ollama_pull::{
     validate_model_name as validate_pull_model_name, validate_pull_action,
 };
 
+mod file_watcher;
+use file_watcher::run_worktree_watcher;
+
 #[derive(Clone)]
 struct AppState {
     store: Arc<Mutex<SessionStore>>,
@@ -601,10 +604,12 @@ pub async fn bind_and_report(
     };
     let future = async move {
         let scheduler = tokio::spawn(automation_scheduler(state.clone()));
+        let watcher = tokio::spawn(run_worktree_watcher(state.clone()));
         let result = axum::serve(listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await;
         scheduler.abort();
+        watcher.abort();
         result?;
         Ok(())
     };

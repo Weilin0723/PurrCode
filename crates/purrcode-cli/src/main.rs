@@ -4244,6 +4244,7 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         CheckpointRestored { .. } => "checkpoint_restored",
         SessionForked { .. } => "session_forked",
         WorktreeDispositionRecorded { .. } => "worktree_disposition_recorded",
+        ExternalChangeDetected { .. } => "external_change_detected",
         SessionCancelled { .. } => "session_cancelled",
         RecoveryRequired { .. } => "recovery_required",
         SessionCompleted => "session_completed",

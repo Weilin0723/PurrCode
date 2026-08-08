@@ -1090,6 +1090,7 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::CheckpointRestored { .. } => "checkpoint_restored",
         SessionEvent::SessionForked { .. } => "session_forked",
         SessionEvent::WorktreeDispositionRecorded { .. } => "worktree_disposition_recorded",
+        SessionEvent::ExternalChangeDetected { .. } => "external_change_detected",
         SessionEvent::SessionCancelled { .. } => "session_cancelled",
         SessionEvent::RecoveryRequired { .. } => "recovery_required",
         SessionEvent::SessionCompleted => "session_completed",

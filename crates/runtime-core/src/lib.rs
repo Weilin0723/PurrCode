@@ -1200,6 +1200,13 @@ pub enum SessionEvent {
         strategy: String,
         detail: String,
     },
+    /// An external process (not the agent) changed files in the session
+    /// worktree while the session was not executing. This is how the backend
+    /// surfaces "someone edited a file outside PurrCode" so clients can stop
+    /// polling and refresh on change. Audit-only.
+    ExternalChangeDetected {
+        changed_files: Vec<PathBuf>,
+    },
     SessionCancelled {
         reason: String,
     },
