@@ -1065,6 +1065,9 @@ pub enum SessionEvent {
     SupervisorStarted {
         workers: usize,
     },
+    WorkerStarted {
+        worker_id: String,
+    },
     WorkerFinished {
         worker_id: String,
         status: String,

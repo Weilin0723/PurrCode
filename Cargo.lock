@@ -4071,6 +4071,7 @@ dependencies = [
  "purrcode-claw",
  "purrcode-ninelives",
  "purrcode-runtime-core",
+ "reqwest",
  "schemars",
  "semver",
  "serde",

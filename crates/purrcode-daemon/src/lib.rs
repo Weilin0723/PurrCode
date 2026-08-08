@@ -81,8 +81,8 @@ use purrcode_skill_registry::{
 };
 use purrcode_skill_store::{SkillScope, SkillStore};
 use purrcode_supervisor_runtime::{
-    IsolatedWorker, ParallelismConfig, Supervisor, WorkerOutput, WorkerSpec, WorkerStatus,
-    WorkerWorkspace,
+    IsolatedWorker, ParallelismConfig, Supervisor, SupervisorRunState, WorkerEvent, WorkerOutput,
+    WorkerSpec, WorkerStatus, WorkerWorkspace,
 };
 use purrcode_terminal_runtime::{
     AttachTerminalAction, DetachTerminalAction, OwnershipGeneration, ResizeTerminalAction,
@@ -136,6 +136,7 @@ struct AppState {
     interrupting_sessions: Arc<Mutex<BTreeMap<SessionId, Uuid>>>,
     pull_jobs: Arc<Mutex<BTreeMap<ActionId, PullJob>>>,
     live_streams: Arc<Mutex<BTreeMap<SessionId, Arc<LiveStreamHub>>>>,
+    supervisor_runs: Arc<Mutex<BTreeMap<SessionId, SupervisorRunState>>>,
     terminals: TerminalRuntime,
 }
 
@@ -407,6 +408,7 @@ pub async fn bind_and_report(
         interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
         pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
         live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+        supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
         terminals: TerminalRuntime::default(),
     };
     let router = Router::new()
@@ -495,6 +497,11 @@ pub async fn bind_and_report(
         .route("/v1/automations/{id}/disable", post(disable_automation))
         .route("/v1/automations/{id}/run", post(run_automation))
         .route("/v1/supervisor", post(run_supervisor))
+        .route("/v1/supervisor/{session_id}", get(supervisor_status))
+        .route(
+            "/v1/supervisor/{session_id}/workers/{worker_id}/stop",
+            post(stop_supervisor_worker),
+        )
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers", post(configure_provider))
         .route("/v1/providers/{name}", get(get_provider))
@@ -1168,6 +1175,9 @@ impl IsolatedWorker for JudgedSupervisorWorker {
             .await
             .map_err(|error| error.to_string())?;
         drop(local_permit);
+        if workspace.cancellation.is_cancelled() {
+            return Err(format!("worker `{}` was stopped by the user", spec.id));
+        }
         let turn: AgentTurn = serde_json::from_value(value)
             .map_err(|error| format!("invalid worker turn: {error}"))?;
         store
@@ -1345,8 +1355,8 @@ async fn run_supervisor(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let policy = effective_policy(&config, &repository)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let supervisor =
-        Supervisor::new(request.limits).map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let supervisor = Supervisor::new(request.limits.clone())
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let parent = SessionId::new();
     {
         let mut store = state.store.lock().await;
@@ -1376,84 +1386,218 @@ async fn run_supervisor(
     };
     mark_models_active(&state, std::slice::from_ref(&worker.model)).await;
     drop(lifecycle_gate);
-    let task_state = state.clone();
+
+    // Run the supervisor in the background so the client is not blocked until
+    // every worker finishes. Worker lifecycle events are streamed to the
+    // parent session and the run state is retained so a client can stop an
+    // individual worker mid-flight.
+    let limits = request.limits;
+    let channel_capacity = limits.max_workers.saturating_mul(2).max(1);
     let task_repository = repository.clone();
     let lifecycle_model = worker.model.clone();
-    let report_task = tokio::spawn(async move {
-        let report = AssertUnwindSafe(supervisor.run(&task_repository, request.workers, &worker))
-            .catch_unwind()
-            .await;
-        release_active_models(&task_state, std::slice::from_ref(&lifecycle_model)).await;
-        report
-    });
-    let report = report_task
+    let run_state = SupervisorRunState::default();
+    state
+        .supervisor_runs
+        .lock()
         .await
-        .map_err(|error| ApiError::Conflict(format!("supervisor task failed: {error}")))?;
-    let report = report
-        .map_err(|panic| {
-            ApiError::Conflict(format!(
-                "supervisor task panicked: {}",
-                panic_payload_message(panic)
-            ))
-        })?
-        .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    let mut views = Vec::new();
-    let mut store = state.store.lock().await;
-    for result in &report.results {
-        let status = match &result.status {
-            WorkerStatus::Completed => "completed".into(),
-            WorkerStatus::Failed(reason) => format!("failed: {reason}"),
-            WorkerStatus::SkippedDependency(id) => format!("skipped dependency: {id}"),
-        };
-        let changed_paths = result
-            .effects
-            .as_ref()
-            .map(|effects| effects.changed_files.clone())
-            .unwrap_or_default();
-        store.append(
-            parent,
-            &SessionEvent::WorkerFinished {
-                worker_id: result.spec.id.clone(),
-                status: status.clone(),
-                changed_paths: changed_paths.clone(),
-            },
-        )?;
-        views.push(SupervisorWorkerView {
-            id: result.spec.id.clone(),
-            status,
-            worktree: result
-                .worktree
-                .as_ref()
-                .map(|worktree| worktree.path.clone()),
-            changed_paths,
-            summary: result.output.as_ref().map(|output| output.summary.clone()),
-        });
-    }
-    let conflicts = match report.merge_decision {
-        purrcode_supervisor_runtime::MergeDecision::IndependentReviewRequired => Vec::new(),
-        purrcode_supervisor_runtime::MergeDecision::ConflictsRequireResolution(conflicts) => {
-            conflicts
-                .into_iter()
-                .map(|conflict| conflict.path)
-                .collect()
+        .insert(parent, run_state.clone());
+    let (event_sender, mut event_receiver) =
+        tokio::sync::mpsc::channel::<WorkerEvent>(channel_capacity);
+    let background_state = state.clone();
+    tokio::spawn(async move {
+        let report = AssertUnwindSafe(supervisor.run_with_events(
+            &task_repository,
+            request.workers,
+            &worker,
+            &run_state,
+            &event_sender,
+        ))
+        .catch_unwind()
+        .await;
+        release_active_models(&background_state, std::slice::from_ref(&lifecycle_model)).await;
+        drop(event_sender);
+        // Append the final review-required marker once the whole run is done.
+        match report {
+            Ok(Ok(report)) => {
+                if let Ok(mut store) = SessionStore::open(&background_state.database) {
+                    let conflicts = match report.merge_decision {
+                        purrcode_supervisor_runtime::MergeDecision::IndependentReviewRequired => {
+                            Vec::new()
+                        }
+                        purrcode_supervisor_runtime::MergeDecision::ConflictsRequireResolution(
+                            conflicts,
+                        ) => conflicts
+                            .into_iter()
+                            .map(|conflict| conflict.path)
+                            .collect(),
+                    };
+                    let _ = store.append(
+                        parent,
+                        &SessionEvent::SupervisorReviewRequired {
+                            conflicts: conflicts.clone(),
+                        },
+                    );
+                }
+                let _ = background_state
+                    .supervisor_runs
+                    .lock()
+                    .await
+                    .remove(&parent);
+            }
+            Ok(Err(error)) => {
+                if let Ok(mut store) = SessionStore::open(&background_state.database) {
+                    let _ = store.append(
+                        parent,
+                        &SessionEvent::SessionFailed {
+                            reason: format!("supervisor failed: {error}"),
+                        },
+                    );
+                }
+                let _ = background_state
+                    .supervisor_runs
+                    .lock()
+                    .await
+                    .remove(&parent);
+            }
+            Err(_) => {
+                if let Ok(mut store) = SessionStore::open(&background_state.database) {
+                    let _ = store.append(
+                        parent,
+                        &SessionEvent::SessionFailed {
+                            reason: "supervisor panicked".into(),
+                        },
+                    );
+                }
+                let _ = background_state
+                    .supervisor_runs
+                    .lock()
+                    .await
+                    .remove(&parent);
+            }
         }
-    };
-    store.append(
-        parent,
-        &SessionEvent::SupervisorReviewRequired {
-            conflicts: conflicts.clone(),
-        },
-    )?;
+    });
+    // Consume worker lifecycle events and append them to the parent session.
+    let consumer_state = state.clone();
+    tokio::spawn(async move {
+        while let Some(event) = event_receiver.recv().await {
+            match event {
+                WorkerEvent::Started { worker_id, .. } => {
+                    if let Ok(mut store) = SessionStore::open(&consumer_state.database) {
+                        let _ = store.append(parent, &SessionEvent::WorkerStarted { worker_id });
+                    }
+                }
+                WorkerEvent::Finished {
+                    worker_id,
+                    status,
+                    changed_paths,
+                    summary,
+                } => {
+                    let status = match status {
+                        WorkerStatus::Completed => "completed".into(),
+                        WorkerStatus::Failed(reason) => format!("failed: {reason}"),
+                        WorkerStatus::SkippedDependency(id) => {
+                            format!("skipped dependency: {id}")
+                        }
+                    };
+                    if let Ok(mut store) = SessionStore::open(&consumer_state.database) {
+                        let _ = store.append(
+                            parent,
+                            &SessionEvent::WorkerFinished {
+                                worker_id,
+                                status,
+                                changed_paths,
+                            },
+                        );
+                    }
+                    let _ = summary;
+                }
+            }
+        }
+    });
     Ok((
         StatusCode::ACCEPTED,
         Json(SupervisorView {
             session_id: parent.0.to_string(),
-            model_requests: report.model_requests,
-            workers: views,
-            conflicts,
-            review_required: true,
+            model_requests: 0,
+            workers: Vec::new(),
+            conflicts: Vec::new(),
+            review_required: false,
         }),
     ))
+}
+
+/// Reports the live state of a background supervisor run: the worker tree from
+/// the durable event log plus whether the run is still in flight.
+async fn supervisor_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<SupervisorView>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&session_id)?;
+    let in_flight = state.supervisor_runs.lock().await.contains_key(&id);
+    let store = state.store.lock().await;
+    let session = store.load(id)?;
+    if session.event_count == 0 {
+        return Err(ApiError::NotFound);
+    }
+    let mut workers = Vec::new();
+    let mut conflicts = Vec::new();
+    for event in store.events(id)? {
+        match event {
+            SessionEvent::WorkerFinished {
+                worker_id,
+                status,
+                changed_paths,
+            } => workers.push(SupervisorWorkerView {
+                id: worker_id,
+                status,
+                worktree: None,
+                changed_paths,
+                summary: None,
+            }),
+            SessionEvent::SupervisorReviewRequired {
+                conflicts: conflicts_event,
+            } => conflicts = conflicts_event,
+            _ => {}
+        }
+    }
+    Ok(Json(SupervisorView {
+        session_id: id.0.to_string(),
+        model_requests: 0,
+        workers,
+        conflicts,
+        review_required: !in_flight,
+    }))
+}
+
+/// Stops an individual worker in a running supervisor. The worker is cancelled
+/// cooperatively; its effect is recorded as a failed (stopped) worker.
+async fn stop_supervisor_worker(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((session_id, worker_id)): AxumPath<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&session_id)?;
+    let run_state = state
+        .supervisor_runs
+        .lock()
+        .await
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::Conflict("supervisor run is not active or already finished".into())
+        })?;
+    if run_state.cancel_worker(&worker_id).await {
+        Ok(Json(serde_json::json!({
+            "session_id": id.0.to_string(),
+            "worker_id": worker_id,
+            "stopped": true,
+        })))
+    } else {
+        Err(ApiError::NotFound)
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -3378,8 +3522,14 @@ async fn invoke_mcp(
     let constraints = if trusted {
         authorize_deterministic_action(&mut store, id, action_id, &action, "trusted MCP tool")?
     } else {
-        let (constraints, _) =
-            authorize_exact_human_action(&mut store, id, action_id, &action, "MCP invocation", false)?;
+        let (constraints, _) = authorize_exact_human_action(
+            &mut store,
+            id,
+            action_id,
+            &action,
+            "MCP invocation",
+            false,
+        )?;
         constraints
     };
     reserve_mcp_call(&mut store, id, &request.server, &request.tool)?;
@@ -3481,10 +3631,7 @@ async fn test_mcp_server(
     let config = AppConfig::load(&state.app_config)
         .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
     let section = mcp_section(&config)?;
-    let server = section
-        .servers
-        .get(&id)
-        .ok_or(ApiError::NotFound)?;
+    let server = section.servers.get(&id).ok_or(ApiError::NotFound)?;
     match McpHost::test_connection(server).await {
         Ok((tools, diagnostics)) => Ok(Json(serde_json::json!({
             "connected": true,
@@ -9304,7 +9451,9 @@ fn authorize_deterministic_action(
             approved_by: ApprovalAuthority::DeterministicPolicy,
         })
         .map_err(|_| {
-            ApiError::Conflict(format!("{purpose} authorization is unavailable or was already approved"))
+            ApiError::Conflict(format!(
+                "{purpose} authorization is unavailable or was already approved"
+            ))
         })?;
     store
         .consume_authorization(action_id, &action_digest)
@@ -11203,6 +11352,7 @@ mod tests {
             interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             terminals: TerminalRuntime::default(),
         };
         let mut headers = HeaderMap::new();
@@ -12414,6 +12564,7 @@ default = "ollama/small"
             interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             terminals: TerminalRuntime::default(),
         };
         let session_id = SessionId::new();
@@ -12512,6 +12663,7 @@ default = "ollama/small"
             interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             terminals: TerminalRuntime::default(),
         };
         let session_id = SessionId::new();
@@ -12805,6 +12957,96 @@ default = "ollama/small"
         );
         assert_eq!(peak.load(Ordering::SeqCst), 1);
         assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn supervisor_starts_in_background_and_streams_worker_status() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repo");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        std::fs::write(repository.join("README.md"), "fixture").unwrap();
+        git(&repository, &["add", "README.md"]);
+        git(
+            &repository,
+            &[
+                "-c",
+                "user.name=PurrCode Tests",
+                "-c",
+                "user.email=tests@purrcode.local",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        );
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(
+            &app_config,
+            "schema_version = 1\n[models.roles]\ncoder = \"local/test\"\n[models]\ndefault = \"local/test\"\n[providers.local]\ntype = \"ollama\"\nbase_url = \"http://127.0.0.1:9/\"\n",
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: app_config.clone(),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        // Starting a supervisor must return immediately with the session id
+        // (it runs in the background), not block until every worker finishes.
+        let started = client
+            .post(format!("{base}/v1/supervisor"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "inspect the repo",
+                "repository": repository,
+                "workers": [{"id": "scout", "objective": "explore auth", "dependencies": []}],
+                "limits": {"max_workers": 1, "max_model_requests": 1, "max_worktrees": 1, "require_isolation": true}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(started.status(), StatusCode::ACCEPTED);
+        let started_body: serde_json::Value = started.json().await.unwrap();
+        let supervisor_session = started_body["session_id"].as_str().unwrap().to_string();
+        assert!(!supervisor_session.is_empty());
+
+        // The supervisor session appears in the session list as a background run.
+        let listed: serde_json::Value = client
+            .get(format!("{base}/v1/sessions"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|session| { session["id"] == supervisor_session })
+        );
+
+        // The status endpoint reports the supervisor session.
+        let status = client
+            .get(format!("{base}/v1/supervisor/{supervisor_session}"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+        handle.abort();
     }
 
     #[tokio::test]

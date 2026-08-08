@@ -162,12 +162,13 @@ impl SkillStore {
         let has_enabled = self
             .conn
             .prepare("PRAGMA table_info(skill_store)")?
-            .query_map([], |row| Ok(row.get::<_, String>(1)?))?
+            .query_map([], |row| row.get::<_, String>(1))?
             .filter_map(Result::ok)
             .any(|name| name == "enabled");
         if !has_enabled {
-            self.conn
-                .execute_batch("ALTER TABLE skill_store ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;")?;
+            self.conn.execute_batch(
+                "ALTER TABLE skill_store ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;",
+            )?;
         }
         let scope_is_key = self
             .conn
@@ -526,7 +527,9 @@ impl SkillStore {
             // A disabled skill is installed but never invoked, so it must not
             // count as an invocable match (and must not suppress external
             // search either).
-            .partition(|record| record.enabled && qualification_is_invocable(&record.qualification_status));
+            .partition(|record| {
+                record.enabled && qualification_is_invocable(&record.qualification_status)
+            });
         let external_search_avoided = !qualified_matches.is_empty();
         Ok(InstalledCapabilityResolution {
             capability: capability.trim().to_owned(),

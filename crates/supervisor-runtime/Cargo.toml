@@ -11,6 +11,7 @@ purrcode-repository-engine = { path = "../repository-engine" }
 purrcode-runtime-core = { path = "../runtime-core" }
 serde.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 tempfile.workspace = true

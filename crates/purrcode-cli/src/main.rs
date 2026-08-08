@@ -4218,6 +4218,7 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionResumed => "session_resumed",
         ModelSelected { .. } => "model_selected",
         SupervisorStarted { .. } => "supervisor_started",
+        WorkerStarted { .. } => "worker_started",
         WorkerFinished { .. } => "worker_finished",
         SupervisorReviewRequired { .. } => "supervisor_review_required",
         ContextIndexed { .. } => "context_indexed",

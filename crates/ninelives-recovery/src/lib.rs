@@ -1066,6 +1066,7 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::SessionResumed => "session_resumed",
         SessionEvent::ModelSelected { .. } => "model_selected",
         SessionEvent::SupervisorStarted { .. } => "supervisor_started",
+        SessionEvent::WorkerStarted { .. } => "worker_started",
         SessionEvent::WorkerFinished { .. } => "worker_finished",
         SessionEvent::SupervisorReviewRequired { .. } => "supervisor_review_required",
         SessionEvent::ContextIndexed { .. } => "context_indexed",

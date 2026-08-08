@@ -482,7 +482,7 @@ async fn run_rpc(
     server.validate()?;
     match &server.transport {
         McpTransport::Stdio => run_stdio_rpc(server, method, params).await,
-        McpTransport::Http { .. } => run_http_rpc(server, method, params).await,
+        McpTransport::Http => run_http_rpc(server, method, params).await,
     }
 }
 
@@ -575,11 +575,13 @@ async fn run_http_rpc(
         .header("MCP-Protocol-Version", "2025-06-18")
         .header("PURRCODE_CAPABILITY_ID", &token_id)
         .header("PURRCODE_CAPABILITY_TOKEN", &token_secret)
-        .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-            "protocolVersion":"2025-06-18",
-            "capabilities":{},
-            "clientInfo":{"name":"purrcode","version":env!("CARGO_PKG_VERSION")}
-        }}))
+        .json(
+            &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-06-18",
+                "capabilities":{},
+                "clientInfo":{"name":"purrcode","version":env!("CARGO_PKG_VERSION")}
+            }}),
+        )
         .send()
         .await
         .map_err(|error| HostError::Http(error.to_string()))?;
@@ -599,18 +601,12 @@ async fn run_http_rpc(
         .map_err(|error| HostError::Http(error.to_string()))?;
     let (response_value, _) = parse_http_response(response).await?;
     ensure_rpc_success(&response_value, 2)?;
-    Ok((
-        response_value["result"].clone(),
-        String::new(),
-        token_id,
-    ))
+    Ok((response_value["result"].clone(), String::new(), token_id))
 }
 
 /// Reads a streamable-HTTP response, accepting either a bare JSON body or a
 /// single SSE `data:` line carrying the JSON-RPC envelope.
-async fn parse_http_response(
-    response: reqwest::Response,
-) -> Result<(Value, String), HostError> {
+async fn parse_http_response(response: reqwest::Response) -> Result<(Value, String), HostError> {
     let bytes = response
         .bytes()
         .await
