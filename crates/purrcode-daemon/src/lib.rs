@@ -609,6 +609,19 @@ pub async fn bind_and_report(
         .route("/v1/mcp/servers/{id}/test", post(test_mcp_server))
         .route("/v1/codex", get(get_codex_config).post(update_codex_config))
         .route("/v1/codex/doctor", post(run_codex_doctor))
+        // Authentication runs ahead of every handler and every extractor.
+        //
+        // Two things were wrong with authorizing inside each handler. Nothing
+        // made the line mandatory, so a new handler that omitted it would
+        // serve without a token. And for any handler taking `Json<T>`, axum
+        // runs the body extractor first — so an unauthenticated request with a
+        // malformed body was answered 422 by the extractor before the handler
+        // could reject it, letting a caller with no token probe which request
+        // shapes the daemon accepts. A layer answers 401 before either.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_bearer,
+        ))
         .with_state(state.clone());
     let listener = TcpListener::bind(config.bind).await?;
     let actual_bind = listener.local_addr()?;
@@ -4924,7 +4937,13 @@ async fn session(
         archived: meta.archived,
         pinned: meta.pinned,
         parent_id: meta.parent_id.map(|id| id.0.to_string()),
-        repository: session.repository,
+        // Canonicalised to match `sessions()`. A session created through a
+        // symlinked path would otherwise be reported one way by the list and
+        // another way by this route, and a client comparing the two would
+        // conclude they are different folders.
+        repository: session
+            .repository
+            .map(|path| path.canonicalize().unwrap_or(path)),
         worktree: session.worktree,
         selected_model: session.selected_model,
         created_at: timestamps.first().map(|(timestamp, _)| *timestamp),
@@ -5023,7 +5042,13 @@ async fn update_session_meta(
         archived: meta.archived,
         pinned: meta.pinned,
         parent_id: meta.parent_id.map(|id| id.0.to_string()),
-        repository: session_state.repository,
+        // Canonicalised to match `sessions()`. A session created through a
+        // symlinked path would otherwise be reported one way by the list and
+        // another way by this route, and a client comparing the two would
+        // conclude they are different folders.
+        repository: session_state
+            .repository
+            .map(|path| path.canonicalize().unwrap_or(path)),
         worktree: session_state.worktree,
         selected_model: session_state.selected_model,
         created_at: timestamps.first().map(|(timestamp, _)| *timestamp),
@@ -6683,8 +6708,19 @@ async fn bootstrap(
     })))
 }
 
-async fn git_read(repository: &Path, arguments: &[&str]) -> Result<String, ApiError> {
-    let output = tokio::process::Command::new("git")
+/// Runs `git` with a scrubbed environment and prompts disabled.
+///
+/// Every git invocation in the daemon goes through here. The hardening is the
+/// point: an inherited environment lets the repository's own config reach the
+/// child, and without `GIT_TERMINAL_PROMPT=0` a command that needs credentials
+/// blocks forever on a prompt no one can see. Keeping this in one place is
+/// what stops a new call site from quietly omitting it, which had already
+/// happened twice.
+async fn git_output(
+    repository: &Path,
+    arguments: &[&str],
+) -> Result<std::process::Output, std::io::Error> {
+    tokio::process::Command::new("git")
         .args(arguments)
         .current_dir(repository)
         .env_clear()
@@ -6695,6 +6731,11 @@ async fn git_read(repository: &Path, arguments: &[&str]) -> Result<String, ApiEr
                 .map(|path| ("PATH", path)),
         )
         .output()
+        .await
+}
+
+async fn git_read(repository: &Path, arguments: &[&str]) -> Result<String, ApiError> {
+    let output = git_output(repository, arguments)
         .await
         .map_err(|error| ApiError::Conflict(format!("git operation failed: {error}")))?;
     if !output.status.success() {
@@ -6969,6 +7010,19 @@ async fn event_stream(
 #[derive(Deserialize)]
 struct EventStreamQuery {
     after: Option<usize>,
+}
+
+/// Rejects any request that does not carry the daemon's bearer token.
+///
+/// Applied as a router layer so it cannot be forgotten by a new handler and
+/// cannot be preceded by a body extractor.
+async fn require_bearer(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, ApiError> {
+    authorize(&state, request.headers())?;
+    Ok(next.run(request).await)
 }
 
 fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
@@ -8963,10 +9017,7 @@ fn bounded_directory_summary(directory: &std::path::Path) -> Option<String> {
 }
 
 async fn git_show(repository: &std::path::Path, reference: &str) -> Result<Option<String>, String> {
-    let output = tokio::process::Command::new("git")
-        .args(["show", reference])
-        .current_dir(repository)
-        .output()
+    let output = git_output(repository, &["show", reference])
         .await
         .map_err(|error| format!("git show failed: {error}"))?;
     if !output.status.success() {
@@ -8977,10 +9028,7 @@ async fn git_show(repository: &std::path::Path, reference: &str) -> Result<Optio
 
 /// Summarizes the repository's uncommitted diff for an `@diff` reference.
 async fn git_diff_summary(repository: &std::path::Path) -> Option<String> {
-    let output = tokio::process::Command::new("git")
-        .args(["diff", "--numstat", "-z", "HEAD", "--", "."])
-        .current_dir(repository)
-        .output()
+    let output = git_output(repository, &["diff", "--numstat", "-z", "HEAD", "--", "."])
         .await
         .ok()?;
     if !output.status.success() {
@@ -13639,6 +13687,131 @@ default = "ollama/small"
                 .as_array()
                 .is_some_and(|values| values.iter().any(|value| value == capability))
         }));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn every_route_refuses_an_unauthenticated_request() {
+        // Authorization is one hand-copied line at the top of each of ~133
+        // handlers, and nothing makes it mandatory: a new handler that omits
+        // it compiles, wires up, and serves without a token. The existing
+        // bearer-token test only ever exercised `/v1/health`, so it proved
+        // the mechanism worked without proving it was applied.
+        //
+        // This walks a route from every method and family instead. It is not
+        // a substitute for the line being unforgettable, but it is what turns
+        // "somebody forgot" from a silent hole into a failing test.
+        let temporary = tempfile::tempdir().unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file,
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let client = reqwest::Client::new();
+        let session = SessionId::new().0.to_string();
+
+        let gets = [
+            "/v1/health".to_owned(),
+            "/v1/ui/status?repository=/tmp".to_owned(),
+            "/v1/sessions".to_owned(),
+            "/v1/sessions/search?q=x".to_owned(),
+            "/v1/workspace?repository=/tmp".to_owned(),
+            "/v1/terminals".to_owned(),
+            "/v1/providers".to_owned(),
+            "/v1/models".to_owned(),
+            "/v1/bootstrap".to_owned(),
+            "/v1/commands".to_owned(),
+            "/v1/skills".to_owned(),
+            "/v1/mcp/servers".to_owned(),
+            "/v1/memory?repository=/tmp".to_owned(),
+            "/v1/automations".to_owned(),
+            "/v1/codex".to_owned(),
+            "/v1/local-models".to_owned(),
+            "/v1/lsp/servers".to_owned(),
+            "/v1/lsp/diagnostics".to_owned(),
+            "/v1/github/status".to_owned(),
+            format!("/v1/sessions/{session}/events"),
+            format!("/v1/sessions/{session}/conversation"),
+            format!("/v1/sessions/{session}/checkpoints"),
+            format!("/v1/supervisor/{session}"),
+        ];
+        for path in &gets {
+            let status = client
+                .get(format!("{base}{path}"))
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "GET {path} served an unauthenticated request"
+            );
+        }
+
+        let posts = [
+            "/v1/sessions".to_owned(),
+            "/v1/references/resolve".to_owned(),
+            "/v1/lsp/hover".to_owned(),
+            "/v1/lsp/definition".to_owned(),
+            "/v1/lsp/format".to_owned(),
+            "/v1/memory".to_owned(),
+            "/v1/mcp/servers".to_owned(),
+            "/v1/providers".to_owned(),
+            "/v1/supervisor".to_owned(),
+            "/v1/repository/inspect".to_owned(),
+            format!("/v1/sessions/{session}/checkpoint"),
+            format!("/v1/sessions/{session}/fork"),
+            format!("/v1/sessions/{session}/cancel"),
+            format!("/v1/sessions/{session}/compact"),
+        ];
+        for path in &posts {
+            let status = client
+                .post(format!("{base}{path}"))
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "POST {path} served an unauthenticated request"
+            );
+        }
+
+        let status = client
+            .patch(format!("{base}/v1/sessions/{session}"))
+            .json(&serde_json::json!({"pinned": true}))
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "PATCH served unauthenticated"
+        );
+
+        let status = client
+            .delete(format!("{base}/v1/sessions/{session}"))
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "DELETE served unauthenticated"
+        );
+
         handle.abort();
     }
 

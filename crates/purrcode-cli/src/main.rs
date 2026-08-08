@@ -32,7 +32,8 @@ use purrcode_provider_gateway::{
 use purrcode_repository_engine::{ApplicationStrategy, RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
     ActionId, ApprovalAuthority, Authorization, CommandAction, JudgmentDecision, ProposedAction,
-    ResearchEvent, ResearchExport, ResearchMetrics, SessionEvent, SessionId, ValidationStatus,
+    ResearchEvent, ResearchExport, ResearchMetrics, SessionEvent, SessionId, SessionStatus,
+    ValidationStatus,
 };
 use purrcode_tui::TuiConfig;
 use serde::{Deserialize, Serialize};
@@ -1321,6 +1322,18 @@ async fn dispatch(cli: Cli) -> Result<()> {
             acknowledge_unattributed_effects,
         } => {
             let session_id = resolve_session_id(&store, session)?;
+            // The daemon refuses this while a session holds a lease. That
+            // lease is daemon memory, so this path cannot see it — but the
+            // durable status can, and rolling back a worktree an agent is
+            // still writing into destroys work and leaves the tree in a state
+            // neither the agent nor the event log describes.
+            let status = store.load(session_id)?.status;
+            if matches!(status, SessionStatus::Active | SessionStatus::Executing(_)) {
+                bail!(
+                    "session is still running ({status:?}); pause it first with `purrcode pause {}`",
+                    session_id.0
+                );
+            }
             let worktree = session_worktree_from_store(&store, session_id)?;
             let effects = RepositoryEngine::effects(&worktree).await?;
             let digest = blake3::hash(&effects.binary_patch).to_hex().to_string();

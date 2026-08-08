@@ -29,7 +29,6 @@ pub struct SessionRow {
     pub relative_time: String,
     pub needs_attention: bool,
     pub group: String,
-    pub unread: bool,
     /// Workspace metadata from `session_meta`. Archived sessions are hidden
     /// behind a disclosure rather than deleted; pinned ones sort to the top.
     pub archived: bool,
@@ -816,13 +815,16 @@ pub fn parse_session_rows(raw: &[Value]) -> Vec<SessionRow> {
                     .or_else(|| text(value, "objective"))
                     .unwrap_or_else(|| "Untitled session".to_owned()),
                 state,
-                relative_time: text(value, "relative_time").unwrap_or_default(),
+                // Formatted here, not read from the response: the daemon's
+                // `SessionView` has never carried a `relative_time`, so
+                // reading one left every row's timestamp column blank. When
+                // the session is running there is nothing durable to date
+                // either, and "" is the honest answer for that.
+                relative_time: text(value, "updated_at")
+                    .or_else(|| text(value, "created_at"))
+                    .map(|stamp| relative_time(&stamp))
+                    .unwrap_or_default(),
                 group: session_group(value),
-                unread: value
-                    .get("unread")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-                    || needs_attention,
                 needs_attention,
                 archived: value
                     .get("archived")
@@ -867,14 +869,9 @@ pub fn relative_time(timestamp: &str) -> String {
 }
 
 fn session_group(value: &Value) -> String {
-    let relative = text(value, "relative_time").unwrap_or_default();
-    let normalized = relative.to_ascii_lowercase();
-    if normalized.contains("today") || normalized.contains("now") || relative.contains(':') {
-        return "Today".into();
-    }
-    if normalized.contains("yesterday") {
-        return "Yesterday".into();
-    }
+    // Grouped from the timestamps the daemon actually sends. An earlier
+    // version branched on a `relative_time` field first, which the daemon has
+    // never emitted — so those branches never ran.
     for key in ["updated_at", "created_at"] {
         if let Some(timestamp) = text(value, key)
             && let Ok(parsed) = DateTime::parse_from_rfc3339(&timestamp)
@@ -889,9 +886,6 @@ fn session_group(value: &Value) -> String {
             }
             return date.format("%b %-d").to_string();
         }
-    }
-    if !relative.is_empty() {
-        return relative;
     }
     "Earlier".into()
 }
@@ -2159,23 +2153,40 @@ mod tests {
     }
 
     #[test]
-    fn session_rows_have_reference_date_groups_and_unread_state() {
+    fn session_rows_are_dated_from_the_fields_the_daemon_actually_sends() {
+        // This test previously supplied a `relative_time` field. The daemon's
+        // `SessionView` has never had one, so the row's timestamp column was
+        // blank in the running application while the test passed — the
+        // fixture was describing a response shape that does not exist. Both
+        // the group and the displayed time now come from `updated_at`.
+        let today = Utc::now();
+        let yesterday = today - chrono::Days::new(1);
         let rows = parse_session_rows(&[
             json!({
                 "id": "today",
                 "objective": "Today task",
-                "relative_time": "10:24",
-                "unread": true
+                "updated_at": today.to_rfc3339(),
             }),
             json!({
                 "id": "yesterday",
                 "objective": "Yesterday task",
-                "relative_time": "Yesterday"
+                "updated_at": yesterday.to_rfc3339(),
             }),
         ]);
         assert_eq!(rows[0].group, "Today");
-        assert!(rows[0].unread);
         assert_eq!(rows[1].group, "Yesterday");
+        assert!(
+            !rows[0].relative_time.is_empty(),
+            "a session with a timestamp must render one"
+        );
+        assert_eq!(rows[1].relative_time, "1d ago");
+    }
+
+    #[test]
+    fn a_session_with_no_timestamp_renders_no_time_rather_than_a_guess() {
+        let rows = parse_session_rows(&[json!({"id": "s", "objective": "no dates"})]);
+        assert_eq!(rows[0].relative_time, "");
+        assert_eq!(rows[0].group, "Earlier");
     }
 
     #[test]

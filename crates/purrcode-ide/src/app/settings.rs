@@ -326,6 +326,21 @@ impl SettingsPage {
     }
 }
 
+/// Whether a section with `keywords` should be drawn for `query` on `page`.
+///
+/// A free function because the rule is pure and worth testing on its own: the
+/// bug it encodes was a silent one, visible only as an empty page.
+fn control_matches(query: &str, page: SettingsPage, keywords: &[&str]) -> bool {
+    let query = query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    keywords
+        .iter()
+        .any(|keyword| keyword.to_ascii_lowercase().contains(&query))
+        || page.matches_query(&query)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct SettingsLayout {
     compact: bool,
@@ -805,14 +820,15 @@ impl PurrCodeIde {
 
     /// Whether the current search query should show a control whose keywords
     /// are `keywords`. An empty query shows everything (FR-A7).
+    ///
+    /// A query that matched the *page* also shows every section on it. The two
+    /// keyword lists — the page's, which drives the nav, and each section's,
+    /// which drives this — were maintained by hand and had already drifted:
+    /// searching "keychain" listed "Models & providers" in the nav, and
+    /// opening it rendered a heading with every section suppressed. Whatever
+    /// was good enough to offer the page is good enough to draw it.
     fn control_matches(&self, keywords: &[&str]) -> bool {
-        let query = self.settings_search.trim().to_ascii_lowercase();
-        if query.is_empty() {
-            return true;
-        }
-        keywords
-            .iter()
-            .any(|keyword| keyword.to_ascii_lowercase().contains(&query))
+        control_matches(&self.settings_search, self.settings_page, keywords)
     }
 
     fn settings_content(&mut self, ui: &mut Ui, ctx: &egui::Context) {
@@ -3409,6 +3425,36 @@ mod tests {
         assert_eq!(SettingsPage::Codex.group(), "EXTENSIONS");
         assert_eq!(SettingsPage::Authority.group(), "RUNTIME");
         assert_eq!(SettingsPage::Advanced.group(), "SYSTEM");
+    }
+
+    #[test]
+    fn a_query_that_finds_a_page_also_draws_it() {
+        // The nav and the sections used to filter on two hand-maintained
+        // keyword lists, and they drifted: "keychain" listed "Models &
+        // providers" and then rendered it with every section suppressed. A
+        // page that the search offers must have something on it.
+        for page in SettingsPage::ALL {
+            for keyword in page.keywords() {
+                assert!(
+                    control_matches(keyword, *page, &["a-keyword-no-section-uses"]),
+                    "searching {keyword:?} offers {} but would draw nothing on it",
+                    page.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_query_matching_nothing_still_hides_unrelated_controls() {
+        // The fix must not turn the search into a no-op: a query that matches
+        // neither the page nor the section still filters.
+        assert!(!control_matches(
+            "zzzz-nothing",
+            SettingsPage::Models,
+            &["provider", "role"]
+        ));
+        // An empty query still shows everything (FR-A7).
+        assert!(control_matches("", SettingsPage::Models, &["anything"]));
     }
 
     #[test]
