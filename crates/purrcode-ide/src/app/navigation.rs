@@ -314,11 +314,13 @@ impl PurrCodeIde {
             self.active_file = pos;
         } else {
             self.open_files.push(super::OpenFile {
-                path,
+                path: path.clone(),
                 label,
                 body,
                 scroll_to_line: None,
                 modified: false,
+                disk_stamp: super::disk_stamp(&path),
+                external_change: false,
             });
             self.active_file = self.open_files.len() - 1;
         }
@@ -326,6 +328,10 @@ impl PurrCodeIde {
         self.activity = super::ActivityBar::Explorer;
         self.agent_location = super::AgentLocation::Aux;
         self.aux_panel = Some(super::AuxView::Agent);
+        // Hand the document to its language server so analysis starts, and
+        // ask for its outline. Both are no-ops without a server for the type.
+        self.open_in_language_server(&path);
+        self.request_symbols(&path);
     }
 
     // ── Search ──────────────────────────────────────────────────────

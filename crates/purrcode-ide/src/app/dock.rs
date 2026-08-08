@@ -8,6 +8,7 @@
 use egui::{Align, Layout, RichText, ScrollArea, Ui};
 
 use super::{DockTab, PurrCodeIde};
+use crate::theme;
 
 impl PurrCodeIde {
     /// The docked evidence panel at the bottom.
@@ -99,13 +100,43 @@ impl PurrCodeIde {
 
     // ── Problems ────────────────────────────────────────────────────
 
-    fn problems_panel(&self, ui: &mut Ui) {
+    fn problems_panel(&mut self, ui: &mut Ui) {
+        // Two independent sources answer different questions, and collapsing
+        // them would let one stand in for the other: validation reports what
+        // ran and failed, language servers report what the code says right
+        // now. A project whose tests never ran is not a project without
+        // problems, so the panel names each source and what it has actually
+        // seen rather than printing one unqualified "no problems".
+        let tokens = self.tokens;
+        let repository = self.repository.clone();
+        ui.label(
+            RichText::new("FROM LANGUAGE SERVERS")
+                .size(theme::TYPE_EYEBROW)
+                .strong()
+                .color(tokens.text_muted),
+        );
+        ui.add_space(2.0);
+        let jump = crate::app::language::diagnostics_list(ui, &tokens, &self.language, &repository);
+        if let Some(location) = jump {
+            self.open_location(&location);
+        }
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new("FROM VALIDATION")
+                .size(theme::TYPE_EYEBROW)
+                .strong()
+                .color(tokens.text_muted),
+        );
+        ui.add_space(2.0);
+
         let problems = crate::model::problems_from(&self.session.validation);
         if problems.is_empty() {
-            ui.vertical_centered(|ui| {
-                ui.add_space(24.0);
-                ui.label(RichText::new("No problems detected").color(self.tokens.text_muted));
-            });
+            let explanation = if self.session.validation.stages.is_empty() {
+                "No validation has run for this session yet."
+            } else {
+                "Every validation stage that ran passed."
+            };
+            ui.label(RichText::new(explanation).small().color(tokens.text_muted));
             return;
         }
 

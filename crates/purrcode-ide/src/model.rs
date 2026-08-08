@@ -1262,6 +1262,243 @@ pub fn panel_availability_label(availability: &PanelAvailability) -> &'static st
     }
 }
 
+// ── Language intelligence (LSP) ────────────────────────────────────────
+
+/// A 0-based position in a document, matching the LSP wire shape.
+///
+/// The editor thinks in 1-based line numbers because that is what a gutter
+/// shows; everything crossing the daemon boundary stays 0-based so there is
+/// exactly one place (`Location::display_line`) where the conversion happens.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DocumentPosition {
+    pub line: u64,
+    pub character: u64,
+}
+
+impl DocumentPosition {
+    pub fn parse(value: &Value) -> Self {
+        Self {
+            line: value["line"].as_u64().unwrap_or(0),
+            character: value["character"].as_u64().unwrap_or(0),
+        }
+    }
+
+    /// The line as a gutter shows it.
+    pub fn display_line(self) -> usize {
+        self.line as usize + 1
+    }
+}
+
+/// A place a language server pointed at: a definition, a reference, or a
+/// symbol's home.
+#[derive(Clone, Debug)]
+pub struct Location {
+    pub path: std::path::PathBuf,
+    pub start: DocumentPosition,
+}
+
+impl Location {
+    /// Parses one `LocationLink`. Returns `None` for an entry with no usable
+    /// target, so a malformed element drops out instead of pointing the user
+    /// at line 1 of nothing.
+    pub fn parse(value: &Value) -> Option<Self> {
+        let uri = value["target_uri"].as_str()?;
+        let path = uri.strip_prefix("file://").unwrap_or(uri);
+        if path.is_empty() {
+            return None;
+        }
+        Some(Self {
+            path: std::path::PathBuf::from(path),
+            // Prefer the selection range: it is the identifier itself, where
+            // the full target range can be an entire function body.
+            start: DocumentPosition::parse(if value["target_selection_range"].is_object() {
+                &value["target_selection_range"]["start"]
+            } else {
+                &value["target_range"]["start"]
+            }),
+        })
+    }
+
+    /// `path:line`, repository-relative when possible.
+    pub fn label(&self, repository: &std::path::Path) -> String {
+        let shown = self.path.strip_prefix(repository).unwrap_or(&self.path);
+        format!("{}:{}", shown.display(), self.start.display_line())
+    }
+}
+
+/// One symbol in the open document's outline.
+#[derive(Clone, Debug)]
+pub struct Symbol {
+    pub name: String,
+    pub kind: u64,
+    pub detail: Option<String>,
+    pub start: DocumentPosition,
+}
+
+impl Symbol {
+    pub fn parse(value: &Value) -> Option<Self> {
+        Some(Self {
+            name: value["name"].as_str()?.to_owned(),
+            kind: value["kind"].as_u64().unwrap_or(0),
+            detail: value["detail"].as_str().map(str::to_owned),
+            start: DocumentPosition::parse(&value["selection_range"]["start"]),
+        })
+    }
+
+    /// The LSP `SymbolKind` as a short word. Unknown kinds render as "symbol"
+    /// rather than as a number the user would have to look up.
+    pub const fn kind_label(&self) -> &'static str {
+        match self.kind {
+            2 => "module",
+            5 => "class",
+            6 => "method",
+            8 => "field",
+            9 => "constructor",
+            10 => "enum",
+            11 => "interface",
+            12 => "function",
+            13 => "variable",
+            14 => "constant",
+            23 => "struct",
+            26 => "type",
+            _ => "symbol",
+        }
+    }
+}
+
+/// One diagnostic a language server published for a file.
+#[derive(Clone, Debug)]
+pub struct Diagnostic {
+    pub start: DocumentPosition,
+    /// LSP severity: 1 error, 2 warning, 3 information, 4 hint. `None` when
+    /// the server omitted it.
+    pub severity: Option<u64>,
+    pub code: Option<String>,
+    pub source: Option<String>,
+    pub message: String,
+}
+
+impl Diagnostic {
+    pub fn parse(value: &Value) -> Self {
+        Self {
+            start: DocumentPosition::parse(&value["range"]["start"]),
+            severity: value["severity"].as_u64(),
+            code: value["code"].as_str().map(str::to_owned),
+            source: value["source"].as_str().map(str::to_owned),
+            message: value["message"].as_str().unwrap_or_default().to_owned(),
+        }
+    }
+
+    /// A server that omitted severity has not said the problem is minor, so an
+    /// unlabelled diagnostic sorts with errors rather than being quietly
+    /// filed as a hint.
+    pub const fn is_error(&self) -> bool {
+        matches!(self.severity, Some(1) | None)
+    }
+
+    pub const fn severity_label(&self) -> &'static str {
+        match self.severity {
+            Some(1) => "Error",
+            Some(2) => "Warning",
+            Some(3) => "Info",
+            Some(4) => "Hint",
+            _ => "Unspecified",
+        }
+    }
+}
+
+/// Everything the IDE knows from language servers right now.
+///
+/// Every field distinguishes "asked and got nothing" from "never asked".
+/// Language servers analyse asynchronously, so an empty diagnostic list moments
+/// after opening a file means the server has not spoken yet — rendering that as
+/// a clean file would be a lie the user would rely on.
+#[derive(Clone, Debug, Default)]
+pub struct LanguageIntelligence {
+    /// Language servers present on this machine, as `(program, extensions)`.
+    pub servers: Vec<(String, Vec<String>)>,
+    /// `true` once the server probe has answered at least once.
+    pub servers_checked: bool,
+    /// Hover text for the position the pointer last rested on.
+    pub hover: Option<String>,
+    /// The document and position `hover` describes, so a stale reply for a
+    /// position the pointer has already left is discarded rather than shown
+    /// against the wrong token.
+    pub hover_anchor: Option<(std::path::PathBuf, DocumentPosition)>,
+    /// Results of the last "find references" request.
+    pub references: Vec<Location>,
+    pub references_for: Option<String>,
+    pub references_checked: bool,
+    /// The open document's outline.
+    pub symbols: Vec<Symbol>,
+    pub symbols_for: Option<std::path::PathBuf>,
+    /// Published diagnostics per file.
+    pub diagnostics: BTreeMap<std::path::PathBuf, Vec<Diagnostic>>,
+    /// `true` once a diagnostics poll has answered. Until then the Problems
+    /// panel says the servers are still warming up instead of "no problems".
+    pub diagnostics_checked: bool,
+    /// The last language-server failure, shown as an explanation rather than
+    /// silently producing an empty result.
+    pub last_error: Option<String>,
+}
+
+impl LanguageIntelligence {
+    /// Whether any language server covers this file's extension.
+    ///
+    /// Used to keep the UI honest: an unsupported file must not offer
+    /// "Go to definition" and then do nothing.
+    pub fn supports(&self, path: &std::path::Path) -> bool {
+        let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+            return false;
+        };
+        let extension = extension.to_ascii_lowercase();
+        self.servers
+            .iter()
+            .any(|(_, extensions)| extensions.iter().any(|candidate| candidate == &extension))
+    }
+
+    /// Diagnostics for one file, newest snapshot the daemon published.
+    pub fn for_file(&self, path: &std::path::Path) -> &[Diagnostic] {
+        self.diagnostics.get(path).map_or(&[], Vec::as_slice)
+    }
+
+    /// Total diagnostics across every file, for the status bar.
+    pub fn counts(&self) -> (usize, usize) {
+        let mut errors = 0;
+        let mut others = 0;
+        for diagnostics in self.diagnostics.values() {
+            for diagnostic in diagnostics {
+                if diagnostic.is_error() {
+                    errors += 1;
+                } else {
+                    others += 1;
+                }
+            }
+        }
+        (errors, others)
+    }
+
+    /// Replaces the whole diagnostic set from a `GET /v1/lsp/diagnostics` body.
+    pub fn absorb_diagnostics(&mut self, value: &Value) {
+        let mut next: BTreeMap<std::path::PathBuf, Vec<Diagnostic>> = BTreeMap::new();
+        for file in value["files"].as_array().unwrap_or(&Vec::new()) {
+            let Some(path) = file["path"].as_str() else {
+                continue;
+            };
+            let diagnostics: Vec<Diagnostic> = file["diagnostics"]
+                .as_array()
+                .map(|items| items.iter().map(Diagnostic::parse).collect())
+                .unwrap_or_default();
+            // A file the server has declared clean is reported with an empty
+            // array; dropping the key entirely would be the same shape as
+            // "never analysed", which the panel must not conflate.
+            next.insert(std::path::PathBuf::from(path), diagnostics);
+        }
+        self.diagnostics = next;
+        self.diagnostics_checked = true;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

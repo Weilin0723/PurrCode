@@ -206,6 +206,11 @@ impl PurrCodeIde {
             }
         };
         let path = file.path.clone();
+        let jump_to = file.scroll_to_line;
+        let conflicted = file.external_change;
+        let mut caret: Option<crate::model::DocumentPosition> = None;
+        let mut hovered: Option<crate::model::DocumentPosition> = None;
+        let mut follow: Option<crate::model::DocumentPosition> = None;
         let line_count = content.lines().count().max(1);
         let mono = egui::FontId::monospace(theme::TYPE_CODE);
         // The gutter is sized to the widest line number *from the live face*,
@@ -213,6 +218,52 @@ impl PurrCodeIde {
         // number up to one right edge.
         let digit_w = ui.fonts_mut(|fonts| fonts.glyph_width(&mono, '0'));
         let gutter_width = 12.0 + digit_w * line_count.to_string().len() as f32;
+
+        // A file that moved on disk while this buffer had unsaved edits is a
+        // fork in the file's history. Neither side is discarded automatically:
+        // the bar names the situation and the user picks, because silently
+        // keeping either one loses work somebody meant to keep.
+        if conflicted {
+            let mut choice: Option<bool> = None;
+            egui::Frame::new()
+                .fill(self.tokens.accent_soft)
+                .inner_margin(egui::Margin::symmetric(10, 6))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        crate::icons::inline(ui, Glyph::Warning, 12.0, self.tokens.status_warning);
+                        ui.label(
+                            RichText::new("This file changed on disk while you had unsaved edits.")
+                                .size(theme::TYPE_META)
+                                .color(self.tokens.text_primary),
+                        );
+                        if ui
+                            .small_button("Reload from disk")
+                            .on_hover_text("Discard the edits in this editor")
+                            .clicked()
+                        {
+                            choice = Some(true);
+                        }
+                        if ui
+                            .small_button("Keep my version")
+                            .on_hover_text("Your next save overwrites the file on disk")
+                            .clicked()
+                        {
+                            choice = Some(false);
+                        }
+                    });
+                });
+            match choice {
+                Some(true) => self.reload_from_disk(index),
+                Some(false) => self.keep_editor_version(index),
+                None => {}
+            }
+            // The buffer may have been replaced by the reload, so re-read it
+            // rather than drawing the copy taken before the choice.
+            if choice.is_some() {
+                ui.ctx().request_repaint();
+                return;
+            }
+        }
 
         // One scroll area wraps a single horizontal row holding both columns,
         // so a single offset drives the numbers and the code together — a
@@ -256,24 +307,95 @@ impl PurrCodeIde {
                         job.wrap.max_width = wrap_width;
                         ui.fonts_mut(|f| f.layout_job(job))
                     };
-                    let _ = ui.add(
-                        egui::TextEdit::multiline(&mut content)
-                            .code_editor()
-                            .frame(false)
-                            .font(egui::TextStyle::Monospace)
-                            .id_salt("code_editor")
-                            .desired_width(f32::INFINITY)
-                            .layouter(&mut layouter),
-                    );
+                    // `show` rather than `add`: the caret and the laid-out
+                    // galley are what make hover, go-to-definition and
+                    // scroll-to-line possible, and `add` throws both away.
+                    let output = egui::TextEdit::multiline(&mut content)
+                        .code_editor()
+                        .frame(false)
+                        .font(egui::TextStyle::Monospace)
+                        .id_salt("code_editor")
+                        .desired_width(f32::INFINITY)
+                        .layouter(&mut layouter)
+                        .show(ui);
+
+                    caret = output
+                        .state
+                        .cursor
+                        .char_range()
+                        .map(|range| document_position(&content, range.primary.index));
+
+                    // A pointer resting over a token asks the language server
+                    // what it is. The position is resolved through the galley
+                    // so a wrapped line still maps to the right document
+                    // coordinate.
+                    if let Some(pointer) = output.response.hover_pos() {
+                        let cursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
+                        let position = document_position(&content, cursor.index);
+                        hovered = Some(position);
+                        // ⌘/Ctrl-click is the universal "follow this symbol"
+                        // gesture, and the modifier is what keeps it from
+                        // stealing an ordinary click that places the caret.
+                        if output.response.clicked() && ui.input(|input| input.modifiers.command) {
+                            follow = Some(position);
+                        }
+                    }
+
+                    // Jump requests set a line while the editor was not
+                    // drawing; honour them now that there is a galley to
+                    // measure against.
+                    if let Some(line) = jump_to {
+                        let cursor = egui::text::CCursor::new(char_index_of_line(&content, line));
+                        let rect = output.galley.pos_from_cursor(cursor);
+                        ui.scroll_to_rect(
+                            rect.translate(output.galley_pos.to_vec2()),
+                            Some(Align::Center),
+                        );
+                    }
                 });
             });
 
-        if let Some(file) = self.open_files.get_mut(index)
-            && file.body.as_ref() != Ok(&content)
+        if let Some(file) = self.open_files.get_mut(index) {
+            if file.body.as_ref() != Ok(&content) {
+                file.body = Ok(content);
+                file.modified = true;
+                let path = file.path.clone();
+                self.dirty.insert(path);
+            }
+            // Consume the jump: leaving it set would re-centre the view on
+            // every frame and make the editor impossible to scroll.
+            if jump_to.is_some() {
+                file.scroll_to_line = None;
+            }
+        }
+
+        self.caret = caret;
+        if let Some(position) = caret {
+            self.caret_word = word_at(
+                self.open_files
+                    .get(index)
+                    .and_then(|file| file.body.as_ref().ok())
+                    .map(String::as_str)
+                    .unwrap_or_default(),
+                position,
+            );
+        }
+        if let Some(position) = follow {
+            self.go_to_definition(&path, position);
+        }
+        if let Some(position) = hovered {
+            self.note_hover(&path, position);
+            self.show_hover_card(ui, &path, position);
+        } else if self
+            .hover_probe
+            .as_ref()
+            .is_some_and(|probe| probe.path == path)
         {
-            file.body = Ok(content);
-            file.modified = true;
-            self.dirty.insert(file.path.clone());
+            // The pointer left the text: drop the probe and its answer rather
+            // than leaving a tooltip pinned to a token nobody is pointing at.
+            self.hover_probe = None;
+            self.language.hover = None;
+            self.language.hover_anchor = None;
         }
     }
     /// Write the active file's buffer back to disk. `Ok(())` clears the dirty
@@ -300,8 +422,14 @@ impl PurrCodeIde {
             Ok(()) => {
                 if let Some(file) = self.open_files.get_mut(index) {
                     file.modified = false;
+                    // Adopt the stamp this write produced, so the editor's own
+                    // save is not reported back as an external change.
+                    file.disk_stamp = super::disk_stamp(&path);
+                    file.external_change = false;
                 }
                 self.dirty.remove(&path);
+                // The server's copy is now stale; hand it the saved text.
+                self.open_in_language_server(&path);
                 true
             }
             Err(err) => {
@@ -454,6 +582,84 @@ pub(crate) fn tab(
     }
 
     (response.clicked() && !closed, closed)
+}
+
+/// Converts egui's flat character index into LSP's `(line, UTF-16 code unit)`.
+///
+/// Two mismatches are handled here. egui counts characters from the start of
+/// the whole buffer; LSP counts lines and columns. And egui's column is a
+/// character count while LSP's is a UTF-16 code-unit count — the two agree on
+/// ASCII and diverge the moment a file contains CJK text or an emoji, which
+/// would otherwise send the server to the wrong column.
+fn document_position(text: &str, index: usize) -> crate::model::DocumentPosition {
+    let mut line = 0_u64;
+    let mut character = 0_u64;
+    for (position, value) in text.chars().enumerate() {
+        if position >= index {
+            break;
+        }
+        if value == '\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += value.len_utf16() as u64;
+        }
+    }
+    crate::model::DocumentPosition { line, character }
+}
+
+/// The flat character index of the start of a 1-based line, for scrolling.
+///
+/// A line past the end of the buffer clamps to the last line rather than
+/// failing: a diagnostic from a stale analysis should still land the user
+/// somewhere sensible in the file it names.
+fn char_index_of_line(text: &str, display_line: usize) -> usize {
+    let wanted = display_line.saturating_sub(1);
+    let mut line = 0_usize;
+    let mut line_start = 0_usize;
+    for (index, value) in text.chars().enumerate() {
+        if line == wanted {
+            return line_start;
+        }
+        if value == '\n' {
+            line += 1;
+            line_start = index + 1;
+        }
+    }
+    // Past the end of the buffer: the start of the final line.
+    line_start
+}
+
+/// The identifier at a document position, for labelling a references list.
+///
+/// Returns an empty string when the position is not on an identifier, so a
+/// caller can tell "no word here" from a word it failed to read.
+fn word_at(text: &str, position: crate::model::DocumentPosition) -> String {
+    let Some(line) = text.split('\n').nth(position.line as usize) else {
+        return String::new();
+    };
+    // Walk in UTF-16 units to match the position's own units.
+    let mut units = 0_u64;
+    let mut byte_index = line.len();
+    for (index, character) in line.char_indices() {
+        if units >= position.character {
+            byte_index = index;
+            break;
+        }
+        units += character.len_utf16() as u64;
+    }
+    let is_word = |character: char| character.is_alphanumeric() || character == '_';
+    let start = line[..byte_index]
+        .char_indices()
+        .rev()
+        .take_while(|(_, character)| is_word(*character))
+        .last()
+        .map_or(byte_index, |(index, _)| index);
+    let end = line[byte_index..]
+        .char_indices()
+        .find(|(_, character)| !is_word(*character))
+        .map_or(line.len(), |(index, _)| byte_index + index);
+    line[start..end].to_owned()
 }
 
 /// Shorten a label for a breadcrumb without cutting a character in half.

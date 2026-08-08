@@ -18,6 +18,8 @@ mod composer;
 mod dock;
 mod editor;
 mod errors;
+pub(crate) mod files;
+pub(crate) mod language;
 mod navigation;
 pub(crate) mod primitives;
 mod settings;
@@ -127,6 +129,10 @@ pub enum AgentLocation {
 pub enum AuxView {
     Agent,
     Source,
+    /// Every use of one symbol, from `textDocument/references`.
+    References,
+    /// The active document's symbols, from `textDocument/documentSymbol`.
+    Outline,
 }
 
 /// Keep the Agent transcript mounted in exactly one location per frame.
@@ -258,6 +264,23 @@ pub struct OpenFile {
     pub scroll_to_line: Option<usize>,
     /// Whether the editor buffer diverged from disk (tab "●").
     pub modified: bool,
+    /// The file's size and modification time when this buffer was last read
+    /// or written, so a change made outside the editor can be detected.
+    pub disk_stamp: Option<(u64, std::time::SystemTime)>,
+    /// Set when the file on disk moved on under an open buffer — an agent
+    /// wrote it, a rebase landed, another editor saved. The editor never
+    /// silently discards either version; it tells the user and lets them pick.
+    pub external_change: bool,
+}
+
+/// The size and modification time of a file, for change detection.
+///
+/// `None` when the file cannot be stated (deleted, or on a filesystem that
+/// does not report mtime). A missing stamp disables the comparison rather than
+/// producing a spurious "changed on disk" every frame.
+pub(crate) fn disk_stamp(path: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
 }
 
 /// A model the user could choose. `Auto` is not in this list: it is the
@@ -385,6 +408,27 @@ pub struct PurrCodeIde {
     /// has nothing to report" (show the file tree).
     pub(crate) workspace_changes_checked: bool,
 
+    // ── Language intelligence ──────────────────────────────────────────
+    /// What language servers have told this window (v1.2 Pillar 1).
+    pub(crate) language: crate::model::LanguageIntelligence,
+    /// Where the pointer is resting in the editor, for delayed hover.
+    pub(crate) hover_probe: Option<language::HoverProbe>,
+    /// The caret's document position, kept per frame so keyboard actions
+    /// (definition, references, rename) know what the user means by "here".
+    pub(crate) caret: Option<crate::model::DocumentPosition>,
+    /// The identifier under the caret, so a references panel can name what it
+    /// is listing without asking the server twice.
+    pub(crate) caret_word: String,
+    /// Run the formatter on ⌘S before writing to disk.
+    pub(crate) format_on_save: bool,
+
+    // ── Explorer file operations ───────────────────────────────────────
+    /// The create/rename/delete waiting on the user's confirmation.
+    pub(crate) file_operation: Option<files::FileOperation>,
+    pub(crate) file_operation_name: String,
+    /// Why the last attempt was refused, shown beside the name field.
+    pub(crate) file_operation_error: Option<String>,
+
     // ── Dock ───────────────────────────────────────────────────────────
     pub(crate) dock: Option<DockTab>,
 
@@ -440,6 +484,11 @@ pub struct PurrCodeIde {
     /// the session list), not the 700 ms session cadence: `git diff --numstat`
     /// over a dirty tree is not free.
     last_workspace_changes_poll: Instant,
+    /// Diagnostics are pushed by language servers, so the window polls for
+    /// what has been published rather than requesting analysis.
+    last_diagnostic_poll: Instant,
+    /// When open buffers were last compared against the files on disk.
+    last_disk_check: Instant,
     /// When the current `session_loading` began, so a stuck load falls back
     /// instead of spinning forever.
     session_loading_began: Option<Instant>,
@@ -567,6 +616,19 @@ impl PurrCodeIde {
             workspace_changes_loading: false,
             workspace_changes_checked: false,
 
+            language: crate::model::LanguageIntelligence::default(),
+            hover_probe: None,
+            caret: None,
+            caret_word: String::new(),
+            // On by default: a formatter that has to be remembered is a
+            // formatter that produces noisy diffs. It is a no-op when no
+            // language server covers the file.
+            format_on_save: true,
+
+            file_operation: None,
+            file_operation_name: String::new(),
+            file_operation_error: None,
+
             dock: None,
 
             terminals: Vec::new(),
@@ -608,6 +670,8 @@ impl PurrCodeIde {
             last_list_poll: now,
             last_terminal_poll: now,
             last_workspace_changes_poll: now,
+            last_diagnostic_poll: now,
+            last_disk_check: now,
             session_loading_began: None,
             current_session_load_generation: None,
             last_session_load_generation: None,
@@ -909,12 +973,13 @@ impl PurrCodeIde {
                 }
             }
             DockTab::Problems => {
-                let problems = crate::model::problems_from(&self.session.validation);
-                if problems.is_empty() {
-                    None
-                } else {
-                    Some(problems.len().to_string())
-                }
+                // The badge counts both sources the panel shows. Counting only
+                // validation would leave a file full of compile errors badged
+                // as clean while the panel below listed every one of them.
+                let (errors, others) = self.language.counts();
+                let total =
+                    crate::model::problems_from(&self.session.validation).len() + errors + others;
+                (total > 0).then(|| total.to_string())
             }
             DockTab::Terminal => {
                 if self.terminals.is_empty() {
@@ -1241,6 +1306,124 @@ impl PurrCodeIde {
                 self.settings_state.codex = value;
             }
             Response::CodexDoctor(value) => self.settings_state.codex_doctor = value,
+            Response::LspServers(value) => {
+                self.language.servers = value["servers"]
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| {
+                                Some((
+                                    item["program"].as_str()?.to_owned(),
+                                    item["extensions"]
+                                        .as_array()?
+                                        .iter()
+                                        .filter_map(|ext| Some(ext.as_str()?.to_ascii_lowercase()))
+                                        .collect(),
+                                ))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.language.servers_checked = true;
+                self.language.last_error = None;
+                // The servers are known now, so anything already open can be
+                // handed over for analysis.
+                for path in self
+                    .open_files
+                    .iter()
+                    .map(|file| file.path.clone())
+                    .collect::<Vec<_>>()
+                {
+                    self.open_in_language_server(&path);
+                }
+            }
+            Response::LspHover(path, line, character, value) => {
+                let anchor = crate::model::DocumentPosition { line, character };
+                // Only show an answer for the position the pointer is still
+                // resting on: a reply that arrives after the pointer moved
+                // would label the wrong token.
+                let current = self
+                    .hover_probe
+                    .as_ref()
+                    .is_some_and(|probe| probe.path == path && probe.position == anchor);
+                if current {
+                    let contents = value["contents"].as_str().unwrap_or_default().trim();
+                    self.language.hover = (!contents.is_empty()).then(|| contents.to_owned());
+                    self.language.hover_anchor = Some((path, anchor));
+                }
+            }
+            Response::LspDefinition(value) => {
+                let targets: Vec<crate::model::Location> = value
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(crate::model::Location::parse)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                match targets.first() {
+                    // One target is an unambiguous jump. Several means the
+                    // symbol genuinely has multiple definitions (trait impls,
+                    // overloads), so the list is shown rather than guessing.
+                    Some(target) if targets.len() == 1 => self.open_location(target),
+                    Some(_) => {
+                        self.language.references = targets;
+                        self.language.references_checked = true;
+                        self.language.references_for = Some("definitions".to_owned());
+                        self.aux_panel = Some(AuxView::References);
+                    }
+                    None => self.push_notice(errors::Notice {
+                        kind: errors::NoticeKind::Environment,
+                        headline: "No definition found".to_owned(),
+                        impact: "The language server did not resolve a definition for that symbol."
+                            .to_owned(),
+                        next_step: Some(
+                            "It may still be indexing the project — try again in a moment."
+                                .to_owned(),
+                        ),
+                        actions: vec![errors::NoticeAction::Dismiss],
+                        detail: None,
+                        clears_on_reconnect: false,
+                    }),
+                }
+            }
+            Response::LspReferences(label, value) => {
+                self.language.references = value
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(crate::model::Location::parse)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.language.references_checked = true;
+                self.language.references_for = Some(label);
+            }
+            Response::LspSymbols(path, value) => {
+                self.language.symbols = value
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(crate::model::Symbol::parse)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.language.symbols_for = Some(path);
+            }
+            Response::LspFormat(path, value, then_save) => {
+                self.apply_format_edits(&path, &value, then_save)
+            }
+            Response::LspDiagnostics(value) => self.language.absorb_diagnostics(&value),
+            Response::LspUnavailable(error) => {
+                // Recorded, not raised: a missing language server is a normal
+                // state for a machine, and a modal per hover would be worse
+                // than no intelligence at all.
+                self.language.last_error = Some(error);
+            }
             Response::SettingsMutated => {
                 // A mutation landed; the owning page re-fetches its data.
                 self.settings_state.mutation_succeeded();
@@ -1360,6 +1543,14 @@ impl PurrCodeIde {
         {
             self.last_terminal_poll = Instant::now();
             self.poll_terminals();
+        }
+        // Language intelligence: find out what is installed once, then keep
+        // the Problems panel fed. Both are no-ops when no server exists.
+        if self.stage == Stage::Workspace {
+            self.probe_language_servers();
+            self.poll_diagnostics();
+            self.settle_hover();
+            self.detect_external_changes();
         }
         // A running task should look running without the user touching the
         // mouse; an idle window should not burn a core.
@@ -1512,6 +1703,8 @@ impl eframe::App for PurrCodeIde {
         self.command_center(ctx);
 
         self.settings_window(ctx);
+
+        self.file_operation_dialog(ctx);
 
         self.close_confirm_modal(ctx);
     }
@@ -1854,6 +2047,8 @@ impl PurrCodeIde {
                                 "Source".to_owned()
                             }
                         }
+                        AuxView::References => "References".to_owned(),
+                        AuxView::Outline => "Outline".to_owned(),
                     };
                     ui.label(RichText::new(title).color(self.tokens.text_primary));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1882,6 +2077,8 @@ impl PurrCodeIde {
             .show(ui, |ui| match view {
                 AuxView::Agent => self.agent_surface(ui),
                 AuxView::Source => self.code_column(ui),
+                AuxView::References => self.references_panel(ui),
+                AuxView::Outline => self.outline_panel(ui),
             });
     }
 
@@ -1998,6 +2195,66 @@ impl PurrCodeIde {
         if pressed(Key::S, false) && self.agent_location == AgentLocation::Aux {
             // ⌘S saves the active editor file when the source column owns the
             // centre. It is a no-op while the agent session holds the tab.
+            self.save_and_format_active_file();
+        }
+        // ⌘⇧O opens the document outline, matching the "go to symbol" idiom.
+        if pressed(Key::O, true)
+            && let Some(path) = self.active_file_path()
+        {
+            self.aux_panel = Some(AuxView::Outline);
+            self.request_symbols(&path);
+        }
+
+        // Language navigation. These are plain function keys, not ⌘ chords, so
+        // they are checked outside the `pressed` helper above.
+        let language_keys = ctx.input_mut(|input| {
+            (
+                input.consume_key(Modifiers::NONE, Key::F12),
+                input.consume_key(Modifiers::SHIFT, Key::F12),
+                input.consume_key(Modifiers::ALT.plus(Modifiers::SHIFT), Key::F),
+            )
+        });
+        if let Some((path, position)) = self.caret_target() {
+            let word = self.caret_word.clone();
+            match language_keys {
+                (true, _, _) => self.go_to_definition(&path, position),
+                (_, true, _) => self.find_references(&path, position, &word),
+                (_, _, true) => self.format_document(&path, false),
+                _ => {}
+            }
+        }
+    }
+
+    /// The active editor file, when one owns the centre.
+    fn active_file_path(&self) -> Option<PathBuf> {
+        self.open_files
+            .get(self.active_file)
+            .map(|file| file.path.clone())
+    }
+
+    /// The document and position a language action should act on.
+    ///
+    /// `None` when no file is focused or the caret has not been placed, so a
+    /// keypress does nothing rather than acting on a stale position from a
+    /// file the user has since closed.
+    fn caret_target(&self) -> Option<(PathBuf, crate::model::DocumentPosition)> {
+        let path = self.active_file_path()?;
+        Some((path, self.caret?))
+    }
+
+    /// ⌘S: format first when format-on-save is on, then write.
+    ///
+    /// The save is deferred until the formatting edits land, so the file on
+    /// disk is the formatted text rather than the pre-format buffer followed
+    /// by a second write. When no language server covers the file, this is an
+    /// ordinary save.
+    fn save_and_format_active_file(&mut self) {
+        let Some(path) = self.active_file_path() else {
+            return;
+        };
+        if self.format_on_save && self.language.supports(&path) {
+            self.format_document(&path, true);
+        } else {
             self.save_active_file();
         }
     }

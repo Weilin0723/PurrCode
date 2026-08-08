@@ -9,6 +9,7 @@
 //! [`Response`]s; a slow or dead daemon costs frames, not responsiveness.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -326,6 +327,58 @@ pub enum Request {
     },
     /// `POST /v1/codex/doctor` — run `CodexBridge::doctor`.
     CodexDoctor,
+    // ── Language intelligence ────────────────────────────────────────
+    //
+    // These are reads, so they stay on the query lane rather than the serial
+    // control lane: a hover must never queue behind a running agent turn.
+    /// `GET /v1/lsp/servers` — which language servers this machine has.
+    LspServers,
+    /// `POST /v1/lsp/open` — hand a document to its server so it starts
+    /// analysing. Sent on open and after a save.
+    LspOpen {
+        path: PathBuf,
+        root: PathBuf,
+        text: String,
+    },
+    /// `POST /v1/lsp/hover` — the type/doc text at a position.
+    LspHover {
+        path: PathBuf,
+        root: PathBuf,
+        line: u64,
+        character: u64,
+    },
+    /// `POST /v1/lsp/definition` — where the symbol at a position is defined.
+    LspDefinition {
+        path: PathBuf,
+        root: PathBuf,
+        line: u64,
+        character: u64,
+    },
+    /// `POST /v1/lsp/references` — every use of the symbol at a position.
+    LspReferences {
+        path: PathBuf,
+        root: PathBuf,
+        line: u64,
+        character: u64,
+        /// The identifier the user asked about, echoed back so the results
+        /// panel can name what it is listing.
+        label: String,
+    },
+    /// `POST /v1/lsp/symbols` — the document outline.
+    LspSymbols {
+        path: PathBuf,
+        root: PathBuf,
+    },
+    /// `POST /v1/lsp/format` — whole-document formatting edits.
+    LspFormat {
+        path: PathBuf,
+        root: PathBuf,
+        /// `true` when the format was triggered by a save, so the editor
+        /// writes the formatted text back to disk once the edits land.
+        then_save: bool,
+    },
+    /// `GET /v1/lsp/diagnostics` — everything the servers have published.
+    LspDiagnostics,
 }
 
 /// A panel in the session presentation snapshot.
@@ -651,6 +704,28 @@ pub enum Response {
     CodexSaved(Value),
     /// `POST /v1/codex/doctor` — a `CodexDoctorReport`.
     CodexDoctor(Value),
+    // ── Language intelligence ────────────────────────────────────────
+    /// `GET /v1/lsp/servers` — the servers available on this machine.
+    LspServers(Value),
+    /// `POST /v1/lsp/hover`, correlated with the document and position that
+    /// asked. The UI drops a reply whose anchor the pointer has already left
+    /// rather than showing one token's type against another.
+    LspHover(PathBuf, u64, u64, Value),
+    /// `POST /v1/lsp/definition` — the target locations.
+    LspDefinition(Value),
+    /// `POST /v1/lsp/references` — the symbol that was asked about, and its uses.
+    LspReferences(String, Value),
+    /// `POST /v1/lsp/symbols` — the outline of one document.
+    LspSymbols(PathBuf, Value),
+    /// `POST /v1/lsp/format` — the edits, the document, and whether the editor
+    /// should save once they are applied.
+    LspFormat(PathBuf, Value, bool),
+    /// `GET /v1/lsp/diagnostics` — every published diagnostic.
+    LspDiagnostics(Value),
+    /// A language-server request failed. Separate from the generic failure
+    /// path so a missing rust-analyzer explains itself in the editor instead
+    /// of raising a modal notice on every keystroke.
+    LspUnavailable(String),
     /// A settings mutation landed; the UI refetches the affected page.
     SettingsMutated,
     /// Connectivity changed. `false` means every view should say so rather than
@@ -1662,6 +1737,89 @@ impl Worker {
                     Err(error) => self.reply_failure(error),
                 }
             }
+            // Language-server reads report their own failure rather than the
+            // generic one: a machine with no rust-analyzer is a normal, quiet
+            // state, and routing it through `reply_failure` would raise a
+            // transport notice every time the pointer crossed a token.
+            Request::LspServers => match self.get::<Value>("/v1/lsp/servers") {
+                Ok(value) => self.reply(Response::LspServers(value)),
+                Err(error) => self.reply(Response::LspUnavailable(error)),
+            },
+            Request::LspOpen { path, root, text } => {
+                let body = serde_json::json!({"path": path, "root": root, "text": text});
+                match self.post::<Value>("/v1/lsp/open", &body) {
+                    Ok(_) => {}
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspHover {
+                path,
+                root,
+                line,
+                character,
+            } => {
+                let body = serde_json::json!({
+                    "path": path, "root": root,
+                    "position": {"line": line, "character": character},
+                });
+                match self.post::<Value>("/v1/lsp/hover", &body) {
+                    Ok(value) => self.reply(Response::LspHover(path, line, character, value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspDefinition {
+                path,
+                root,
+                line,
+                character,
+            } => {
+                let body = serde_json::json!({
+                    "path": path, "root": root,
+                    "position": {"line": line, "character": character},
+                });
+                match self.post::<Value>("/v1/lsp/definition", &body) {
+                    Ok(value) => self.reply(Response::LspDefinition(value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspReferences {
+                path,
+                root,
+                line,
+                character,
+                label,
+            } => {
+                let body = serde_json::json!({
+                    "path": path, "root": root,
+                    "position": {"line": line, "character": character},
+                });
+                match self.post::<Value>("/v1/lsp/references", &body) {
+                    Ok(value) => self.reply(Response::LspReferences(label, value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspSymbols { path, root } => {
+                let body = serde_json::json!({"path": path, "root": root});
+                match self.post::<Value>("/v1/lsp/symbols", &body) {
+                    Ok(value) => self.reply(Response::LspSymbols(path, value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspFormat {
+                path,
+                root,
+                then_save,
+            } => {
+                let body = serde_json::json!({"path": path, "root": root});
+                match self.post::<Value>("/v1/lsp/format", &body) {
+                    Ok(value) => self.reply(Response::LspFormat(path, value, then_save)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspDiagnostics => match self.get::<Value>("/v1/lsp/diagnostics") {
+                Ok(value) => self.reply(Response::LspDiagnostics(value)),
+                Err(error) => self.reply(Response::LspUnavailable(error)),
+            },
             Request::CodexGet => match self.get::<Value>("/v1/codex") {
                 Ok(value) => self.reply(Response::Codex(value)),
                 Err(error) => self.reply_failure(error),
