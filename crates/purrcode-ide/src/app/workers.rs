@@ -119,12 +119,16 @@ impl PurrCodeIde {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if ui
-                                            .small_button("Stop")
-                                            .on_hover_text(
-                                                "Stop this worker. The rest of the run continues.",
-                                            )
-                                            .clicked()
+                                        if super::primitives::button(
+                                            ui,
+                                            &tokens,
+                                            super::primitives::Tone::Danger,
+                                            "Stop",
+                                        )
+                                        .on_hover_text(
+                                            "Stop this worker. The rest of the run continues.",
+                                        )
+                                        .clicked()
                                         {
                                             stop = Some(worker.id.clone());
                                         }
@@ -178,7 +182,11 @@ impl PurrCodeIde {
                 })
                 .response;
 
-        if response.interact(egui::Sense::click()).clicked() {
+        if response
+            .interact(egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
             open = !open;
             ui.data_mut(|data| data.insert_temp(state_id, open));
         }

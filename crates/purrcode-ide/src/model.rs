@@ -671,6 +671,38 @@ fn number(value: &Value, key: &str) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
 
+/// A string field, defaulting to empty rather than `None`.
+///
+/// Distinct from [`text`], which reports an empty string as absent. Use this
+/// where the field is displayed as-is and "" and "missing" mean the same
+/// thing to the reader.
+fn string(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Maps a JSON array through a fallible parser, dropping what does not parse.
+///
+/// Every list the daemon sends arrives as an array of objects that the UI has
+/// to narrow, and each one was spelling out the same
+/// `as_array().map(…filter_map…).unwrap_or_default()` ceremony. Dropping an
+/// unparseable element rather than defaulting it is deliberate: a row missing
+/// the id its buttons act on would render controls that fail on click.
+pub fn objects<T>(value: &Value, parse: impl Fn(&Value) -> Option<T>) -> Vec<T> {
+    value
+        .as_array()
+        .map(|items| items.iter().filter_map(parse).collect())
+        .unwrap_or_default()
+}
+
+/// A JSON array of strings.
+fn strings(value: &Value, key: &str) -> Vec<String> {
+    objects(&value[key], |item| item.as_str().map(str::to_owned))
+}
+
 /// Parse a `TurnId` the daemon stamped onto this record, when it stamped
 /// one.
 ///
@@ -1352,41 +1384,16 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn parse(value: &Value) -> Self {
-        let workers = value["workers"]
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        Some(Worker {
-                            id: item["id"].as_str()?.to_owned(),
-                            status: item["status"].as_str().unwrap_or("unknown").to_owned(),
-                            changed_paths: item["changed_paths"]
-                                .as_array()
-                                .map(|paths| {
-                                    paths
-                                        .iter()
-                                        .filter_map(|path| path.as_str().map(str::to_owned))
-                                        .collect()
-                                })
-                                .unwrap_or_default(),
-                            summary: item["summary"].as_str().map(str::to_owned),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
         Self {
-            workers,
-            conflicts: value["conflicts"]
-                .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str().map(str::to_owned))
-                        .collect()
+            workers: objects(&value["workers"], |item| {
+                Some(Worker {
+                    id: item["id"].as_str()?.to_owned(),
+                    status: item["status"].as_str().unwrap_or("unknown").to_owned(),
+                    changed_paths: strings(item, "changed_paths"),
+                    summary: item["summary"].as_str().map(str::to_owned),
                 })
-                .unwrap_or_default(),
+            }),
+            conflicts: strings(value, "conflicts"),
             review_required: value["review_required"].as_bool().unwrap_or(false),
         }
     }
@@ -1445,14 +1452,14 @@ impl MemoryEntry {
                 out.push(Self {
                     id: id.to_owned(),
                     kind: kind.clone(),
-                    content: entry["content"].as_str().unwrap_or_default().to_owned(),
-                    source: entry["source"].as_str().unwrap_or_default().to_owned(),
+                    content: string(entry, "content"),
+                    source: string(entry, "source"),
                     confidence: entry["confidence"]
                         .as_str()
                         .unwrap_or("unverified")
                         .to_owned(),
                     scope: entry["scope"].as_str().unwrap_or("repository").to_owned(),
-                    created_at: entry["created_at"].as_str().unwrap_or_default().to_owned(),
+                    created_at: string(entry, "created_at"),
                     last_used_at: entry["last_used_at"].as_str().map(str::to_owned),
                 });
             }
@@ -1495,25 +1502,14 @@ pub struct SessionHit {
 
 impl SessionHit {
     pub fn parse_all(value: &Value) -> Vec<Self> {
-        value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        Some(Self {
-                            session_id: item["session_id"].as_str()?.to_owned(),
-                            event_type: item["event_type"].as_str().unwrap_or_default().to_owned(),
-                            snippet: item["snippet"].as_str().unwrap_or_default().to_owned(),
-                            occurred_at: item["occurred_at"]
-                                .as_str()
-                                .unwrap_or_default()
-                                .to_owned(),
-                        })
-                    })
-                    .collect()
+        objects(value, |item| {
+            Some(Self {
+                session_id: item["session_id"].as_str()?.to_owned(),
+                event_type: string(item, "event_type"),
+                snippet: string(item, "snippet"),
+                occurred_at: string(item, "occurred_at"),
             })
-            .unwrap_or_default()
+        })
     }
 }
 
@@ -1536,23 +1532,15 @@ pub struct Checkpoint {
 
 impl Checkpoint {
     pub fn parse_all(value: &Value) -> Vec<Self> {
-        value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        Some(Self {
-                            id: item["id"].as_str()?.to_owned(),
-                            label: item["label"].as_str().unwrap_or_default().to_owned(),
-                            head: item["head"].as_str().unwrap_or_default().to_owned(),
-                            created_at: item["created_at"].as_str().unwrap_or_default().to_owned(),
-                            changed_files: None,
-                        })
-                    })
-                    .collect()
+        objects(value, |item| {
+            Some(Self {
+                id: item["id"].as_str()?.to_owned(),
+                label: string(item, "label"),
+                head: string(item, "head"),
+                created_at: string(item, "created_at"),
+                changed_files: None,
             })
-            .unwrap_or_default()
+        })
     }
 
     /// A short label for a row: the checkpoint's own label, or its head when
@@ -1629,22 +1617,14 @@ pub struct ResolvedReference {
 
 impl ResolvedReference {
     pub fn parse_all(value: &Value) -> Vec<Self> {
-        value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        Some(Self {
-                            display: item["display"].as_str()?.to_owned(),
-                            resolved: item["resolved"].as_bool().unwrap_or(false),
-                            preview: item["preview"].as_str().map(str::to_owned),
-                            diagnostics: item["diagnostics"].as_str().map(str::to_owned),
-                        })
-                    })
-                    .collect()
+        objects(value, |item| {
+            Some(Self {
+                display: item["display"].as_str()?.to_owned(),
+                resolved: item["resolved"].as_bool().unwrap_or(false),
+                preview: item["preview"].as_str().map(str::to_owned),
+                diagnostics: item["diagnostics"].as_str().map(str::to_owned),
             })
-            .unwrap_or_default()
+        })
     }
 }
 
@@ -1771,7 +1751,7 @@ impl Diagnostic {
             severity: value["severity"].as_u64(),
             code: value["code"].as_str().map(str::to_owned),
             source: value["source"].as_str().map(str::to_owned),
-            message: value["message"].as_str().unwrap_or_default().to_owned(),
+            message: string(value, "message"),
         }
     }
 
@@ -1806,11 +1786,11 @@ pub struct LanguageIntelligence {
     /// `true` once the server probe has answered at least once.
     pub servers_checked: bool,
     /// Hover text for the position the pointer last rested on.
+    ///
+    /// Which position that is lives in `hover_probe` on the app, which is the
+    /// single source of truth for where the pointer is; keeping a second copy
+    /// here meant four assignment sites had to be held in step by hand.
     pub hover: Option<String>,
-    /// The document and position `hover` describes, so a stale reply for a
-    /// position the pointer has already left is discarded rather than shown
-    /// against the wrong token.
-    pub hover_anchor: Option<(std::path::PathBuf, DocumentPosition)>,
     /// Results of the last "find references" request.
     pub references: Vec<Location>,
     pub references_for: Option<String>,
@@ -1871,10 +1851,7 @@ impl LanguageIntelligence {
             let Some(path) = file["path"].as_str() else {
                 continue;
             };
-            let diagnostics: Vec<Diagnostic> = file["diagnostics"]
-                .as_array()
-                .map(|items| items.iter().map(Diagnostic::parse).collect())
-                .unwrap_or_default();
+            let diagnostics = objects(&file["diagnostics"], |item| Some(Diagnostic::parse(item)));
             // A file the server has declared clean is reported with an empty
             // array; dropping the key entirely would be the same shape as
             // "never analysed", which the panel must not conflate.

@@ -238,96 +238,90 @@ impl PurrCodeIde {
             return;
         };
         let tokens = self.tokens;
-        let mut close = false;
-        let mut commit = false;
         let mut name = self.file_operation_name.clone();
+        let error = self.file_operation_error.clone();
+        let destructive = matches!(operation, FileOperation::Delete { .. });
+        let confirm = match operation {
+            FileOperation::Delete { .. } => ("Delete", super::primitives::Tone::Danger),
+            FileOperation::Rename { .. } => ("Rename", super::primitives::Tone::Primary),
+            _ => ("Create", super::primitives::Tone::Primary),
+        };
 
-        egui::Modal::new(egui::Id::new("purrcode_file_operation")).show(ctx, |ui| {
-            ui.set_width(360.0);
-            ui.label(
-                RichText::new(operation.title())
-                    .size(theme::TYPE_TITLE)
-                    .color(tokens.text_primary),
-            );
-            ui.add_space(6.0);
-
-            match &operation {
-                FileOperation::Delete { target } => {
-                    let what = if target.is_dir() { "folder" } else { "file" };
-                    ui.label(
-                        RichText::new(format!(
-                            "Delete the {what} “{}”?",
-                            target
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_default()
-                        ))
-                        .color(tokens.text_primary),
-                    );
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(if target.is_dir() {
-                            "Everything inside it is deleted too. This cannot be undone from \
-                             PurrCode."
-                        } else {
-                            "This cannot be undone from PurrCode."
-                        })
-                        .size(theme::TYPE_META)
-                        .color(tokens.text_secondary),
-                    );
-                }
-                _ => {
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut name)
-                            .hint_text("Name")
-                            .desired_width(f32::INFINITY),
-                    );
-                    response.request_focus();
-                    if response.lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                    {
-                        commit = true;
+        let (choice, submitted) = super::primitives::dialog(
+            ctx,
+            &tokens,
+            "purrcode_file_operation",
+            operation.title(),
+            confirm,
+            destructive || !name.trim().is_empty(),
+            |ui| {
+                let mut submitted = false;
+                match &operation {
+                    FileOperation::Delete { target } => {
+                        let what = if target.is_dir() { "folder" } else { "file" };
+                        ui.label(
+                            RichText::new(format!(
+                                "Delete the {what} “{}”?",
+                                target
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().into_owned())
+                                    .unwrap_or_default()
+                            ))
+                            .color(tokens.text_primary),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(if target.is_dir() {
+                                "Everything inside it is deleted too. This cannot be undone from \
+                                 PurrCode."
+                            } else {
+                                "This cannot be undone from PurrCode."
+                            })
+                            .size(theme::TYPE_META)
+                            .color(tokens.text_secondary),
+                        );
+                    }
+                    _ => {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut name)
+                                .hint_text("Name")
+                                .desired_width(f32::INFINITY),
+                        );
+                        response.request_focus();
+                        submitted = response.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter));
                     }
                 }
-            }
-
-            if let Some(error) = &self.file_operation_error {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(error)
-                        .size(theme::TYPE_META)
-                        .color(tokens.status_error),
-                );
-            }
-
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    close = true;
+                if let Some(error) = &error {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(error)
+                            .size(theme::TYPE_META)
+                            .color(tokens.status_error),
+                    );
                 }
-                let confirm = match operation {
-                    FileOperation::Delete { .. } => "Delete",
-                    FileOperation::Rename { .. } => "Rename",
-                    _ => "Create",
-                };
-                if ui.button(confirm).clicked() {
-                    commit = true;
-                }
-            });
-        });
+                submitted
+            },
+        );
 
         self.file_operation_name = name.clone();
-        if commit {
+        let confirmed = submitted || choice == Some(super::primitives::DialogChoice::Confirm);
+        if confirmed {
             match self.commit_file_operation(&operation, &name) {
-                Ok(()) => close = true,
+                Ok(()) => self.close_file_operation(),
+                // The dialog stays open with the reason beside the field the
+                // user typed into, rather than dropping what they wrote.
                 Err(error) => self.file_operation_error = Some(error.message()),
             }
+        } else if choice == Some(super::primitives::DialogChoice::Cancel) {
+            self.close_file_operation();
         }
-        if close {
-            self.file_operation = None;
-            self.file_operation_name.clear();
-            self.file_operation_error = None;
-        }
+    }
+
+    fn close_file_operation(&mut self) {
+        self.file_operation = None;
+        self.file_operation_name.clear();
+        self.file_operation_error = None;
     }
 
     /// Starts an operation, clearing any previous attempt's error.

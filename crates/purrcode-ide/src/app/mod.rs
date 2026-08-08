@@ -265,6 +265,14 @@ pub struct OpenFile {
     /// Repository-relative, for the tab label.
     pub label: String,
     pub body: Result<String, String>,
+    /// Where each line begins, as `(character offset, byte offset)`.
+    ///
+    /// Rebuilt only when the buffer changes, via [`OpenFile::set_body`]. The
+    /// editor converts between egui's flat character index and LSP's
+    /// line/column on every frame — twice, for the caret and the pointer — and
+    /// scanning the buffer from the start each time is O(file size) per frame.
+    /// With this the conversion is a binary search plus a walk of one line.
+    pub line_starts: Vec<(usize, usize)>,
     pub scroll_to_line: Option<usize>,
     /// Whether the editor buffer diverged from disk (tab "●").
     pub modified: bool,
@@ -297,6 +305,29 @@ pub(crate) enum PaletteAction {
     Settings,
     /// Place a daemon session command in the composer, ready to send.
     Compose(String),
+}
+
+impl OpenFile {
+    /// Replaces the buffer and rebuilds its line index.
+    ///
+    /// Every write to `body` goes through here so the index cannot drift out
+    /// of step with the text it describes — a stale index would put the caret
+    /// on the wrong line, which is worse than no index at all.
+    pub fn set_body(&mut self, text: String) {
+        self.line_starts = line_starts(&text);
+        self.body = Ok(text);
+    }
+}
+
+/// The `(character, byte)` offset at which each line of `text` begins.
+fn line_starts(text: &str) -> Vec<(usize, usize)> {
+    let mut starts = vec![(0, 0)];
+    for (character, (byte, value)) in text.char_indices().enumerate() {
+        if value == '\n' {
+            starts.push((character + 1, byte + value.len_utf8()));
+        }
+    }
+    starts
 }
 
 /// The size and modification time of a file, for change detection.
@@ -390,6 +421,10 @@ pub struct PurrCodeIde {
     pub(crate) workspace_symbols: Vec<(String, String, Option<String>)>,
     /// The query `workspace_symbols` answers, so a stale reply is discarded.
     pub(crate) workspace_symbols_for: Option<String>,
+    /// Repository paths, indexed for the `@` completion and Quick Open.
+    /// Held only while a picker is open; see `refresh_path_index`.
+    pub(crate) path_index: Vec<IndexedPath>,
+    pub(crate) path_index_built: Option<Instant>,
     /// The draft's references, resolved by the daemon.
     pub(crate) resolved_references: Vec<model::ResolvedReference>,
     /// The draft `resolved_references` describes, so a reply for text the
@@ -494,11 +529,6 @@ pub struct PurrCodeIde {
     /// The caret's document position, kept per frame so keyboard actions
     /// (definition, references, rename) know what the user means by "here".
     pub(crate) caret: Option<crate::model::DocumentPosition>,
-    /// The identifier under the caret, so a references panel can name what it
-    /// is listing without asking the server twice.
-    pub(crate) caret_word: String,
-    /// Run the formatter on ⌘S before writing to disk.
-    pub(crate) format_on_save: bool,
 
     // ── Explorer file operations ───────────────────────────────────────
     /// The create/rename/delete waiting on the user's confirmation.
@@ -686,6 +716,8 @@ impl PurrCodeIde {
             commands: Vec::new(),
             workspace_symbols: Vec::new(),
             workspace_symbols_for: None,
+            path_index: Vec::new(),
+            path_index_built: None,
             resolved_references: Vec::new(),
             references_requested_for: None,
             command_palette: None,
@@ -732,11 +764,6 @@ impl PurrCodeIde {
             language: crate::model::LanguageIntelligence::default(),
             hover_probe: None,
             caret: None,
-            caret_word: String::new(),
-            // On by default: a formatter that has to be remembered is a
-            // formatter that produces noisy diffs. It is a no-op when no
-            // language server covers the file.
-            format_on_save: true,
 
             file_operation: None,
             file_operation_name: String::new(),
@@ -1435,24 +1462,14 @@ impl PurrCodeIde {
             }
             Response::CodexDoctor(value) => self.settings_state.codex_doctor = value,
             Response::LspServers(value) => {
-                self.language.servers = value["servers"]
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| {
-                                Some((
-                                    item["program"].as_str()?.to_owned(),
-                                    item["extensions"]
-                                        .as_array()?
-                                        .iter()
-                                        .filter_map(|ext| Some(ext.as_str()?.to_ascii_lowercase()))
-                                        .collect(),
-                                ))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                self.language.servers = crate::model::objects(&value["servers"], |item| {
+                    Some((
+                        item["program"].as_str()?.to_owned(),
+                        crate::model::objects(&item["extensions"], |ext| {
+                            Some(ext.as_str()?.to_ascii_lowercase())
+                        }),
+                    ))
+                });
                 self.language.servers_checked = true;
                 self.language.last_error = None;
                 // The servers are known now, so anything already open can be
@@ -1478,19 +1495,10 @@ impl PurrCodeIde {
                 if current {
                     let contents = value["contents"].as_str().unwrap_or_default().trim();
                     self.language.hover = (!contents.is_empty()).then(|| contents.to_owned());
-                    self.language.hover_anchor = Some((path, anchor));
                 }
             }
             Response::LspDefinition(value) => {
-                let targets: Vec<crate::model::Location> = value
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(crate::model::Location::parse)
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let targets = crate::model::objects(&value, crate::model::Location::parse);
                 match targets.first() {
                     // One target is an unambiguous jump. Several means the
                     // symbol genuinely has multiple definitions (trait impls,
@@ -1518,28 +1526,13 @@ impl PurrCodeIde {
                 }
             }
             Response::LspReferences(label, value) => {
-                self.language.references = value
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(crate::model::Location::parse)
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                self.language.references =
+                    crate::model::objects(&value, crate::model::Location::parse);
                 self.language.references_checked = true;
                 self.language.references_for = Some(label);
             }
             Response::LspSymbols(path, value) => {
-                self.language.symbols = value
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(crate::model::Symbol::parse)
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                self.language.symbols = crate::model::objects(&value, crate::model::Symbol::parse);
                 self.language.symbols_for = Some(path);
             }
             Response::LspFormat(path, value, then_save) => {
@@ -1569,15 +1562,9 @@ impl PurrCodeIde {
                 }
             }
             Response::CheckpointPreview(checkpoint, value) => {
-                let files: Vec<String> = value["changed_files"]
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| item.as_str().map(str::to_owned))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let files = crate::model::objects(&value["changed_files"], |item| {
+                    item.as_str().map(str::to_owned)
+                });
                 // Fold the preview into both the list entry and the pending
                 // dialog, so the confirmation button unlocks with a real
                 // number behind it.
@@ -1593,13 +1580,10 @@ impl PurrCodeIde {
                 }
             }
             Response::CheckpointRestored(_) => {
-                // The worktree changed underneath every open buffer, so make
-                // the editor re-read rather than letting a stale buffer be
-                // saved back over the restored file.
-                for file in &mut self.open_files {
-                    file.disk_stamp = None;
-                }
-                self.last_disk_check = Instant::now() - crate::app::language::DISK_CHECK;
+                // The restore rewrote the worktree underneath every open
+                // buffer, so re-read them now rather than leaving a stale
+                // buffer to be saved back over the restored file.
+                self.reload_after_worktree_replaced();
                 self.checkpoints_for = None;
             }
             Response::SessionForked(child) => {
@@ -1639,21 +1623,13 @@ impl PurrCodeIde {
                 }
             }
             Response::Commands(value) => {
-                self.commands = value
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| {
-                                Some((
-                                    item["name"].as_str()?.to_owned(),
-                                    item["description"].as_str().unwrap_or_default().to_owned(),
-                                    item["group"].as_str().unwrap_or_default().to_owned(),
-                                ))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                self.commands = crate::model::objects(&value, |item| {
+                    Some((
+                        item["name"].as_str()?.to_owned(),
+                        item["description"].as_str().unwrap_or_default().to_owned(),
+                        item["group"].as_str().unwrap_or_default().to_owned(),
+                    ))
+                });
             }
             Response::References(text, value) => {
                 // The draft may have moved on while this was in flight; a
@@ -1791,6 +1767,7 @@ impl PurrCodeIde {
         }
         // Language intelligence: find out what is installed once, then keep
         // the Problems panel fed. Both are no-ops when no server exists.
+        self.refresh_path_index();
         if self.stage == Stage::Workspace {
             self.probe_language_servers();
             self.poll_diagnostics();
@@ -2470,10 +2447,14 @@ impl PurrCodeIde {
             )
         });
         if let Some((path, position)) = self.caret_target() {
-            let word = self.caret_word.clone();
             match language_keys {
                 (true, _, _) => self.go_to_definition(&path, position),
-                (_, true, _) => self.find_references(&path, position, &word),
+                (_, true, _) => {
+                    // Read the identifier here rather than every frame: it is
+                    // only ever needed to label this one panel.
+                    let word = self.word_at_caret(position);
+                    self.find_references(&path, position, &word);
+                }
                 (_, _, true) => self.format_document(&path, false),
                 _ => {}
             }
@@ -2497,7 +2478,7 @@ impl PurrCodeIde {
         Some((path, self.caret?))
     }
 
-    /// ⌘S: format first when format-on-save is on, then write.
+    /// ⌘S: format, then write.
     ///
     /// The save is deferred until the formatting edits land, so the file on
     /// disk is the formatted text rather than the pre-format buffer followed
@@ -2507,7 +2488,7 @@ impl PurrCodeIde {
         let Some(path) = self.active_file_path() else {
             return;
         };
-        if self.format_on_save && self.language.supports(&path) {
+        if self.language.supports(&path) {
             self.format_document(&path, true);
         } else {
             self.save_active_file();
@@ -2575,7 +2556,11 @@ impl PurrCodeIde {
                     run = Some(first.clone());
                 }
             } else {
-                let results = self.fuzzy_files(&query);
+                let results = if query.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    self.matching_paths(&query.to_ascii_lowercase(), false, 12)
+                };
                 if results.is_empty() && !query.trim().is_empty() {
                     ui.label(
                         RichText::new("No file matches.")
@@ -2583,7 +2568,7 @@ impl PurrCodeIde {
                             .color(self.tokens.text_muted),
                     );
                 }
-                for (path, _) in results.iter().take(12) {
+                for path in &results {
                     let shown = path.strip_prefix(&self.repository).unwrap_or(path);
                     if ui
                         .selectable_label(false, shown.display().to_string())
@@ -2595,7 +2580,7 @@ impl PurrCodeIde {
                 if ui.input(|input| input.key_pressed(egui::Key::Enter))
                     && let Some(first) = results.first()
                 {
-                    open = Some(first.0.clone());
+                    open = Some(first.clone());
                 }
             }
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
@@ -2731,17 +2716,6 @@ impl PurrCodeIde {
         }
     }
 
-    /// Rank files by prefix/substring match against `query`.
-    fn fuzzy_files(&self, query: &str) -> Vec<(PathBuf, i64)> {
-        if query.trim().is_empty() {
-            return Vec::new();
-        }
-        self.matching_paths(&query.to_ascii_lowercase(), false, 20)
-            .into_iter()
-            .map(|path| (path, 0))
-            .collect()
-    }
-
     /// Paths under the open folder matching a lowercase query.
     ///
     /// Matching is done against the repository-relative path, not the bare
@@ -2749,70 +2723,129 @@ impl PurrCodeIde {
     /// not drown the list in every `mod.rs` in the tree. Results are ranked
     /// by where the match landed and how much path surrounds it, so the
     /// shortest, earliest match wins.
+    ///
+    /// This reads the cached index rather than the filesystem. It is called
+    /// from a draw path — once per frame while a picker is open — so walking
+    /// the tree here would be a directory crawl at the display's refresh rate.
     pub(crate) fn matching_paths(
         &self,
         query: &str,
         directories: bool,
         limit: usize,
     ) -> Vec<PathBuf> {
-        if self.repository.as_os_str().is_empty() {
-            return Vec::new();
-        }
-        // A bounded walk. A repository with a pathological tree must not make
-        // the composer stutter on every keystroke, so the crawl stops once it
-        // has seen enough to rank a good answer.
-        const MAX_VISITED: usize = 20_000;
-        let mut scored: Vec<(i64, PathBuf)> = Vec::new();
-        let mut queue = std::collections::VecDeque::from([self.repository.clone()]);
-        let mut visited = 0_usize;
-        while let Some(directory) = queue.pop_front() {
-            let Ok(entries) = std::fs::read_dir(&directory) else {
+        let mut scored: Vec<(i64, &PathBuf)> = Vec::new();
+        for entry in &self.path_index {
+            if entry.is_directory != directories {
+                continue;
+            }
+            // An empty query lists what is nearest the root rather than
+            // nothing: opening `@` with no text should show something.
+            let position = if query.is_empty() {
+                Some(0)
+            } else {
+                entry.relative.find(query)
+            };
+            let Some(position) = position else {
                 continue;
             };
-            for entry in entries.flatten() {
-                visited += 1;
-                if visited > MAX_VISITED {
-                    break;
-                }
-                let path = entry.path();
-                let name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default();
-                // The same exclusions the file tree uses, so completion and
-                // the Explorer agree about what is in the project.
-                if name.starts_with('.') || name == "target" || name == "node_modules" {
-                    continue;
-                }
-                let is_directory = path.is_dir();
-                if is_directory {
-                    queue.push_back(path.clone());
-                }
-                if is_directory != directories {
-                    continue;
-                }
-                let relative = path
-                    .strip_prefix(&self.repository)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_ascii_lowercase();
-                // An empty query lists what is nearest the root rather than
-                // nothing: opening `@` with no text should show something.
-                let position = if query.is_empty() {
-                    Some(0)
-                } else {
-                    relative.find(query)
-                };
-                let Some(position) = position else {
-                    continue;
-                };
-                scored.push((position as i64 + relative.len() as i64, path));
-            }
+            scored.push((position as i64 + entry.relative.len() as i64, &entry.path));
         }
-        scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
         scored.truncate(limit);
-        scored.into_iter().map(|(_, path)| path).collect()
+        scored.into_iter().map(|(_, path)| path.clone()).collect()
     }
+
+    /// Keeps the path index fresh while a picker needs it.
+    ///
+    /// The index exists only while something is searching paths, and is
+    /// dropped as soon as nothing is: a large repository's index is not worth
+    /// holding for a window nobody is typing into. Rebuilding is bounded by
+    /// [`PATH_INDEX_TTL`], so a file created outside PurrCode shows up in
+    /// completion within a second or two without any per-keystroke I/O.
+    pub(crate) fn refresh_path_index(&mut self) {
+        let wanted = self.active_completion.is_some()
+            || self.quick_open.is_some()
+            || self.command_palette.is_some();
+        if !wanted {
+            if !self.path_index.is_empty() {
+                self.path_index = Vec::new();
+                self.path_index_built = None;
+            }
+            return;
+        }
+        let fresh = self
+            .path_index_built
+            .is_some_and(|built| built.elapsed() < PATH_INDEX_TTL);
+        if fresh {
+            return;
+        }
+        self.path_index_built = Some(Instant::now());
+        self.path_index = index_paths(&self.repository);
+    }
+}
+
+/// One entry in the path index.
+pub(crate) struct IndexedPath {
+    /// Repository-relative, lowercased once at index time so matching never
+    /// re-allocates per query.
+    pub relative: String,
+    pub path: PathBuf,
+    pub is_directory: bool,
+}
+
+/// How long a path index is trusted before it is rebuilt.
+const PATH_INDEX_TTL: Duration = Duration::from_secs(2);
+
+/// Walks the open folder once, producing the index the pickers match against.
+///
+/// `entry.file_type()` rather than `path.is_dir()`: the directory read already
+/// returned the type on every platform PurrCode targets, so asking the
+/// filesystem again would be one extra syscall per entry for information
+/// already in hand.
+fn index_paths(repository: &std::path::Path) -> Vec<IndexedPath> {
+    if repository.as_os_str().is_empty() {
+        return Vec::new();
+    }
+    // A bounded walk, so a pathological tree cannot stall the frame that
+    // rebuilds the index.
+    const MAX_VISITED: usize = 20_000;
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::from([repository.to_path_buf()]);
+    let mut visited = 0_usize;
+    while let Some(directory) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > MAX_VISITED {
+                return out;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            // The same exclusions the file tree uses, so completion and the
+            // Explorer agree about what is in the project.
+            if name.starts_with('.') || name == "target" || name == "node_modules" {
+                continue;
+            }
+            let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            let path = entry.path();
+            if is_directory {
+                queue.push_back(path.clone());
+            }
+            let relative = path
+                .strip_prefix(repository)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_ascii_lowercase();
+            out.push(IndexedPath {
+                relative,
+                path,
+                is_directory,
+            });
+        }
+    }
+    out
 }
 
 /// Truncate a session title for a compact label, keeping the start and adding

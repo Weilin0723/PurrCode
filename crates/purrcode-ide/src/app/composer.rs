@@ -327,6 +327,9 @@ impl PurrCodeIde {
                             .rect_filled(rect, theme::RADIUS_CONTROL, tokens.surface_hover);
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
+                    if response.has_focus() {
+                        tokens.focus_ring(ui.painter(), rect);
+                    }
                     ui.painter().text(
                         egui::pos2(rect.left() + 8.0, rect.center().y),
                         egui::Align2::LEFT_CENTER,

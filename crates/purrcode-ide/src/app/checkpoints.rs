@@ -99,89 +99,55 @@ impl PurrCodeIde {
             return;
         };
         let tokens = self.tokens;
-        let mut close = false;
-        let mut confirm = false;
         let mut scope = pending.scope;
         // A restore started from the checkpoint list has no conversation
         // anchor, so the conversation scopes cannot be honoured there.
         let can_fork = pending.anchor_message_id.is_some();
+        // Confirmation waits for the preview whenever code is at stake:
+        // agreeing to discard an unknown amount of work is not consent.
+        let ready = !scope.restores_code() || pending.checkpoint.changed_files.is_some();
 
-        egui::Modal::new(egui::Id::new("purrcode_restore")).show(ctx, |ui| {
-            ui.set_width(420.0);
-            ui.label(
-                RichText::new("Restore")
-                    .size(theme::TYPE_TITLE)
-                    .color(tokens.text_primary),
-            );
-            ui.add_space(2.0);
-            ui.label(
-                RichText::new(pending.checkpoint.display())
-                    .size(theme::TYPE_META)
-                    .color(tokens.text_secondary),
-            );
-            ui.add_space(10.0);
-
-            for option in RestoreScope::ALL {
-                let allowed = can_fork || !option.forks_conversation();
-                ui.add_enabled_ui(allowed, |ui| {
-                    ui.radio_value(&mut scope, *option, option.label())
-                        .on_hover_text(if allowed {
-                            option.description().to_owned()
-                        } else {
-                            "Start this from a message in the conversation to fork it.".to_owned()
-                        });
-                });
-            }
-
-            ui.add_space(10.0);
-            // The cost of the operation, in real numbers. Until the preview
-            // lands there is no honest number to show, so the dialog says it
-            // is still asking rather than printing a zero.
-            match &pending.checkpoint.changed_files {
-                Some(files) if scope.restores_code() => {
-                    ui.label(
-                        RichText::new(format!(
-                            "Restoring rewrites {} file{} in this session's worktree.",
-                            files.len(),
-                            if files.len() == 1 { "" } else { "s" }
-                        ))
+        let (choice, ()) = super::primitives::dialog(
+            ctx,
+            &tokens,
+            "purrcode_restore",
+            "Restore",
+            ("Restore", super::primitives::Tone::Danger),
+            ready,
+            |ui| {
+                ui.label(
+                    RichText::new(pending.checkpoint.display())
                         .size(theme::TYPE_META)
-                        .color(tokens.text_primary),
-                    );
-                    ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(
-                            "Every change made after this checkpoint is discarded. This cannot \
-                             be undone.",
-                        )
-                        .size(theme::TYPE_META)
-                        .color(tokens.status_warning),
-                    );
-                    if !files.is_empty() {
-                        ui.add_space(6.0);
-                        ScrollArea::vertical()
-                            .id_salt("restore_files")
-                            .max_height(120.0)
-                            .show(ui, |ui| {
-                                for file in files {
-                                    ui.label(
-                                        RichText::new(file)
-                                            .monospace()
-                                            .size(theme::TYPE_META)
-                                            .color(tokens.text_muted),
-                                    );
-                                }
+                        .color(tokens.text_secondary),
+                );
+                ui.add_space(10.0);
+
+                for option in RestoreScope::ALL {
+                    let allowed = can_fork || !option.forks_conversation();
+                    ui.add_enabled_ui(allowed, |ui| {
+                        ui.radio_value(&mut scope, *option, option.label())
+                            .on_hover_text(if allowed {
+                                option.description().to_owned()
+                            } else {
+                                "Start this from a message in the conversation to fork it."
+                                    .to_owned()
                             });
-                    }
+                    });
                 }
-                Some(_) => {
+                ui.add_space(10.0);
+
+                // What the operation costs, in real numbers. One axis, three
+                // outcomes: the worktree is untouched, the cost is known, or
+                // it is still being read.
+                if !scope.restores_code() {
                     ui.label(
                         RichText::new("The worktree is left untouched.")
                             .size(theme::TYPE_META)
                             .color(tokens.text_secondary),
                     );
+                    return;
                 }
-                None if scope.restores_code() => {
+                let Some(files) = &pending.checkpoint.changed_files else {
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.label(
@@ -190,42 +156,57 @@ impl PurrCodeIde {
                                 .color(tokens.text_muted),
                         );
                     });
+                    return;
+                };
+                ui.label(
+                    RichText::new(format!(
+                        "Restoring rewrites {} file{} in this session's worktree.",
+                        files.len(),
+                        if files.len() == 1 { "" } else { "s" }
+                    ))
+                    .size(theme::TYPE_META)
+                    .color(tokens.text_primary),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(
+                        "Every change made after this checkpoint is discarded. This cannot be \
+                         undone.",
+                    )
+                    .size(theme::TYPE_META)
+                    .color(tokens.status_warning),
+                );
+                if files.is_empty() {
+                    return;
                 }
-                None => {
-                    ui.label(
-                        RichText::new("The worktree is left untouched.")
-                            .size(theme::TYPE_META)
-                            .color(tokens.text_secondary),
-                    );
+                ui.add_space(6.0);
+                ScrollArea::vertical()
+                    .id_salt("restore_files")
+                    .max_height(120.0)
+                    .show(ui, |ui| {
+                        for file in files {
+                            ui.label(
+                                RichText::new(file)
+                                    .monospace()
+                                    .size(theme::TYPE_META)
+                                    .color(tokens.text_muted),
+                            );
+                        }
+                    });
+            },
+        );
+
+        match choice {
+            Some(super::primitives::DialogChoice::Confirm) => {
+                self.commit_restore(&pending, scope);
+                self.pending_restore = None;
+            }
+            Some(super::primitives::DialogChoice::Cancel) => self.pending_restore = None,
+            None => {
+                if let Some(pending) = self.pending_restore.as_mut() {
+                    pending.scope = scope;
                 }
             }
-
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    close = true;
-                }
-                // Confirmation waits for the preview whenever code is at
-                // stake: agreeing to discard an unknown amount of work is not
-                // consent.
-                let ready = !scope.restores_code() || pending.checkpoint.changed_files.is_some();
-                ui.add_enabled_ui(ready, |ui| {
-                    if ui.button("Restore").clicked() {
-                        confirm = true;
-                    }
-                });
-            });
-        });
-
-        if let Some(pending) = self.pending_restore.as_mut() {
-            pending.scope = scope;
-        }
-        if confirm {
-            self.commit_restore(&pending, scope);
-            close = true;
-        }
-        if close {
-            self.pending_restore = None;
         }
     }
 
@@ -285,35 +266,39 @@ impl PurrCodeIde {
             return;
         }
 
-        let checkpoints = self.checkpoints.clone();
+        // Moved out and put back rather than cloned: this is a draw path.
+        let checkpoints = std::mem::take(&mut self.checkpoints);
         let mut restore: Option<Checkpoint> = None;
         ScrollArea::vertical()
             .id_salt("checkpoint_list")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 for checkpoint in &checkpoints {
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label(
-                                RichText::new(checkpoint.display())
-                                    .size(theme::TYPE_LABEL)
-                                    .color(tokens.text_primary),
-                            );
-                            ui.label(
-                                RichText::new(crate::model::relative_time(&checkpoint.created_at))
-                                    .size(theme::TYPE_META)
-                                    .color(tokens.text_muted),
-                            );
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("Restore").clicked() {
-                                restore = Some(checkpoint.clone());
-                            }
-                        });
-                    });
-                    ui.add_space(2.0);
+                    // `list_row` owns the identity/meta/action layout, so a
+                    // narrow panel elides the label instead of running it
+                    // under the button.
+                    let asked = super::primitives::list_row(
+                        ui,
+                        &tokens,
+                        super::primitives::RowSpec::new(&checkpoint.display())
+                            .meta(&crate::model::relative_time(&checkpoint.created_at)),
+                        |ui| {
+                            super::primitives::button(
+                                ui,
+                                &tokens,
+                                super::primitives::Tone::Secondary,
+                                "Restore",
+                            )
+                            .clicked()
+                        },
+                    )
+                    .inner;
+                    if asked {
+                        restore = Some(checkpoint.clone());
+                    }
                 }
             });
+        self.checkpoints = checkpoints;
         if let Some(checkpoint) = restore {
             self.begin_restore(checkpoint, None);
         }

@@ -2407,50 +2407,39 @@ impl PurrCodeIde {
         let Some((id, content)) = self.editing_memory.clone() else {
             return;
         };
+        let tokens = self.tokens;
         let mut next = content;
-        let mut close = false;
-        let mut commit = false;
-        egui::Modal::new(egui::Id::new("purrcode_edit_memory")).show(ctx, |ui| {
-            ui.set_width(420.0);
-            ui.label(
-                egui::RichText::new("Edit memory")
-                    .size(crate::theme::TYPE_TITLE)
-                    .color(self.tokens.text_primary),
-            );
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new("The entry keeps its original source and date.")
-                    .size(crate::theme::TYPE_META)
-                    .color(self.tokens.text_secondary),
-            );
-            ui.add_space(8.0);
-            ui.add(
-                egui::TextEdit::multiline(&mut next)
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY),
-            );
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    close = true;
-                }
-                ui.add_enabled_ui(!next.trim().is_empty(), |ui| {
-                    if ui.button("Save").clicked() {
-                        commit = true;
-                    }
+        let (choice, ()) = primitives::dialog(
+            ctx,
+            &tokens,
+            "purrcode_edit_memory",
+            "Edit memory",
+            ("Save", Tone::Primary),
+            !next.trim().is_empty(),
+            |ui| {
+                ui.label(
+                    egui::RichText::new("The entry keeps its original source and date.")
+                        .size(crate::theme::TYPE_META)
+                        .color(tokens.text_secondary),
+                );
+                ui.add_space(8.0);
+                ui.add(
+                    egui::TextEdit::multiline(&mut next)
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY),
+                );
+            },
+        );
+        match choice {
+            Some(primitives::DialogChoice::Confirm) if !next.trim().is_empty() => {
+                self.client.send(Request::UpdateMemory {
+                    id,
+                    content: next.trim().to_owned(),
                 });
-            });
-        });
-        self.editing_memory = Some((id.clone(), next.clone()));
-        if commit && !next.trim().is_empty() {
-            self.client.send(Request::UpdateMemory {
-                id,
-                content: next.trim().to_owned(),
-            });
-            close = true;
-        }
-        if close {
-            self.editing_memory = None;
+                self.editing_memory = None;
+            }
+            Some(primitives::DialogChoice::Cancel) => self.editing_memory = None,
+            _ => self.editing_memory = Some((id, next)),
         }
     }
 
@@ -2463,7 +2452,7 @@ impl PurrCodeIde {
     /// prompt; a denied one cannot run at all. Both are stated here, because
     /// a user who cannot see which tools are pre-approved has not really
     /// approved them.
-    fn mcp_trust_summary(&self, ui: &mut Ui, id: &str, server: &Value) {
+    fn mcp_trust_summary(&self, ui: &mut Ui, server: &Value) {
         let names = |key: &str| {
             array(server, key)
                 .into_iter()
@@ -2472,23 +2461,19 @@ impl PurrCodeIde {
         };
         let trusted = names("trusted_tools");
         let denied = names("deny_tools");
-        let _ = id;
-        let summary = match (trusted.is_empty(), denied.is_empty()) {
-            (true, true) => "Every tool asks before it runs. No tool is denied.".to_owned(),
-            (false, true) => format!(
-                "Runs without asking: {}. No tool is denied.",
-                trusted.join(", ")
-            ),
-            (true, false) => format!(
-                "Every tool asks before it runs. Denied: {}.",
-                denied.join(", ")
-            ),
-            (false, false) => format!(
-                "Runs without asking: {}. Denied: {}.",
-                trusted.join(", "),
-                denied.join(", ")
-            ),
+        // Two independent facts, stated independently — a 2x2 match over them
+        // spelled the same two sentences four times.
+        let trust = if trusted.is_empty() {
+            "Every tool asks before it runs.".to_owned()
+        } else {
+            format!("Runs without asking: {}.", trusted.join(", "))
         };
+        let deny = if denied.is_empty() {
+            "No tool is denied.".to_owned()
+        } else {
+            format!("Denied: {}.", denied.join(", "))
+        };
+        let summary = format!("{trust} {deny}");
         row_note(
             ui,
             if trusted.is_empty() {
@@ -2661,7 +2646,7 @@ impl PurrCodeIde {
                             // from one where every call is asked about, so the
                             // row says which tools those are rather than
                             // leaving it to a config file.
-                            self.mcp_trust_summary(ui, id, server);
+                            self.mcp_trust_summary(ui, server);
                             self.mcp_test_report(ui, id);
                             match asked {
                                 Some(McpAction::Remove) => remove = Some(id.clone()),
@@ -2862,13 +2847,7 @@ impl PurrCodeIde {
                     "trusted_tools": tool_list(&self.mcp_trusted_tools),
                     "deny_tools": tool_list(&self.mcp_deny_tools),
                     "program": self.mcp_program.trim().to_owned(),
-                    "arguments": self
-                        .mcp_arguments
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>(),
+                    "arguments": tool_list(&self.mcp_arguments),
                     "working_directory": self.mcp_working_directory.trim().to_owned(),
                     "network": self.mcp_network,
                     "environment_from": environment_from,

@@ -180,7 +180,10 @@ impl PurrCodeIde {
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
                         self.section_heading_label(ui, group_name);
-                        if folds && ui.small_button("Hide").clicked() {
+                        if folds
+                            && primitives::button(ui, &self.tokens, primitives::Tone::Quiet, "Hide")
+                                .clicked()
+                        {
                             ui.data_mut(|data| data.insert_temp(collapsed_id(group_name), false));
                         }
                     });
@@ -247,6 +250,17 @@ impl PurrCodeIde {
         };
         ui.painter()
             .circle_filled(egui::pos2(rect.left() + 12.0, rect.center().y), 3.0, dot);
+        if entry.forked {
+            crate::icons::draw(
+                ui,
+                egui::Rect::from_center_size(
+                    egui::pos2(rect.left() + 22.0, rect.center().y),
+                    egui::Vec2::splat(9.0),
+                ),
+                crate::icons::Glyph::Branch,
+                self.tokens.text_muted,
+            );
+        }
         if entry.running && !selected {
             // A ring around the dot, so "working elsewhere" is legible at a
             // glance without adding a second column of chrome.
@@ -260,21 +274,13 @@ impl PurrCodeIde {
         // The timestamp is measured first so the title can be given exactly
         // the space that is left, and elided rather than overrun.
         let meta_font = egui::FontId::proportional(10.5);
-        // Markers ride with the timestamp rather than beside the title, so a
-        // pinned or forked session is legible without stealing width from the
-        // one thing the user actually reads.
-        let mut marks = String::new();
-        if entry.pinned {
-            marks.push('📌');
-        }
-        if entry.forked {
-            marks.push('⑂');
-        }
-        let meta = match (needs_attention, marks.is_empty()) {
-            (true, true) => format!("• {relative_time}"),
-            (true, false) => format!("{marks} • {relative_time}"),
-            (false, true) => relative_time.to_owned(),
-            (false, false) => format!("{marks} {relative_time}"),
+        // No marker for pinned: it already sits under a "Pinned" heading, and
+        // repeating that on every row is noise. Forked has no other home, so
+        // it gets a real glyph rather than a text symbol standing in for one.
+        let meta = if needs_attention {
+            format!("• {relative_time}")
+        } else {
+            relative_time.to_owned()
         };
         let meta_width = ui.fonts_mut(|fonts| {
             fonts
@@ -302,12 +308,13 @@ impl PurrCodeIde {
         } else {
             self.tokens.text_secondary
         };
+        let title_left = if entry.forked { 34.0 } else { 22.0 };
         let mut job = egui::text::LayoutJob::single_section(
             title.to_owned(),
             egui::TextFormat::simple(egui::FontId::proportional(12.0), color),
         );
         job.wrap = egui::text::TextWrapping {
-            max_width: (rect.width() - 22.0 - meta_width - 16.0).max(40.0),
+            max_width: (rect.width() - title_left - meta_width - 16.0).max(40.0),
             max_rows: 1,
             break_anywhere: true,
             overflow_character: Some('…'),
@@ -315,7 +322,10 @@ impl PurrCodeIde {
         let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
         let elided = galley.elided;
         ui.painter().galley(
-            egui::pos2(rect.left() + 22.0, rect.center().y - galley.size().y * 0.5),
+            egui::pos2(
+                rect.left() + title_left,
+                rect.center().y - galley.size().y * 0.5,
+            ),
             galley,
             color,
         );
@@ -439,7 +449,11 @@ impl PurrCodeIde {
                             );
                         })
                         .response;
-                    if response.interact(Sense::click()).clicked() {
+                    if response
+                        .interact(Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
                         select = Some(hit.session_id.clone());
                     }
                     ui.add_space(6.0);
@@ -487,50 +501,40 @@ impl PurrCodeIde {
         let Some((session, title)) = self.renaming_session.clone() else {
             return;
         };
+        let tokens = self.tokens;
         let mut next = title;
-        let mut close = false;
-        let mut commit = false;
-        egui::Modal::new(egui::Id::new("purrcode_rename_session")).show(ctx, |ui| {
-            ui.set_width(340.0);
-            ui.label(
-                RichText::new("Rename session")
-                    .size(crate::theme::TYPE_TITLE)
-                    .color(self.tokens.text_primary),
-            );
-            ui.add_space(8.0);
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut next)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Session name"),
-            );
-            response.request_focus();
-            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
-                commit = true;
-            }
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    close = true;
-                }
-                ui.add_enabled_ui(!next.trim().is_empty(), |ui| {
-                    if ui.button("Rename").clicked() {
-                        commit = true;
-                    }
-                });
-            });
-        });
-        self.renaming_session = Some((session.clone(), next.clone()));
-        if commit && !next.trim().is_empty() {
+        let (choice, submitted) = primitives::dialog(
+            ctx,
+            &tokens,
+            "purrcode_rename_session",
+            "Rename session",
+            ("Rename", primitives::Tone::Primary),
+            !next.trim().is_empty(),
+            |ui| {
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut next)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Session name"),
+                );
+                response.request_focus();
+                // Enter commits, so renaming never needs the mouse.
+                response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+            },
+        );
+
+        let confirmed = submitted || choice == Some(primitives::DialogChoice::Confirm);
+        if confirmed && !next.trim().is_empty() {
             self.client.send(crate::daemon::Request::UpdateSessionMeta {
                 session,
                 title: Some(next.trim().to_owned()),
                 archived: None,
                 pinned: None,
             });
-            close = true;
-        }
-        if close {
             self.renaming_session = None;
+        } else if choice == Some(primitives::DialogChoice::Cancel) {
+            self.renaming_session = None;
+        } else {
+            self.renaming_session = Some((session, next));
         }
     }
 
@@ -538,49 +542,41 @@ impl PurrCodeIde {
         let Some((session, title)) = self.deleting_session.clone() else {
             return;
         };
-        let mut close = false;
-        let mut confirm = false;
-        egui::Modal::new(egui::Id::new("purrcode_delete_session")).show(ctx, |ui| {
-            ui.set_width(380.0);
-            ui.label(
-                RichText::new("Delete session")
-                    .size(crate::theme::TYPE_TITLE)
-                    .color(self.tokens.text_primary),
-            );
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(format!("“{title}” is removed from this list."))
-                    .color(self.tokens.text_primary),
-            );
-            ui.add_space(4.0);
-            // Stated because it is true and because it matters: this is a
-            // soft delete, and a user who believes they have erased an audit
-            // trail has been misled about what PurrCode keeps.
-            ui.label(
-                RichText::new(
-                    "Its audit record is preserved. Archive it instead if you only want it out \
-                     of the way.",
-                )
-                .size(crate::theme::TYPE_META)
-                .color(self.tokens.text_secondary),
-            );
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    close = true;
-                }
-                if ui.button("Delete").clicked() {
-                    confirm = true;
-                }
-            });
-        });
-        if confirm {
-            self.client
-                .send(crate::daemon::Request::DeleteSession { session });
-            close = true;
-        }
-        if close {
-            self.deleting_session = None;
+        let tokens = self.tokens;
+        let (choice, ()) = primitives::dialog(
+            ctx,
+            &tokens,
+            "purrcode_delete_session",
+            "Delete session",
+            ("Delete", primitives::Tone::Danger),
+            true,
+            |ui| {
+                ui.label(
+                    RichText::new(format!("“{title}” is removed from this list."))
+                        .color(tokens.text_primary),
+                );
+                ui.add_space(4.0);
+                // Stated because it is true and because it matters: this is a
+                // soft delete, and a user who believes they have erased an
+                // audit trail has been misled about what PurrCode keeps.
+                ui.label(
+                    RichText::new(
+                        "Its audit record is preserved. Archive it instead if you only want it \
+                         out of the way.",
+                    )
+                    .size(theme::TYPE_META)
+                    .color(tokens.text_secondary),
+                );
+            },
+        );
+        match choice {
+            Some(primitives::DialogChoice::Confirm) => {
+                self.client
+                    .send(crate::daemon::Request::DeleteSession { session });
+                self.deleting_session = None;
+            }
+            Some(primitives::DialogChoice::Cancel) => self.deleting_session = None,
+            None => {}
         }
     }
 
@@ -599,10 +595,12 @@ impl PurrCodeIde {
         if let Some(pos) = self.open_files.iter().position(|f| f.path == path) {
             self.active_file = pos;
         } else {
+            let line_starts = body.as_deref().map(super::line_starts).unwrap_or_default();
             self.open_files.push(super::OpenFile {
                 path: path.clone(),
                 label,
                 body,
+                line_starts,
                 scroll_to_line: None,
                 modified: false,
                 disk_stamp: super::disk_stamp(&path),

@@ -222,6 +222,7 @@ impl PurrCodeIde {
         let path = file.path.clone();
         let jump_to = file.scroll_to_line;
         let conflicted = file.external_change;
+        let line_starts = std::mem::take(&mut file.line_starts);
         let mut caret: Option<crate::model::DocumentPosition> = None;
         let mut hovered: Option<crate::model::DocumentPosition> = None;
         let mut follow: Option<crate::model::DocumentPosition> = None;
@@ -333,11 +334,9 @@ impl PurrCodeIde {
                         .layouter(&mut layouter)
                         .show(ui);
 
-                    caret = output
-                        .state
-                        .cursor
-                        .char_range()
-                        .map(|range| document_position(&content, range.primary.index));
+                    caret = output.state.cursor.char_range().map(|range| {
+                        document_position(&content, &line_starts, range.primary.index)
+                    });
 
                     // A pointer resting over a token asks the language server
                     // what it is. The position is resolved through the galley
@@ -345,7 +344,7 @@ impl PurrCodeIde {
                     // coordinate.
                     if let Some(pointer) = output.response.hover_pos() {
                         let cursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
-                        let position = document_position(&content, cursor.index);
+                        let position = document_position(&content, &line_starts, cursor.index);
                         hovered = Some(position);
                         // ⌘/Ctrl-click is the universal "follow this symbol"
                         // gesture, and the modifier is what keeps it from
@@ -359,7 +358,8 @@ impl PurrCodeIde {
                     // drawing; honour them now that there is a galley to
                     // measure against.
                     if let Some(line) = jump_to {
-                        let cursor = egui::text::CCursor::new(char_index_of_line(&content, line));
+                        let cursor =
+                            egui::text::CCursor::new(char_index_of_line(&line_starts, line));
                         let rect = output.galley.pos_from_cursor(cursor);
                         ui.scroll_to_rect(
                             rect.translate(output.galley_pos.to_vec2()),
@@ -370,8 +370,12 @@ impl PurrCodeIde {
             });
 
         if let Some(file) = self.open_files.get_mut(index) {
-            if file.body.as_ref() != Ok(&content) {
-                file.body = Ok(content);
+            if file.body.as_ref() == Ok(&content) {
+                // Unchanged: hand the index straight back rather than paying
+                // to rebuild it, which is the common case every frame.
+                file.line_starts = line_starts;
+            } else {
+                file.set_body(content);
                 file.modified = true;
                 let path = file.path.clone();
                 self.dirty.insert(path);
@@ -384,16 +388,6 @@ impl PurrCodeIde {
         }
 
         self.caret = caret;
-        if let Some(position) = caret {
-            self.caret_word = word_at(
-                self.open_files
-                    .get(index)
-                    .and_then(|file| file.body.as_ref().ok())
-                    .map(String::as_str)
-                    .unwrap_or_default(),
-                position,
-            );
-        }
         if let Some(position) = follow {
             self.go_to_definition(&path, position);
         }
@@ -409,7 +403,6 @@ impl PurrCodeIde {
             // than leaving a tooltip pinned to a token nobody is pointing at.
             self.hover_probe = None;
             self.language.hover = None;
-            self.language.hover_anchor = None;
         }
     }
     /// Write the active file's buffer back to disk. `Ok(())` clears the dirty
@@ -605,21 +598,32 @@ pub(crate) fn tab(
 /// character count while LSP's is a UTF-16 code-unit count — the two agree on
 /// ASCII and diverge the moment a file contains CJK text or an emoji, which
 /// would otherwise send the server to the wrong column.
-fn document_position(text: &str, index: usize) -> crate::model::DocumentPosition {
-    let mut line = 0_u64;
-    let mut character = 0_u64;
-    for (position, value) in text.chars().enumerate() {
-        if position >= index {
-            break;
-        }
-        if value == '\n' {
-            line += 1;
-            character = 0;
-        } else {
-            character += value.len_utf16() as u64;
-        }
+///
+/// `line_starts` turns the line lookup into a binary search, so the only walk
+/// is across the caret's own line. This runs twice per frame, and scanning
+/// from the top of the buffer each time made the cost of moving the caret
+/// proportional to the size of the file.
+fn document_position(
+    text: &str,
+    line_starts: &[(usize, usize)],
+    index: usize,
+) -> crate::model::DocumentPosition {
+    // The last line whose start is at or before the index.
+    let line = line_starts
+        .partition_point(|(character, _)| *character <= index)
+        .saturating_sub(1);
+    let (line_char, line_byte) = line_starts.get(line).copied().unwrap_or((0, 0));
+    let character = text
+        .get(line_byte..)
+        .unwrap_or_default()
+        .chars()
+        .take(index.saturating_sub(line_char))
+        .map(|value| value.len_utf16() as u64)
+        .sum();
+    crate::model::DocumentPosition {
+        line: line as u64,
+        character,
     }
-    crate::model::DocumentPosition { line, character }
 }
 
 /// The flat character index of the start of a 1-based line, for scrolling.
@@ -627,21 +631,23 @@ fn document_position(text: &str, index: usize) -> crate::model::DocumentPosition
 /// A line past the end of the buffer clamps to the last line rather than
 /// failing: a diagnostic from a stale analysis should still land the user
 /// somewhere sensible in the file it names.
-fn char_index_of_line(text: &str, display_line: usize) -> usize {
+fn char_index_of_line(line_starts: &[(usize, usize)], display_line: usize) -> usize {
     let wanted = display_line.saturating_sub(1);
-    let mut line = 0_usize;
-    let mut line_start = 0_usize;
-    for (index, value) in text.chars().enumerate() {
-        if line == wanted {
-            return line_start;
-        }
-        if value == '\n' {
-            line += 1;
-            line_start = index + 1;
-        }
+    line_starts
+        .get(wanted)
+        .or_else(|| line_starts.last())
+        .map_or(0, |(character, _)| *character)
+}
+
+impl PurrCodeIde {
+    /// The identifier under the caret, for labelling a references list.
+    pub(crate) fn word_at_caret(&self, position: crate::model::DocumentPosition) -> String {
+        self.open_files
+            .get(self.active_file)
+            .and_then(|file| file.body.as_ref().ok())
+            .map(|body| word_at(body, position))
+            .unwrap_or_default()
     }
-    // Past the end of the buffer: the start of the final line.
-    line_start
 }
 
 /// The identifier at a document position, for labelling a references list.

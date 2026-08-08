@@ -221,7 +221,7 @@ impl PurrCodeIde {
                 continue;
             }
             if let Ok(content) = std::fs::read_to_string(&file.path) {
-                file.body = Ok(content);
+                file.set_body(content);
                 file.disk_stamp = stamp;
                 reloaded.push(file.path.clone());
             }
@@ -229,6 +229,30 @@ impl PurrCodeIde {
         // Re-open in the language server so its view matches the new text.
         for path in reloaded {
             self.open_in_language_server(&path);
+        }
+    }
+
+    /// Re-reads every open buffer after the worktree was replaced wholesale.
+    ///
+    /// A checkpoint restore rewrites files underneath the editor, so waiting
+    /// for the timestamp poll to notice is both slow and unreliable — a
+    /// restore can land a file whose size and mtime happen to match what the
+    /// buffer already had. This reads them back directly instead.
+    ///
+    /// The dirty/clean split is the same promise `detect_external_changes`
+    /// makes: a clean buffer is reloaded silently, and one with unsaved edits
+    /// is flagged so the user chooses rather than losing work to a restore
+    /// they may not have realised would touch that file.
+    pub(crate) fn reload_after_worktree_replaced(&mut self) {
+        for index in 0..self.open_files.len() {
+            if self.open_files[index].modified {
+                self.open_files[index].external_change = true;
+                // Adopt the new stamp so the poll does not raise the same
+                // conflict a second time.
+                self.open_files[index].disk_stamp = super::disk_stamp(&self.open_files[index].path);
+                continue;
+            }
+            self.reload_from_disk(index);
         }
     }
 
@@ -241,7 +265,7 @@ impl PurrCodeIde {
             return;
         };
         if let Some(file) = self.open_files.get_mut(index) {
-            file.body = Ok(content);
+            file.set_body(content);
             file.modified = false;
             file.external_change = false;
             file.disk_stamp = super::disk_stamp(&path);
@@ -307,7 +331,6 @@ impl PurrCodeIde {
             return;
         }
         self.language.hover = None;
-        self.language.hover_anchor = None;
         self.hover_probe = Some(HoverProbe {
             path: path.to_path_buf(),
             position,
@@ -330,11 +353,13 @@ impl PurrCodeIde {
             .filter(|diagnostic| diagnostic.start.line == position.line)
             .map(|diagnostic| format!("{}: {}", diagnostic.severity_label(), diagnostic.message))
             .collect();
+        // Only show an answer for the position the pointer is still resting
+        // on: a reply that arrived after the pointer moved would label the
+        // wrong token. The probe is the single record of where that is.
         let anchored = self
-            .language
-            .hover_anchor
+            .hover_probe
             .as_ref()
-            .is_some_and(|(anchor_path, anchor)| anchor_path == path && *anchor == position);
+            .is_some_and(|probe| probe.path == path && probe.position == position);
         let hover = anchored.then(|| self.language.hover.clone()).flatten();
         if diagnostics.is_empty() && hover.is_none() {
             return;
@@ -400,7 +425,7 @@ impl PurrCodeIde {
         };
         let formatted = apply_text_edits(&original, &edits);
         if formatted != original {
-            self.open_files[index].body = Ok(formatted);
+            self.open_files[index].set_body(formatted);
             self.open_files[index].modified = true;
             self.dirty.insert(path.to_path_buf());
         }
@@ -440,7 +465,10 @@ impl PurrCodeIde {
         }
 
         let repository = self.repository.clone();
-        let references = self.language.references.clone();
+        // Moved out and put back rather than cloned: this is a draw path, and
+        // a few hundred references would mean a few hundred PathBuf
+        // allocations on every frame the panel is open.
+        let references = std::mem::take(&mut self.language.references);
         let mut open: Option<Location> = None;
         ScrollArea::vertical()
             .id_salt("lsp_references")
@@ -471,12 +499,14 @@ impl PurrCodeIde {
                         ))
                         .on_hover_text(reference.label(&repository))
                         .interact(egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
                         open = Some(reference.clone());
                     }
                 }
             });
+        self.language.references = references;
         if let Some(location) = open {
             self.open_location(&location);
         }
@@ -519,7 +549,7 @@ impl PurrCodeIde {
             return;
         }
 
-        let symbols = self.language.symbols.clone();
+        let symbols = std::mem::take(&mut self.language.symbols);
         let mut jump: Option<usize> = None;
         ScrollArea::vertical()
             .id_salt("lsp_outline")
@@ -531,6 +561,7 @@ impl PurrCodeIde {
                     }
                 }
             });
+        self.language.symbols = symbols;
         if let Some(line) = jump
             && let Some(file) = self.open_files.get_mut(self.active_file)
         {
@@ -631,6 +662,10 @@ fn symbol_row(ui: &mut Ui, tokens: &theme::Tokens, symbol: &Symbol) -> egui::Res
         ui.painter()
             .rect_filled(rect, theme::RADIUS_CONTROL, tokens.surface_hover);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    // Keyboard focus must be visible, not implied (PRD §27).
+    if response.has_focus() {
+        tokens.focus_ring(ui.painter(), rect);
     }
     ui.painter().text(
         egui::pos2(rect.left() + 8.0, rect.center().y),
@@ -761,7 +796,11 @@ pub(crate) fn diagnostics_list(
                         }),
                         None => response,
                     };
-                    if response.interact(egui::Sense::click()).clicked() {
+                    if response
+                        .interact(egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
                         open = Some(Location {
                             path: path.clone(),
                             start: diagnostic.start,

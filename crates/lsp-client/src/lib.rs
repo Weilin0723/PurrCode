@@ -899,16 +899,27 @@ impl LspManager {
     }
 
     /// Every document with published diagnostics, across all live servers.
+    ///
+    /// The servers are pumped **concurrently**. Each is a separate process
+    /// with its own pipe, and a quiet server spends its entire budget waiting
+    /// for a byte that never comes — so pumping them one after another made
+    /// the wall time `budget × server count` while the caller held the
+    /// manager's lock. Since a language is keyed per file extension, a
+    /// TypeScript project alone runs four servers, which turned a 400 ms
+    /// budget into 1.6 s of lock contention against every hover and
+    /// completion request.
     pub async fn all_diagnostics(&mut self, budget: std::time::Duration) -> Vec<FileDiagnostics> {
-        let mut out = Vec::new();
-        // The budget is per server: each one is a separate process with its
-        // own pending notifications, and a shared budget would starve the
-        // servers that happen to be polled last.
-        for server in self.servers.values_mut() {
+        // The budget is per server rather than shared: a shared deadline would
+        // starve whichever servers were polled last.
+        let pumps = self.servers.values_mut().map(|server| async move {
             server.pump_notifications(budget).await;
-            out.extend(server.all_diagnostics());
-        }
-        out
+            server.all_diagnostics()
+        });
+        futures::future::join_all(pumps)
+            .await
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     pub fn drop_server(&mut self, file: &Path) {
