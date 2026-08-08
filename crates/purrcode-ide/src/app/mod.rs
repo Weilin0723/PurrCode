@@ -26,6 +26,7 @@ pub(crate) mod primitives;
 mod settings;
 mod terminals;
 mod workbench;
+pub(crate) mod workers;
 
 pub use errors::{Notice, NoticeAction, NoticeKind};
 
@@ -450,6 +451,12 @@ pub struct PurrCodeIde {
     /// has nothing to report" (show the file tree).
     pub(crate) workspace_changes_checked: bool,
 
+    // ── Agent workspace ────────────────────────────────────────────────
+    /// The worker tree for the selected session (v1.2 Pillar 4).
+    pub(crate) supervisor: model::Supervisor,
+    /// The session `supervisor` describes, so a switch refetches.
+    pub(crate) supervisor_for: Option<String>,
+
     // ── Project memory ─────────────────────────────────────────────────
     /// Durable project knowledge for the open folder.
     pub(crate) memory: Vec<model::MemoryEntry>,
@@ -567,6 +574,8 @@ pub struct PurrCodeIde {
     last_diagnostic_poll: Instant,
     /// When open buffers were last compared against the files on disk.
     last_disk_check: Instant,
+    /// When the worker tree was last refreshed.
+    last_supervisor_poll: Instant,
     /// When the current `session_loading` began, so a stuck load falls back
     /// instead of spinning forever.
     session_loading_began: Option<Instant>,
@@ -702,6 +711,9 @@ impl PurrCodeIde {
             workspace_changes_loading: false,
             workspace_changes_checked: false,
 
+            supervisor: model::Supervisor::default(),
+            supervisor_for: None,
+
             memory: Vec::new(),
             memory_kind: "learnings".to_owned(),
             memory_content: String::new(),
@@ -776,6 +788,7 @@ impl PurrCodeIde {
             last_terminal_poll: now,
             last_workspace_changes_poll: now,
             last_diagnostic_poll: now,
+            last_supervisor_poll: now,
             last_disk_check: now,
             session_loading_began: None,
             current_session_load_generation: None,
@@ -1533,6 +1546,11 @@ impl PurrCodeIde {
                 self.apply_format_edits(&path, &value, then_save)
             }
             Response::LspDiagnostics(value) => self.language.absorb_diagnostics(&value),
+            Response::Supervisor(session, value) => {
+                if self.selected.as_deref() == Some(session.as_str()) {
+                    self.supervisor = crate::model::Supervisor::parse(&value);
+                }
+            }
             Response::Memory(value) => {
                 self.memory = crate::model::MemoryEntry::parse_all(&value);
             }
@@ -1779,6 +1797,7 @@ impl PurrCodeIde {
             self.settle_hover();
             self.detect_external_changes();
             self.refresh_checkpoints();
+            self.poll_supervisor();
         }
         // A running task should look running without the user touching the
         // mouse; an idle window should not burn a core.

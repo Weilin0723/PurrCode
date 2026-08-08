@@ -227,6 +227,9 @@ impl PurrCodeIde {
         // A restore/fork clicked in the transcript, applied after the scroll
         // area releases its borrow of the message list.
         let mut message_action: Option<(super::checkpoints::MessageAction, model::Message)> = None;
+        // A worker the user asked to stop, applied once the transcript's
+        // borrow of the message list is released.
+        let mut stop_worker: Option<String> = None;
         egui::ScrollArea::vertical()
             .id_salt("conversation_scroll")
             .stick_to_bottom(true)
@@ -276,14 +279,25 @@ impl PurrCodeIde {
                         }
                         if Some(index) == anchor && !condensed.is_empty() {
                             ui.add_space(4.0);
+                            // The worker tree sits with the work log because
+                            // it is the same question — what is happening
+                            // right now — at a different granularity.
+                            if let Some(worker) = self.worker_tree(ui) {
+                                stop_worker = Some(worker);
+                            }
                             self.work_log(ui, &condensed);
                             work_log_rendered = true;
                             ui.add_space(4.0);
                         }
                     }
-                    if !work_log_rendered && !condensed.is_empty() {
+                    if !work_log_rendered {
                         ui.add_space(4.0);
-                        self.work_log(ui, &condensed);
+                        if let Some(worker) = self.worker_tree(ui) {
+                            stop_worker = Some(worker);
+                        }
+                        if !condensed.is_empty() {
+                            self.work_log(ui, &condensed);
+                        }
                     }
                 }
 
@@ -322,6 +336,9 @@ impl PurrCodeIde {
         }
         if let Some((action, message)) = message_action {
             self.apply_message_action(action, &message);
+        }
+        if let Some(worker) = stop_worker {
+            self.stop_worker(worker);
         }
 
         ui.add_space(6.0);

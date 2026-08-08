@@ -475,6 +475,17 @@ pub enum Request {
     ForgetMemory {
         id: String,
     },
+    // ── Agent workspace ──────────────────────────────────────────────
+    /// `GET /v1/supervisor/{session}` — the worker tree for a session.
+    SupervisorStatus {
+        session: String,
+    },
+    /// `POST /v1/supervisor/{session}/workers/{id}/stop` — stop one worker
+    /// without cancelling the whole run.
+    StopWorker {
+        session: String,
+        worker: String,
+    },
 }
 
 /// A panel in the session presentation snapshot.
@@ -851,6 +862,8 @@ pub enum Response {
     McpTested(String, Value),
     /// `GET /v1/memory` — project knowledge grouped by kind.
     Memory(Value),
+    /// `GET /v1/supervisor/{session}` — the session and its worker tree.
+    Supervisor(String, Value),
     /// A settings mutation landed; the UI refetches the affected page.
     SettingsMutated,
     /// Connectivity changed. `false` means every view should say so rather than
@@ -1051,7 +1064,10 @@ impl Request {
             }
             Self::SendTerminalInput { .. }
             | Self::StopTerminal { .. }
-            | Self::SetTerminalOwner { .. } => true,
+            | Self::SetTerminalOwner { .. }
+            // Stopping a worker is an interrupt: it must not queue behind
+            // the work it is trying to stop.
+            | Self::StopWorker { .. } => true,
             _ => false,
         }
     }
@@ -1109,6 +1125,7 @@ impl Request {
                     | Self::CreateMemory { .. }
                     | Self::UpdateMemory { .. }
                     | Self::ForgetMemory { .. }
+                    | Self::StopWorker { .. }
             )
     }
 }
@@ -2067,6 +2084,25 @@ impl Worker {
                 let path = format!("/v1/sessions/search?q={}", urlencode(&query));
                 match self.get::<Value>(&path) {
                     Ok(value) => self.reply(Response::SessionSearch(query, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::SupervisorStatus { session } => {
+                let path = format!("/v1/supervisor/{}", urlencode(&session));
+                // A session that never ran a supervisor has no worker tree.
+                // That is the normal case, not a failure worth a notice.
+                if let Ok(value) = self.get::<Value>(&path) {
+                    self.reply(Response::Supervisor(session, value));
+                }
+            }
+            Request::StopWorker { session, worker } => {
+                let path = format!(
+                    "/v1/supervisor/{}/workers/{}/stop",
+                    urlencode(&session),
+                    urlencode(&worker)
+                );
+                match self.post::<Value>(&path, &serde_json::json!({})) {
+                    Ok(_) => self.reply(Response::Mutated(session)),
                     Err(error) => self.reply_failure(error),
                 }
             }

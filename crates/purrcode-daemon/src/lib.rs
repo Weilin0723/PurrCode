@@ -1562,25 +1562,60 @@ async fn supervisor_status(
     if session.event_count == 0 {
         return Err(ApiError::NotFound);
     }
-    let mut workers = Vec::new();
+    // Workers are tracked from Started, not only from Finished. Reporting
+    // only the finished ones made a running worker invisible — and a worker
+    // nobody can see is a worker nobody can stop, which is the whole point of
+    // the per-worker stop route below.
+    let mut workers: Vec<SupervisorWorkerView> = Vec::new();
     let mut conflicts = Vec::new();
     for event in store.events(id)? {
         match event {
+            SessionEvent::WorkerStarted { worker_id } => {
+                workers.push(SupervisorWorkerView {
+                    id: worker_id,
+                    status: "running".into(),
+                    worktree: None,
+                    changed_paths: Vec::new(),
+                    summary: None,
+                });
+            }
             SessionEvent::WorkerFinished {
                 worker_id,
                 status,
                 changed_paths,
-            } => workers.push(SupervisorWorkerView {
-                id: worker_id,
-                status,
-                worktree: None,
-                changed_paths,
-                summary: None,
-            }),
+            } => {
+                // Complete the entry the Started event opened, so a worker
+                // appears once with its final status rather than twice.
+                match workers.iter_mut().find(|worker| worker.id == worker_id) {
+                    Some(worker) => {
+                        worker.status = status;
+                        worker.changed_paths = changed_paths;
+                    }
+                    // A run recorded before WorkerStarted existed has only
+                    // the Finished event; keep showing it.
+                    None => workers.push(SupervisorWorkerView {
+                        id: worker_id,
+                        status,
+                        worktree: None,
+                        changed_paths,
+                        summary: None,
+                    }),
+                }
+            }
             SessionEvent::SupervisorReviewRequired {
                 conflicts: conflicts_event,
             } => conflicts = conflicts_event,
             _ => {}
+        }
+    }
+    // A run that is no longer in flight cannot have running workers: the
+    // process is gone, so reporting one as live would offer a stop button
+    // that can never succeed.
+    if !in_flight {
+        for worker in &mut workers {
+            if worker.status == "running" {
+                worker.status = "interrupted".into();
+            }
         }
     }
     Ok(Json(SupervisorView {
@@ -11471,6 +11506,100 @@ mod tests {
         );
         // The audit record is still there — that is the point of a soft delete.
         assert!(!state.store.lock().await.events(removed).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_running_worker_is_visible_before_it_finishes() {
+        // The status route used to build its list from WorkerFinished alone,
+        // so a worker that was still running did not appear — and the
+        // per-worker stop control had nothing to attach to.
+        let temporary = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&temporary.path().join("sessions.db")).unwrap();
+        let session = SessionId::new();
+        store
+            .append(
+                session,
+                &SessionEvent::SessionCreated {
+                    objective: "parallel work".into(),
+                    repository: temporary.path().to_path_buf(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::WorkerStarted {
+                    worker_id: "worker-1".into(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::WorkerStarted {
+                    worker_id: "worker-2".into(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::WorkerFinished {
+                    worker_id: "worker-1".into(),
+                    status: "completed".into(),
+                    changed_paths: vec![PathBuf::from("src/lib.rs")],
+                },
+            )
+            .unwrap();
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
+            terminals: TerminalRuntime::default(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let view = supervisor_status(State(state), headers, AxumPath(session.0.to_string()))
+            .await
+            .expect("supervisor status must be readable");
+
+        // Each worker appears exactly once, whatever stage it reached.
+        assert_eq!(view.0.workers.len(), 2);
+        let finished = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "worker-1")
+            .expect("the finished worker is listed");
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.changed_paths, vec![PathBuf::from("src/lib.rs")]);
+
+        // No run is in flight here, so the unfinished worker is reported as
+        // interrupted rather than as live work with a stop button that could
+        // never succeed.
+        let unfinished = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "worker-2")
+            .expect("the unfinished worker is still listed");
+        assert_eq!(unfinished.status, "interrupted");
     }
 
     #[test]

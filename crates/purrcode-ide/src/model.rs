@@ -1311,6 +1311,100 @@ pub fn panel_availability_label(availability: &PanelAvailability) -> &'static st
     }
 }
 
+// ── Agent workspace ────────────────────────────────────────────────────
+
+/// One worker under a supervisor run.
+#[derive(Clone, Debug)]
+pub struct Worker {
+    pub id: String,
+    pub status: String,
+    pub changed_paths: Vec<String>,
+    pub summary: Option<String>,
+}
+
+impl Worker {
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
+
+    /// A one-line result: what it did, in files.
+    pub fn outcome(&self) -> String {
+        if self.is_running() {
+            return "working…".to_owned();
+        }
+        match self.changed_paths.len() {
+            0 => self.status.clone(),
+            1 => format!("{} · 1 file changed", self.status),
+            count => format!("{} · {count} files changed", self.status),
+        }
+    }
+}
+
+/// The worker tree for one session.
+#[derive(Clone, Debug, Default)]
+pub struct Supervisor {
+    pub workers: Vec<Worker>,
+    /// Paths two workers both touched, which a human has to resolve.
+    pub conflicts: Vec<String>,
+    /// `true` once the run is finished and awaiting review.
+    pub review_required: bool,
+}
+
+impl Supervisor {
+    pub fn parse(value: &Value) -> Self {
+        let workers = value["workers"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(Worker {
+                            id: item["id"].as_str()?.to_owned(),
+                            status: item["status"].as_str().unwrap_or("unknown").to_owned(),
+                            changed_paths: item["changed_paths"]
+                                .as_array()
+                                .map(|paths| {
+                                    paths
+                                        .iter()
+                                        .filter_map(|path| path.as_str().map(str::to_owned))
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                            summary: item["summary"].as_str().map(str::to_owned),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            workers,
+            conflicts: value["conflicts"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            review_required: value["review_required"].as_bool().unwrap_or(false),
+        }
+    }
+
+    pub fn running(&self) -> usize {
+        self.workers
+            .iter()
+            .filter(|worker| worker.is_running())
+            .count()
+    }
+
+    /// Whether there is anything worth showing. An empty tree means this
+    /// session never ran workers, and the surface stays out of the way.
+    pub fn is_empty(&self) -> bool {
+        self.workers.is_empty()
+    }
+}
+
 // ── Project memory ─────────────────────────────────────────────────────
 
 /// One durable thing PurrCode knows about this project.
