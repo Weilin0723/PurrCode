@@ -224,6 +224,9 @@ impl PurrCodeIde {
         let measure = ui.available_width();
         let mut open_aux = false;
         let mut toggle_inline = false;
+        // A restore/fork clicked in the transcript, applied after the scroll
+        // area releases its borrow of the message list.
+        let mut message_action: Option<(super::checkpoints::MessageAction, model::Message)> = None;
         egui::ScrollArea::vertical()
             .id_salt("conversation_scroll")
             .stick_to_bottom(true)
@@ -264,7 +267,13 @@ impl PurrCodeIde {
                         // those exact words and the transcript should show them
                         // as their own. The objective itself lives in the
                         // breadcrumb; the bubble below is the user's turn.
-                        self.message(ui, message, measure);
+                        //
+                        // The transcript is drawn while `session.messages` is
+                        // borrowed, so a restore/fork click is recorded here
+                        // and run after the loop.
+                        if let Some(action) = self.message(ui, message, measure) {
+                            message_action = Some((action, message.clone()));
+                        }
                         if Some(index) == anchor && !condensed.is_empty() {
                             ui.add_space(4.0);
                             self.work_log(ui, &condensed);
@@ -310,6 +319,9 @@ impl PurrCodeIde {
         }
         if toggle_inline {
             self.inline_diff_open = !self.inline_diff_open;
+        }
+        if let Some((action, message)) = message_action {
+            self.apply_message_action(action, &message);
         }
 
         ui.add_space(6.0);
@@ -871,15 +883,30 @@ impl PurrCodeIde {
     /// `measure` is the transcript's content width, handed down from outside
     /// the scroll area so this method never asks how much room the scrollbar
     /// left it.
-    fn message(&self, ui: &mut Ui, message: &model::Message, measure: f32) {
-        if message.is_user() {
-            self.user_bubble(ui, &message.content, measure);
-        } else {
-            // The user typed plain text; rendering *their* words as markdown
-            // would put emphasis in their mouth that they did not write.
-            markdown::render(ui, &self.tokens, &message.content, measure);
-        }
+    fn message(
+        &self,
+        ui: &mut Ui,
+        message: &model::Message,
+        measure: f32,
+    ) -> Option<super::checkpoints::MessageAction> {
+        let response = ui
+            .scope(|ui| {
+                if message.is_user() {
+                    self.user_bubble(ui, &message.content, measure);
+                } else {
+                    // The user typed plain text; rendering *their* words as
+                    // markdown would put emphasis in their mouth that they
+                    // did not write.
+                    markdown::render(ui, &self.tokens, &message.content, measure);
+                }
+            })
+            .response;
+        // Restore/fork controls, revealed on hover so the transcript stays
+        // readable (v1.2 Pillar 3).
+        let hovered = ui.rect_contains_pointer(response.rect);
+        let action = super::checkpoints::message_actions(ui, &self.tokens, message, hovered);
         ui.add_space(10.0);
+        action
     }
 
     /// The user's own words, right-aligned against the transcript's edge.

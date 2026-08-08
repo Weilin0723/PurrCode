@@ -45,6 +45,11 @@ pub struct SessionRow {
 /// populate them.
 #[derive(Clone, Debug, Default)]
 pub struct Message {
+    /// The daemon's message id. This is what `POST /v1/sessions/{id}/fork`
+    /// anchors on, so forking from a message is exact rather than positional.
+    /// Empty for a message recorded before ids were persisted, which is why
+    /// the fork affordance is hidden rather than offered-and-broken.
+    pub id: String,
     pub role: String,
     pub content: String,
     pub timestamp: String,
@@ -786,6 +791,33 @@ pub fn parse_session_rows(raw: &[Value]) -> Vec<SessionRow> {
         .collect()
 }
 
+/// An RFC 3339 timestamp as a short, human-readable time.
+///
+/// A timestamp that cannot be parsed is returned unchanged rather than
+/// replaced with a placeholder: showing the raw value lets a user recognise a
+/// format problem, where "unknown" hides it.
+pub fn relative_time(timestamp: &str) -> String {
+    let Ok(parsed) = DateTime::parse_from_rfc3339(timestamp) else {
+        return timestamp.to_owned();
+    };
+    let parsed = parsed.with_timezone(&Utc);
+    let now = Utc::now();
+    let elapsed = now.signed_duration_since(parsed);
+    if elapsed.num_seconds() < 60 {
+        return "just now".into();
+    }
+    if elapsed.num_minutes() < 60 {
+        return format!("{}m ago", elapsed.num_minutes());
+    }
+    if elapsed.num_hours() < 24 {
+        return format!("{}h ago", elapsed.num_hours());
+    }
+    if elapsed.num_days() < 7 {
+        return format!("{}d ago", elapsed.num_days());
+    }
+    parsed.format("%b %-d").to_string()
+}
+
 fn session_group(value: &Value) -> String {
     let relative = text(value, "relative_time").unwrap_or_default();
     let normalized = relative.to_ascii_lowercase();
@@ -1178,6 +1210,7 @@ pub fn parse_session(id: &str, snapshot: &crate::daemon::SessionSnapshot) -> Ses
             .iter()
             .filter_map(|value| {
                 Some(Message {
+                    id: text(value, "id").unwrap_or_default(),
                     role: text(value, "role")?,
                     content: text(value, "content").unwrap_or_default(),
                     timestamp: text(value, "timestamp").unwrap_or_default(),
@@ -1259,6 +1292,102 @@ pub fn panel_availability_label(availability: &PanelAvailability) -> &'static st
         PanelAvailability::Empty => "Empty",
         PanelAvailability::Unavailable => "Unavailable",
         PanelAvailability::Error => "Error",
+    }
+}
+
+// ── Checkpoints ────────────────────────────────────────────────────────
+
+/// One restorable point in a session's history.
+#[derive(Clone, Debug)]
+pub struct Checkpoint {
+    pub id: String,
+    pub label: String,
+    /// The base commit the checkpoint's patch applies over.
+    pub head: String,
+    pub created_at: String,
+    /// Files the checkpoint's patch touches, from the preview route. `None`
+    /// until the preview has been fetched — which is not the same as a
+    /// checkpoint that changes nothing, so the dialog waits rather than
+    /// claiming "0 files".
+    pub changed_files: Option<Vec<String>>,
+}
+
+impl Checkpoint {
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(Self {
+                            id: item["id"].as_str()?.to_owned(),
+                            label: item["label"].as_str().unwrap_or_default().to_owned(),
+                            head: item["head"].as_str().unwrap_or_default().to_owned(),
+                            created_at: item["created_at"].as_str().unwrap_or_default().to_owned(),
+                            changed_files: None,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A short label for a row: the checkpoint's own label, or its head when
+    /// it has none.
+    pub fn display(&self) -> String {
+        if self.label.trim().is_empty() {
+            let head: String = self.head.chars().take(8).collect();
+            format!("Checkpoint {head}")
+        } else {
+            self.label.clone()
+        }
+    }
+}
+
+/// What a restore should put back.
+///
+/// The conversation and the worktree are separate stores, so restoring one
+/// without the other is a real and sometimes wanted operation — rewinding the
+/// code while keeping what was said about it, for instance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RestoreScope {
+    ConversationOnly,
+    CodeOnly,
+    Both,
+}
+
+impl RestoreScope {
+    pub const ALL: &'static [Self] = &[Self::Both, Self::CodeOnly, Self::ConversationOnly];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ConversationOnly => "Conversation only",
+            Self::CodeOnly => "Code only",
+            Self::Both => "Conversation and code",
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::ConversationOnly => {
+                "Fork the conversation at this point. The worktree is left as it is."
+            }
+            Self::CodeOnly => {
+                "Restore the worktree to this checkpoint. The conversation is left as it is."
+            }
+            Self::Both => "Restore the worktree and fork the conversation at this point.",
+        }
+    }
+
+    /// Whether this scope touches the worktree.
+    pub const fn restores_code(self) -> bool {
+        matches!(self, Self::CodeOnly | Self::Both)
+    }
+
+    /// Whether this scope forks the conversation.
+    pub const fn forks_conversation(self) -> bool {
+        matches!(self, Self::ConversationOnly | Self::Both)
     }
 }
 

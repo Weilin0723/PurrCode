@@ -42,7 +42,7 @@ const HOVER_DELAY: Duration = Duration::from_millis(350);
 /// An agent writing a file the user has open is the common case this catches,
 /// and a second is fast enough for that to feel immediate without stat-ing
 /// every open buffer on every frame.
-const DISK_CHECK: Duration = Duration::from_secs(1);
+pub(crate) const DISK_CHECK: Duration = Duration::from_secs(1);
 
 /// Where the pointer is resting, and since when.
 #[derive(Clone, Debug)]

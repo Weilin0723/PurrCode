@@ -73,6 +73,20 @@ impl PurrCodeIde {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(6.0);
                         let aux_open = self.aux_panel.is_some();
+                        // Checkpoints are how a user undoes an agent's work, so
+                        // the way back is always one click away rather than
+                        // buried in a menu.
+                        if self
+                            .icon_action(ui, Glyph::History, "Checkpoints — restore or fork")
+                            .clicked()
+                        {
+                            self.aux_panel = if self.aux_panel == Some(super::AuxView::Checkpoints)
+                            {
+                                None
+                            } else {
+                                Some(super::AuxView::Checkpoints)
+                            };
+                        }
                         if self
                             .icon_action(ui, Glyph::PanelRight, "Open the side panel")
                             .clicked()

@@ -13,6 +13,7 @@
 //! the runtime can work out for itself (PRD §10).
 
 mod bar;
+pub(crate) mod checkpoints;
 mod code;
 mod composer;
 mod dock;
@@ -133,6 +134,8 @@ pub enum AuxView {
     References,
     /// The active document's symbols, from `textDocument/documentSymbol`.
     Outline,
+    /// Restorable checkpoints for the selected session.
+    Checkpoints,
 }
 
 /// Keep the Agent transcript mounted in exactly one location per frame.
@@ -447,6 +450,14 @@ pub struct PurrCodeIde {
     /// has nothing to report" (show the file tree).
     pub(crate) workspace_changes_checked: bool,
 
+    // ── Checkpoints ────────────────────────────────────────────────────
+    /// Restorable points for the selected session, newest first.
+    pub(crate) checkpoints: Vec<model::Checkpoint>,
+    /// The session `checkpoints` belongs to, so a switch refetches.
+    pub(crate) checkpoints_for: Option<String>,
+    /// A restore awaiting confirmation.
+    pub(crate) pending_restore: Option<checkpoints::PendingRestore>,
+
     // ── Language intelligence ──────────────────────────────────────────
     /// What language servers have told this window (v1.2 Pillar 1).
     pub(crate) language: crate::model::LanguageIntelligence,
@@ -662,6 +673,10 @@ impl PurrCodeIde {
             workspace_changes: model::Changes::default(),
             workspace_changes_loading: false,
             workspace_changes_checked: false,
+
+            checkpoints: Vec::new(),
+            checkpoints_for: None,
+            pending_restore: None,
 
             language: crate::model::LanguageIntelligence::default(),
             hover_probe: None,
@@ -1469,6 +1484,57 @@ impl PurrCodeIde {
                 self.apply_format_edits(&path, &value, then_save)
             }
             Response::LspDiagnostics(value) => self.language.absorb_diagnostics(&value),
+            Response::Checkpoints(session, value) => {
+                if self.selected.as_deref() == Some(session.as_str()) {
+                    self.checkpoints = crate::model::Checkpoint::parse_all(&value);
+                }
+            }
+            Response::CheckpointPreview(checkpoint, value) => {
+                let files: Vec<String> = value["changed_files"]
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                // Fold the preview into both the list entry and the pending
+                // dialog, so the confirmation button unlocks with a real
+                // number behind it.
+                for entry in &mut self.checkpoints {
+                    if entry.id == checkpoint {
+                        entry.changed_files = Some(files.clone());
+                    }
+                }
+                if let Some(pending) = self.pending_restore.as_mut()
+                    && pending.checkpoint.id == checkpoint
+                {
+                    pending.checkpoint.changed_files = Some(files);
+                }
+            }
+            Response::CheckpointRestored(_) => {
+                // The worktree changed underneath every open buffer, so make
+                // the editor re-read rather than letting a stale buffer be
+                // saved back over the restored file.
+                for file in &mut self.open_files {
+                    file.disk_stamp = None;
+                }
+                self.last_disk_check = Instant::now() - crate::app::language::DISK_CHECK;
+                self.checkpoints_for = None;
+            }
+            Response::SessionForked(child) => {
+                if child.is_empty() {
+                    return;
+                }
+                // Select the fork: the user asked to try another approach, and
+                // leaving them in the parent means the next thing they type
+                // lands in the session they were trying to branch away from.
+                self.pending_initial_session = Some(child.clone());
+                self.select_session(&child);
+                let repository = self.repository_string();
+                self.client.send(Request::ListSessions { repository });
+            }
             Response::LspWorkspaceSymbols(query, value) => {
                 // Only accept the answer to the query still being typed.
                 if self.workspace_symbols_for.as_deref() == Some(query.as_str()) {
@@ -1651,6 +1717,7 @@ impl PurrCodeIde {
             self.poll_diagnostics();
             self.settle_hover();
             self.detect_external_changes();
+            self.refresh_checkpoints();
         }
         // A running task should look running without the user touching the
         // mouse; an idle window should not burn a core.
@@ -1805,6 +1872,8 @@ impl eframe::App for PurrCodeIde {
         self.settings_window(ctx);
 
         self.file_operation_dialog(ctx);
+
+        self.restore_dialog(ctx);
 
         self.close_confirm_modal(ctx);
     }
@@ -2149,6 +2218,7 @@ impl PurrCodeIde {
                         }
                         AuxView::References => "References".to_owned(),
                         AuxView::Outline => "Outline".to_owned(),
+                        AuxView::Checkpoints => "Checkpoints".to_owned(),
                     };
                     ui.label(RichText::new(title).color(self.tokens.text_primary));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -2179,6 +2249,7 @@ impl PurrCodeIde {
                 AuxView::Source => self.code_column(ui),
                 AuxView::References => self.references_panel(ui),
                 AuxView::Outline => self.outline_panel(ui),
+                AuxView::Checkpoints => self.checkpoints_panel(ui),
             });
     }
 

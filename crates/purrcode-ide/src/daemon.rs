@@ -397,6 +397,33 @@ pub enum Request {
         repository: String,
         text: String,
     },
+    // ── Checkpoints and fork ─────────────────────────────────────────
+    /// `GET /v1/sessions/{id}/checkpoints` — restorable points, newest first.
+    ListCheckpoints {
+        session: String,
+    },
+    /// `GET /v1/sessions/{id}/checkpoints/{checkpoint}/preview` — what a
+    /// restore would change, fetched before the confirmation is shown so the
+    /// dialog states a real number rather than asking for blind consent.
+    CheckpointPreview {
+        session: String,
+        checkpoint: String,
+    },
+    /// `POST /v1/sessions/{id}/checkpoints/{checkpoint}/restore`.
+    RestoreCheckpoint {
+        session: String,
+        checkpoint: String,
+    },
+    /// `POST /v1/sessions/{id}/checkpoint` — capture one now.
+    CreateCheckpoint {
+        session: String,
+        label: String,
+    },
+    /// `POST /v1/sessions/{id}/fork` — branch the conversation at a message.
+    ForkSession {
+        session: String,
+        anchor_message_id: String,
+    },
 }
 
 /// A panel in the session presentation snapshot.
@@ -755,6 +782,17 @@ pub enum Response {
     /// resolved references. The text is echoed so a stale reply cannot label
     /// a draft the user has since edited.
     References(String, Value),
+    // ── Checkpoints and fork ─────────────────────────────────────────
+    /// `GET /v1/sessions/{id}/checkpoints`.
+    Checkpoints(String, Value),
+    /// `GET .../checkpoints/{checkpoint}/preview` — the checkpoint it
+    /// describes, and what restoring it would change.
+    CheckpointPreview(String, Value),
+    /// A restore completed; the session should be reloaded.
+    CheckpointRestored(String),
+    /// A fork completed, carrying the new child session's id so the window
+    /// can select it.
+    SessionForked(String),
     /// A settings mutation landed; the UI refetches the affected page.
     SettingsMutated,
     /// Connectivity changed. `false` means every view should say so rather than
@@ -999,6 +1037,13 @@ impl Request {
                     | Self::McpProbe { .. }
                     | Self::CodexPut { .. }
                     | Self::CodexDoctor
+                    // Restoring, checkpointing and forking mutate durable
+                    // session state, so they take the serial control lane —
+                    // two restores racing would leave the worktree in a state
+                    // neither of them describes.
+                    | Self::RestoreCheckpoint { .. }
+                    | Self::CreateCheckpoint { .. }
+                    | Self::ForkSession { .. }
             )
     }
 }
@@ -1854,6 +1899,72 @@ impl Worker {
                 match self.post::<Value>("/v1/lsp/workspace-symbols", &body) {
                     Ok(value) => self.reply(Response::LspWorkspaceSymbols(query, value)),
                     Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::ListCheckpoints { session } => {
+                let path = format!("/v1/sessions/{}/checkpoints", urlencode(&session));
+                match self.get::<Value>(&path) {
+                    Ok(value) => self.reply(Response::Checkpoints(session, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::CheckpointPreview {
+                session,
+                checkpoint,
+            } => {
+                let path = format!(
+                    "/v1/sessions/{}/checkpoints/{}/preview",
+                    urlencode(&session),
+                    urlencode(&checkpoint)
+                );
+                match self.get::<Value>(&path) {
+                    Ok(value) => self.reply(Response::CheckpointPreview(checkpoint, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::RestoreCheckpoint {
+                session,
+                checkpoint,
+            } => {
+                let path = format!(
+                    "/v1/sessions/{}/checkpoints/{}/restore",
+                    urlencode(&session),
+                    urlencode(&checkpoint)
+                );
+                // The daemon refuses a restore that does not acknowledge the
+                // discard. The UI states it plainly in the dialog, so sending
+                // the acknowledgement here is a record of that, not a bypass.
+                let body = serde_json::json!({"acknowledge_discard": true});
+                match self.post::<Value>(&path, &body) {
+                    Ok(_) => {
+                        self.reply(Response::CheckpointRestored(session.clone()));
+                        self.reply(Response::Mutated(session));
+                    }
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::CreateCheckpoint { session, label } => {
+                let path = format!("/v1/sessions/{}/checkpoint", urlencode(&session));
+                match self.post::<Value>(&path, &serde_json::json!({"label": label})) {
+                    Ok(_) => {
+                        self.reply(Response::Mutated(session.clone()));
+                        self.handle(Request::ListCheckpoints { session });
+                    }
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::ForkSession {
+                session,
+                anchor_message_id,
+            } => {
+                let path = format!("/v1/sessions/{}/fork", urlencode(&session));
+                let body = serde_json::json!({"anchor_message_id": anchor_message_id});
+                match self.post::<Value>(&path, &body) {
+                    Ok(value) => {
+                        let child = value["id"].as_str().unwrap_or_default().to_owned();
+                        self.reply(Response::SessionForked(child));
+                    }
+                    Err(error) => self.reply_submission_failure(error),
                 }
             }
             Request::ListCommands => match self.get::<Value>("/v1/commands") {
