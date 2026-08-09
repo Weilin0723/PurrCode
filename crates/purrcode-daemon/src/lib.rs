@@ -3860,20 +3860,20 @@ async fn invoke_mcp(
     let policy = effective_policy(&config, &repository)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let policy_decision = policy.evaluate(&action, &repository);
-    let decision = if trusted {
-        // Trust bypasses PawGate's per-call approval but keeps the same
-        // isolation constraints the sandbox enforces.
-        JudgmentDecision::AllowWithConstraints(ActionConstraints {
+    let decision = apply_tool_trust(
+        policy_decision,
+        trusted,
+        // Trust waives the per-call approval only; the sandbox still enforces
+        // exactly the isolation the server is configured with.
+        ActionConstraints {
             working_directory: repository.clone(),
             network: server.network,
             timeout_seconds: server.timeout_seconds,
             maximum_output_bytes: server.maximum_output_bytes,
             allowed_write_globs: Vec::new(),
             maximum_changed_files: 0,
-        })
-    } else {
-        policy_decision
-    };
+        },
+    );
     let action_id = if let Some(action_id) = requested_action_id {
         action_id
     } else if trusted {
@@ -10019,6 +10019,34 @@ fn authorize_exact_human_action(
     Ok((constraints, action_digest))
 }
 
+/// Applies a configured trust decision on top of PawGate's judgment.
+///
+/// Trust is a waiver of the *approval prompt*, never of the policy. It
+/// downgrades `RequireApproval` to `AllowWithConstraints` and leaves every
+/// other judgment exactly as PawGate returned it — most importantly `Deny`.
+///
+/// That asymmetry is the whole point. A trust list is ordinary configuration:
+/// `trusts()` is plain string equality and `McpServerConfig::validate` never
+/// checks that its entries are safe identifiers, so an entry like `rm -rf`
+/// silently matches a call PawGate denies for exactly that reason. If trust
+/// were an unconditional allow, naming a tool in config would erase the denial
+/// and hand the unchecked name to the server. Configuration may always narrow
+/// what runs; it may never widen it. Extensions that add tools — MCP servers,
+/// skills, project-supplied profiles — all resolve through this rule, so no
+/// extension point can become a way around PawGate.
+fn apply_tool_trust(
+    policy_decision: JudgmentDecision,
+    trusted: bool,
+    trusted_constraints: ActionConstraints,
+) -> JudgmentDecision {
+    match policy_decision {
+        JudgmentDecision::RequireApproval { .. } if trusted => {
+            JudgmentDecision::AllowWithConstraints(trusted_constraints)
+        }
+        other => other,
+    }
+}
+
 /// Authorizes a pre-approved action whose judgment was an
 /// `AllowWithConstraints` (a trusted MCP tool). The authority is
 /// `DeterministicPolicy` — the same non-human authority a read-only command
@@ -11666,6 +11694,60 @@ mod tests {
             status,
             evidence: format!("{action}: {evidence}"),
         }
+    }
+
+    fn trust_constraints() -> ActionConstraints {
+        ActionConstraints {
+            working_directory: PathBuf::from("/repository"),
+            network: true,
+            timeout_seconds: 30,
+            maximum_output_bytes: 4096,
+            allowed_write_globs: Vec::new(),
+            maximum_changed_files: 0,
+        }
+    }
+
+    #[test]
+    fn trusting_a_tool_cannot_overturn_a_pawgate_denial() {
+        // The bypass this guards against: `trusted_tools` is matched by plain
+        // string equality and is never validated to hold safe identifiers, so
+        // an operator can list a name PawGate denies for exactly that reason.
+        // If trust were an unconditional allow, naming the tool in config
+        // would erase the denial and the unchecked name would reach the
+        // server. Configuration narrows; it never widens.
+        let denied = JudgmentDecision::Deny {
+            reason: "external server and tool names must be non-empty safe identifiers".into(),
+        };
+        assert!(matches!(
+            apply_tool_trust(denied.clone(), true, trust_constraints()),
+            JudgmentDecision::Deny { .. }
+        ));
+        // And untrusted denial is of course still a denial.
+        assert!(matches!(
+            apply_tool_trust(denied, false, trust_constraints()),
+            JudgmentDecision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn trust_waives_only_the_approval_prompt() {
+        let approval = JudgmentDecision::RequireApproval {
+            reason: "external tool `docs/search` requires explicit authorization".into(),
+            constraints: trust_constraints(),
+        };
+        // Trusted: the prompt is waived, and the constraints are the server's
+        // configured isolation rather than anything the caller supplied.
+        match apply_tool_trust(approval.clone(), true, trust_constraints()) {
+            JudgmentDecision::AllowWithConstraints(constraints) => {
+                assert_eq!(constraints, trust_constraints());
+            }
+            other => panic!("expected an allow for a trusted tool, got {other:?}"),
+        }
+        // Untrusted: the approval requirement survives untouched.
+        assert!(matches!(
+            apply_tool_trust(approval, false, trust_constraints()),
+            JudgmentDecision::RequireApproval { .. }
+        ));
     }
 
     #[tokio::test]
