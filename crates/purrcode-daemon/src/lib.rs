@@ -3860,7 +3860,9 @@ async fn invoke_mcp(
             request.server, request.tool
         )));
     }
-    let trusted = !discovery && server.trusts(&request.tool);
+    // The daemon deletes the legacy trust bypass: `trusted` is now expressed
+    // INSIDE the descriptor's approval_policy, and `Policy::evaluate_tool`
+    // (PR2) is the single decision point. deny-beats-trust ordering is kept.
     let action = McpHost::translate(
         &request.server,
         &request.tool,
@@ -3869,21 +3871,47 @@ async fn invoke_mcp(
     );
     let policy = effective_policy(&config, &repository)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let policy_decision = policy.evaluate(&action, &repository);
-    let decision = apply_tool_trust(
-        policy_decision,
-        trusted,
-        // Trust waives the per-call approval only; the sandbox still enforces
-        // exactly the isolation the server is configured with.
-        ActionConstraints {
-            working_directory: repository.clone(),
-            network: server.network,
-            timeout_seconds: server.timeout_seconds,
-            maximum_output_bytes: server.maximum_output_bytes,
-            allowed_write_globs: Vec::new(),
-            maximum_changed_files: 0,
-        },
-    );
+    // Build a descriptor for this tool with trust folded into the approval
+    // policy, then admit it against the workspace ceiling. Trust waives the
+    // per-call approval only; the sandbox still enforces exactly the
+    // isolation the server is configured with.
+    let trusted = !discovery && server.trusts(&request.tool);
+    let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+    let ceiling = policy.tool_ceiling(&repository);
+    let tool_descriptor = registry
+        .admit_tool(
+            purrcode_runtime_core::ToolDescriptorProposal {
+                id: purrcode_runtime_core::ToolId::mcp(&request.server, &request.tool),
+                provider: purrcode_runtime_core::ToolProvider::Mcp,
+                display_name: request.tool.clone(),
+                description: "MCP tool invocation".into(),
+                schema: serde_json::json!({ "type": "object" }),
+                capabilities: std::collections::BTreeSet::new(),
+                side_effect_class: if server.denies(&request.tool) {
+                    purrcode_runtime_core::SideEffectClass::Destructive
+                } else {
+                    purrcode_runtime_core::SideEffectClass::Execute
+                },
+                network_scope: if server.network {
+                    purrcode_runtime_core::NetworkScope::Any
+                } else {
+                    purrcode_runtime_core::NetworkScope::None
+                },
+                filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                approval_policy: if server.denies(&request.tool) {
+                    purrcode_runtime_core::ApprovalPolicy::Forbidden
+                } else if trusted {
+                    purrcode_runtime_core::ApprovalPolicy::PreAuthorized
+                } else {
+                    purrcode_runtime_core::ApprovalPolicy::AlwaysAsk
+                },
+                origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+            },
+            &ceiling,
+        )
+        .clone();
+    // A deny-listed tool is a hard deny that overrides any approval.
+    let decision = policy.evaluate_tool(&action, &tool_descriptor, &repository);
     let action_id = if let Some(action_id) = requested_action_id {
         action_id
     } else if trusted {
@@ -10155,34 +10183,6 @@ fn authorize_exact_human_action(
     Ok((constraints, action_digest))
 }
 
-/// Applies a configured trust decision on top of PawGate's judgment.
-///
-/// Trust is a waiver of the *approval prompt*, never of the policy. It
-/// downgrades `RequireApproval` to `AllowWithConstraints` and leaves every
-/// other judgment exactly as PawGate returned it — most importantly `Deny`.
-///
-/// That asymmetry is the whole point. A trust list is ordinary configuration:
-/// `trusts()` is plain string equality and `McpServerConfig::validate` never
-/// checks that its entries are safe identifiers, so an entry like `rm -rf`
-/// silently matches a call PawGate denies for exactly that reason. If trust
-/// were an unconditional allow, naming a tool in config would erase the denial
-/// and hand the unchecked name to the server. Configuration may always narrow
-/// what runs; it may never widen it. Extensions that add tools — MCP servers,
-/// skills, project-supplied profiles — all resolve through this rule, so no
-/// extension point can become a way around PawGate.
-fn apply_tool_trust(
-    policy_decision: JudgmentDecision,
-    trusted: bool,
-    trusted_constraints: ActionConstraints,
-) -> JudgmentDecision {
-    match policy_decision {
-        JudgmentDecision::RequireApproval { .. } if trusted => {
-            JudgmentDecision::AllowWithConstraints(trusted_constraints)
-        }
-        other => other,
-    }
-}
-
 /// Authorizes a pre-approved action whose judgment was an
 /// `AllowWithConstraints` (a trusted MCP tool). The authority is
 /// `DeterministicPolicy` — the same non-human authority a read-only command
@@ -11832,56 +11832,120 @@ mod tests {
         }
     }
 
-    fn trust_constraints() -> ActionConstraints {
-        ActionConstraints {
-            working_directory: PathBuf::from("/repository"),
-            network: true,
-            timeout_seconds: 30,
-            maximum_output_bytes: 4096,
-            allowed_write_globs: Vec::new(),
-            maximum_changed_files: 0,
-        }
-    }
-
     #[test]
     fn trusting_a_tool_cannot_overturn_a_pawgate_denial() {
-        // The bypass this guards against: `trusted_tools` is matched by plain
-        // string equality and is never validated to hold safe identifiers, so
-        // an operator can list a name PawGate denies for exactly that reason.
-        // If trust were an unconditional allow, naming the tool in config
-        // would erase the denial and the unchecked name would reach the
-        // server. Configuration narrows; it never widens.
-        let denied = JudgmentDecision::Deny {
-            reason: "external server and tool names must be non-empty safe identifiers".into(),
-        };
-        assert!(matches!(
-            apply_tool_trust(denied.clone(), true, trust_constraints()),
-            JudgmentDecision::Deny { .. }
-        ));
-        // And untrusted denial is of course still a denial.
-        assert!(matches!(
-            apply_tool_trust(denied, false, trust_constraints()),
-            JudgmentDecision::Deny { .. }
-        ));
+        // Trust is now expressed inside the descriptor's approval_policy
+        // (PreAuthorized) and evaluated by Policy::evaluate_tool. A deny-listed
+        // tool is admitted Forbidden and is a hard deny that no trust can
+        // overturn. This is the old `apply_tool_trust` bypass deleted in PR5.
+        let repository = Path::new("/repository");
+        let policy = Policy::default();
+        let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+        let ceiling = policy.tool_ceiling(repository);
+        let descriptor = registry
+            .admit_tool(
+                purrcode_runtime_core::ToolDescriptorProposal {
+                    id: purrcode_runtime_core::ToolId::mcp("server", "blocked"),
+                    provider: purrcode_runtime_core::ToolProvider::Mcp,
+                    display_name: "blocked".into(),
+                    description: "deny-listed".into(),
+                    schema: serde_json::json!({ "type": "object" }),
+                    capabilities: std::collections::BTreeSet::new(),
+                    side_effect_class: purrcode_runtime_core::SideEffectClass::Destructive,
+                    network_scope: purrcode_runtime_core::NetworkScope::None,
+                    filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                    approval_policy: purrcode_runtime_core::ApprovalPolicy::Forbidden,
+                    origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+                },
+                &ceiling,
+            )
+            .clone();
+        let action = purrcode_runtime_core::ProposedAction::ExternalTool(
+            purrcode_runtime_core::ExternalToolAction {
+                server_id: "server".into(),
+                tool_name: "blocked".into(),
+                arguments: serde_json::json!({}),
+                working_directory: repository.to_path_buf(),
+            },
+        );
+        let decision = policy.evaluate_tool(&action, &descriptor, repository);
+        assert!(
+            matches!(decision, JudgmentDecision::Deny { .. }),
+            "a Forbidden descriptor must never be allowed, even if 'trusted'"
+        );
     }
 
     #[test]
     fn trust_waives_only_the_approval_prompt() {
-        let approval = JudgmentDecision::RequireApproval {
-            reason: "external tool `docs/search` requires explicit authorization".into(),
-            constraints: trust_constraints(),
-        };
-        // Trusted: the prompt is waived, and the constraints are the server's
-        // configured isolation rather than anything the caller supplied.
-        match apply_tool_trust(approval.clone(), true, trust_constraints()) {
-            JudgmentDecision::AllowWithConstraints(constraints) => {
-                assert_eq!(constraints, trust_constraints());
-            }
-            other => panic!("expected an allow for a trusted tool, got {other:?}"),
-        }
-        // Untrusted: the approval requirement survives untouched.
+        // A trusted tool is admitted PreAuthorized; evaluate_tool allows it
+        // with the server's configured isolation. An untrusted tool is
+        // AlwaysAsk and requires approval.
+        let repository = Path::new("/repository");
+        let policy = Policy::default();
+        let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+        let ceiling = policy.tool_ceiling(repository);
+
+        let trusted_descriptor = registry
+            .admit_tool(
+                purrcode_runtime_core::ToolDescriptorProposal {
+                    id: purrcode_runtime_core::ToolId::mcp("server", "docs_search"),
+                    provider: purrcode_runtime_core::ToolProvider::Mcp,
+                    display_name: "docs/search".into(),
+                    description: "trusted read".into(),
+                    schema: serde_json::json!({ "type": "object" }),
+                    capabilities: std::collections::BTreeSet::new(),
+                    side_effect_class: purrcode_runtime_core::SideEffectClass::Read,
+                    network_scope: purrcode_runtime_core::NetworkScope::None,
+                    filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                    approval_policy: purrcode_runtime_core::ApprovalPolicy::PreAuthorized,
+                    origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+                },
+                &ceiling,
+            )
+            .clone();
+        let untrusted_descriptor = registry
+            .admit_tool(
+                purrcode_runtime_core::ToolDescriptorProposal {
+                    id: purrcode_runtime_core::ToolId::mcp("server", "docs_search_untrusted"),
+                    provider: purrcode_runtime_core::ToolProvider::Mcp,
+                    display_name: "docs/search".into(),
+                    description: "untrusted".into(),
+                    schema: serde_json::json!({ "type": "object" }),
+                    capabilities: std::collections::BTreeSet::new(),
+                    side_effect_class: purrcode_runtime_core::SideEffectClass::Execute,
+                    network_scope: purrcode_runtime_core::NetworkScope::None,
+                    filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                    approval_policy: purrcode_runtime_core::ApprovalPolicy::AlwaysAsk,
+                    origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+                },
+                &ceiling,
+            )
+            .clone();
+
+        let trusted_action = purrcode_runtime_core::ProposedAction::ExternalTool(
+            purrcode_runtime_core::ExternalToolAction {
+                server_id: "server".into(),
+                tool_name: "docs_search".into(),
+                arguments: serde_json::json!({}),
+                working_directory: repository.to_path_buf(),
+            },
+        );
+        let untrusted_action = purrcode_runtime_core::ProposedAction::ExternalTool(
+            purrcode_runtime_core::ExternalToolAction {
+                server_id: "server".into(),
+                tool_name: "docs_search_untrusted".into(),
+                arguments: serde_json::json!({}),
+                working_directory: repository.to_path_buf(),
+            },
+        );
+        // Trusted: the prompt is waived, the decision is an allow.
         assert!(matches!(
-            apply_tool_trust(approval, false, trust_constraints()),
+            policy.evaluate_tool(&trusted_action, &trusted_descriptor, repository),
+            JudgmentDecision::AllowWithConstraints(_)
+        ));
+        // Untrusted: the approval requirement survives.
+        assert!(matches!(
+            policy.evaluate_tool(&untrusted_action, &untrusted_descriptor, repository),
             JudgmentDecision::RequireApproval { .. }
         ));
     }
