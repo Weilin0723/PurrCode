@@ -49,6 +49,7 @@ use purrcode_agent_runtime::{
 };
 use purrcode_claw::ToolRuntime;
 use purrcode_codex_bridge::{CodexBridge, CodexBridgeConfig, CodexDoctorReport};
+use purrcode_extension_config::ExtensionSet;
 use purrcode_lsp::{LspManager, Position as LspPosition, default_server_commands, path_to_uri};
 use purrcode_mcp_host::{
     DynamicQualificationRequest, McpHost, McpServerConfig, Qualifier as SkillQualifier,
@@ -58,7 +59,6 @@ use purrcode_ninelives::{
     Automation, ProjectMemoryEntry, SessionCheckpoint, SessionStore, StoreError,
 };
 use purrcode_pawgate::{Policy, resolve_policy_path};
-use purrcode_extension_config::ExtensionSet;
 use purrcode_provider_gateway::failover::FailoverProvider;
 use purrcode_provider_gateway::{
     AppConfig, ModelEvent, ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode,
@@ -581,6 +581,7 @@ pub async fn bind_and_report(
         .route("/v1/repository/inspect", post(inspect_repository))
         .route("/v1/references/resolve", post(resolve_references))
         .route("/v1/commands", get(list_commands))
+        .route("/v1/agents", get(list_agents))
         .route("/v1/extensions/diagnostics", get(extension_diagnostics))
         .route("/v1/extensions/reload", post(extension_reload))
         .route("/v1/lsp/servers", get(list_lsp_servers))
@@ -1050,7 +1051,7 @@ async fn launch_automation(
         )?;
     }
     if let Err(error) =
-        spawn_agent_operation(state.clone(), session_id, AgentOperation::Start).await
+        spawn_agent_operation(state.clone(), session_id, AgentOperation::Start, None).await
     {
         state.store.lock().await.append(
             session_id,
@@ -2350,7 +2351,7 @@ async fn start_session(
         TaskMode::Plan | TaskMode::Review => AgentOperation::Plan,
         TaskMode::Ask | TaskMode::Build => AgentOperation::Start,
     };
-    if let Err(error) = spawn_agent_operation(state.clone(), id, operation).await {
+    if let Err(error) = spawn_agent_operation(state.clone(), id, operation, None).await {
         let reason = error_message(&error).chars().take(512).collect();
         state
             .store
@@ -2541,7 +2542,7 @@ async fn resume_or_restore_pause(
     ended_status: Option<SessionStatus>,
     operation: AgentOperation,
 ) -> Result<(), ApiError> {
-    let Err(error) = spawn_agent_operation(state.clone(), id, operation).await else {
+    let Err(error) = spawn_agent_operation(state.clone(), id, operation, None).await else {
         return Ok(());
     };
     if was_paused {
@@ -2845,7 +2846,7 @@ async fn approve_session(
     // Recheck before spawning so an invalid approval can never become an asynchronous
     // agent failure that corrupts an otherwise paused or terminal session.
     require_approval_boundary(&state.store.lock().await.load(id)?)?;
-    spawn_agent_operation(state, id, AgentOperation::Approve).await?;
+    spawn_agent_operation(state, id, AgentOperation::Approve, None).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
@@ -4407,6 +4408,7 @@ async fn spawn_agent_operation(
     state: AppState,
     id: SessionId,
     operation: AgentOperation,
+    agent: Option<String>,
 ) -> Result<(), ApiError> {
     let _lifecycle_gate = state.lifecycle_gate.lock().await;
     if state.interrupting_sessions.lock().await.contains_key(&id) {
@@ -4440,6 +4442,7 @@ async fn spawn_agent_operation(
     }
     let task_state = state.clone();
     let lifecycle_models: Vec<ModelId> = budget.models.values().cloned().collect();
+    let agent_profile = agent.clone();
     let coding_model = budget
         .models
         .get("coding_worker")
@@ -4495,6 +4498,7 @@ async fn spawn_agent_operation(
             coding_model,
             observer,
             task_cancellation.clone(),
+            agent_profile.clone(),
         ))
         .catch_unwind()
         .await;
@@ -4802,6 +4806,7 @@ fn failover_for_role(
     Ok(Arc::new(FailoverProvider::new(primary, fallbacks)) as Arc<dyn ModelProvider>)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_agent_operation(
     state: &AppState,
     id: SessionId,
@@ -4810,6 +4815,7 @@ async fn run_agent_operation(
     model: ModelId,
     observer: AgentStreamObserver,
     cancellation: AgentCancellation,
+    agent: Option<String>,
 ) -> Result<(), DaemonError> {
     let mut store = SessionStore::open(&state.database)?;
     let session = store.load(id)?;
@@ -4906,6 +4912,20 @@ async fn run_agent_operation(
         .ok_or_else(|| DaemonError::AgentConfiguration("session repository is missing".into()))?;
     let policy = effective_policy(&config, &repository)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    // ── Agent profile (v1.3 §8 PR4) ────────────────────────────────────
+    // Resolve the named profile from the extension cache between the workspace
+    // policy and the pinned context. The profile was already restricted
+    // against the ceiling at admission; its ceiling and system prompt bind here.
+    let profile = match &agent {
+        Some(name) => {
+            let set = load_extension_set(state, &repository).await;
+            let descriptor = set.admitted(name).cloned().ok_or_else(|| {
+                DaemonError::AgentConfiguration(format!("unknown agent profile `{name}`"))
+            })?;
+            Some(descriptor)
+        }
+        None => None,
+    };
     // ── Pinned context for this turn ──────────────────────────────────
     // The composer's `@file` chips and the Project Memory settings page both
     // promise the user that content is attached to the agent. This is where
@@ -4990,6 +5010,10 @@ async fn run_agent_operation(
         .with_stream_observer(observer)
         .with_cancellation(cancellation)
         .with_pinned_context(assembled.pinned);
+    let agent = match profile {
+        Some(profile) => agent.with_profile(profile),
+        None => agent,
+    };
     let resolver = DaemonSkillResolver::new(state).await;
     let capability = infer_capability(&objective);
     if let CapabilityResolution::InstalledSkill { skill_id, .. } = agent
@@ -9430,8 +9454,7 @@ async fn load_extension_set(state: &AppState, repository: &Path) -> Arc<Extensio
         None => Policy::default().tool_ceiling(repository),
     };
     let user_root = std::env::home_dir().map(|home| home.join(".purrcode"));
-    let (set, _diagnostics) =
-        ExtensionSet::load(repository, user_root.as_deref(), &ceiling);
+    let (set, _diagnostics) = ExtensionSet::load(repository, user_root.as_deref(), &ceiling);
     let set = Arc::new(set);
     state
         .extensions
@@ -9474,6 +9497,36 @@ async fn extension_reload(
         .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
     state.extensions.write().await.remove(&repository);
     Ok(Json(serde_json::json!({ "reloaded": true })))
+}
+
+/// v1.3 §7: list the admitted agent profiles for a repository, with the
+/// restricted descriptors. `?repository=` is required to scope.
+async fn list_agents(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let set = load_extension_set(&state, &repository).await;
+    let agents: Vec<serde_json::Value> = set
+        .admitted_agents
+        .values()
+        .map(|descriptor| serde_json::json!({
+            "name": descriptor.name(),
+            "description": descriptor.description(),
+            "model_role": descriptor.model_role().map(|r| r.as_str()),
+            "system_prompt": descriptor.system_prompt(),
+            "allowed_tools": descriptor.allowed_tools().iter().map(|t| t.as_str()).collect::<Vec<_>>(),
+            "allowed_skills": descriptor.allowed_skills().iter().collect::<Vec<_>>(),
+            "ceiling": descriptor.ceiling(),
+        }))
+        .collect();
+    Ok(Json(
+        serde_json::json!({ "agents": agents, "diagnostics": set.diagnostics }),
+    ))
 }
 
 #[derive(Deserialize)]

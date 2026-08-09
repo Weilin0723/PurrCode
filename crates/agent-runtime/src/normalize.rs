@@ -73,7 +73,28 @@ fn canonicalize_read_action(
 pub(crate) fn normalize_action(
     action: AgentAction,
     _worktree: &Path,
+    profile: Option<&purrcode_runtime_core::AgentDescriptor>,
 ) -> Result<ProposedAction, AgentError> {
+    // Profile-level allowlist enforcement BEFORE PawGate sees the action
+    // (v1.3 §8 PR4). A project agent with `permissions.write: false` must be
+    // refused here, not merely routed to approval — its ceiling already
+    // forbids the write.
+    if let Some(profile) = profile {
+        let write_allowed = matches!(
+            profile.ceiling().maximum_filesystem,
+            purrcode_runtime_core::FilesystemScope::Worktree { .. }
+        );
+        if !write_allowed
+            && matches!(
+                action,
+                AgentAction::WriteFile { .. } | AgentAction::DeleteFile { .. }
+            )
+        {
+            return Err(AgentError::InvalidModelTurn(
+                "this agent profile is read-only; file mutation is denied".into(),
+            ));
+        }
+    }
     match action {
         AgentAction::Read(read) => {
             let read = canonicalize_read_action(read)?;
@@ -374,12 +395,24 @@ pub(crate) fn decision_constraints(decision: &JudgmentDecision) -> Option<&Actio
 /// * `Ask` (Governed) leaves every decision untouched.
 /// * `ModifyAction`/`Replan`/`Allow` are never touched: they are advice about
 ///   correctness, not authority.
+///
+/// v1.3 §9.4 Hole A: a registered tool with `AlwaysAsk` or higher friction, or
+/// any side effect beyond read, is NEVER auto-approved — even under `Auto` or
+/// `FullAccess`. And `FullAccess` never converts a `Deny` into an allow.
 pub(crate) fn apply_permission_mode(
     mode: PermissionMode,
     decision: JudgmentDecision,
-    worktree: &Path,
+    _worktree: &Path,
+    descriptor: Option<&purrcode_runtime_core::ToolDescriptor>,
 ) -> JudgmentDecision {
     use JudgmentDecision::*;
+    if let Some(descriptor) = descriptor {
+        if descriptor.approval_policy() >= purrcode_runtime_core::ApprovalPolicy::AlwaysAsk
+            || descriptor.side_effect_class() > purrcode_runtime_core::SideEffectClass::Read
+        {
+            return decision;
+        }
+    }
     match mode {
         PermissionMode::Auto => match decision {
             RequireApproval { constraints, .. } => AllowWithConstraints(constraints),
@@ -387,9 +420,10 @@ pub(crate) fn apply_permission_mode(
         },
         PermissionMode::FullAccess => match decision {
             RequireApproval { constraints, .. } => AllowWithConstraints(constraints),
-            Deny { .. } => {
-                AllowWithConstraints(ActionConstraints::read_only(worktree.to_path_buf()))
-            }
+            // §9.4 Hole A: FullAccess NEVER converts a Deny into an allow. A
+            // checked-in project file must not overrule an explicit
+            // organizational Deny, and a session mode a human set for
+            // convenience must not either.
             other => other,
         },
         PermissionMode::Ask => decision,
@@ -460,8 +494,8 @@ mod action_normalization_tests {
     use purrcode_pawgate::Policy;
     use purrcode_runtime_core::adaptation::PermissionMode;
     use purrcode_runtime_core::{
-        ActionConstraints, ActionId, CommandAction, JudgmentDecision, ProposedAction,
-        RepositoryReadAction, SessionEvent, SessionId, SessionState,
+        ActionConstraints, ActionId, AgentDescriptor, CommandAction, JudgmentDecision,
+        ProposedAction, RepositoryReadAction, SessionEvent, SessionId, SessionState,
     };
     use std::collections::BTreeMap;
     use std::path::Path;
@@ -579,6 +613,7 @@ mod action_normalization_tests {
         let action = normalize_action(
             AgentAction::ReadCommand(legacy_command("git", &["rev-parse", "HEAD"])),
             &worktree,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -640,8 +675,12 @@ mod action_normalization_tests {
     #[test]
     fn typed_read_normalizes_to_repository_read() {
         let worktree = Path::new("/repo/.purrcode/worktrees/session");
-        let action =
-            normalize_action(AgentAction::Read(RepositoryReadAction::GitStatus), worktree).unwrap();
+        let action = normalize_action(
+            AgentAction::Read(RepositoryReadAction::GitStatus),
+            worktree,
+            None,
+        )
+        .unwrap();
         let ProposedAction::RepositoryRead(read) = action else {
             panic!("expected typed repository read")
         };
@@ -660,6 +699,7 @@ mod action_normalization_tests {
                 max_bytes: 4096,
             }),
             worktree,
+            None,
         )
         .unwrap();
         let ProposedAction::RepositoryRead(read) = action else {
@@ -679,6 +719,7 @@ mod action_normalization_tests {
                 max_entries: 32,
             }),
             Path::new("/repo/.purrcode/worktrees/session"),
+            None,
         )
         .unwrap();
         let ProposedAction::RepositoryRead(RepositoryReadAction::List { paths, .. }) = action
@@ -696,6 +737,7 @@ mod action_normalization_tests {
                 max_entries: 32,
             }),
             Path::new("/repo/.purrcode/worktrees/session"),
+            None,
         )
         .unwrap_err();
         assert_eq!(
@@ -713,6 +755,7 @@ mod action_normalization_tests {
                 max_entries: 32,
             }),
             &worktree,
+            None,
         )
         .unwrap();
         let decision = Policy::default().evaluate(&action, &worktree);
@@ -736,6 +779,7 @@ mod action_normalization_tests {
                 expected_digest: None,
             },
             &worktree,
+            None,
         )
         .unwrap();
         let decision = Policy::default().evaluate(&action, &worktree);
@@ -753,7 +797,7 @@ mod action_normalization_tests {
             reason: "policy wants a human".into(),
             constraints: ActionConstraints::read_only(worktree.to_path_buf()),
         };
-        let converted = apply_permission_mode(PermissionMode::Auto, approval, worktree);
+        let converted = apply_permission_mode(PermissionMode::Auto, approval, worktree, None);
         assert!(
             matches!(converted, JudgmentDecision::AllowWithConstraints(_)),
             "Auto must skip the prompt but keep bounds, got {converted:?}"
@@ -765,12 +809,17 @@ mod action_normalization_tests {
                 reason: "policy refuses".into(),
             },
             worktree,
+            None,
         );
         assert!(matches!(denied, JudgmentDecision::Deny { .. }));
     }
 
     #[test]
-    fn full_access_overrides_even_a_deny_with_read_only_bounds() {
+    fn full_access_does_not_override_a_deny() {
+        // v1.3 §9.4 Hole A: FullAccess must NOT convert a Deny into an allow —
+        // a checked-in project file must not overrule an explicit
+        // organizational Deny, and a session mode a human set for convenience
+        // must not either.
         let worktree = Path::new("/repo/.purrcode/worktrees/session");
         let denied = apply_permission_mode(
             PermissionMode::FullAccess,
@@ -778,17 +827,54 @@ mod action_normalization_tests {
                 reason: "policy refuses".into(),
             },
             worktree,
+            None,
         );
-        match denied {
-            JudgmentDecision::AllowWithConstraints(constraints) => {
-                assert!(!constraints.network, "override must not add network");
-                assert!(
-                    constraints.allowed_write_globs.is_empty(),
-                    "override must not add write globs"
-                );
-            }
-            other => panic!("FullAccess must override a deny, got {other:?}"),
-        }
+        assert!(
+            matches!(denied, JudgmentDecision::Deny { .. }),
+            "FullAccess must never convert a Deny into an allow"
+        );
+    }
+
+    #[test]
+    fn auto_never_auto_approves_a_registered_non_read_tool() {
+        // §9.4 Hole A: an AlwaysAsk / write-class descriptor is never
+        // auto-approved, even under Auto.
+        let worktree = Path::new("/repo/.purrcode/worktrees/session");
+        let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+        let ceiling = purrcode_runtime_core::ToolCeiling {
+            maximum_side_effect: purrcode_runtime_core::SideEffectClass::Destructive,
+            maximum_network: purrcode_runtime_core::NetworkScope::Any,
+            maximum_filesystem: purrcode_runtime_core::FilesystemScope::maximum(),
+            minimum_approval: purrcode_runtime_core::ApprovalPolicy::PreAuthorized,
+            denied_tool_ids: std::collections::BTreeSet::new(),
+        };
+        let write = registry
+            .admit_tool(
+                purrcode_runtime_core::ToolDescriptorProposal {
+                    id: purrcode_runtime_core::ToolId::mcp("github", "create_issue"),
+                    provider: purrcode_runtime_core::ToolProvider::Mcp,
+                    display_name: "create_issue".into(),
+                    description: "write".into(),
+                    schema: serde_json::json!({ "type": "object" }),
+                    capabilities: std::collections::BTreeSet::new(),
+                    side_effect_class: purrcode_runtime_core::SideEffectClass::Write,
+                    network_scope: purrcode_runtime_core::NetworkScope::None,
+                    filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                    approval_policy: purrcode_runtime_core::ApprovalPolicy::ByClass,
+                    origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+                },
+                &ceiling,
+            )
+            .clone();
+        let approval = JudgmentDecision::RequireApproval {
+            reason: "tool may mutate external state".into(),
+            constraints: ActionConstraints::read_only(worktree.to_path_buf()),
+        };
+        let kept = apply_permission_mode(PermissionMode::Auto, approval, worktree, Some(&write));
+        assert!(
+            matches!(kept, JudgmentDecision::RequireApproval { .. }),
+            "a write-class registered tool must never be auto-approved"
+        );
     }
 
     #[test]
@@ -799,14 +885,14 @@ mod action_normalization_tests {
             constraints: ActionConstraints::read_only(worktree.to_path_buf()),
         };
         assert!(matches!(
-            apply_permission_mode(PermissionMode::Ask, approval, worktree),
+            apply_permission_mode(PermissionMode::Ask, approval, worktree, None),
             JudgmentDecision::RequireApproval { .. }
         ));
         let advice = JudgmentDecision::Replan {
             reason: "plan drifted".into(),
         };
         assert!(matches!(
-            apply_permission_mode(PermissionMode::FullAccess, advice, worktree),
+            apply_permission_mode(PermissionMode::FullAccess, advice, worktree, None),
             JudgmentDecision::Replan { .. }
         ));
     }
@@ -820,6 +906,7 @@ mod action_normalization_tests {
                 max_entries: 32,
             }),
             &worktree,
+            None,
         )
         .unwrap();
         let decision = Policy::default().evaluate(&action, &worktree);
@@ -849,6 +936,7 @@ mod action_normalization_tests {
                 max_entries: 32,
             }),
             &worktree,
+            None,
         )
         .unwrap();
         let distinct_decision = Policy::default().evaluate(&distinct, &worktree);
@@ -871,6 +959,7 @@ mod action_normalization_tests {
                 expected_digest: None,
             },
             &worktree,
+            None,
         );
         assert!(result.is_err());
     }
@@ -884,7 +973,39 @@ mod action_normalization_tests {
                 expected_digest: "digest".into(),
             },
             &worktree,
+            None,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_only_profile_rejects_file_mutation_before_pawgate() {
+        // v1.3 §8 PR4 acceptance test step 3: a project agent with
+        // permissions.write:false proposing a WriteFile is refused in
+        // normalize_action, BEFORE ActionProposed is appended.
+        let worktree = std::env::temp_dir().join("purrcode-readonly-profile");
+        let profile = AgentDescriptor::default(); // permissive default is read-only
+        let error = normalize_action(
+            AgentAction::WriteFile {
+                path: "src/file.txt".into(),
+                content: "value".into(),
+                expected_digest: None,
+            },
+            &worktree,
+            Some(&profile),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("read-only"),
+            "write must be refused in normalize_action, got {error}"
+        );
+        // Reads still pass through a read-only profile.
+        let read = normalize_action(
+            AgentAction::Read(RepositoryReadAction::GitStatus),
+            &worktree,
+            Some(&profile),
+        )
+        .unwrap();
+        assert!(matches!(read, ProposedAction::RepositoryRead(..)));
     }
 }

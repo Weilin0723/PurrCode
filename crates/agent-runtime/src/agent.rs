@@ -40,11 +40,12 @@ use purrcode_runtime_core::work::{
     WorkPriority, WorkRisk, WorkTask, WorkTaskId, WorkTaskStatus,
 };
 use purrcode_runtime_core::{
-    ActionConstraints, ActionId, ApprovalAuthority, Authorization, CheckpointDecision,
-    CheckpointId, ContextClass, ContextLedgerEntry, ContextLedgerSection, ContextualDecision,
-    ContextualJudgment, ConversationMessage, FailedAttempt, JudgmentDecision, PinnedContext,
-    ProposedAction, RepositoryReadAction, SemanticCheckpoint, SessionEvent, SessionId,
-    SessionState, SessionStatus, TestResultSummary, TurnId, ValidationStatus, WhyIncluded,
+    ActionConstraints, ActionId, AgentDescriptor, ApprovalAuthority, Authorization,
+    CheckpointDecision, CheckpointId, ContextClass, ContextLedgerEntry, ContextLedgerSection,
+    ContextualDecision, ContextualJudgment, ConversationMessage, FailedAttempt, JudgmentDecision,
+    PinnedContext, ProposedAction, RepositoryReadAction, SemanticCheckpoint, SessionEvent,
+    SessionId, SessionState, SessionStatus, TestResultSummary, TurnId, ValidationStatus,
+    WhyIncluded,
 };
 use purrcode_validation_runtime::{
     EvidenceStatus, ValidationDetector, ValidationEvidence, ValidationPlan, ValidationRunner,
@@ -228,6 +229,10 @@ pub struct NativeAgent<'a> {
     /// the main turn, the compaction rebuild, the scout — sees the same pinned
     /// set and none of them can silently drop it.
     pinned_context: PinnedContext,
+    /// The v1.3 agent profile this turn runs under. `None` for built-in
+    /// sessions; a named profile supplies its own system prompt, tool allowlist
+    /// and permission ceiling (all pre-restricted at admission).
+    profile: Option<AgentDescriptor>,
 }
 
 impl<'a> NativeAgent<'a> {
@@ -247,6 +252,7 @@ impl<'a> NativeAgent<'a> {
             stream_observer: None,
             cancellation: None,
             pinned_context: PinnedContext::default(),
+            profile: None,
         }
     }
 
@@ -319,6 +325,18 @@ impl<'a> NativeAgent<'a> {
     pub fn with_pinned_context(mut self, pinned: PinnedContext) -> Self {
         self.pinned_context = pinned;
         self
+    }
+
+    /// Bind a v1.3 agent profile to this turn. The profile was already
+    /// restricted at admission; its ceiling and system prompt apply here.
+    pub fn with_profile(mut self, profile: AgentDescriptor) -> Self {
+        self.profile = Some(profile);
+        self
+    }
+
+    /// The active profile, if any.
+    pub fn profile(&self) -> Option<&AgentDescriptor> {
+        self.profile.as_ref()
     }
 
     fn budget(&self) -> BudgetConstraints {
@@ -419,6 +437,7 @@ impl<'a> NativeAgent<'a> {
             &context_hits,
             &session_events,
             &self.pinned_context,
+            self.profile.as_ref(),
         );
         Ok((messages, ledger))
     }
@@ -1544,7 +1563,8 @@ impl<'a> NativeAgent<'a> {
 
             let mut action_results = Vec::new();
             for action in actions {
-                let proposed = crate::normalize::normalize_action(action, &worktree)?;
+                let proposed =
+                    crate::normalize::normalize_action(action, &worktree, self.profile.as_ref())?;
                 // Verify the action is read-only per scout's allowed kinds.
                 if !matches!(&proposed, ProposedAction::RepositoryRead(_)) {
                     return Err(AgentError::InvalidModelTurn(
@@ -2212,6 +2232,7 @@ impl<'a> NativeAgent<'a> {
                 &context_hits,
                 &session_events,
                 &self.pinned_context,
+                self.profile.as_ref(),
             );
             // ── P0: Preflight the FINAL ModelRequest ─────────────────
             // Move contract + warning injection BEFORE compaction so the
@@ -2284,6 +2305,7 @@ impl<'a> NativeAgent<'a> {
                     &context_hits,
                     &session_events,
                     &self.pinned_context,
+                    self.profile.as_ref(),
                 );
                 let (rebuilt_msgs, rebuilt_ledger) = rebuilt;
                 // P0: Re-inject contract+warning with freshly computed
@@ -2550,7 +2572,11 @@ impl<'a> NativeAgent<'a> {
                 // flow through ToolRuntime::execute() instead of execute_batch().
                 let mut normalized = Vec::with_capacity(turn.actions.len());
                 for a in &turn.actions {
-                    normalized.push(normalize_action(a.clone(), &worktree)?);
+                    normalized.push(normalize_action(
+                        a.clone(),
+                        &worktree,
+                        self.profile.as_ref(),
+                    )?);
                 }
                 let mut action_ids = Vec::with_capacity(turn.actions.len());
                 // P0-4: Store each action's PawGate constraints individually
@@ -2650,7 +2676,7 @@ impl<'a> NativeAgent<'a> {
                         turn.action.clone()
                     }
                     .ok_or_else(|| AgentError::InvalidModelTurn("action is required".into()))?;
-                    match normalize_action(action, &worktree) {
+                    match normalize_action(action, &worktree, self.profile.as_ref()) {
                         Ok(action) => {
                             proposed_action = Some(action);
                             break;
@@ -3114,6 +3140,7 @@ impl<'a> NativeAgent<'a> {
                 self.controls.permission_mode,
                 decision,
                 &session_worktree.path,
+                None,
             );
             match decision {
                 JudgmentDecision::AllowWithConstraints(constraints) => {
