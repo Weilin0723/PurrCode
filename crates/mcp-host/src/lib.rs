@@ -6,6 +6,7 @@ use purrcode_ninelives::{SessionStore, StoreError};
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, Authorization, CommandAction,
     ExternalToolAction, JudgmentDecision, ProposedAction, SessionEvent, SessionId,
+    ToolDescriptorProposal,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -332,6 +333,75 @@ pub struct McpToolDescriptor {
     pub name: String,
     pub description: Option<String>,
     pub input_schema: Value,
+    /// MCP `annotations` from the JSON-RPC reply — claims authored by the
+    /// remote server, so they are untrusted and restricted on admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Value>,
+    /// MCP `outputSchema` — the structured result contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    /// MCP `title` — the server's human-readable name for the tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl McpToolDescriptor {
+    /// Map a discovered tool onto the v1.3 descriptor lattice (PR5 §8).
+    ///
+    /// Annotations are CLAIMS from a remote server, so the proposal carries
+    /// `DescriptorOrigin::RemoteDiscovery` and is restricted on admission
+    /// against the workspace ceiling, then pinned (`tool_descriptor_pins`).
+    /// `readOnlyHint` → Read; `destructiveHint` → Destructive; the server's
+    /// configured network reach → `NetworkScope`; the server's working
+    /// directory → the filesystem scope.
+    pub fn descriptor_proposal(&self, server: &McpServerConfig) -> ToolDescriptorProposal {
+        use purrcode_runtime_core::{
+            ApprovalPolicy, DescriptorOrigin, FilesystemScope, NetworkScope, SideEffectClass,
+            ToolId, ToolProvider,
+        };
+        let read_only = self
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get("readOnlyHint"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let destructive = self
+            .annotations
+            .as_ref()
+            .and_then(|a| a.get("destructiveHint"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let side_effect_class = if destructive {
+            SideEffectClass::Destructive
+        } else if read_only {
+            SideEffectClass::Read
+        } else {
+            SideEffectClass::Execute
+        };
+        let network_scope = if server.network {
+            NetworkScope::Any
+        } else {
+            NetworkScope::None
+        };
+        let filesystem_scope = FilesystemScope::WorktreeRead;
+        ToolDescriptorProposal {
+            id: ToolId::mcp(&server.id, &self.name),
+            provider: ToolProvider::Mcp,
+            display_name: self.title.clone().unwrap_or_else(|| self.name.clone()),
+            description: self.description.clone().unwrap_or_default(),
+            schema: self.input_schema.clone(),
+            capabilities: std::collections::BTreeSet::new(),
+            side_effect_class,
+            network_scope,
+            filesystem_scope,
+            approval_policy: if read_only && !server.network {
+                ApprovalPolicy::ByClass
+            } else {
+                ApprovalPolicy::AlwaysAsk
+            },
+            origin: DescriptorOrigin::RemoteDiscovery,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -409,6 +479,14 @@ impl McpHost {
                     name: name.into(),
                     description: tool["description"].as_str().map(str::to_owned),
                     input_schema: tool["inputSchema"].clone(),
+                    annotations: tool["annotations"]
+                        .as_object()
+                        .map(|_| tool["annotations"].clone()),
+                    output_schema: tool["outputSchema"]
+                        .clone()
+                        .as_object()
+                        .map(|_| tool["outputSchema"].clone()),
+                    title: tool["title"].as_str().map(str::to_owned),
                 })
             })
             .collect()
@@ -435,6 +513,13 @@ impl McpHost {
                 name: name.into(),
                 description: tool["description"].as_str().map(str::to_owned),
                 input_schema: tool["inputSchema"].clone(),
+                annotations: tool["annotations"]
+                    .as_object()
+                    .map(|_| tool["annotations"].clone()),
+                output_schema: tool["outputSchema"]
+                    .as_object()
+                    .map(|_| tool["outputSchema"].clone()),
+                title: tool["title"].as_str().map(str::to_owned),
             });
         }
         let diagnostics = if stderr.is_empty() {
