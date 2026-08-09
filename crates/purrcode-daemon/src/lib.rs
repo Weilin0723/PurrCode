@@ -58,6 +58,7 @@ use purrcode_ninelives::{
     Automation, ProjectMemoryEntry, SessionCheckpoint, SessionStore, StoreError,
 };
 use purrcode_pawgate::{Policy, resolve_policy_path};
+use purrcode_extension_config::ExtensionSet;
 use purrcode_provider_gateway::failover::FailoverProvider;
 use purrcode_provider_gateway::{
     AppConfig, ModelEvent, ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode,
@@ -104,7 +105,7 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, broadcast, watch};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, watch};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
@@ -147,6 +148,11 @@ struct AppState {
     supervisor_runs: Arc<Mutex<BTreeMap<SessionId, SupervisorRunState>>>,
     lsp: Arc<Mutex<LspManager>>,
     terminals: TerminalRuntime,
+    /// Per-repository `.purrcode/` extension cache (v1.3 §8 PR3). The cache is
+    /// mandatory, not an optimization: the file watcher and the reload route
+    /// invalidate it, and every per-turn read hits this snapshot rather than
+    /// re-reading YAML from disk.
+    extensions: Arc<RwLock<BTreeMap<PathBuf, Arc<ExtensionSet>>>>,
 }
 
 /// Metadata retained for a session whose durable event log cannot be replayed
@@ -420,6 +426,7 @@ pub async fn bind_and_report(
         supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
         lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
         terminals: TerminalRuntime::default(),
+        extensions: Arc::new(RwLock::new(BTreeMap::new())),
     };
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -574,6 +581,8 @@ pub async fn bind_and_report(
         .route("/v1/repository/inspect", post(inspect_repository))
         .route("/v1/references/resolve", post(resolve_references))
         .route("/v1/commands", get(list_commands))
+        .route("/v1/extensions/diagnostics", get(extension_diagnostics))
+        .route("/v1/extensions/reload", post(extension_reload))
         .route("/v1/lsp/servers", get(list_lsp_servers))
         .route("/v1/lsp/open", post(lsp_open))
         .route("/v1/lsp/hover", post(lsp_hover))
@@ -9403,6 +9412,71 @@ async fn list_commands(
 }
 
 #[derive(Deserialize)]
+struct ExtensionQuery {
+    #[serde(default)]
+    repository: String,
+}
+
+/// Load (or return the cached) extension set for a repository.
+async fn load_extension_set(state: &AppState, repository: &Path) -> Arc<ExtensionSet> {
+    if let Some(cached) = state.extensions.read().await.get(repository) {
+        return cached.clone();
+    }
+    let config = AppConfig::load(&state.app_config).ok();
+    let ceiling = match config {
+        Some(config) => effective_policy(&config, repository)
+            .map(|policy| policy.tool_ceiling(repository))
+            .unwrap_or_else(|_| Policy::default().tool_ceiling(repository)),
+        None => Policy::default().tool_ceiling(repository),
+    };
+    let user_root = std::env::home_dir().map(|home| home.join(".purrcode"));
+    let (set, _diagnostics) =
+        ExtensionSet::load(repository, user_root.as_deref(), &ceiling);
+    let set = Arc::new(set);
+    state
+        .extensions
+        .write()
+        .await
+        .insert(repository.to_path_buf(), set.clone());
+    set
+}
+
+/// v1.3 §7: every parse error and every clamped field, for a repository.
+async fn extension_diagnostics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let set = load_extension_set(&state, &repository).await;
+    Ok(Json(serde_json::json!({ "diagnostics": set.diagnostics })))
+}
+
+#[derive(Deserialize)]
+struct ExtensionReloadRequest {
+    #[serde(default)]
+    repository: String,
+}
+
+/// v1.3 §7: invalidate the per-repository extension cache so the next load
+/// re-reads `.purrcode/` from disk.
+async fn extension_reload(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ExtensionReloadRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(request.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    state.extensions.write().await.remove(&repository);
+    Ok(Json(serde_json::json!({ "reloaded": true })))
+}
+
+#[derive(Deserialize)]
 struct ListMemoryQuery {
     #[serde(default)]
     repository: String,
@@ -11801,6 +11875,7 @@ mod tests {
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -11887,6 +11962,7 @@ mod tests {
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -11992,6 +12068,7 @@ mod tests {
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -12089,6 +12166,7 @@ mod tests {
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -12441,6 +12519,7 @@ mod tests {
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -13654,6 +13733,7 @@ default = "ollama/small"
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let session_id = SessionId::new();
         let original_generation = Uuid::new_v4();
@@ -13754,6 +13834,7 @@ default = "ollama/small"
             supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let session_id = SessionId::new();
         let generation = Uuid::new_v4();

@@ -934,17 +934,36 @@ async fn ensure_purrcode_excluded(repository: &Path) -> Result<(), RepositoryErr
         repository.join(exclude)
     };
     let current = std::fs::read_to_string(&exclude).unwrap_or_default();
-    if current.lines().any(|line| line.trim() == ".purrcode/") {
-        return Ok(());
+    let mut lines: Vec<&str> = current.lines().collect();
+    // v1.3: only the runtime scratch under `.purrcode/worktrees/` is excluded,
+    // so `.purrcode/agents/`, `.purrcode/commands/`, `.purrcode/hooks/` and
+    // `.purrcode/settings.yaml` can be committed as project configuration. If a
+    // previous PurrCode run wrote the blanket `.purrcode/` line, replace it.
+    lines.retain(|line| line.trim() != ".purrcode/");
+    let has_narrow = lines
+        .iter()
+        .any(|line| line.trim() == ".purrcode/worktrees/");
+    if !has_narrow {
+        lines.push(".purrcode/worktrees/");
+    }
+    let mut updated = String::new();
+    let mut first = true;
+    for line in lines {
+        if !first {
+            updated.push('\n');
+        }
+        updated.push_str(line);
+        first = false;
+    }
+    if !updated.is_empty() {
+        updated.push('\n');
     }
     let mut file = OpenOptions::new()
         .create(true)
-        .append(true)
+        .truncate(true)
+        .write(true)
         .open(&exclude)?;
-    if !current.is_empty() && !current.ends_with('\n') {
-        writeln!(file)?;
-    }
-    writeln!(file, ".purrcode/")?;
+    file.write_all(updated.as_bytes())?;
     file.sync_all()?;
     Ok(())
 }

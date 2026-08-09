@@ -21,6 +21,7 @@ reqwest.workspace = true
 purrcode-agent-runtime = { path = "../agent-runtime" }
 purrcode-codex-bridge = { path = "../codex-bridge" }
 purrcode-pawgate = { path = "../pawgate-runtime" }
+purrcode-extension-config = { path = "../extension-config" }
 purrcode-mcp-host = { path = "../mcp-host" }
 purrcode-provider-gateway = { path = "../provider-gateway" }
 purrcode-provider-import = { path = "../provider-import" }

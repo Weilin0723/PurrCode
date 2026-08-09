@@ -227,6 +227,7 @@ mod tests {
                 purrcode_lsp::default_server_commands(),
             ))),
             terminals: crate::TerminalRuntime::default(),
+            extensions: std::sync::Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
         }
     }
 
