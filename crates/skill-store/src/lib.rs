@@ -369,8 +369,8 @@ impl SkillStore {
         }
 
         self.conn.execute(
-            "DELETE FROM skill_store WHERE skill_id = ?1",
-            params![skill_id],
+            "DELETE FROM skill_store WHERE skill_id = ?1 AND scope = ?2",
+            params![skill_id, record.scope.to_string()],
         )?;
 
         Ok(record)
