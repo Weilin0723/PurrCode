@@ -4027,6 +4027,7 @@ dependencies = [
  "purrcode-claw",
  "purrcode-codex-bridge",
  "purrcode-environment-runtime",
+ "purrcode-extension-config",
  "purrcode-lsp",
  "purrcode-mcp-host",
  "purrcode-ninelives",
@@ -4099,6 +4100,18 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "uuid",
+]
+
+[[package]]
+name = "purrcode-extension-config"
+version = "1.0.0"
+dependencies = [
+ "purrcode-pawgate",
+ "purrcode-runtime-core",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

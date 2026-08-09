@@ -1057,12 +1057,7 @@ mod tests {
         // The six-string allowlist at the top of `verify` is maintained
         // separately from the struct; assert they never drift apart.
         let value = serde_json::to_value(Policy::default()).unwrap();
-        let fields: BTreeSet<String> = value
-            .as_object()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect();
+        let fields: BTreeSet<String> = value.as_object().unwrap().keys().cloned().collect();
         let known: BTreeSet<String> = [
             "read_only_programs",
             "approval_required_programs",

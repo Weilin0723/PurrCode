@@ -85,12 +85,7 @@ impl ExtensionSet {
         (set, diagnostics)
     }
 
-    fn load_agents(
-        &mut self,
-        root: &Path,
-        source: ExtensionSource,
-        ceiling: &ToolCeiling,
-    ) {
+    fn load_agents(&mut self, root: &Path, source: ExtensionSource, ceiling: &ToolCeiling) {
         let dir = root.join("agents");
         for path in list_yaml(&dir) {
             let Some(bytes) = read_bounded(&path) else {
@@ -104,7 +99,8 @@ impl ExtensionSet {
             // clamped fields.
             let (descriptor, diagnostics) = profile.clone().restrict(ceiling);
             self.diagnostics.extend(diagnostics);
-            self.admitted_agents.insert(descriptor.name().to_owned(), descriptor);
+            self.admitted_agents
+                .insert(descriptor.name().to_owned(), descriptor);
             self.agents.insert(profile.name.clone(), profile);
         }
     }
@@ -202,10 +198,8 @@ fn parse_command(
     };
     // A project file can never declare a daemon route (§8 PR3). The daemon
     // path is built-in only; project files use Agent/Prompt/Client.
-    if matches!(
-        command.execution,
-        CommandExecutionSpec::Daemon { .. }
-    ) && source == ExtensionSource::Project
+    if matches!(command.execution, CommandExecutionSpec::Daemon { .. })
+        && source == ExtensionSource::Project
     {
         return Err(ExtensionLoadError::Invalid(
             "project commands may not declare a daemon route",
@@ -290,12 +284,12 @@ mod tests {
             ".purrcode/agents/broken.yaml",
             "name: [unclosed\n",
         );
-        let (set, _) = ExtensionSet::load(
-            root.path(),
-            None,
-            &ceiling(),
+        let (set, _) = ExtensionSet::load(root.path(), None, &ceiling());
+        assert_eq!(
+            set.agents.len(),
+            1,
+            "the good file loads despite the broken one"
         );
-        assert_eq!(set.agents.len(), 1, "the good file loads despite the broken one");
         assert!(set.agents.contains_key("reviewer"));
     }
 
@@ -342,11 +336,7 @@ mod tests {
             ".purrcode/agents/a.yaml",
             "name: a\ndescription: project\n",
         );
-        write_yaml(
-            user.path(),
-            "agents/a.yaml",
-            "name: a\ndescription: user\n",
-        );
+        write_yaml(user.path(), "agents/a.yaml", "name: a\ndescription: user\n");
         let (set, _) = ExtensionSet::load(project.path(), Some(user.path()), &ceiling());
         // User tier wins: the map holds one entry, the user one.
         assert_eq!(set.agents.len(), 1);
@@ -376,7 +366,9 @@ mod tests {
             purrcode_runtime_core::FilesystemScope::WorktreeRead
         );
         assert!(
-            diagnostics.iter().any(|d| d.severity == DiagnosticSeverity::Restricted),
+            diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Restricted),
             "the clamp must be surfaced"
         );
     }

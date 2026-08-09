@@ -230,10 +230,7 @@ impl AgentProfile {
     /// `permissions` is a REQUEST, never a grant: every field can only lower
     /// the effective value relative to the workspace ceiling. Capability axes
     /// intersect (min); the approval axis takes the max (friction only grows).
-    pub fn restrict(
-        self,
-        ceiling: &ToolCeiling,
-    ) -> (AgentDescriptor, Vec<AdmissionDiagnostic>) {
+    pub fn restrict(self, ceiling: &ToolCeiling) -> (AgentDescriptor, Vec<AdmissionDiagnostic>) {
         let mut diagnostics = Vec::new();
 
         // ── Filesystem ceiling ──
