@@ -408,6 +408,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::TerminalActionProposed { .. } => "terminal_action_proposed",
         SessionEvent::TerminalJudgmentRecorded { .. } => "terminal_judgment_recorded",
         SessionEvent::CompletionRepairRecorded { .. } => "completion_repair_recorded",
+        SessionEvent::ToolEvidenceRecorded { .. } => "tool_evidence_recorded",
+        SessionEvent::HookTriggered { .. } => "hook_triggered",
     }
 }
 

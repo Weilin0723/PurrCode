@@ -4285,6 +4285,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         TerminalActionProposed { .. } => "terminal_action_proposed",
         TerminalJudgmentRecorded { .. } => "terminal_judgment_recorded",
         CompletionRepairRecorded { .. } => "completion_repair_recorded",
+        ToolEvidenceRecorded { .. } => "tool_evidence_recorded",
+        HookTriggered { .. } => "hook_triggered",
     }
 }
 

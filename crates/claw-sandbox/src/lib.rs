@@ -122,6 +122,15 @@ impl ToolRuntime {
             ProposedAction::ExternalTool(_) => Err(ExecutionError::UnsupportedConstraint(
                 "external tool actions must execute through the isolated MCP host".into(),
             )),
+            // v1.3: registry tools dispatch on descriptor.provider in PR5.
+            // Until then nothing constructs this variant, so a conservative
+            // refusal is honest — never a silent no-op.
+            ProposedAction::Tool(invocation) => {
+                Err(ExecutionError::UnsupportedConstraint(format!(
+                    "tool `{}` dispatch is not wired until PR5",
+                    invocation.tool_id
+                )))
+            }
         }
     }
 

@@ -209,6 +209,32 @@ impl Policy {
                     },
                 }
             }
+            // v1.3: registry-admitted tool invocations are judged by
+            // `Policy::evaluate_tool` against their descriptor. This arm is a
+            // conservative fallback so the old `evaluate` path can never
+            // auto-allow a registry tool; PR2 replaces it with the real
+            // descriptor-driven decision.
+            ProposedAction::Tool(invocation) => {
+                if invocation.working_directory != repository {
+                    return JudgmentDecision::Deny {
+                        reason: "tool working directory does not match the session worktree".into(),
+                    };
+                }
+                JudgmentDecision::RequireApproval {
+                    reason: format!(
+                        "tool `{}` requires explicit authorization",
+                        invocation.tool_id
+                    ),
+                    constraints: ActionConstraints {
+                        working_directory: repository.to_path_buf(),
+                        network: false,
+                        timeout_seconds: self.timeout_seconds,
+                        maximum_output_bytes: self.maximum_output_bytes,
+                        allowed_write_globs: Vec::new(),
+                        maximum_changed_files: 0,
+                    },
+                }
+            }
         }
     }
 

@@ -1095,6 +1095,8 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::RecoveryRequired { .. } => "recovery_required",
         SessionEvent::SessionCompleted => "session_completed",
         SessionEvent::SessionFailed { .. } => "session_failed",
+        SessionEvent::ToolEvidenceRecorded { .. } => "tool_evidence_recorded",
+        SessionEvent::HookTriggered { .. } => "hook_triggered",
         _ => "research_event",
     }
 }

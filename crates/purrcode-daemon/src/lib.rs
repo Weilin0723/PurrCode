@@ -5791,6 +5791,15 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 match action {
                     ProposedAction::RepositoryRead(_) => inspected += 1,
                     ProposedAction::WriteFile(_) | ProposedAction::DeleteFile(_) => edited += 1,
+                    ProposedAction::Tool(_) => items.push(ActivityItem {
+                        id,
+                        kind: ActivityKind::Command,
+                        label: "Called a registered tool".to_owned(),
+                        status: ActivityStatus::Done,
+                        summary: None,
+                        detail_available: true,
+                        turn_id: turn.clone(),
+                    }),
                     _ => items.push(ActivityItem {
                         id,
                         kind: ActivityKind::Command,

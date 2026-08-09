@@ -406,6 +406,7 @@ pub(crate) fn task_related_paths(state: &SessionState) -> Vec<PathBuf> {
             }
             ProposedAction::WriteFile(_) | ProposedAction::DeleteFile(_) => None,
             ProposedAction::Command(_) | ProposedAction::ExternalTool(_) => None,
+            ProposedAction::Tool(_) => None,
             ProposedAction::RepositoryRead(_) => None,
         })
         .take(MAX_TASK_CONTEXT_PATH_HINTS)

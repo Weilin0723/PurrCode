@@ -2,19 +2,41 @@
 
 pub mod adaptation;
 pub mod authority;
+pub mod capability;
+pub mod evidence;
+pub mod extension;
+pub mod graph;
+pub mod native_tools;
 pub mod product_state;
 pub mod terminal;
+pub mod tool;
 pub mod work;
 
 pub use authority::{
     AuthenticationChannel, AuthorityMode, GrantCapability, GrantId, HumanAuthorityGrant,
     HumanIdentity,
 };
+pub use capability::{
+    AdmissionDiagnostic, CapabilityId, CapabilityProvider, CapabilityRegistry, DiagnosticSeverity,
+    ExtensionLayer,
+};
+pub use evidence::{EvidenceInitiator, ExecutionEvidence, ExecutionOutcome, RedactionClass};
+pub use extension::{
+    AgentDescriptor, AgentProfile, CommandDescriptor, CommandExecutionSpec, ContextPolicy,
+    ContextRequirement, HookAction, HookDescriptor, HookTrigger, ModelRoleName, PermissionRequest,
+    SkillDescriptor, SkillPolicy, SkillValidation, ToolPolicy,
+};
+pub use graph::{GraphEdgeKind, GraphNodeKind};
+pub use native_tools::builtin_native_proposals;
 pub use product_state::{InputDisposition, ProductState, ProductStateView, StateColor};
 pub use terminal::{
     OwnershipGeneration, OwnershipTransition, ResizeTerminalAction, SendTerminalInputAction,
     StartTerminalAction, StopProcessAction, TerminalAction, TerminalDimensions, TerminalId,
     TerminalInput, TerminalOwner, TerminalSessionRecord, TerminalStatus, TranscriptPolicy,
+};
+pub use tool::{
+    ApprovalPolicy, DescriptorOrigin, FilesystemScope, NetworkScope, SideEffectClass, ToolCeiling,
+    ToolDescriptor, ToolDescriptorProposal, ToolId, ToolInvocation, ToolProvider,
 };
 pub use work::{
     AcceptanceCriterion, CriterionId, DesignDecision, DesignDecisionId, EvidenceCoverage,
@@ -565,12 +587,25 @@ pub enum ProposedAction {
     RepositoryRead(RepositoryReadAction),
     WriteFile(WriteFileAction),
     DeleteFile(DeleteFileAction),
-    ExternalTool(ExternalToolAction),
+    ExternalTool(ExternalToolAction), // deprecated; kept for log replay (§10)
+    Tool(ToolInvocation),             // NEW v1.3
 }
 
 impl ProposedAction {
     pub fn digest(&self, constraints: &ActionConstraints) -> Result<String, DomainError> {
         let canonical = serde_json::to_vec(&(self, constraints))?;
+        Ok(blake3::hash(&canonical).to_hex().to_string())
+    }
+
+    /// v1.3: the descriptor digest is hashed alongside the action and the
+    /// constraints. A descriptor mutated between authorize() and
+    /// consume_authorization() no longer matches, so the capability is void.
+    pub fn digest_v3(
+        &self,
+        constraints: &ActionConstraints,
+        descriptor_digest: &str,
+    ) -> Result<String, DomainError> {
+        let canonical = serde_json::to_vec(&(self, constraints, descriptor_digest))?;
         Ok(blake3::hash(&canonical).to_hex().to_string())
     }
 }
@@ -805,6 +840,13 @@ pub enum WhyIncluded {
     },
     RecentEdit,
     Pinned,
+    /// A graph-derived hit: the node was reached by traversing a durable
+    /// project-graph edge, not by matching the query lexically.
+    RelatedByGraph {
+        via_edge: GraphEdgeKind,
+        from_node: String,
+        hops: u8,
+    },
 }
 
 /// Token/byte accounting for one logical slice of an assembled prompt.
@@ -858,7 +900,7 @@ pub struct ContextLedgerEntry {
 /// context inspector can tell "I typed `@src/auth.rs` and it was attached"
 /// apart from "the project's AGENTS.md was attached" — both are pinned, but
 /// only one of them is something the user asked for in this turn.
-#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PinnedOrigin {
     /// A composer reference the user typed (`@file`, `@folder:`, `@diff`,
@@ -869,16 +911,24 @@ pub enum PinnedOrigin {
     ProjectInstructions,
     /// A durable project-memory entry selected for this turn.
     ProjectMemory,
+    /// Structured findings returned by a registered tool (skill validation,
+    /// MCP tool result, hook output). Attached as data, not re-parsed prose —
+    /// acceptance-test step 12.
+    ToolFindings {
+        tool_id: ToolId,
+        action_id: ActionId,
+    },
 }
 
 impl PinnedOrigin {
     /// The prefix used to build a ledger section label, so labels group by
     /// origin when the inspector sorts them.
-    pub const fn label_prefix(self) -> &'static str {
+    pub const fn label_prefix(&self) -> &'static str {
         match self {
             Self::ComposerReference => "reference",
             Self::ProjectInstructions => "project_instructions",
             Self::ProjectMemory => "project_memory",
+            Self::ToolFindings { .. } => "tool_findings",
         }
     }
 
@@ -886,11 +936,12 @@ impl PinnedOrigin {
     /// user's own words made concrete; instructions and memory are the
     /// project's standing knowledge, and labelling them as such is what stops
     /// the model from reading a remembered build command as a fresh request.
-    pub const fn heading(self) -> &'static str {
+    pub const fn heading(&self) -> &'static str {
         match self {
             Self::ComposerReference => "ATTACHED REFERENCES (the user pinned these to this turn)",
             Self::ProjectInstructions => "PROJECT INSTRUCTIONS (from the repository)",
             Self::ProjectMemory => "PROJECT MEMORY (durable, auditable project knowledge)",
+            Self::ToolFindings { .. } => "TOOL FINDINGS (structured output from a registered tool)",
         }
     }
 }
@@ -940,12 +991,12 @@ impl PinnedContext {
     /// actually saw — the invariant the context ledger is built on.
     pub fn render_parts(&self) -> Vec<(String, String)> {
         let mut parts = Vec::with_capacity(self.sections.len());
-        let mut current: Option<PinnedOrigin> = None;
+        let mut current: Option<&PinnedOrigin> = None;
         for section in &self.sections {
             let mut text = String::new();
-            if current != Some(section.origin) {
+            if current != Some(&section.origin) {
                 text.push_str(&format!("## {}\n", section.origin.heading()));
-                current = Some(section.origin);
+                current = Some(&section.origin);
             }
             text.push_str(&format!("### {}\n{}\n\n", section.label, section.content));
             parts.push((
@@ -1472,6 +1523,21 @@ pub enum SessionEvent {
         /// Which completion-repair attempt this was (1-based).
         attempt: u8,
         reason: String,
+    },
+    // ── v1.3 extension-platform events (appended at the end so logs written
+    //    by v1.2 still deserialize) ───────────────────────────────────────
+    /// One authorized tool invocation, recorded as durable evidence. The
+    /// canonical projection of [`crate::ExecutionEvidence`] into the event log.
+    ToolEvidenceRecorded {
+        evidence: Box<ExecutionEvidence>,
+    },
+    /// A governed hook fired (or was denied before it could). Recorded BEFORE
+    /// the action is proposed, so a triggered-but-denied hook is
+    /// distinguishable from one that never fired.
+    HookTriggered {
+        hook_id: String,
+        trigger: HookTrigger,
+        action_id: Option<ActionId>,
     },
 }
 
@@ -2645,6 +2711,30 @@ mod tests {
     }
 
     #[test]
+    fn digest_v3_binds_the_descriptor_digest() {
+        // §4.1: a descriptor mutated between authorize() and
+        // consume_authorization() must void the capability.
+        let root = PathBuf::from("/repo");
+        let action = ProposedAction::Tool(ToolInvocation {
+            tool_id: ToolId::native("read_file"),
+            arguments: serde_json::json!({}),
+            working_directory: root.clone(),
+            descriptor_digest: "abc".into(),
+        });
+        let constraints = ActionConstraints::read_only(root.clone());
+
+        let d1 = action.digest_v3(&constraints, "descriptor-v1").unwrap();
+        let d2 = action.digest_v3(&constraints, "descriptor-v2").unwrap();
+        assert_ne!(
+            d1, d2,
+            "descriptor refresh invalidates outstanding capabilities"
+        );
+
+        let same = action.digest_v3(&constraints, "descriptor-v1").unwrap();
+        assert_eq!(d1, same, "deterministic for identical inputs");
+    }
+
+    #[test]
     fn repository_read_action_synthesizes_safe_shell_invocation() {
         let root = PathBuf::from("/repo");
         let read = RepositoryReadAction::GitLog {
@@ -2688,6 +2778,60 @@ mod tests {
         let json = serde_json::to_string(&action).unwrap();
         let parsed: ProposedAction = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, action);
+    }
+
+    #[test]
+    fn v1_2_session_event_log_still_deserializes_with_new_variants_present() {
+        // §10 backward compatibility: appending variants must not change the
+        // serde shape of the pre-existing variants, so a v1.2-written log
+        // (which carries exactly these shapes) still loads. Because the derive
+        // attributes on the old variants are untouched, round-tripping a typed
+        // old-shaped event through the CURRENT serde is a faithful proof: the
+        // bytes produced here are byte-identical to what v1.2 wrote.
+        let legacy = SessionEvent::ActionProposed {
+            action_id: ActionId::new(),
+            action: ProposedAction::RepositoryRead(RepositoryReadAction::ReadFile {
+                path: PathBuf::from("src/lib.rs"),
+                max_bytes: DEFAULT_READ_FILE_MAX_BYTES,
+            }),
+            turn_id: None,
+        };
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        let parsed: SessionEvent =
+            serde_json::from_slice(&bytes).expect("v1.2 log must still load");
+        assert_eq!(parsed, legacy);
+
+        // And the new variants round-trip through the same serde framing.
+        let event = SessionEvent::ToolEvidenceRecorded {
+            evidence: Box::new(ExecutionEvidence {
+                action_id: ActionId::new(),
+                session_id: SessionId::new(),
+                turn_id: None,
+                tool_id: ToolId::native("read_file"),
+                provider: ToolProvider::Native,
+                descriptor_digest: "abc".into(),
+                decision: JudgmentDecision::AllowWithConstraints(ActionConstraints::read_only(
+                    PathBuf::from("/repo"),
+                )),
+                approved_by: ApprovalAuthority::DeterministicPolicy,
+                constraints: ActionConstraints::read_only(PathBuf::from("/repo")),
+                effective_network_scope: NetworkScope::None,
+                effective_filesystem_scope: FilesystemScope::WorktreeRead,
+                initiator: EvidenceInitiator::Human,
+                outcome: ExecutionOutcome::Succeeded {
+                    exit_code: Some(0),
+                    truncated: false,
+                    affected_paths: Vec::new(),
+                },
+                structured_output: None,
+                redaction_class: RedactionClass::Public,
+                started_at: chrono::Utc::now(),
+                finished_at: chrono::Utc::now(),
+            }),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
     }
 
     #[test]
