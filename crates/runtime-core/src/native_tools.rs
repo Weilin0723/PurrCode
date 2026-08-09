@@ -11,8 +11,9 @@
 //! registry. This module is the single declaration site the architecture doc's
 //! `native_tools.rs` describes, expressed as proposal builders.
 
+use super::capability::CapabilityRegistry;
 use super::tool::{
-    ApprovalPolicy, DescriptorOrigin, FilesystemScope, NetworkScope, SideEffectClass,
+    ApprovalPolicy, DescriptorOrigin, FilesystemScope, NetworkScope, SideEffectClass, ToolCeiling,
     ToolDescriptorProposal, ToolId, ToolProvider,
 };
 use std::collections::BTreeSet;
@@ -108,34 +109,94 @@ pub fn builtin_native_proposals() -> Vec<ToolDescriptorProposal> {
     ]
 }
 
+/// A fresh registry populated with every builtin native tool, restricted
+/// against the permissive default ceiling (Builtin origins ARE the ceiling
+/// source, so nothing is clamped). Consumers that need the admitted descriptors
+/// (e.g. PawGate's `evaluate_tool` lookup) hold this registry.
+pub fn builtin_native_registry() -> CapabilityRegistry {
+    let mut registry = CapabilityRegistry::new();
+    let ceiling = ToolCeiling {
+        maximum_side_effect: SideEffectClass::Destructive,
+        maximum_network: NetworkScope::Any,
+        maximum_filesystem: FilesystemScope::maximum(),
+        minimum_approval: ApprovalPolicy::PreAuthorized,
+        denied_tool_ids: BTreeSet::new(),
+    };
+    for proposal in builtin_native_proposals() {
+        registry.admit_tool(proposal, &ceiling);
+    }
+    registry
+}
+
+/// The native tool id for a repository-read kind's canonical name.
+pub fn repository_read_tool_id(read: &super::RepositoryReadAction) -> ToolId {
+    use super::RepositoryReadAction::*;
+    let name = match read {
+        GitStatus => "git_status",
+        GitRevParse { .. } => "git_rev_parse",
+        GitLog { .. } => "git_log",
+        GitDiff { .. } => "git_diff",
+        GitShow { .. } => "git_show",
+        GitLsFiles { .. } => "git_ls_files",
+        RepositoryGrep { .. } => "repository_grep",
+        Find { .. } => "find",
+        List { .. } => "list",
+        ReadFile { .. } => "read_file",
+    };
+    ToolId::native(name)
+}
+
+/// The native tool id for a `ProposedAction`, or `None` for actions with no
+/// native descriptor (external tools). Used by PawGate's `evaluate_tool`
+/// fallback to map a legacy action onto its descriptor.
+pub fn native_tool_id_for(action: &super::ProposedAction) -> Option<ToolId> {
+    use super::ProposedAction::*;
+    match action {
+        RepositoryRead(read) => Some(repository_read_tool_id(read)),
+        WriteFile(_) => Some(ToolId::native("write_file")),
+        DeleteFile(_) => Some(ToolId::native("delete_file")),
+        Command(_) => Some(ToolId::native("command")),
+        ExternalTool(_) | Tool(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn builtin_table_covers_all_read_kinds_and_the_trio() {
+    fn builtin_registry_covers_all_proposals() {
+        let registry = builtin_native_registry();
         let proposals = builtin_native_proposals();
-        assert_eq!(proposals.len(), 13, "10 reads + write + delete + command");
-        for name in [
-            "git_status",
-            "git_rev_parse",
-            "git_log",
-            "git_diff",
-            "git_show",
-            "git_ls_files",
-            "repository_grep",
-            "find",
-            "list",
-            "read_file",
-            "write_file",
-            "delete_file",
-            "command",
-        ] {
-            let id = ToolId::native(name);
+        assert_eq!(proposals.len(), 13);
+        for proposal in proposals {
             assert!(
-                proposals.iter().any(|p| p.id == id),
-                "missing builtin {name}"
+                registry.tool(&proposal.id).is_some(),
+                "builtin {} not admitted",
+                proposal.id
             );
+        }
+    }
+
+    #[test]
+    fn repository_read_tool_ids_are_stable() {
+        use super::super::RepositoryReadAction;
+        let cases = [
+            (RepositoryReadAction::GitStatus, "native:git_status"),
+            (
+                RepositoryReadAction::ReadFile {
+                    path: "src/lib.rs".into(),
+                    max_bytes: 1024,
+                },
+                "native:read_file",
+            ),
+            (
+                RepositoryReadAction::GitDiff { paths: vec![] },
+                "native:git_diff",
+            ),
+        ];
+        for (read, expected) in cases {
+            assert_eq!(repository_read_tool_id(&read).as_str(), expected);
         }
     }
 
