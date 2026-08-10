@@ -452,6 +452,34 @@ impl McpHost {
         })
     }
 
+    /// Execute an already-authorized MCP tool. v1.3 registry tools are
+    /// authorized in the agent turn loop (their `ToolInvocation` binds the
+    /// descriptor digest via `digest_v3`), so the authorization was already
+    /// consumed before dispatch; this skips `authorize_external` and runs the
+    /// RPC directly. The server config is re-validated and the same isolation
+    /// guarantees apply.
+    pub async fn call_authorized(
+        server: &McpServerConfig,
+        tool_name: &str,
+        arguments: &Value,
+    ) -> Result<McpCallResult, HostError> {
+        if tool_name == "__discover__" {
+            return Err(HostError::WrongActionType);
+        }
+        server.validate()?;
+        let (value, stderr, capability_token_id) = run_rpc(
+            server,
+            "tools/call",
+            json!({"name": tool_name, "arguments": arguments}),
+        )
+        .await?;
+        Ok(McpCallResult {
+            value,
+            stderr,
+            capability_token_id,
+        })
+    }
+
     pub async fn discover_tools(
         store: &mut SessionStore,
         action_id: ActionId,

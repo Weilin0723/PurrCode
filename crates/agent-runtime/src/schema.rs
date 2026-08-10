@@ -4,7 +4,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use purrcode_runtime_core::{CommandAction, ProposedAction, RepositoryReadAction, SessionEvent};
+use purrcode_runtime_core::{CommandAction, ProposedAction, RepositoryReadAction, SessionEvent, ToolId};
 
 use crate::errors::AgentError;
 use crate::stream::is_unsafe_terminal_control;
@@ -98,6 +98,15 @@ pub enum AgentAction {
         path: PathBuf,
         expected_digest: String,
     },
+    /// Invoke a registered tool from the turn's capability registry (v1.3).
+    /// `tool_id` is the fully-qualified id (`native:read_file`,
+    /// `mcp:server/tool`, `skill:id/tool`); `arguments` are validated against
+    /// the admitted descriptor's JSON schema in `normalize_action`, never in
+    /// deserialization (which is turn-state free).
+    Tool {
+        tool_id: ToolId,
+        arguments: serde_json::Value,
+    },
 }
 
 /// Returns true when an action is read-only (does not mutate the repository).
@@ -118,6 +127,10 @@ enum AgentActionWire {
     DeleteFile {
         path: PathBuf,
         expected_digest: String,
+    },
+    Tool {
+        tool_id: ToolId,
+        arguments: serde_json::Value,
     },
 }
 
@@ -141,6 +154,13 @@ impl From<AgentActionWire> for AgentAction {
             } => Self::DeleteFile {
                 path,
                 expected_digest,
+            },
+            AgentActionWire::Tool {
+                tool_id,
+                arguments,
+            } => Self::Tool {
+                tool_id,
+                arguments,
             },
         }
     }

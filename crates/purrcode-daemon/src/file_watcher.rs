@@ -228,6 +228,7 @@ mod tests {
             ))),
             terminals: crate::TerminalRuntime::default(),
             extensions: std::sync::Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
+            tool_registries: std::sync::Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
         }
     }
 

@@ -87,6 +87,18 @@ impl ToolId {
             None
         }
     }
+
+    /// Splits an `mcp:` id into its `(server_id, tool_name)` pair. Returns
+    /// `None` for non-MCP ids. Used by the daemon executor to find the server
+    /// config and the tool name for `McpHost::call_authorized`.
+    pub fn mcp_parts(&self) -> Option<(&str, &str)> {
+        let rest = self.0.strip_prefix("mcp:")?;
+        let (server, tool) = rest.split_once('/')?;
+        if server.is_empty() || tool.is_empty() {
+            return None;
+        }
+        Some((server, tool))
+    }
 }
 
 impl std::fmt::Display for ToolId {

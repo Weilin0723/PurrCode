@@ -41,11 +41,11 @@ use purrcode_runtime_core::work::{
 };
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, AgentDescriptor, ApprovalAuthority, Authorization,
-    CheckpointDecision, CheckpointId, ContextClass, ContextLedgerEntry, ContextLedgerSection,
-    ContextualDecision, ContextualJudgment, ConversationMessage, FailedAttempt, JudgmentDecision,
-    PinnedContext, ProposedAction, RepositoryReadAction, SemanticCheckpoint, SessionEvent,
-    SessionId, SessionState, SessionStatus, TestResultSummary, TurnId, ValidationStatus,
-    WhyIncluded,
+    CapabilityRegistry, CheckpointDecision, CheckpointId, ContextClass, ContextLedgerEntry,
+    ContextLedgerSection, ContextualDecision, ContextualJudgment, ConversationMessage,
+    FailedAttempt, JudgmentDecision, PinnedContext, ProposedAction, RepositoryReadAction,
+    SemanticCheckpoint, SessionEvent, SessionId, SessionState, SessionStatus, TestResultSummary,
+    TurnId, ValidationStatus, WhyIncluded,
 };
 use purrcode_validation_runtime::{
     EvidenceStatus, ValidationDetector, ValidationEvidence, ValidationPlan, ValidationRunner,
@@ -80,6 +80,7 @@ use crate::schema::{
     validate_plan, validate_turn,
 };
 use crate::stream::{AgentStreamEvent, AgentStreamObserver, RationaleStreamExtractor};
+use crate::tool_executor::ToolExecutor;
 
 const MAX_AUTONOMOUS_ITERATIONS: usize = 32;
 const MAX_CONSECUTIVE_POLICY_REJECTIONS: usize = 3;
@@ -233,6 +234,15 @@ pub struct NativeAgent<'a> {
     /// sessions; a named profile supplies its own system prompt, tool allowlist
     /// and permission ceiling (all pre-restricted at admission).
     profile: Option<AgentDescriptor>,
+    /// The per-repository capability registry (v1.3 PR B). `None` for built-in
+    /// sessions with no registry attached; a named profile or a registry-aware
+    /// session supplies the admitted tool descriptors that `normalize_action`
+    /// resolves and that the prompt tool manifest is generated from.
+    tool_registry: Option<Arc<CapabilityRegistry>>,
+    /// Provider dispatch for registry tools (v1.3 PR B). The daemon implements
+    /// this with `McpHost` + the skill runtime; `None` means registry tools are
+    /// not executable (the `Tool` arm of `ToolRuntime::execute` refuses them).
+    tool_executor: Option<Arc<dyn ToolExecutor>>,
 }
 
 impl<'a> NativeAgent<'a> {
@@ -253,6 +263,8 @@ impl<'a> NativeAgent<'a> {
             cancellation: None,
             pinned_context: PinnedContext::default(),
             profile: None,
+            tool_registry: None,
+            tool_executor: None,
         }
     }
 
@@ -334,9 +346,68 @@ impl<'a> NativeAgent<'a> {
         self
     }
 
+    /// Attach the per-repository capability registry (v1.3 PR B). This is what
+    /// lets the model emit registry tools (`AgentAction::Tool`) and what the
+    /// prompt tool manifest is generated from. Without it, `Tool` actions are
+    /// refused in `normalize_action`.
+    pub fn with_tool_registry(mut self, registry: Arc<CapabilityRegistry>) -> Self {
+        self.tool_registry = Some(registry);
+        self
+    }
+
+    /// Attach the provider dispatch for registry tools (v1.3 PR B). Without it,
+    /// an admitted `Tool` action reaches the executor which refuses it.
+    pub fn with_tool_executor(mut self, executor: Arc<dyn ToolExecutor>) -> Self {
+        self.tool_executor = Some(executor);
+        self
+    }
+
     /// The active profile, if any.
     pub fn profile(&self) -> Option<&AgentDescriptor> {
         self.profile.as_ref()
+    }
+
+    /// The registry-generated tool manifest for the prompt, or `None` when no
+    /// registry is attached (built-in sessions keep the legacy typed-read
+    /// prose). Rendered from `turn_schema` filtered by the active profile's
+    /// `allowed_tools`.
+    fn tools_manifest(&self) -> Option<String> {
+        let registry = self.tool_registry.as_ref()?;
+        let agent = self
+            .profile
+            .clone()
+            .unwrap_or_default();
+        let schema = registry.turn_schema(&agent);
+        let tools = schema
+            .get("tools")
+            .and_then(serde_json::Value::as_array)
+            .map(|tools| {
+                tools
+                    .iter()
+                    .map(|tool| {
+                        let id = tool
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown");
+                        let description = tool
+                            .get("description")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("");
+                        let approval = tool
+                            .get("approval")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("auto");
+                        format!("- `{id}` ({approval}): {description}\n  Emit as {{\"type\":\"tool\",\"tool_id\":\"{id}\",\"arguments\":{{...}}}}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        if tools.is_empty() {
+            None
+        } else {
+            Some(tools)
+        }
     }
 
     fn budget(&self) -> BudgetConstraints {
@@ -438,6 +509,7 @@ impl<'a> NativeAgent<'a> {
             &session_events,
             &self.pinned_context,
             self.profile.as_ref(),
+            self.tools_manifest().as_deref(),
         );
         Ok((messages, ledger))
     }
@@ -1563,8 +1635,12 @@ impl<'a> NativeAgent<'a> {
 
             let mut action_results = Vec::new();
             for action in actions {
-                let proposed =
-                    crate::normalize::normalize_action(action, &worktree, self.profile.as_ref())?;
+                let proposed = crate::normalize::normalize_action(
+                    action,
+                    &worktree,
+                    self.profile.as_ref(),
+                    self.tool_registry.as_deref(),
+                )?;
                 // Verify the action is read-only per scout's allowed kinds.
                 if !matches!(&proposed, ProposedAction::RepositoryRead(_)) {
                     return Err(AgentError::InvalidModelTurn(
@@ -1618,6 +1694,7 @@ impl<'a> NativeAgent<'a> {
                     constraints,
                     &session_worktree,
                     Some(request.parent_turn_id),
+                    self.tool_executor.as_ref(),
                 )
                 .await?;
 
@@ -1904,6 +1981,7 @@ impl<'a> NativeAgent<'a> {
             // approve long after the action was proposed), so there is no
             // "current" turn to stamp this execution with.
             None,
+            self.tool_executor.as_ref(),
         )
         .await;
         let result = match result {
@@ -2233,6 +2311,7 @@ impl<'a> NativeAgent<'a> {
                 &session_events,
                 &self.pinned_context,
                 self.profile.as_ref(),
+                self.tools_manifest().as_deref(),
             );
             // ── P0: Preflight the FINAL ModelRequest ─────────────────
             // Move contract + warning injection BEFORE compaction so the
@@ -2306,6 +2385,7 @@ impl<'a> NativeAgent<'a> {
                     &session_events,
                     &self.pinned_context,
                     self.profile.as_ref(),
+                    self.tools_manifest().as_deref(),
                 );
                 let (rebuilt_msgs, rebuilt_ledger) = rebuilt;
                 // P0: Re-inject contract+warning with freshly computed
@@ -2576,6 +2656,7 @@ impl<'a> NativeAgent<'a> {
                         a.clone(),
                         &worktree,
                         self.profile.as_ref(),
+                        self.tool_registry.as_deref(),
                     )?);
                 }
                 let mut action_ids = Vec::with_capacity(turn.actions.len());
@@ -2676,7 +2757,12 @@ impl<'a> NativeAgent<'a> {
                         turn.action.clone()
                     }
                     .ok_or_else(|| AgentError::InvalidModelTurn("action is required".into()))?;
-                    match normalize_action(action, &worktree, self.profile.as_ref()) {
+                    match normalize_action(
+                        action,
+                        &worktree,
+                        self.profile.as_ref(),
+                        self.tool_registry.as_deref(),
+                    ) {
                         Ok(action) => {
                             proposed_action = Some(action);
                             break;
@@ -3015,7 +3101,23 @@ impl<'a> NativeAgent<'a> {
                     turn_id: Some(turn_id),
                 },
             )?;
-            let deterministic = self.policy.evaluate(&proposed, &worktree);
+            // v1.3 PR B: a registry tool is judged provider-blind by
+            // `Policy::evaluate_tool` against its admitted descriptor (schema,
+            // side-effect class, network/filesystem scope, approval policy),
+            // NOT the conservative `evaluate` arm that always requires
+            // approval. Legacy actions keep the generic path.
+            let deterministic = match (&proposed, self.tool_registry.as_deref()) {
+                (ProposedAction::Tool(invocation), Some(registry)) => {
+                    match registry.tool(&invocation.tool_id) {
+                        Some(descriptor) => {
+                            self.policy
+                                .evaluate_tool(&proposed, descriptor, &worktree)
+                        }
+                        None => self.policy.evaluate(&proposed, &worktree),
+                    }
+                }
+                _ => self.policy.evaluate(&proposed, &worktree),
+            };
             store.append(
                 session_id,
                 &SessionEvent::JudgmentRecorded {
@@ -3145,10 +3247,15 @@ impl<'a> NativeAgent<'a> {
             match decision {
                 JudgmentDecision::AllowWithConstraints(constraints) => {
                     consecutive_policy_rejections = 0;
+                    let action_digest = authorization_digest(
+                        &proposed,
+                        &constraints,
+                        self.tool_registry.as_deref(),
+                    )?;
                     store.authorize(&Authorization {
                         action_id,
                         session_id,
-                        action_digest: proposed.digest(&constraints)?,
+                        action_digest,
                         constraints: constraints.clone(),
                         authorized_at: Utc::now(),
                         approved_by: ApprovalAuthority::DeterministicPolicy,
@@ -3168,6 +3275,7 @@ impl<'a> NativeAgent<'a> {
                         &constraints,
                         &session_worktree,
                         Some(turn_id),
+                        self.tool_executor.as_ref(),
                     )
                     .await;
                     match execution {
@@ -4164,6 +4272,26 @@ fn pause_after_validation_budget(
     Ok(AgentOutcome::ValidationFailed { session_id, failed })
 }
 
+/// The authorization digest for a proposed action. A registry `Tool`
+/// invocation binds the descriptor digest into the digest (v1.3 `digest_v3`),
+/// so a descriptor mutated between authorize() and consume_authorization()
+/// voids the capability. Legacy actions keep the v1/v2 digest.
+fn authorization_digest(
+    action: &ProposedAction,
+    constraints: &ActionConstraints,
+    registry: Option<&CapabilityRegistry>,
+) -> Result<String, purrcode_runtime_core::DomainError> {
+    if let ProposedAction::Tool(invocation) = action
+        && let Some(registry) = registry
+        && let Some(descriptor) = registry.tool(&invocation.tool_id)
+    {
+        action.digest_v3(constraints, descriptor.descriptor_digest())
+    } else {
+        action.digest(constraints)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn execute_and_record(
     store: &mut SessionStore,
     session_id: SessionId,
@@ -4172,10 +4300,36 @@ async fn execute_and_record(
     constraints: &purrcode_runtime_core::ActionConstraints,
     worktree: &SessionWorktree,
     turn_id: Option<TurnId>,
+    tool_executor: Option<&Arc<dyn ToolExecutor>>,
 ) -> Result<ExecutionResult, AgentError> {
     let before = RepositoryEngine::snapshot(worktree).await?;
     store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
-    match ToolRuntime::execute(store, action_id, action, constraints).await {
+    let result = match (action, tool_executor) {
+        // v1.3 PR B: a registered tool dispatches by provider through the
+        // executor (Mcp → McpHost, Skill → skill runtime). Native tools and
+        // legacy actions keep flowing through ToolRuntime::execute.
+        (ProposedAction::Tool(invocation), Some(executor)) => {
+            match executor
+                .execute_tool(store, session_id, turn_id, action_id, invocation, constraints)
+                .await
+            {
+                Ok(outcome) => Ok(ExecutionResult {
+                    exit_code: outcome.exit_code,
+                    stdout: outcome.stdout.into_bytes(),
+                    stderr: outcome.stderr.into_bytes(),
+                    truncated: outcome.truncated,
+                    affected_paths: outcome.affected_paths,
+                    sandbox_level: purrcode_claw::SandboxLevel::WorktreeWriteNoShell,
+                    sandbox_backend: "tool-executor".into(),
+                }),
+                Err(error) => Err(error),
+            }
+        }
+        _ => ToolRuntime::execute(store, action_id, action, constraints)
+            .await
+            .map_err(Into::into),
+    };
+    match result {
         Ok(mut result) => {
             let after = RepositoryEngine::snapshot(worktree).await?;
             result.affected_paths =
@@ -4226,7 +4380,7 @@ async fn execute_and_record(
                     evidence: error.to_string(),
                 },
             )?;
-            Err(error.into())
+            Err(error)
         }
     }
 }

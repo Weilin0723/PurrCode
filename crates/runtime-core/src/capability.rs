@@ -156,7 +156,7 @@ pub enum DiagnosticSeverity {
 }
 
 /// The one registry.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CapabilityRegistry {
     tools: BTreeMap<ToolId, ToolDescriptor>,
     agents: BTreeMap<String, AgentDescriptor>,
@@ -401,14 +401,51 @@ impl CapabilityRegistry {
             .unwrap_or(&[])
     }
 
-    /// The model-facing tool schema for a turn, filtered by the active agent's
-    /// allowlist. This is what replaces `schema_for!(AgentTurn)` at
-    /// agent-runtime/src/agent.rs:2337 (wired in PR5).
-    pub fn turn_schema(&self, _agent: &AgentDescriptor) -> serde_json::Value {
-        // PR5 populates this from the admitted descriptors. A unit-test stub
-        // that returns an empty tools array keeps the current call path
-        // byte-identical until the registry is wired in.
-        serde_json::json!({ "type": "array", "items": {} })
+    /// The model-facing tool manifest for a turn, filtered by the active
+    /// agent's allowlist. Delivered as prose in the prompt (the model I/O
+    /// contract stays JSON-in/JSON-out `AgentTurn`), NOT as OpenAI
+    /// function-calling — `ModelRequest.tools` stays empty.
+    ///
+    /// Each admitted tool contributes its id, description, parameter schema,
+    /// and a side-effect / approval hint so the model can see which calls will
+    /// prompt. An empty agent allowlist admits every registered tool; a
+    /// non-empty one admits only the intersection.
+    pub fn turn_schema(&self, agent: &AgentDescriptor) -> serde_json::Value {
+        let allowlist = agent.allowed_tools();
+        let tools: Vec<serde_json::Value> = self
+            .tools
+            .values()
+            .filter(|descriptor| {
+                allowlist.is_empty() || allowlist.contains(descriptor.id())
+            })
+            .map(|descriptor| {
+                serde_json::json!({
+                    "id": descriptor.id().as_str(),
+                    "provider": match descriptor.provider() {
+                        super::ToolProvider::Native => "native",
+                        super::ToolProvider::Mcp => "mcp",
+                        super::ToolProvider::Skill => "skill",
+                    },
+                    "description": descriptor.description(),
+                    "parameters": descriptor.schema(),
+                    "side_effect": match descriptor.side_effect_class() {
+                        super::SideEffectClass::Read => "read",
+                        super::SideEffectClass::Write => "write",
+                        super::SideEffectClass::Execute => "execute",
+                        super::SideEffectClass::Destructive => "destructive",
+                    },
+                    "approval": match descriptor.approval_policy() {
+                        super::ApprovalPolicy::PreAuthorized => "auto",
+                        super::ApprovalPolicy::ByClass => "read_auto_write_ask",
+                        super::ApprovalPolicy::AlwaysAsk => "always_ask",
+                        super::ApprovalPolicy::Forbidden => "forbidden",
+                    },
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "tools": tools,
+        })
     }
 
     pub fn diagnostics(&self) -> &[AdmissionDiagnostic] {

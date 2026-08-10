@@ -155,6 +155,17 @@ struct AppState {
     /// invalidate it, and every per-turn read hits this snapshot rather than
     /// re-reading YAML from disk.
     extensions: Arc<RwLock<BTreeMap<PathBuf, Arc<ExtensionSet>>>>,
+    /// Per-repository capability registry cache (v1.3 PR B). Holds the admitted
+    /// tool descriptors (native + MCP + skill) for the model tool manifest and
+    /// `Tool`-action resolution. Built lazily, invalidated on extension reload
+    /// and MCP config change.
+    tool_registries: Arc<RwLock<BTreeMap<PathBuf, Arc<ToolRegistryCache>>>>,
+}
+
+/// A repository's admitted tool registry, cached per-repository.
+#[derive(Default)]
+struct ToolRegistryCache {
+    registry: purrcode_runtime_core::CapabilityRegistry,
 }
 
 /// Metadata retained for a session whose durable event log cannot be replayed
@@ -429,6 +440,7 @@ pub async fn bind_and_report(
         lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
         terminals: TerminalRuntime::default(),
         extensions: Arc::new(RwLock::new(BTreeMap::new())),
+        tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
     };
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -1295,6 +1307,14 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 path,
                 expected_digest,
             }),
+            AgentAction::Tool { tool_id, .. } => {
+                // Supervisor workers run without a tool registry; registry tools
+                // are a primary-agent surface.
+                return Err(format!(
+                    "registry tool `{}` is not executable from a supervisor worker",
+                    tool_id.as_str()
+                ));
+            }
         };
         let action_id = ActionId::new();
         store
@@ -5123,6 +5143,17 @@ async fn run_agent_operation(
         Some(profile) => agent.with_profile(profile),
         None => agent,
     };
+    // v1.3 PR B: attach the repository's capability registry and the provider
+    // dispatch executor so the model can propose registered tools
+    // (native + MCP + skill) and they execute by provider.
+    let registry_cache = load_tool_registry(state, &repository).await;
+    let executor = Arc::new(DaemonToolExecutor {
+        state: state.clone(),
+        registry: registry_cache.clone(),
+    });
+    let agent = agent
+        .with_tool_registry(Arc::new(registry_cache.registry.clone()))
+        .with_tool_executor(executor);
     let resolver = DaemonSkillResolver::new(state).await;
     let capability = infer_capability(&objective);
     if let CapabilityResolution::InstalledSkill { skill_id, .. } = agent
@@ -9575,6 +9606,179 @@ async fn load_extension_set(state: &AppState, repository: &Path) -> Arc<Extensio
     set
 }
 
+/// Load (or return the cached) capability registry for a repository (v1.3
+/// PR B). The registry admits the builtin native tools plus every configured
+/// MCP server's discovered tools, each restricted against the workspace
+/// ceiling. The active agent profile's `allowed_tools` filter is applied at
+/// model-surface time, not here — admission is ceiling-only so one registry
+/// serves every profile for the repository.
+///
+/// MCP discovery is cached (it is an stdio/HTTP RPC); the cache is invalidated
+/// by `POST /v1/extensions/reload` and on MCP config change, alongside the
+/// extension cache.
+async fn load_tool_registry(state: &AppState, repository: &Path) -> Arc<ToolRegistryCache> {
+    if let Some(cached) = state.tool_registries.read().await.get(repository) {
+        return cached.clone();
+    }
+    let config = AppConfig::load(&state.app_config).ok();
+    let ceiling = match config {
+        Some(config) => effective_policy(&config, repository)
+            .map(|policy| policy.tool_ceiling(repository))
+            .unwrap_or_else(|_| Policy::default().tool_ceiling(repository)),
+        None => Policy::default().tool_ceiling(repository),
+    };
+    let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+    // Builtin native tools (Builtin origin — they ARE the ceiling source).
+    for proposal in purrcode_runtime_core::native_tools::builtin_native_proposals() {
+        registry.admit_tool(proposal, &ceiling);
+    }
+    // MCP servers: discover once via the auth-free `test_connection` and admit
+    // each tool's descriptor proposal against the ceiling. A server that fails
+    // to connect contributes nothing (its tools stay absent until it is fixed
+    // or the config changes).
+    if let Some(section) = AppConfig::load(&state.app_config)
+        .ok()
+        .and_then(|config| mcp_section(&config).ok())
+    {
+        for server in section.servers.values() {
+            match McpHost::test_connection(server).await {
+                Ok((tools, _)) => {
+                    for tool in &tools {
+                        registry.admit_tool(tool.descriptor_proposal(server), &ceiling);
+                    }
+                }
+                Err(_) => {
+                    // Leave the server's tools absent; the runtime handles
+                    // a missing tool as a clear "not admitted" error.
+                }
+            }
+        }
+    }
+    let cache = Arc::new(ToolRegistryCache { registry });
+    state
+        .tool_registries
+        .write()
+        .await
+        .insert(repository.to_path_buf(), cache.clone());
+    cache
+}
+
+/// The daemon's provider dispatch for registry tools (v1.3 PR B). Implements
+/// the agent-runtime `ToolExecutor` seam without pulling `mcp-host`/`skill-store`
+/// into agent-runtime. Native tools never reach here (they convert back to
+/// legacy actions in `normalize_action`); `Mcp` routes to `McpHost`, `Skill`
+/// routes to the skill runtime (PR C).
+struct DaemonToolExecutor {
+    state: AppState,
+    registry: Arc<ToolRegistryCache>,
+}
+
+#[async_trait]
+impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
+    async fn execute_tool(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        action_id: ActionId,
+        invocation: &purrcode_runtime_core::ToolInvocation,
+        constraints: &purrcode_runtime_core::ActionConstraints,
+    ) -> Result<purrcode_agent_runtime::ToolExecutionOutcome, purrcode_agent_runtime::AgentError> {
+        let started_at = Utc::now();
+        let provider = invocation.tool_id.provider();
+        let tool_id = invocation.tool_id.as_str();
+        let descriptor = self.registry.registry.tool(&invocation.tool_id);
+        // MCP tools dispatch to the isolated MCP host. The authorization was
+        // already consumed in the turn loop (digest_v3), so we use the raw
+        // `call_authorized` path.
+        let (stdout, stderr, exit_code) = match provider {
+            purrcode_runtime_core::ToolProvider::Mcp => {
+                let (server_id, tool_name) = invocation.tool_id.mcp_parts().ok_or_else(|| {
+                    purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                        "malformed mcp tool id `{tool_id}`"
+                    ))
+                })?;
+                let config = AppConfig::load(&self.state.app_config)
+                    .ok()
+                    .and_then(|config| mcp_section(&config).ok())
+                    .and_then(|section| section.servers.get(server_id).cloned());
+                let Some(server) = config else {
+                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                        "mcp server `{server_id}` is not configured"
+                    )));
+                };
+                match McpHost::call_authorized(&server, tool_name, &invocation.arguments).await {
+                    Ok(result) => {
+                        let stdout = serde_json::to_string_pretty(&result.value)
+                            .unwrap_or_else(|_| result.value.to_string());
+                        (stdout, result.stderr, Some(0))
+                    }
+                    Err(error) => {
+                        return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
+                            format!("mcp tool `{tool_id}` failed: {error}"),
+                        ));
+                    }
+                }
+            }
+            purrcode_runtime_core::ToolProvider::Skill => {
+                return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                    "skill tool `{tool_id}` runtime lands in PR C"
+                )));
+            }
+            purrcode_runtime_core::ToolProvider::Native => {
+                return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                    "native tool `{tool_id}` must flow through the legacy action path"
+                )));
+            }
+        };
+        // Durable tool evidence (v1.3 PR B). The descriptor digest is bound
+        // into the authorization digest, so this records exactly what was
+        // judged. tool_evidence is a projection; the event log stays the audit
+        // source of truth.
+        if let Some(descriptor) = descriptor {
+            let evidence = purrcode_runtime_core::ExecutionEvidence {
+                action_id,
+                session_id,
+                turn_id,
+                tool_id: invocation.tool_id.clone(),
+                provider,
+                descriptor_digest: descriptor.descriptor_digest().to_owned(),
+                decision: purrcode_runtime_core::JudgmentDecision::AllowWithConstraints(
+                    constraints.clone(),
+                ),
+                approved_by: purrcode_runtime_core::ApprovalAuthority::DeterministicPolicy,
+                constraints: constraints.clone(),
+                effective_network_scope: descriptor.network_scope().clone(),
+                effective_filesystem_scope: descriptor.filesystem_scope().clone(),
+                initiator: purrcode_runtime_core::EvidenceInitiator::Model { turn_id: turn_id.unwrap_or_default() },
+                outcome: purrcode_runtime_core::ExecutionOutcome::Succeeded {
+                    exit_code,
+                    truncated: false,
+                    affected_paths: Vec::new(),
+                },
+                structured_output: None,
+                redaction_class: purrcode_runtime_core::RedactionClass::Arguments,
+                started_at,
+                finished_at: Utc::now(),
+            };
+            store.append(
+                session_id,
+                &SessionEvent::ToolEvidenceRecorded {
+                    evidence: Box::new(evidence),
+                },
+            )?;
+        }
+        Ok(purrcode_agent_runtime::ToolExecutionOutcome {
+            stdout,
+            stderr,
+            exit_code,
+            truncated: false,
+            affected_paths: Vec::new(),
+            structured_output: None,
+        })
+    }
+}
+
 /// v1.3 §7: every parse error and every clamped field, for a repository.
 async fn extension_diagnostics(
     State(state): State<AppState>,
@@ -9607,6 +9811,7 @@ async fn extension_reload(
         .canonicalize()
         .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
     state.extensions.write().await.remove(&repository);
+    state.tool_registries.write().await.remove(&repository);
     Ok(Json(serde_json::json!({ "reloaded": true })))
 }
 
@@ -12149,6 +12354,7 @@ mod tests {
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
             extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -12236,6 +12442,7 @@ mod tests {
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
             extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -12342,6 +12549,7 @@ mod tests {
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
             extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -12440,6 +12648,7 @@ mod tests {
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
             extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -12793,6 +13002,7 @@ mod tests {
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
             extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
@@ -14007,6 +14217,7 @@ default = "ollama/small"
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
             extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let session_id = SessionId::new();
         let original_generation = Uuid::new_v4();
@@ -14108,6 +14319,7 @@ default = "ollama/small"
             lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
             extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let session_id = SessionId::new();
         let generation = Uuid::new_v4();

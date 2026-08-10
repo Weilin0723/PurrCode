@@ -668,6 +668,7 @@ pub(crate) fn build_messages(
     session_events: &[SessionEvent],
     pinned: &PinnedContext,
     profile: Option<&purrcode_runtime_core::AgentDescriptor>,
+    tools_manifest: Option<&str>,
 ) -> (Vec<ModelMessage>, ContextLedgerEntry) {
     let action_outputs = session_events
         .iter()
@@ -920,9 +921,16 @@ CRITICAL RULES:\n\
 - `complete: true` → `actions` must be empty; `rationale` IS the user-facing answer\n\
 - A mutating action (write_file, delete_file) must be the ONLY action in `actions`\n\
 - Read-only actions may be batched together in `actions` for parallel exploration";
+    // v1.3 PR B: the registry-generated tool manifest. `None` for built-in
+    // sessions with no registry — the prompt then carries the legacy typed-read
+    // prose in `output_format_and_schema`. When present, it lists every
+    // admitted tool the model may propose as `{ "type": "tool", "tool_id": ... }`.
+    let tools_block = tools_manifest
+        .map(|manifest| format!("## AVAILABLE TOOLS\n{manifest}\n\n"))
+        .unwrap_or_default();
     let final_user_content = format!(
         "{request_and_worktree}{pinned_block}{plan_block}{recent_actions_block}{validation_block}\
-{retrieved_block}{compacted_block}{output_format_and_schema}"
+{retrieved_block}{compacted_block}{output_format_and_schema}{tools_block}"
     );
     messages.push(ModelMessage {
         role: "user".into(),
@@ -1024,6 +1032,19 @@ CRITICAL RULES:\n\
             WhyIncluded::AlwaysPresent,
         ),
     ]);
+    // The registry tool manifest is accounted for in the ledger when present,
+    // exactly as it appears in the prompt (after the output-format block).
+    let tools_ledger = tools_manifest
+        .map(|manifest| format!("## AVAILABLE TOOLS\n{manifest}\n\n"))
+        .unwrap_or_default();
+    if !tools_ledger.is_empty() {
+        raw_sections.push((
+            ContextClass::Instructions,
+            "available_tools".into(),
+            tools_ledger.as_str(),
+            WhyIncluded::AlwaysPresent,
+        ));
+    }
 
     // Cumulative-ceiling allocation: each section's `estimated_tokens` is the
     // *increment* in `ceil(running_char_total / 4)` it contributes, not an
@@ -1314,6 +1335,7 @@ mod tests {
             &context_hits,
             &[],
             &pinned,
+            None,
             None,
         );
 
