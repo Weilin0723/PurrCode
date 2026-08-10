@@ -1244,9 +1244,113 @@ impl CommandPalette {
                     "/{registered} is registered but has no handler in this build. Please report this; no action was taken."
                 );
             }
+            // Not a built-in verb. Before calling it unknown, ask the daemon:
+            // it is the single source of truth for what commands exist, and a
+            // project can declare its own (`.purrcode/commands/*.yaml`). Without
+            // this, `/security-review` worked in the IDE and reported "unknown
+            // command" in the TUI — two clients disagreeing about the same
+            // repository's configuration.
             _ => {
-                app.message_bar = format!("Unknown command: /{cmd}. Type /help for commands.");
+                dispatch_dynamic_command(app, &cmd, args).await;
             }
+        }
+    }
+}
+
+/// Percent-encode a query-string value. Repository paths can contain spaces and
+/// other characters that would otherwise split the query.
+fn encode_query_value(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                (byte as char).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect()
+}
+
+/// Dispatch a command the TUI does not implement itself by resolving it against
+/// `GET /v1/commands`.
+///
+/// The daemon publishes every command it knows — built-ins and project/user
+/// extensions alike — with the route or prompt that runs it, so the client
+/// needs no second registry. An `Agent` command is published as a daemon route,
+/// which is why this only has to understand `daemon` and `prompt`.
+async fn dispatch_dynamic_command(app: &mut App, cmd: &str, arguments: &str) {
+    // The daemon merges project/user extension commands only when it is told
+    // which repository to scope to.
+    let repository = app.config.repository.to_string_lossy().into_owned();
+    let path = if repository.is_empty() {
+        "/v1/commands".to_string()
+    } else {
+        format!(
+            "/v1/commands?repository={}",
+            encode_query_value(&repository)
+        )
+    };
+    let commands = match app.request(reqwest::Method::GET, &path, None).await {
+        Ok(value) => value,
+        Err(error) => {
+            app.message_bar =
+                format!("Unknown command: /{cmd}. The daemon command list is unavailable: {error}");
+            return;
+        }
+    };
+    let name = format!("/{cmd}");
+    let Some(descriptor) = commands
+        .as_array()
+        .and_then(|commands| commands.iter().find(|entry| entry["name"] == name.as_str()))
+    else {
+        app.message_bar = format!("Unknown command: /{cmd}. Type /help for commands.");
+        return;
+    };
+    match descriptor["execution"]["kind"].as_str() {
+        Some("daemon") => {
+            let Some(session) = app.session_id.clone() else {
+                app.message_bar =
+                    format!("{name} needs an active session. Start one with /new first.");
+                return;
+            };
+            let route = descriptor["execution"]["path"]
+                .as_str()
+                .unwrap_or_default()
+                .replace("{id}", &session);
+            let method = match descriptor["execution"]["method"].as_str() {
+                Some("GET") => reqwest::Method::GET,
+                Some("DELETE") => reqwest::Method::DELETE,
+                _ => reqwest::Method::POST,
+            };
+            let body = (!arguments.trim().is_empty())
+                .then(|| serde_json::json!({ "arguments": arguments.trim() }));
+            match app.request(method, &route, body).await {
+                Ok(_) => {
+                    app.message_bar = format!("{name} accepted.");
+                }
+                Err(error) => {
+                    app.message_bar = format!("{name} failed: {error}");
+                }
+            }
+        }
+        Some("prompt") => {
+            let prompt = descriptor["execution"]["prompt"]
+                .as_str()
+                .unwrap_or_default();
+            let message = if arguments.trim().is_empty() {
+                prompt.to_owned()
+            } else {
+                format!("{prompt}\n\n{}", arguments.trim())
+            };
+            app.composer.restore_draft(&message);
+            app.message_bar = format!("{name} loaded into the composer; press Enter to send.");
+        }
+        _ => {
+            // `client` execution means the client owns the behaviour, and this
+            // client does not implement it. Saying so is more useful than
+            // "unknown command", which would suggest a typo.
+            app.message_bar =
+                format!("{name} is a client-side command this TUI does not implement.");
         }
     }
 }

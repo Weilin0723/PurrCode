@@ -159,7 +159,19 @@ impl ProjectGraph {
         Ok(())
     }
 
-    /// Neighbours of a seed node, ordered by confidence desc then hops asc.
+    /// Nodes reachable from a seed within `hops` hops, breadth-first.
+    ///
+    /// `hops` is now honoured: it was previously accepted and echoed back as
+    /// the reported hop count while the query only ever read the seed's direct
+    /// edges, so `hops: 3` and `hops: 1` returned identical results and the
+    /// "3 hop(s)" label on a one-hop neighbour was wrong.
+    ///
+    /// Traversal is breadth-first so the reported hop count is the SHORTEST
+    /// path to each node, and confidence decays multiplicatively per hop
+    /// (`confidence_millis` is a per-edge factor in 0..=1000), so a distant
+    /// node reached through weak edges ranks below a close one. Results are
+    /// ordered by decayed confidence descending, then by hops ascending, and
+    /// truncated to `limit`.
     pub fn neighbours(
         &self,
         project: &Path,
@@ -167,10 +179,54 @@ impl ProjectGraph {
         hops: u8,
         limit: usize,
     ) -> Result<Vec<(GraphNode, GraphEdge, u8)>, GraphError> {
+        let mut visited: BTreeSet<i64> = BTreeSet::from([seed.id.0]);
+        // (node, edge that reached it, hops, decayed confidence)
+        let mut collected: Vec<(GraphNode, GraphEdge, u8, f64)> = Vec::new();
+        let mut frontier: Vec<(i64, u8, f64)> = vec![(seed.id.0, 0, 1.0)];
+        // A traversal must terminate on a cyclic graph and must not fan out
+        // without bound on a hub node, so each level is capped by the caller's
+        // limit as well.
+        let per_level = limit.max(1) * 4;
+        while let Some((node_id, depth, confidence)) = frontier.pop() {
+            if depth >= hops {
+                continue;
+            }
+            let mut next = Vec::new();
+            for (node, edge) in self.direct_edges(project, node_id, per_level)? {
+                if !visited.insert(node.id.0) {
+                    continue;
+                }
+                let decayed = confidence * (edge.confidence_millis as f64 / 1000.0);
+                next.push((node.id.0, depth + 1, decayed));
+                collected.push((node, edge, depth + 1, decayed));
+            }
+            frontier.extend(next);
+        }
+        collected.sort_by(|left, right| {
+            right
+                .3
+                .partial_cmp(&left.3)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(left.2.cmp(&right.2))
+                .then(left.0.key.cmp(&right.0.key))
+        });
+        collected.truncate(limit);
+        Ok(collected
+            .into_iter()
+            .map(|(node, edge, hops, _)| (node, edge, hops))
+            .collect())
+    }
+
+    /// One hop out of `node_id`, in either edge direction.
+    fn direct_edges(
+        &self,
+        project: &Path,
+        node_id: i64,
+        limit: usize,
+    ) -> Result<Vec<(GraphNode, GraphEdge)>, GraphError> {
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.project, n.kind, n.key, n.label, n.attributes, n.sensitive, n.observed_at,
-                    e.source_id, e.target_id, e.kind, e.confidence_millis, e.edge_source, e.evidence, e.observed_at,
-                    ?4
+                    e.source_id, e.target_id, e.kind, e.confidence_millis, e.edge_source, e.evidence, e.observed_at
              FROM graph_edges e
              JOIN graph_nodes n ON n.id = CASE WHEN e.source_id = ?2 THEN e.target_id ELSE e.source_id END
              WHERE e.project = ?1 AND (e.source_id = ?2 OR e.target_id = ?2)
@@ -178,12 +234,7 @@ impl ProjectGraph {
              LIMIT ?3",
         )?;
         let rows = stmt.query_map(
-            params![
-                project.to_string_lossy(),
-                seed.id.0,
-                limit as i64,
-                hops as i64
-            ],
+            params![project.to_string_lossy(), node_id, limit as i64],
             |row| {
                 let node = GraphNode {
                     id: NodeId(row.get(0)?),
@@ -208,14 +259,13 @@ impl ProjectGraph {
                         .map(|d| d.with_timezone(&chrono::Utc))
                         .unwrap_or_else(|_| chrono::Utc::now()),
                 };
-                Ok((node, edge, row.get::<_, i64>(15)? as u8))
+                Ok((node, edge))
             },
         )?;
         let mut result = Vec::new();
         for row in rows {
             result.push(row?);
         }
-        let _ = hops;
         Ok(result)
     }
 
@@ -333,6 +383,117 @@ mod tests {
         let bad = node(Path::new("/repo"), GraphNodeKind::File, "/etc/passwd");
         let err = graph.upsert_node(&bad).unwrap_err();
         assert!(matches!(err, GraphError::NonRelativeKey(_)));
+    }
+
+    /// The 0005 schema, so traversal can be tested without ninelives.
+    fn graph_with_schema(path: &Path) -> ProjectGraph {
+        let graph = ProjectGraph::open(path).unwrap();
+        // 0005 records itself in schema_migrations, which ninelives owns.
+        graph
+            .conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
+            )
+            .unwrap();
+        graph
+            .conn
+            .execute_batch(include_str!("../../../migrations/0005_project_graph.sql"))
+            .unwrap();
+        graph
+    }
+
+    fn edge(source: NodeId, target: NodeId, confidence: u16) -> GraphEdge {
+        GraphEdge {
+            source,
+            target,
+            kind: GraphEdgeKind::Imports,
+            confidence_millis: confidence,
+            edge_source: EdgeSource::StaticAnalysis,
+            evidence: "test".into(),
+            observed_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn traversal_actually_walks_hops_and_decays_confidence() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut graph = graph_with_schema(&temporary.path().join("graph.db"));
+        let project = Path::new("/repo");
+
+        // a → b → c, plus a → d directly.
+        let a = graph
+            .upsert_node(&node(project, GraphNodeKind::File, "a.rs"))
+            .unwrap();
+        let b = graph
+            .upsert_node(&node(project, GraphNodeKind::File, "b.rs"))
+            .unwrap();
+        let c = graph
+            .upsert_node(&node(project, GraphNodeKind::File, "c.rs"))
+            .unwrap();
+        let d = graph
+            .upsert_node(&node(project, GraphNodeKind::File, "d.rs"))
+            .unwrap();
+        graph
+            .insert_edge(project, &edge(a.clone(), b.clone(), 900))
+            .unwrap();
+        graph.insert_edge(project, &edge(b, c, 900)).unwrap();
+        graph
+            .insert_edge(project, &edge(a.clone(), d, 400))
+            .unwrap();
+
+        let seed = GraphNode {
+            id: a,
+            ..node(project, GraphNodeKind::File, "a.rs")
+        };
+
+        // One hop reaches only the direct neighbours. Before the traversal was
+        // implemented, `hops` was carried through unused, so this returned the
+        // same set as the two-hop query below and mislabelled the hop count.
+        let one = graph.neighbours(project, &seed, 1, 10).unwrap();
+        let keys: Vec<&str> = one.iter().map(|(n, _, _)| n.key.as_str()).collect();
+        assert_eq!(keys, vec!["b.rs", "d.rs"], "one hop is one hop");
+        assert!(one.iter().all(|(_, _, hops)| *hops == 1));
+
+        // Two hops reaches c.rs, reported at its true shortest distance.
+        let two = graph.neighbours(project, &seed, 2, 10).unwrap();
+        let c_hit = two
+            .iter()
+            .find(|(node, _, _)| node.key == "c.rs")
+            .expect("c.rs is reachable in two hops");
+        assert_eq!(c_hit.2, 2, "the reported hop count is the real distance");
+
+        // Confidence decays per hop: c.rs (0.9 × 0.9 = 0.81) still outranks
+        // d.rs (0.4) even though d.rs is closer.
+        let order: Vec<&str> = two.iter().map(|(n, _, _)| n.key.as_str()).collect();
+        assert_eq!(order, vec!["b.rs", "c.rs", "d.rs"]);
+    }
+
+    #[test]
+    fn traversal_terminates_on_a_cycle() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut graph = graph_with_schema(&temporary.path().join("graph.db"));
+        let project = Path::new("/repo");
+        let a = graph
+            .upsert_node(&node(project, GraphNodeKind::File, "a.rs"))
+            .unwrap();
+        let b = graph
+            .upsert_node(&node(project, GraphNodeKind::File, "b.rs"))
+            .unwrap();
+        graph
+            .insert_edge(project, &edge(a.clone(), b.clone(), 1000))
+            .unwrap();
+        graph
+            .insert_edge(project, &edge(b, a.clone(), 1000))
+            .unwrap();
+        let seed = GraphNode {
+            id: a,
+            ..node(project, GraphNodeKind::File, "a.rs")
+        };
+        // Would loop forever without the visited set.
+        let hits = graph.neighbours(project, &seed, 5, 10).unwrap();
+        assert_eq!(hits.len(), 1, "a cycle visits each node once");
+        assert_eq!(hits[0].0.key, "b.rs");
     }
 
     #[test]

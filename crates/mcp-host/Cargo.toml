@@ -9,6 +9,7 @@ blake3.workspace = true
 chrono.workspace = true
 libc.workspace = true
 purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-skill-store = { path = "../skill-store" }
 purrcode-ninelives = { path = "../ninelives-recovery" }
 purrcode-claw = { path = "../claw-sandbox" }
 reqwest.workspace = true

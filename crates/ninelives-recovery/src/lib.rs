@@ -395,10 +395,7 @@ impl SessionStore {
     /// Record a first sighting of a remote tool descriptor. The pin row is
     /// created on first use so the digest is durable before any approval; the
     /// approval itself flips `approved_at`.
-    pub fn record_pin_first_seen(
-        &mut self,
-        pin: &ToolDescriptorPin,
-    ) -> Result<(), StoreError> {
+    pub fn record_pin_first_seen(&mut self, pin: &ToolDescriptorPin) -> Result<(), StoreError> {
         self.connection.execute(
             "INSERT OR IGNORE INTO tool_descriptor_pins(
                 project, tool_id, descriptor_digest, provider, origin,
@@ -551,6 +548,106 @@ impl SessionStore {
             ],
         )?;
         Ok(())
+    }
+
+    /// Project one `ExecutionEvidence` into the `tool_evidence` table
+    /// (migration 0004).
+    ///
+    /// The event log stays the audit source of truth; this is the queryable
+    /// projection that lets a client answer "every external tool this session
+    /// touched" without replaying the log. Migration 0004 created the table but
+    /// nothing wrote to it, so the answer was always empty.
+    pub fn record_tool_evidence(
+        &mut self,
+        evidence: &purrcode_runtime_core::ExecutionEvidence,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO tool_evidence(
+                action_id, session_id, turn_id, tool_id, provider, descriptor_digest,
+                initiator, approved_by, outcome, redaction_class, started_at, finished_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                evidence.action_id.0.to_string(),
+                evidence.session_id.0.to_string(),
+                evidence.turn_id.map(|id| id.0.to_string()),
+                evidence.tool_id.as_str(),
+                serde_json::to_string(&evidence.provider)?,
+                evidence.descriptor_digest,
+                serde_json::to_string(&evidence.initiator)?,
+                serde_json::to_string(&evidence.approved_by)?,
+                serde_json::to_string(&evidence.outcome)?,
+                serde_json::to_string(&evidence.redaction_class)?,
+                evidence.started_at,
+                evidence.finished_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Every tool this session touched, newest first, from the projection.
+    pub fn tool_evidence(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<(String, String, String)>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT tool_id, outcome, redaction_class FROM tool_evidence
+             WHERE session_id = ?1 ORDER BY started_at DESC",
+        )?;
+        let rows = statement.query_map([session_id.0.to_string()], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        let mut evidence = Vec::new();
+        for row in rows {
+            evidence.push(row?);
+        }
+        Ok(evidence)
+    }
+
+    /// Record which provider satisfied a capability, and what else was
+    /// considered. This is what makes "why did THIS skill run?" answerable
+    /// after the fact.
+    pub fn record_capability_resolution(
+        &mut self,
+        session_id: SessionId,
+        turn_id: Option<purrcode_runtime_core::TurnId>,
+        capability: &str,
+        chosen: &purrcode_runtime_core::CapabilityProvider,
+        considered: &[purrcode_runtime_core::CapabilityProvider],
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO capability_resolutions(
+                id, session_id, turn_id, capability, chosen_provider, considered, resolved_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                Uuid::new_v4().to_string(),
+                session_id.0.to_string(),
+                turn_id.map(|id| id.0.to_string()),
+                capability,
+                serde_json::to_string(chosen)?,
+                serde_json::to_string(considered)?,
+                Utc::now(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Capability resolutions for a session, newest first.
+    pub fn capability_resolutions(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT capability, chosen_provider FROM capability_resolutions
+             WHERE session_id = ?1 ORDER BY resolved_at DESC",
+        )?;
+        let rows = statement.query_map([session_id.0.to_string()], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        let mut resolutions = Vec::new();
+        for row in rows {
+            resolutions.push(row?);
+        }
+        Ok(resolutions)
     }
 
     pub fn events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>, StoreError> {
@@ -1443,14 +1540,16 @@ mod tests {
         );
 
         // Approve v1: the exact digest now passes.
-        assert!(store
-            .approve_pin(
-                &project,
-                tool_id,
-                digest_v1,
-                &serde_json::to_string(&ApprovalAuthority::Human).unwrap()
-            )
-            .unwrap());
+        assert!(
+            store
+                .approve_pin(
+                    &project,
+                    tool_id,
+                    digest_v1,
+                    &serde_json::to_string(&ApprovalAuthority::Human).unwrap()
+                )
+                .unwrap()
+        );
         assert_eq!(
             store.pin_verdict(&project, tool_id, digest_v1).unwrap(),
             PinVerdict::Approved
@@ -1470,28 +1569,32 @@ mod tests {
         );
 
         // Re-approval after revocation flips it back to Approved.
-        assert!(store
-            .approve_pin(
-                &project,
-                tool_id,
-                digest_v1,
-                &serde_json::to_string(&ApprovalAuthority::Human).unwrap()
-            )
-            .unwrap());
+        assert!(
+            store
+                .approve_pin(
+                    &project,
+                    tool_id,
+                    digest_v1,
+                    &serde_json::to_string(&ApprovalAuthority::Human).unwrap()
+                )
+                .unwrap()
+        );
         assert_eq!(
             store.pin_verdict(&project, tool_id, digest_v1).unwrap(),
             PinVerdict::Approved
         );
 
         // Approving a digest that differs from the stored pin is refused.
-        assert!(!store
-            .approve_pin(
-                &project,
-                tool_id,
-                digest_v2,
-                &serde_json::to_string(&ApprovalAuthority::Human).unwrap()
-            )
-            .unwrap());
+        assert!(
+            !store
+                .approve_pin(
+                    &project,
+                    tool_id,
+                    digest_v2,
+                    &serde_json::to_string(&ApprovalAuthority::Human).unwrap()
+                )
+                .unwrap()
+        );
         assert_eq!(
             store.pin_verdict(&project, tool_id, digest_v1).unwrap(),
             PinVerdict::Approved

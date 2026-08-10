@@ -58,5 +58,31 @@ pub trait HookEvaluator: Send + Sync {
         session_id: SessionId,
         trigger: purrcode_runtime_core::HookTrigger,
         depth: u8,
-    ) -> Result<bool, AgentError>;
+    ) -> Result<HookOutcome, AgentError>;
+}
+
+/// What a trigger's hook chain did to the turn.
+///
+/// `Suspended` and `Aborted` both stop the turn, but they are different events
+/// and must not be reported as the same thing: an aborted chain failed, while a
+/// suspended one is waiting on a person and has a durable pending action they
+/// can approve to continue. Collapsing them into one boolean made every hook
+/// pause read as "a blocking hook aborted the turn".
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum HookOutcome {
+    /// Every hook ran (or none fired). The turn continues.
+    #[default]
+    Continued,
+    /// A hook needs human approval. The session is in `AwaitingApproval` with
+    /// the hook's exact invocation pending.
+    Suspended,
+    /// A blocking hook was denied or failed. The turn fails with it.
+    Aborted,
+}
+
+impl HookOutcome {
+    /// Whether the turn must stop here, for either reason.
+    pub fn stops_turn(self) -> bool {
+        !matches!(self, HookOutcome::Continued)
+    }
 }

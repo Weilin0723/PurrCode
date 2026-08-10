@@ -151,33 +151,38 @@ pub(crate) fn normalize_action(
                     tool_id.as_str()
                 )));
             };
+            // The registry handed to a turn is the EFFECTIVE one
+            // (`CapabilityRegistry::for_agent`): already filtered by the
+            // profile's `ToolSelection` and already intersected with the
+            // profile's ceiling on every axis. A tool the profile does not
+            // select is therefore simply absent here — the same set the model
+            // manifest was rendered from.
             let Some(descriptor) = registry.tool(&tool_id) else {
-                return Err(AgentError::InvalidModelTurn(format!(
-                    "tool `{}` is not admitted in this registry",
-                    tool_id.as_str()
-                )));
+                return Err(AgentError::InvalidModelTurn(match profile {
+                    Some(profile) => format!(
+                        "tool `{}` is not available to agent profile `{}`",
+                        tool_id.as_str(),
+                        profile.name()
+                    ),
+                    None => format!(
+                        "tool `{}` is not admitted in this registry",
+                        tool_id.as_str()
+                    ),
+                }));
             };
             if let Some(profile) = profile {
-                let allowlist = profile.allowed_tools();
-                if !allowlist.is_empty() && !allowlist.contains(&tool_id) {
-                    return Err(AgentError::InvalidModelTurn(format!(
-                        "tool `{}` is outside this agent profile's allowed_tools",
-                        tool_id.as_str()
-                    )));
-                }
-                // Enforce the profile's filesystem ceiling against the tool's
-                // descriptor. A read-only profile (ceiling = WorktreeRead)
-                // must refuse ANY tool that writes — including native tools
-                // like write_file/delete_file that convert to legacy actions
-                // and would otherwise reach PawGate with only the workspace
-                // policy, not the profile's ceiling.
+                // Defence in depth. `for_agent` already forbids a write tool
+                // under a read-only ceiling; this refuses one that reached here
+                // through a registry that was not narrowed for this profile.
                 let profile_allows_write = matches!(
                     profile.ceiling().maximum_filesystem,
                     purrcode_runtime_core::FilesystemScope::Worktree { .. }
                 );
                 if !profile_allows_write
-                    && descriptor.filesystem_scope()
-                        != &purrcode_runtime_core::FilesystemScope::WorktreeRead
+                    && matches!(
+                        descriptor.filesystem_scope(),
+                        purrcode_runtime_core::FilesystemScope::Worktree { .. }
+                    )
                 {
                     return Err(AgentError::InvalidModelTurn(format!(
                         "tool `{}` mutates the worktree and is denied by this read-only agent profile",
@@ -248,13 +253,17 @@ fn convert_native_tool(
     let read = match name {
         "git_status" => Some(Read::GitStatus),
         "git_rev_parse" => Some(Read::GitRevParse {
-            revision: str_arg("revision")
-                .unwrap_or("HEAD")
-                .to_owned(),
+            revision: str_arg("revision").unwrap_or("HEAD").to_owned(),
         }),
         "git_log" => Some(Read::GitLog {
-            max_count: arguments.get("max_count").and_then(serde_json::Value::as_u64).map(|v| v as u32),
-            oneline: arguments.get("oneline").and_then(serde_json::Value::as_bool).unwrap_or(true),
+            max_count: arguments
+                .get("max_count")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32),
+            oneline: arguments
+                .get("oneline")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true),
         }),
         "git_diff" => Some(Read::GitDiff {
             paths: paths_arg("paths"),
@@ -269,7 +278,9 @@ fn convert_native_tool(
         }),
         "repository_grep" => Some(Read::RepositoryGrep {
             pattern: str_arg("pattern")
-                .ok_or_else(|| AgentError::InvalidModelTurn("repository_grep requires `pattern`".into()))?
+                .ok_or_else(|| {
+                    AgentError::InvalidModelTurn("repository_grep requires `pattern`".into())
+                })?
                 .to_owned(),
             paths: paths_arg("paths"),
             case_insensitive: arguments
@@ -317,38 +328,54 @@ fn convert_native_tool(
                 .unwrap_or(8192),
         }),
         "write_file" => {
-            return Ok(Some(ProposedAction::WriteFile(purrcode_runtime_core::WriteFileAction {
-                path: path_arg("path")?,
-                content: str_arg("content")
-                    .ok_or_else(|| AgentError::InvalidModelTurn("write_file requires `content`".into()))?
-                    .to_owned(),
-                expected_digest: arguments.get("expected_digest").and_then(serde_json::Value::as_str).map(str::to_owned),
-            })));
+            return Ok(Some(ProposedAction::WriteFile(
+                purrcode_runtime_core::WriteFileAction {
+                    path: path_arg("path")?,
+                    content: str_arg("content")
+                        .ok_or_else(|| {
+                            AgentError::InvalidModelTurn("write_file requires `content`".into())
+                        })?
+                        .to_owned(),
+                    expected_digest: arguments
+                        .get("expected_digest")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                },
+            )));
         }
         "delete_file" => {
-            return Ok(Some(ProposedAction::DeleteFile(purrcode_runtime_core::DeleteFileAction {
-                path: path_arg("path")?,
-                expected_digest: arguments
-                    .get("expected_digest")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            })));
+            return Ok(Some(ProposedAction::DeleteFile(
+                purrcode_runtime_core::DeleteFileAction {
+                    path: path_arg("path")?,
+                    expected_digest: arguments
+                        .get("expected_digest")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                },
+            )));
         }
         "command" => {
             let program = str_arg("program")
                 .ok_or_else(|| AgentError::InvalidModelTurn("command requires `program`".into()))?;
             let program = PathBuf::from(program);
-            return Ok(Some(ProposedAction::Command(purrcode_runtime_core::CommandAction {
-                program,
-                arguments: arguments
-                    .get("arguments")
-                    .and_then(serde_json::Value::as_array)
-                    .map(|items| items.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-                    .unwrap_or_default(),
-                working_directory: worktree.to_path_buf(),
-                environment: std::collections::BTreeMap::new(),
-            })));
+            return Ok(Some(ProposedAction::Command(
+                purrcode_runtime_core::CommandAction {
+                    program,
+                    arguments: arguments
+                        .get("arguments")
+                        .and_then(serde_json::Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|v| v.as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    working_directory: worktree.to_path_buf(),
+                    environment: std::collections::BTreeMap::new(),
+                },
+            )));
         }
         _ => None,
     };
@@ -829,8 +856,8 @@ mod action_normalization_tests {
             AgentAction::ReadCommand(legacy_command("git", &["rev-parse", "HEAD"])),
             &worktree,
             None,
-                    None,
-)
+            None,
+        )
         .unwrap();
         assert!(matches!(
             action,
@@ -895,8 +922,8 @@ mod action_normalization_tests {
             AgentAction::Read(RepositoryReadAction::GitStatus),
             worktree,
             None,
-                    None,
-)
+            None,
+        )
         .unwrap();
         let ProposedAction::RepositoryRead(read) = action else {
             panic!("expected typed repository read")
@@ -917,8 +944,8 @@ mod action_normalization_tests {
             }),
             worktree,
             None,
-                    None,
-)
+            None,
+        )
         .unwrap();
         let ProposedAction::RepositoryRead(read) = action else {
             panic!("expected typed repository read")
@@ -938,8 +965,8 @@ mod action_normalization_tests {
             }),
             Path::new("/repo/.purrcode/worktrees/session"),
             None,
-                    None,
-)
+            None,
+        )
         .unwrap();
         let ProposedAction::RepositoryRead(RepositoryReadAction::List { paths, .. }) = action
         else {
@@ -957,8 +984,8 @@ mod action_normalization_tests {
             }),
             Path::new("/repo/.purrcode/worktrees/session"),
             None,
-                    None,
-)
+            None,
+        )
         .unwrap_err();
         assert_eq!(
             error.to_string(),
@@ -976,8 +1003,8 @@ mod action_normalization_tests {
             }),
             &worktree,
             None,
-                    None,
-)
+            None,
+        )
         .unwrap();
         let decision = Policy::default().evaluate(&action, &worktree);
         assert!(matches!(
@@ -1001,8 +1028,8 @@ mod action_normalization_tests {
             },
             &worktree,
             None,
-                    None,
-)
+            None,
+        )
         .unwrap();
         let decision = Policy::default().evaluate(&action, &worktree);
         assert!(
@@ -1129,8 +1156,8 @@ mod action_normalization_tests {
             }),
             &worktree,
             None,
-                    None,
-)
+            None,
+        )
         .unwrap();
         let decision = Policy::default().evaluate(&action, &worktree);
         let JudgmentDecision::AllowWithConstraints(constraints) = decision.clone() else {
@@ -1160,8 +1187,8 @@ mod action_normalization_tests {
             }),
             &worktree,
             None,
-                    None,
-)
+            None,
+        )
         .unwrap();
         let distinct_decision = Policy::default().evaluate(&distinct, &worktree);
         let JudgmentDecision::AllowWithConstraints(distinct_constraints) = distinct_decision else {
@@ -1184,8 +1211,8 @@ mod action_normalization_tests {
             },
             &worktree,
             None,
-                    None,
-);
+            None,
+        );
         assert!(result.is_err());
     }
 
@@ -1199,8 +1226,8 @@ mod action_normalization_tests {
             },
             &worktree,
             None,
-                    None,
-);
+            None,
+        );
         assert!(result.is_err());
     }
 
@@ -1290,8 +1317,8 @@ mod action_normalization_tests {
     #[test]
     fn registry_tool_is_resolved_and_native_tools_convert_to_legacy_actions() {
         use purrcode_runtime_core::{
-            CapabilityRegistry, DescriptorOrigin, FilesystemScope, NetworkScope, SideEffectClass,
-            ToolDescriptorProposal, ToolId, ToolProvider, ToolCeiling, ApprovalPolicy,
+            ApprovalPolicy, CapabilityRegistry, DescriptorOrigin, FilesystemScope, NetworkScope,
+            SideEffectClass, ToolCeiling, ToolDescriptorProposal, ToolId, ToolProvider,
         };
         use std::collections::BTreeSet;
         let worktree = Path::new("/repo/.purrcode/worktrees/session");
@@ -1388,6 +1415,59 @@ mod action_normalization_tests {
         assert!(
             matches!(proposed, ProposedAction::Tool(ref invocation) if invocation.tool_id.as_str() == "mcp:server/ping"),
             "an mcp tool must produce a Tool invocation, got {proposed:?}"
+        );
+    }
+
+    #[test]
+    fn a_server_denied_mcp_tool_cannot_be_invoked_by_the_model() {
+        // `deny_tools` is folded into the ceiling at admission, so the tool is
+        // minted Forbidden. Normalization must refuse it — the generic,
+        // model-driven path cannot be a way around a deny the explicit /mcp
+        // endpoint honours.
+        use purrcode_runtime_core::{
+            ApprovalPolicy, CapabilityRegistry, DescriptorOrigin, FilesystemScope, NetworkScope,
+            SideEffectClass, ToolCeiling, ToolDescriptorProposal, ToolId, ToolProvider,
+        };
+        use std::collections::BTreeSet;
+        let worktree = Path::new("/repo");
+        let ceiling = ToolCeiling {
+            maximum_side_effect: SideEffectClass::Destructive,
+            maximum_network: NetworkScope::Any,
+            maximum_filesystem: FilesystemScope::maximum(),
+            minimum_approval: ApprovalPolicy::ByClass,
+            denied_tool_ids: ["mcp:github/delete_repo".to_string()].into_iter().collect(),
+        };
+        let mut registry = CapabilityRegistry::new();
+        registry.admit_tool(
+            ToolDescriptorProposal {
+                id: ToolId::mcp("github", "delete_repo"),
+                provider: ToolProvider::Mcp,
+                display_name: "delete_repo".into(),
+                description: "delete a repository".into(),
+                schema: serde_json::json!({ "type": "object" }),
+                capabilities: BTreeSet::new(),
+                side_effect_class: SideEffectClass::Read,
+                network_scope: NetworkScope::None,
+                filesystem_scope: FilesystemScope::WorktreeRead,
+                // Even a proposal claiming it needs no approval at all.
+                approval_policy: ApprovalPolicy::PreAuthorized,
+                origin: DescriptorOrigin::RemoteDiscovery,
+            },
+            &ceiling,
+        );
+        let error = normalize_action(
+            AgentAction::Tool {
+                tool_id: ToolId::mcp("github", "delete_repo"),
+                arguments: serde_json::json!({}),
+            },
+            worktree,
+            None,
+            Some(&registry),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("forbidden"),
+            "a denied MCP tool must be refused at normalization, got {error}"
         );
     }
 }

@@ -384,7 +384,11 @@ pub enum HitReason {
     TestRelation { tests: PathBuf },
     /// Reached by traversing a durable project-graph edge (v1.3 PR E) — the
     /// node was not matched lexically but is graph-related to the objective.
-    RelatedByGraph { via_edge: String, from_node: String, hops: u8 },
+    RelatedByGraph {
+        via_edge: String,
+        from_node: String,
+        hops: u8,
+    },
     /// Fallback — included through generic retrieval with no specific signal.
     #[default]
     Unspecified,

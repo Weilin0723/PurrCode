@@ -9,7 +9,10 @@
 //! restricted cannot be constructed.
 
 use super::capability::{AdmissionDiagnostic, CapabilityId, DiagnosticSeverity, ExtensionLayer};
-use super::tool::{FilesystemScope, NetworkScope, SideEffectClass, ToolCeiling, ToolId};
+use super::tool::{
+    DescriptorOrigin, FilesystemScope, NetworkScope, SideEffectClass, ToolCeiling, ToolDescriptor,
+    ToolId,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -130,9 +133,9 @@ pub struct AgentDescriptor {
     capabilities: BTreeSet<CapabilityId>,
     model_role: Option<ModelRoleName>,
     system_prompt: Option<String>,
-    /// Post-restriction. Every id here is present in the registry AND its
-    /// descriptor survived the ceiling.
-    allowed_tools: BTreeSet<ToolId>,
+    /// Post-restriction. Explicit tri-state — there is deliberately no
+    /// "empty set means everything" case (see [`ToolSelection`]).
+    tool_selection: ToolSelection,
     /// Post-restriction. This is what PawGate is handed, not `permissions`.
     ceiling: ToolCeiling,
     context: ContextPolicy,
@@ -166,8 +169,8 @@ impl AgentDescriptor {
         self.system_prompt.as_deref()
     }
 
-    pub fn allowed_tools(&self) -> &BTreeSet<ToolId> {
-        &self.allowed_tools
+    pub fn tool_selection(&self) -> &ToolSelection {
+        &self.tool_selection
     }
 
     pub fn ceiling(&self) -> &ToolCeiling {
@@ -192,9 +195,14 @@ impl AgentDescriptor {
 }
 
 impl Default for AgentDescriptor {
-    /// A permissive default so existing `NativeAgent::new` call sites keep
-    /// compiling until PR4 threads a real profile through. Read-only, no
-    /// tools, no model role.
+    /// The BUILT-IN main agent, used when a session runs with no named profile.
+    /// Its tool selection is [`ToolSelection::AllAdmitted`]: the built-in agent
+    /// is bounded by the workspace policy itself, which is exactly the ceiling
+    /// every descriptor in the registry was already admitted against.
+    ///
+    /// This variant is unreachable from YAML — `AgentProfile::restrict` never
+    /// produces it — so a user-authored profile can never widen itself to
+    /// "every registered tool" by leaving `tools:` blank.
     fn default() -> Self {
         let ceiling = ToolCeiling {
             maximum_side_effect: SideEffectClass::Read,
@@ -210,7 +218,7 @@ impl Default for AgentDescriptor {
             capabilities: BTreeSet::new(),
             model_role: None,
             system_prompt: None,
-            allowed_tools: BTreeSet::new(),
+            tool_selection: ToolSelection::AllAdmitted,
             ceiling,
             context: ContextPolicy::default(),
             allowed_skills: BTreeSet::new(),
@@ -315,29 +323,51 @@ impl AgentProfile {
             });
         }
 
-        // ── Allowed tools: deny beats allow, then the ceiling's deny list,
-        // then literal ids survive while globs (incl. {a,b} braces) are
-        // deferred to the registry intersect in PR4. ──
-        let denied_entries: BTreeSet<&str> = self
-            .tools
-            .deny
-            .iter()
-            .map(String::as_str)
-            .chain(ceiling.denied_tool_ids.iter().map(String::as_str))
+        // ── Tool selection: an explicit tri-state, NOT a set that means
+        // "everything" when empty. Patterns (literal ids as well as globs) are
+        // kept verbatim and resolved against the admitted registry by
+        // `CapabilityRegistry::for_agent`, so `allow: [native:*]` selects the
+        // native namespace and nothing else — never "every registered tool".
+        //
+        // Deny always beats allow, and the workspace ceiling's deny list is
+        // folded in here as well so a profile cannot re-admit a workspace-denied
+        // id by naming it. ──
+        let mut validate = |patterns: &[String], field: &str| -> Vec<String> {
+            patterns
+                .iter()
+                .filter(|pattern| {
+                    if ToolPattern::is_valid(pattern) {
+                        true
+                    } else {
+                        diagnostics.push(AdmissionDiagnostic {
+                            source_path: None,
+                            subject: self.name.clone(),
+                            severity: DiagnosticSeverity::Rejected,
+                            message: format!(
+                                "`{field}` entry `{pattern}` is not a valid tool id or glob and was dropped"
+                            ),
+                            restricted_fields: vec![(
+                                format!("tools.{field}"),
+                                pattern.to_string(),
+                                "dropped".into(),
+                            )],
+                        });
+                        false
+                    }
+                })
+                .cloned()
+                .collect()
+        };
+        let deny: Vec<String> = validate(&self.tools.deny, "deny")
+            .into_iter()
+            .chain(ceiling.denied_tool_ids.iter().cloned())
             .collect();
-        let allowed_tools: BTreeSet<ToolId> = self
-            .tools
-            .allow
-            .iter()
-            .filter(|entry| !denied_entries.contains(entry.as_str()))
-            .filter_map(|entry| {
-                if is_glob(entry) {
-                    None // glob — resolved against the registry later
-                } else {
-                    ToolId::parse(entry)
-                }
-            })
-            .collect();
+        let allow = validate(&self.tools.allow, "allow");
+        let tool_selection = if allow.is_empty() {
+            ToolSelection::InheritSafeDefaults { deny }
+        } else {
+            ToolSelection::Explicit { allow, deny }
+        };
 
         // ── Allowed skills: deny beats allow. ──
         let denied_skills: BTreeSet<&str> = self.skills.deny.iter().map(String::as_str).collect();
@@ -383,7 +413,7 @@ impl AgentProfile {
             capabilities: self.capabilities,
             model_role: self.model_role,
             system_prompt,
-            allowed_tools,
+            tool_selection,
             ceiling: effective_ceiling,
             context: self.context,
             allowed_skills,
@@ -399,14 +429,139 @@ impl AgentProfile {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ToolPolicy {
-    /// Glob patterns over ToolId strings. Empty = inherit the workspace default
-    /// (all Builtin read tools). INTERSECTED with the ceiling — never unioned.
+    /// Glob patterns over ToolId strings. Omitting `allow` selects the
+    /// workspace SAFE DEFAULT (built-in, read-only, no-network native tools) —
+    /// it does NOT select every registered tool. A written `allow` selects
+    /// exactly the admitted tools matching it. Either way the result is
+    /// INTERSECTED with the ceiling — never unioned.
     #[serde(default)]
     pub allow: Vec<String>,
     /// Always applied, always wins over `allow`. Deny beats trust — the same
     /// ordering `McpServerConfig::denies`/`trusts` uses.
     #[serde(default)]
     pub deny: Vec<String>,
+}
+
+/// How an agent profile selects tools out of the admitted registry.
+///
+/// The v1.2 shape was a single `BTreeSet<ToolId>` whose EMPTY value was read as
+/// "admit everything" by both the model manifest and normalization. That made
+/// `allow: [native:*]` — a pattern the old restriction discarded — silently
+/// mean *more* capability than writing nothing at all: native **plus** MCP plus
+/// every future provider. This enum removes the ambiguity: the three cases are
+/// distinct values, and patterns are carried through to be resolved against the
+/// registry rather than dropped.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolSelection {
+    /// The BUILT-IN main agent: every admitted tool, bounded by the workspace
+    /// ceiling the registry already applied. `AgentProfile::restrict` never
+    /// produces this, so no user-authored file can reach it.
+    AllAdmitted,
+    /// `tools.allow` was omitted. The safe default — built-in, read-only,
+    /// no-network, non-writing native tools — minus `deny`.
+    InheritSafeDefaults { deny: Vec<String> },
+    /// `tools.allow` was written. Exactly the admitted tools matching one of
+    /// `allow`, minus `deny`.
+    Explicit {
+        allow: Vec<String>,
+        deny: Vec<String>,
+    },
+}
+
+impl ToolSelection {
+    /// Whether this selection admits an already-admitted descriptor. Deny is
+    /// evaluated first and always wins.
+    pub fn admits(&self, descriptor: &ToolDescriptor) -> bool {
+        let id = descriptor.id().as_str();
+        match self {
+            ToolSelection::AllAdmitted => true,
+            ToolSelection::InheritSafeDefaults { deny } => {
+                !matches_any(deny, id) && is_safe_default(descriptor)
+            }
+            ToolSelection::Explicit { allow, deny } => {
+                !matches_any(deny, id) && matches_any(allow, id)
+            }
+        }
+    }
+
+    /// The patterns as written, for `GET /v1/agents` and diagnostics.
+    pub fn describe(&self) -> serde_json::Value {
+        match self {
+            ToolSelection::AllAdmitted => serde_json::json!({ "kind": "all_admitted" }),
+            ToolSelection::InheritSafeDefaults { deny } => serde_json::json!({
+                "kind": "inherit_safe_defaults",
+                "deny": deny,
+            }),
+            ToolSelection::Explicit { allow, deny } => serde_json::json!({
+                "kind": "explicit",
+                "allow": allow,
+                "deny": deny,
+            }),
+        }
+    }
+}
+
+/// The workspace SAFE DEFAULT: what an agent gets when it writes no `allow`.
+///
+/// Built-in origin (compiled in, not authored by a repository or a remote
+/// server), observes only, reaches no network, and cannot write the worktree.
+/// Deliberately conservative: omitting `tools:` must never hand an agent an MCP
+/// server, a skill script, or `native:command`.
+pub fn is_safe_default(descriptor: &ToolDescriptor) -> bool {
+    descriptor.origin() == DescriptorOrigin::Builtin
+        && descriptor.side_effect_class() == SideEffectClass::Read
+        && descriptor.network_scope() == &NetworkScope::None
+        && !matches!(
+            descriptor.filesystem_scope(),
+            FilesystemScope::Worktree { .. }
+        )
+}
+
+fn matches_any(patterns: &[String], id: &str) -> bool {
+    patterns
+        .iter()
+        .any(|pattern| ToolPattern::matches(pattern, id))
+}
+
+/// A glob over tool-id strings. `*` deliberately spans `/` so `mcp:*` covers
+/// `mcp:<server>/<tool>`; the id alphabet has no path semantics.
+pub struct ToolPattern;
+
+impl ToolPattern {
+    /// A pattern is valid if it either parses as a tool id (a literal) or
+    /// compiles as a glob. An entry that is neither is dropped with a
+    /// diagnostic rather than silently matching nothing.
+    pub fn is_valid(pattern: &str) -> bool {
+        if pattern.is_empty() {
+            return false;
+        }
+        if ToolId::parse(pattern).is_some() {
+            return true;
+        }
+        // A glob must still be namespaced: `*` on its own would let a profile
+        // re-widen itself to everything, which is the defect this type exists
+        // to close.
+        let namespaced = ["native:", "mcp:", "skill:"]
+            .iter()
+            .any(|prefix| pattern.starts_with(prefix));
+        namespaced && Self::compile(pattern).is_some()
+    }
+
+    pub fn matches(pattern: &str, id: &str) -> bool {
+        if pattern == id {
+            return true;
+        }
+        Self::compile(pattern).is_some_and(|matcher| matcher.is_match(id))
+    }
+
+    fn compile(pattern: &str) -> Option<globset::GlobMatcher> {
+        globset::GlobBuilder::new(pattern)
+            .literal_separator(false)
+            .build()
+            .ok()
+            .map(|glob| glob.compile_matcher())
+    }
 }
 
 /// A REQUEST, not a grant. Every field can only lower the effective value.
@@ -593,20 +748,6 @@ fn default_hook_timeout() -> u64 {
     30
 }
 
-/// Whether a tool-allowlist entry is a glob rather than a literal tool id.
-///
-/// Uses the same metacharacters as the workspace's glob dialect (globset):
-/// `*`, `?`, `[...]`, and `{a,b}` brace alternation. A brace expression is
-/// NOT a valid tool id, so it must be deferred to the registry intersect in
-/// PR4 rather than being parsed as a literal.
-fn is_glob(entry: &str) -> bool {
-    entry.contains('*')
-        || entry.contains('?')
-        || entry.contains('[')
-        || entry.contains('{')
-        || entry.contains('}')
-}
-
 #[derive(
     Clone, Copy, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Deserialize, Serialize,
 )]
@@ -755,18 +896,29 @@ mod tests {
     }
 
     #[test]
-    fn allowed_tools_filter_denied_ids() {
+    fn ceiling_denied_ids_join_the_selection_deny_list() {
         let ceiling = ToolCeiling {
             denied_tool_ids: BTreeSet::from(["native:read_file".into()]),
             ..ceiling()
         };
         let (descriptor, _) = reviewer_profile().restrict(&ceiling);
-        assert!(descriptor.allowed_tools().is_empty());
+        // The profile asked for `native:read_file`; the workspace denies it, so
+        // the selection carries the deny and can never re-admit it.
+        match descriptor.tool_selection() {
+            ToolSelection::Explicit { allow, deny } => {
+                assert_eq!(allow, &vec!["native:read_file".to_string()]);
+                assert!(deny.contains(&"native:read_file".to_string()));
+            }
+            other => panic!("expected an explicit selection, got {other:?}"),
+        }
     }
 
     #[test]
-    fn glob_allow_entries_are_deferred() {
-        // Globs are not resolvable without the registry; literal ids survive.
+    fn glob_allow_entries_are_carried_not_discarded() {
+        // v1.3 closure: a glob is a real selection, not a dropped entry. The
+        // old behaviour discarded it, leaving an EMPTY allowlist that both the
+        // manifest and normalization read as "admit everything" — the opposite
+        // of what the author wrote.
         let profile = AgentProfile {
             tools: ToolPolicy {
                 allow: vec!["native:read_file".into(), "native:*".into()],
@@ -775,10 +927,77 @@ mod tests {
             ..reviewer_profile()
         };
         let (descriptor, _) = profile.restrict(&ceiling());
-        assert_eq!(
-            descriptor.allowed_tools(),
-            &BTreeSet::from([ToolId::native("read_file")])
+        match descriptor.tool_selection() {
+            ToolSelection::Explicit { allow, .. } => {
+                assert_eq!(
+                    allow,
+                    &vec!["native:read_file".to_string(), "native:*".to_string()]
+                );
+            }
+            other => panic!("expected an explicit selection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn omitted_tools_inherits_safe_defaults_not_everything() {
+        let profile = AgentProfile {
+            tools: ToolPolicy::default(),
+            ..reviewer_profile()
+        };
+        let (descriptor, _) = profile.restrict(&ceiling());
+        assert!(matches!(
+            descriptor.tool_selection(),
+            ToolSelection::InheritSafeDefaults { .. }
+        ));
+    }
+
+    #[test]
+    fn a_bare_wildcard_is_rejected_with_a_diagnostic() {
+        // `*` would let a profile re-widen itself to every provider, which is
+        // exactly the semantic this type exists to remove.
+        let profile = AgentProfile {
+            tools: ToolPolicy {
+                allow: vec!["*".into(), "not-a-namespace:thing".into()],
+                deny: vec![],
+            },
+            ..reviewer_profile()
+        };
+        let (descriptor, diagnostics) = profile.restrict(&ceiling());
+        assert!(
+            matches!(
+                descriptor.tool_selection(),
+                ToolSelection::InheritSafeDefaults { .. }
+            ),
+            "every entry was invalid, so nothing was selected explicitly"
         );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|d| d.severity == DiagnosticSeverity::Rejected)
+                .count(),
+            2,
+            "both invalid entries must be surfaced, not silently dropped"
+        );
+    }
+
+    #[test]
+    fn tool_pattern_namespaces_are_not_cross_matched() {
+        assert!(ToolPattern::matches("native:*", "native:read_file"));
+        assert!(!ToolPattern::matches("native:*", "mcp:github/create_issue"));
+        assert!(!ToolPattern::matches("native:*", "skill:rust-review/lint"));
+        // `*` spans `/` so an mcp glob covers `server/tool`.
+        assert!(ToolPattern::matches("mcp:*", "mcp:github/create_issue"));
+        assert!(ToolPattern::matches(
+            "mcp:github/*",
+            "mcp:github/create_issue"
+        ));
+        assert!(!ToolPattern::matches(
+            "mcp:github/*",
+            "mcp:gitlab/create_issue"
+        ));
+        assert!(ToolPattern::is_valid("native:{read_file,list}"));
+        assert!(!ToolPattern::is_valid("*"));
+        assert!(!ToolPattern::is_valid(""));
     }
 
     #[test]
@@ -826,14 +1045,20 @@ mod tests {
     }
 
     #[test]
-    fn default_agent_is_permissive_and_read_only() {
+    fn builtin_default_agent_selects_every_admitted_tool() {
+        // The BUILT-IN agent (no named profile) is bounded by the workspace
+        // policy the registry already applied, so it selects everything. What
+        // matters is that `restrict` cannot produce this variant — only the
+        // Default impl can.
         let descriptor = AgentDescriptor::default();
-        assert_eq!(
-            descriptor.ceiling().maximum_filesystem,
-            FilesystemScope::WorktreeRead
-        );
-        assert!(descriptor.allowed_tools().is_empty());
+        assert_eq!(descriptor.tool_selection(), &ToolSelection::AllAdmitted);
         assert!(descriptor.system_prompt().is_none());
+        let (from_yaml, _) = reviewer_profile().restrict(&ceiling());
+        assert_ne!(
+            from_yaml.tool_selection(),
+            &ToolSelection::AllAdmitted,
+            "a YAML-authored profile can never reach AllAdmitted"
+        );
     }
 
     #[test]

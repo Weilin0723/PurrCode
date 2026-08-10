@@ -92,6 +92,24 @@ impl ToolRuntime {
         if authorization.constraints != *constraints {
             return Err(ExecutionError::ConstraintMismatch);
         }
+        Self::execute_authorized(action, constraints).await
+    }
+
+    /// Execute an action whose authorization the caller has ALREADY consumed.
+    ///
+    /// The v1.3 registry-tool path authorizes with `digest_v3` (which binds the
+    /// tool descriptor digest) and consumes the authorization in the daemon's
+    /// executor before dispatching by provider — so by the time a skill script
+    /// reaches Claw, the at-most-once guarantee has already been enforced and
+    /// re-consuming would fail. Sandboxing and constraint enforcement are
+    /// identical to [`Self::execute`]; only the consume step differs.
+    ///
+    /// Callers that have NOT consumed an authorization must use
+    /// [`Self::execute`]; this entry point cannot verify that one existed.
+    pub async fn execute_authorized(
+        action: &ProposedAction,
+        constraints: &purrcode_runtime_core::ActionConstraints,
+    ) -> Result<ExecutionResult, ExecutionError> {
         match action {
             ProposedAction::RepositoryRead(read) => execute_typed_read(read, constraints).await,
             ProposedAction::Command(command) => execute_command(command, constraints).await,
@@ -122,12 +140,14 @@ impl ToolRuntime {
             ProposedAction::ExternalTool(_) => Err(ExecutionError::UnsupportedConstraint(
                 "external tool actions must execute through the isolated MCP host".into(),
             )),
-            // v1.3: registry tools dispatch on descriptor.provider in PR5.
-            // Until then nothing constructs this variant, so a conservative
-            // refusal is honest — never a silent no-op.
+            // Registry tools dispatch by provider in the daemon's ToolExecutor
+            // (which owns McpHost and the skill runtime); Claw only ever sees
+            // the concrete action a provider decomposes into. Reaching here
+            // means a `Tool` action was routed without an executor attached, so
+            // refusing is the honest outcome — never a silent no-op.
             ProposedAction::Tool(invocation) => {
                 Err(ExecutionError::UnsupportedConstraint(format!(
-                    "tool `{}` dispatch is not wired until PR5",
+                    "tool `{}` requires a provider executor; none is attached to this runtime",
                     invocation.tool_id
                 )))
             }

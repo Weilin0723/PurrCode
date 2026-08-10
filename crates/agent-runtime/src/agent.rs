@@ -386,10 +386,7 @@ impl<'a> NativeAgent<'a> {
     /// `allowed_tools`.
     fn tools_manifest(&self) -> Option<String> {
         let registry = self.tool_registry.as_ref()?;
-        let agent = self
-            .profile
-            .clone()
-            .unwrap_or_default();
+        let agent = self.profile.clone().unwrap_or_default();
         let schema = registry.turn_schema(&agent);
         let tools = schema
             .get("tools")
@@ -416,11 +413,7 @@ impl<'a> NativeAgent<'a> {
                     .join("\n")
             })
             .unwrap_or_default();
-        if tools.is_empty() {
-            None
-        } else {
-            Some(tools)
-        }
+        if tools.is_empty() { None } else { Some(tools) }
     }
 
     /// Fire a governed hook trigger at a lifecycle point. Returns an error when
@@ -433,12 +426,15 @@ impl<'a> NativeAgent<'a> {
         trigger: purrcode_runtime_core::HookTrigger,
         depth: u8,
     ) -> Result<(), AgentError> {
-        if let Some(evaluator) = &self.hook_evaluator
-            && evaluator.dispatch(store, session_id, trigger, depth).await?
-        {
-            return Err(AgentError::InvalidModelTurn(format!(
-                "a blocking {trigger} hook aborted the turn"
-            )));
+        if let Some(evaluator) = &self.hook_evaluator {
+            let outcome = evaluator
+                .dispatch(store, session_id, trigger, depth)
+                .await?;
+            if outcome.stops_turn() {
+                return Err(AgentError::InvalidModelTurn(hook_stop_reason(
+                    trigger, outcome,
+                )));
+            }
         }
         Ok(())
     }
@@ -1980,7 +1976,17 @@ impl<'a> NativeAgent<'a> {
         let authorization = Authorization {
             action_id,
             session_id,
-            action_digest: action.digest(&constraints)?,
+            // A registry tool is authorized with digest_v3, which binds the
+            // descriptor digest as well as the action and constraints — that is
+            // what the ToolExecutor consumes. Authorizing a `Tool` action with
+            // the v1 digest here would produce an authorization no executor can
+            // consume, so a human-approved MCP/skill tool (every AlwaysAsk tool)
+            // would fail at dispatch instead of running.
+            action_digest: authorization_digest(
+                &action,
+                &constraints,
+                self.tool_registry.as_deref(),
+            )?,
             constraints: constraints.clone(),
             authorized_at: Utc::now(),
             approved_by: ApprovalAuthority::Human,
@@ -3166,8 +3172,7 @@ impl<'a> NativeAgent<'a> {
                 (ProposedAction::Tool(invocation), Some(registry)) => {
                     match registry.tool(&invocation.tool_id) {
                         Some(descriptor) => {
-                            self.policy
-                                .evaluate_tool(&proposed, descriptor, &worktree)
+                            self.policy.evaluate_tool(&proposed, descriptor, &worktree)
                         }
                         None => self.policy.evaluate(&proposed, &worktree),
                     }
@@ -4348,6 +4353,23 @@ fn authorization_digest(
     }
 }
 
+/// How to report a hook chain that stopped the turn.
+///
+/// A suspension is not a failure: the session is parked on a durable pending
+/// action, and saying "aborted" would tell the user their turn died when what
+/// it actually needs is one approval.
+fn hook_stop_reason(
+    trigger: purrcode_runtime_core::HookTrigger,
+    outcome: crate::tool_executor::HookOutcome,
+) -> String {
+    match outcome {
+        crate::tool_executor::HookOutcome::Suspended => format!(
+            "a {trigger} hook needs approval before it can run; approve the pending action to continue"
+        ),
+        _ => format!("a blocking {trigger} hook aborted the turn"),
+    }
+}
+
 /// True when a proposed action is the `native:commit` registry tool.
 fn is_native_commit(action: &ProposedAction) -> bool {
     matches!(
@@ -4378,35 +4400,23 @@ async fn execute_and_record(
         &ProposedAction::WriteFile(_) | &ProposedAction::DeleteFile(_)
     );
     let is_commit = is_native_commit(action);
-    if is_mutation
-        && let Some(evaluator) = hook_evaluator
-        && evaluator
-            .dispatch(
-                store,
-                session_id,
-                purrcode_runtime_core::HookTrigger::BeforeWrite,
-                0,
-            )
-            .await?
-    {
-        return Err(AgentError::InvalidModelTurn(
-            "a blocking before_write hook aborted the mutation".into(),
-        ));
+    if is_mutation && let Some(evaluator) = hook_evaluator {
+        let trigger = purrcode_runtime_core::HookTrigger::BeforeWrite;
+        let outcome = evaluator.dispatch(store, session_id, trigger, 0).await?;
+        if outcome.stops_turn() {
+            return Err(AgentError::InvalidModelTurn(hook_stop_reason(
+                trigger, outcome,
+            )));
+        }
     }
-    if is_commit
-        && let Some(evaluator) = hook_evaluator
-        && evaluator
-            .dispatch(
-                store,
-                session_id,
-                purrcode_runtime_core::HookTrigger::BeforeCommit,
-                0,
-            )
-            .await?
-    {
-        return Err(AgentError::InvalidModelTurn(
-            "a blocking before_commit hook aborted the commit".into(),
-        ));
+    if is_commit && let Some(evaluator) = hook_evaluator {
+        let trigger = purrcode_runtime_core::HookTrigger::BeforeCommit;
+        let outcome = evaluator.dispatch(store, session_id, trigger, 0).await?;
+        if outcome.stops_turn() {
+            return Err(AgentError::InvalidModelTurn(hook_stop_reason(
+                trigger, outcome,
+            )));
+        }
     }
     let result = match (action, tool_executor) {
         // v1.3 PR B: a registered tool dispatches by provider through the
@@ -4414,7 +4424,14 @@ async fn execute_and_record(
         // legacy actions keep flowing through ToolRuntime::execute.
         (ProposedAction::Tool(invocation), Some(executor)) => {
             match executor
-                .execute_tool(store, session_id, turn_id, action_id, invocation, constraints)
+                .execute_tool(
+                    store,
+                    session_id,
+                    turn_id,
+                    action_id,
+                    invocation,
+                    constraints,
+                )
                 .await
             {
                 Ok(outcome) => Ok(ExecutionResult {
@@ -4437,18 +4454,14 @@ async fn execute_and_record(
     // A blocking after_write hook that denies aborts the turn after the fact.
     if (is_mutation || is_commit)
         && let Some(evaluator) = hook_evaluator
-        && evaluator
-            .dispatch(
-                store,
-                session_id,
-                purrcode_runtime_core::HookTrigger::AfterWrite,
-                0,
-            )
-            .await?
     {
-        return Err(AgentError::InvalidModelTurn(
-            "a blocking after_write hook aborted the turn".into(),
-        ));
+        let trigger = purrcode_runtime_core::HookTrigger::AfterWrite;
+        let outcome = evaluator.dispatch(store, session_id, trigger, 0).await?;
+        if outcome.stops_turn() {
+            return Err(AgentError::InvalidModelTurn(hook_stop_reason(
+                trigger, outcome,
+            )));
+        }
     }
     match result {
         Ok(mut result) => {
@@ -4494,18 +4507,14 @@ async fn execute_and_record(
             // is recorded. A blocking hook that denies aborts the turn.
             if (is_mutation || is_commit)
                 && let Some(evaluator) = hook_evaluator
-                && evaluator
-                    .dispatch(
-                        store,
-                        session_id,
-                        purrcode_runtime_core::HookTrigger::AfterValidation,
-                        0,
-                    )
-                    .await?
             {
-                return Err(AgentError::InvalidModelTurn(
-                    "a blocking after_validation hook aborted the turn".into(),
-                ));
+                let trigger = purrcode_runtime_core::HookTrigger::AfterValidation;
+                let outcome = evaluator.dispatch(store, session_id, trigger, 0).await?;
+                if outcome.stops_turn() {
+                    return Err(AgentError::InvalidModelTurn(hook_stop_reason(
+                        trigger, outcome,
+                    )));
+                }
             }
             Ok(result)
         }

@@ -8,6 +8,7 @@ pub mod extension;
 pub mod graph;
 pub mod native_tools;
 pub mod product_state;
+pub mod schema_validation;
 pub mod terminal;
 pub mod tool;
 pub mod work;
@@ -24,11 +25,13 @@ pub use evidence::{EvidenceInitiator, ExecutionEvidence, ExecutionOutcome, Redac
 pub use extension::{
     AgentDescriptor, AgentProfile, CommandDescriptor, CommandExecutionSpec, ContextPolicy,
     ContextRequirement, HookAction, HookDescriptor, HookTrigger, ModelRoleName, PermissionRequest,
-    SkillDescriptor, SkillPolicy, SkillValidation, ToolPolicy,
+    SkillDescriptor, SkillPolicy, SkillValidation, ToolPattern, ToolPolicy, ToolSelection,
+    is_safe_default,
 };
 pub use graph::{GraphEdgeKind, GraphNodeKind};
 pub use native_tools::builtin_native_proposals;
 pub use product_state::{InputDisposition, ProductState, ProductStateView, StateColor};
+pub use schema_validation::{SchemaViolation, validate as validate_against_schema};
 pub use terminal::{
     OwnershipGeneration, OwnershipTransition, ResizeTerminalAction, SendTerminalInputAction,
     StartTerminalAction, StopProcessAction, TerminalAction, TerminalDimensions, TerminalId,
@@ -918,6 +921,17 @@ pub enum PinnedOrigin {
         tool_id: ToolId,
         action_id: ActionId,
     },
+    /// A file reached by traversing the project-intelligence graph, NOT by a
+    /// lexical match and NOT a project instruction file. Carrying the seed,
+    /// edge kind and hop count here is what lets the context ledger report
+    /// `WhyIncluded::RelatedByGraph` truthfully — pinning graph hits as
+    /// `ProjectInstructions` told the user (and the model) that a repository
+    /// had declared this file as standing guidance, which it had not.
+    GraphRelated {
+        from_node: String,
+        via_edge: GraphEdgeKind,
+        hops: u8,
+    },
 }
 
 impl PinnedOrigin {
@@ -929,6 +943,7 @@ impl PinnedOrigin {
             Self::ProjectInstructions => "project_instructions",
             Self::ProjectMemory => "project_memory",
             Self::ToolFindings { .. } => "tool_findings",
+            Self::GraphRelated { .. } => "graph_related",
         }
     }
 
@@ -942,6 +957,9 @@ impl PinnedOrigin {
             Self::ProjectInstructions => "PROJECT INSTRUCTIONS (from the repository)",
             Self::ProjectMemory => "PROJECT MEMORY (durable, auditable project knowledge)",
             Self::ToolFindings { .. } => "TOOL FINDINGS (structured output from a registered tool)",
+            Self::GraphRelated { .. } => {
+                "RELATED FILES (reached through the project graph, not requested by anyone)"
+            }
         }
     }
 }
@@ -978,6 +996,19 @@ pub struct PinnedContext {
 impl PinnedContext {
     pub fn is_empty(&self) -> bool {
         self.sections.is_empty()
+    }
+
+    /// Append sections after the caller's own, preserving their order.
+    ///
+    /// Used to fold projections — tool findings recovered from the evidence log
+    /// — into the caller-supplied pinned set. Deliberately does NOT sort:
+    /// the caller's order is meaningful (a user's composer references come
+    /// before standing project memory), and `render_parts` emits a heading
+    /// whenever the origin changes, so appending groups the new sections
+    /// without disturbing what was already there.
+    pub fn with_sections(mut self, sections: Vec<PinnedSection>) -> Self {
+        self.sections.extend(sections);
+        self
     }
 
     /// The pinned block split into one `(ledger_label, text)` pair per pinned

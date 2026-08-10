@@ -657,6 +657,50 @@ Only ask for clarification when the ambiguity genuinely changes what tool you wo
 Return EXACTLY the JSON structure specified. No markdown wrappers, no extra text outside the JSON object."
 }
 
+/// Byte cap for one tool's structured findings. A registered tool must not be
+/// able to inject an unbounded block, for the same reason a project
+/// instruction file cannot.
+const MAX_TOOL_FINDINGS_BYTES: usize = 16 * 1024;
+
+/// Project `ToolEvidenceRecorded` events that carry structured output into
+/// pinned `ToolFindings` sections.
+///
+/// Only evidence whose execution SUCCEEDED contributes: a failed tool's partial
+/// output is in the action log, but it is not a finding.
+fn tool_findings(session_events: &[SessionEvent]) -> Vec<purrcode_runtime_core::PinnedSection> {
+    session_events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::ToolEvidenceRecorded { evidence } => Some(evidence),
+            _ => None,
+        })
+        .filter(|evidence| {
+            matches!(
+                evidence.outcome,
+                purrcode_runtime_core::ExecutionOutcome::Succeeded { .. }
+            )
+        })
+        .filter_map(|evidence| {
+            let structured = evidence.structured_output.as_ref()?;
+            let mut content =
+                serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string());
+            if content.len() > MAX_TOOL_FINDINGS_BYTES {
+                content.truncate(MAX_TOOL_FINDINGS_BYTES);
+                content.push_str("\n… (findings truncated)");
+            }
+            Some(purrcode_runtime_core::PinnedSection {
+                origin: purrcode_runtime_core::PinnedOrigin::ToolFindings {
+                    tool_id: evidence.tool_id.clone(),
+                    action_id: evidence.action_id,
+                },
+                label: evidence.tool_id.as_str().to_owned(),
+                content,
+                memory_id: None,
+            })
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_messages(
     turn_id: TurnId,
@@ -670,6 +714,13 @@ pub(crate) fn build_messages(
     profile: Option<&purrcode_runtime_core::AgentDescriptor>,
     tools_manifest: Option<&str>,
 ) -> (Vec<ModelMessage>, ContextLedgerEntry) {
+    // v1.3 closure: structured tool output reaches the next turn as DATA with
+    // provenance, not as re-parsed prose in a stdout blob. The evidence log is
+    // the source of truth — a tool's structured result is projected out of
+    // `ToolEvidenceRecorded` here, so the ledger shows exactly which tool and
+    // which action produced it, and no separate mutable channel can drift from
+    // what was durably recorded.
+    let pinned = &pinned.clone().with_sections(tool_findings(session_events));
     let action_outputs = session_events
         .iter()
         .filter_map(|event| match event {
@@ -842,7 +893,12 @@ pub(crate) fn build_messages(
     // graph-related to the objective, not a keyword match.
     let graph_context = context_hits
         .iter()
-        .filter(|hit| matches!(hit.reason, purrcode_whisker::HitReason::RelatedByGraph { .. }))
+        .filter(|hit| {
+            matches!(
+                hit.reason,
+                purrcode_whisker::HitReason::RelatedByGraph { .. }
+            )
+        })
         .map(|hit| {
             let reason = match &hit.reason {
                 purrcode_whisker::HitReason::RelatedByGraph {
@@ -912,7 +968,9 @@ pub(crate) fn build_messages(
     let graph_block = if graph_context.is_empty() {
         String::new()
     } else {
-        format!("## GRAPH-RELATED CONTEXT (reached by project-graph edge, not keyword match):\n{graph_context}\n\n")
+        format!(
+            "## GRAPH-RELATED CONTEXT (reached by project-graph edge, not keyword match):\n{graph_context}\n\n"
+        )
     };
     let compacted_block = format!("## COMPACTED PRIOR CONTEXT:\n{compacted_context}\n\n");
     let output_format_and_schema = "## OUTPUT FORMAT — Respond with EXACTLY this JSON structure, filling in values:\n\
@@ -1014,14 +1072,32 @@ CRITICAL RULES:\n\
     // the same order as the text they describe. Per-section (rather than one
     // merged "pinned_context" section) is what lets a user see that the
     // reference they attached cost 1.2k tokens and actually landed.
-    raw_sections.extend(pinned_parts.iter().map(|(label, text)| {
-        (
-            ContextClass::PinnedContext,
-            label.clone(),
-            text.as_str(),
-            WhyIncluded::Pinned,
-        )
-    }));
+    // The provenance a section reports must be the provenance it HAS. A graph
+    // hit is not something a person pinned — nobody asked for it — so it is
+    // ledgered as `RelatedByGraph` with the seed, edge and hop count that
+    // produced it, and the trace inspector can show why it was there.
+    raw_sections.extend(pinned.sections.iter().zip(pinned_parts.iter()).map(
+        |(section, (label, text))| {
+            let why = match &section.origin {
+                purrcode_runtime_core::PinnedOrigin::GraphRelated {
+                    from_node,
+                    via_edge,
+                    hops,
+                } => WhyIncluded::RelatedByGraph {
+                    via_edge: *via_edge,
+                    from_node: from_node.clone(),
+                    hops: *hops,
+                },
+                _ => WhyIncluded::Pinned,
+            };
+            (
+                ContextClass::PinnedContext,
+                label.clone(),
+                text.as_str(),
+                why,
+            )
+        },
+    ));
     raw_sections.extend([
         (
             ContextClass::TaskState,
@@ -1299,6 +1375,160 @@ mod tests {
         let first = build_plan_messages("Refactor the retry path", Path::new("/w"), &[], None);
         assert_eq!(first.len(), 2);
         assert!(!first[1].content.contains("reviewed"));
+    }
+
+    fn succeeded_evidence(
+        session_id: SessionId,
+        structured: Option<serde_json::Value>,
+    ) -> SessionEvent {
+        SessionEvent::ToolEvidenceRecorded {
+            evidence: Box::new(purrcode_runtime_core::ExecutionEvidence {
+                action_id: ActionId::new(),
+                session_id,
+                turn_id: None,
+                tool_id: purrcode_runtime_core::ToolId::skill("security-review", "scan"),
+                provider: purrcode_runtime_core::ToolProvider::Skill,
+                descriptor_digest: "digest".into(),
+                decision: purrcode_runtime_core::JudgmentDecision::AllowWithConstraints(
+                    purrcode_runtime_core::ActionConstraints::read_only(PathBuf::from("/w")),
+                ),
+                approved_by: purrcode_runtime_core::ApprovalAuthority::DeterministicPolicy,
+                constraints: purrcode_runtime_core::ActionConstraints::read_only(PathBuf::from(
+                    "/w",
+                )),
+                effective_network_scope: purrcode_runtime_core::NetworkScope::None,
+                effective_filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                initiator: purrcode_runtime_core::EvidenceInitiator::Model {
+                    turn_id: TurnId::default(),
+                },
+                outcome: purrcode_runtime_core::ExecutionOutcome::Succeeded {
+                    exit_code: Some(0),
+                    truncated: false,
+                    affected_paths: Vec::new(),
+                },
+                structured_output: structured,
+                redaction_class: purrcode_runtime_core::RedactionClass::Arguments,
+                started_at: Utc::now(),
+                finished_at: Utc::now(),
+            }),
+        }
+    }
+
+    #[test]
+    fn structured_tool_output_becomes_a_ledgered_tool_findings_section() {
+        // Acceptance: a skill's structured result reaches the next turn as
+        // DATA with provenance — not as prose the model has to re-parse out of
+        // a stdout blob — and the ledger names the tool and action that
+        // produced it.
+        let session_id = SessionId::default();
+        let state = SessionState::empty(session_id);
+        let events = vec![succeeded_evidence(
+            session_id,
+            Some(serde_json::json!({ "findings": [{ "file": "auth.rs", "severity": "high" }] })),
+        )];
+        let (messages, entry) = build_messages(
+            TurnId::default(),
+            session_id,
+            "Review the auth changes",
+            Path::new("/w"),
+            &state,
+            &[],
+            &events,
+            &PinnedContext::default(),
+            None,
+            None,
+        );
+        let prompt = messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<String>();
+        assert!(
+            prompt.contains("TOOL FINDINGS"),
+            "the findings must be framed as tool output, not as user text"
+        );
+        assert!(prompt.contains("\"severity\": \"high\""));
+        let section = entry
+            .sections
+            .iter()
+            .find(|section| section.label.starts_with("tool_findings/"))
+            .expect("the findings are ledgered independently");
+        assert!(section.label.contains("skill:security-review/scan"));
+    }
+
+    #[test]
+    fn a_tool_with_no_structured_output_contributes_no_findings() {
+        // Only a validated structured result becomes findings. Evidence without
+        // one must not produce an empty heading for the model to interpret.
+        let session_id = SessionId::default();
+        let state = SessionState::empty(session_id);
+        let events = vec![succeeded_evidence(session_id, None)];
+        let (messages, _) = build_messages(
+            TurnId::default(),
+            session_id,
+            "Review the auth changes",
+            Path::new("/w"),
+            &state,
+            &[],
+            &events,
+            &PinnedContext::default(),
+            None,
+            None,
+        );
+        let prompt = messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<String>();
+        assert!(!prompt.contains("TOOL FINDINGS"));
+    }
+
+    #[test]
+    fn a_graph_hit_is_ledgered_as_related_by_graph_not_as_pinned() {
+        // Provenance honesty: nobody pinned a graph hit and no repository
+        // declared it as instructions, so the ledger must say the graph
+        // reached it — with the seed, edge and hop count that did.
+        let session_id = SessionId::default();
+        let state = SessionState::empty(session_id);
+        let pinned = PinnedContext {
+            sections: vec![purrcode_runtime_core::PinnedSection {
+                origin: purrcode_runtime_core::PinnedOrigin::GraphRelated {
+                    from_node: "src/auth.rs".into(),
+                    via_edge: purrcode_runtime_core::GraphEdgeKind::Imports,
+                    hops: 2,
+                },
+                label: "src/session.rs".into(),
+                content: "fn resume() {}".into(),
+                memory_id: None,
+            }],
+        };
+        let (_, entry) = build_messages(
+            TurnId::default(),
+            session_id,
+            "Fix the auth flow",
+            Path::new("/w"),
+            &state,
+            &[],
+            &[],
+            &pinned,
+            None,
+            None,
+        );
+        let section = entry
+            .sections
+            .iter()
+            .find(|section| section.label.starts_with("graph_related/"))
+            .expect("the graph hit is ledgered");
+        match &section.why_included {
+            WhyIncluded::RelatedByGraph {
+                via_edge,
+                from_node,
+                hops,
+            } => {
+                assert_eq!(*via_edge, purrcode_runtime_core::GraphEdgeKind::Imports);
+                assert_eq!(from_node, "src/auth.rs");
+                assert_eq!(*hops, 2);
+            }
+            other => panic!("a graph hit must not report {other:?}"),
+        }
     }
 
     /// PRD v1.1 §14.1: the `ContextLedgerEntry` a turn records must sum to

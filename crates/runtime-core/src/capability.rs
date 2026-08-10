@@ -308,6 +308,35 @@ impl CapabilityRegistry {
         self.tools.get(&tool_id).expect("just inserted")
     }
 
+    /// Forbid an already-admitted tool after the fact, with a Rejected
+    /// diagnostic explaining why.
+    ///
+    /// This is the seam for authority decisions that cannot be expressed as a
+    /// static ceiling because they depend on durable state — today, trust-on-
+    /// first-use descriptor pinning: a remote MCP server whose descriptor digest
+    /// changed since it was approved must be unavailable until a human re-pins
+    /// it, and rebuilding the registry must not be a way around that.
+    ///
+    /// The tool stays in the registry as `Forbidden` rather than being deleted,
+    /// so callers get "this tool is forbidden" instead of "no such tool".
+    pub fn forbid_tool(&mut self, id: &ToolId, reason: &str) {
+        let Some(descriptor) = self.tools.remove(id) else {
+            return;
+        };
+        self.diagnostics.push(AdmissionDiagnostic {
+            source_path: None,
+            subject: id.as_str().to_owned(),
+            severity: DiagnosticSeverity::Rejected,
+            message: reason.to_owned(),
+            restricted_fields: vec![(
+                "approval_policy".into(),
+                format!("{:?}", descriptor.approval_policy()),
+                "Forbidden".into(),
+            )],
+        });
+        self.tools.insert(id.clone(), descriptor.forbid());
+    }
+
     /// Admit an agent profile (restricted to its ceiling) into the registry.
     pub fn admit_agent(
         &mut self,
@@ -408,15 +437,22 @@ impl CapabilityRegistry {
     ///
     /// Each admitted tool contributes its id, description, parameter schema,
     /// and a side-effect / approval hint so the model can see which calls will
-    /// prompt. An empty agent allowlist admits every registered tool; a
-    /// non-empty one admits only the intersection.
+    /// prompt. The manifest is filtered by the agent's [`ToolSelection`] and
+    /// excludes anything the ceiling made `Forbidden` — what the model is shown
+    /// and what normalization will accept are the same set.
+    ///
+    /// Call this on the registry returned by [`Self::for_agent`]: the filter
+    /// here is idempotent against that, and running it on the raw repository
+    /// registry would show descriptors the profile's ceiling has not yet
+    /// narrowed.
     pub fn turn_schema(&self, agent: &AgentDescriptor) -> serde_json::Value {
-        let allowlist = agent.allowed_tools();
+        let selection = agent.tool_selection();
         let tools: Vec<serde_json::Value> = self
             .tools
             .values()
             .filter(|descriptor| {
-                allowlist.is_empty() || allowlist.contains(descriptor.id())
+                descriptor.approval_policy() != ApprovalPolicy::Forbidden
+                    && selection.admits(descriptor)
             })
             .map(|descriptor| {
                 serde_json::json!({
@@ -448,6 +484,73 @@ impl CapabilityRegistry {
         })
     }
 
+    /// The PER-TURN effective registry for one agent profile:
+    ///
+    /// ```text
+    /// effective descriptor = workspace admitted descriptor ∩ agent ceiling
+    /// ```
+    ///
+    /// applied to every axis, not just the filesystem. The returned registry is
+    /// the ONE object the rest of the turn uses — model manifest, normalization,
+    /// PawGate, `digest_v3`, execution and evidence all read the same
+    /// descriptors, so what the model was shown, what was authorized, and what
+    /// ran can never disagree.
+    ///
+    /// Two things happen per tool:
+    ///
+    /// 1. The agent's [`ToolSelection`] decides whether the tool is in scope at
+    ///    all. A tool it does not select is simply absent.
+    /// 2. A tool whose declared capability the ceiling cannot support is
+    ///    admitted `Forbidden`, NOT silently downgraded. Clamping is right for
+    ///    scopes that merely constrain an execution (write globs, changed-file
+    ///    budgets); it is wrong for a capability the tool needs to function. A
+    ///    `write_file` under a read-only ceiling must be unavailable, not a
+    ///    descriptor that claims to be a read tool.
+    pub fn for_agent(&self, agent: &AgentDescriptor) -> CapabilityRegistry {
+        let selection = agent.tool_selection();
+        let ceiling = agent.ceiling();
+        let mut effective = self.clone();
+        effective.tools.clear();
+        for descriptor in self.tools.values() {
+            if !selection.admits(descriptor) {
+                continue;
+            }
+            let supported = ceiling_supports(descriptor, ceiling);
+            let (restricted, diagnostics) = descriptor.clone().restrict(ceiling);
+            effective.diagnostics.extend(diagnostics);
+            let restricted = if supported {
+                restricted
+            } else {
+                effective.diagnostics.push(AdmissionDiagnostic {
+                    source_path: None,
+                    subject: descriptor.id().as_str().to_owned(),
+                    severity: DiagnosticSeverity::Rejected,
+                    message: format!(
+                        "tool requires more capability than agent `{}` is granted; \
+                         it is forbidden for this agent rather than downgraded",
+                        agent.name()
+                    ),
+                    restricted_fields: vec![(
+                        "agent_ceiling".into(),
+                        format!("{:?}", descriptor.side_effect_class()),
+                        format!("{:?}", ceiling.maximum_side_effect),
+                    )],
+                });
+                restricted.forbid()
+            };
+            effective.tools.insert(restricted.id().clone(), restricted);
+        }
+        let surviving: std::collections::BTreeSet<ToolId> =
+            effective.tools.keys().cloned().collect();
+        for providers in effective.by_capability.values_mut() {
+            providers.retain(|provider| match provider {
+                CapabilityProvider::Tool { tool_id, .. } => surviving.contains(tool_id),
+                _ => true,
+            });
+        }
+        effective
+    }
+
     pub fn diagnostics(&self) -> &[AdmissionDiagnostic] {
         &self.diagnostics
     }
@@ -473,6 +576,38 @@ impl CapabilityRegistry {
             let entry = self.by_capability.entry(capability.clone()).or_default();
             entry.push(provider.clone());
             entry.sort_by_key(|p| p.rank_key());
+        }
+    }
+}
+
+/// Whether `ceiling` can support what `descriptor` needs in order to do its
+/// job at all. This is the difference between *narrowing* a tool and *removing*
+/// it: a write tool under a read-only ceiling has nothing left to narrow to.
+fn ceiling_supports(descriptor: &ToolDescriptor, ceiling: &ToolCeiling) -> bool {
+    use super::{FilesystemScope, NetworkScope};
+    if descriptor.side_effect_class() > ceiling.maximum_side_effect {
+        return false;
+    }
+    let network_ok = match (descriptor.network_scope(), &ceiling.maximum_network) {
+        (NetworkScope::None, _) => true,
+        (_, NetworkScope::None) => false,
+        (NetworkScope::Hosts { allowed }, NetworkScope::Hosts { allowed: permitted }) => {
+            allowed.iter().any(|host| permitted.contains(host))
+        }
+        _ => true,
+    };
+    if !network_ok {
+        return false;
+    }
+    match (descriptor.filesystem_scope(), &ceiling.maximum_filesystem) {
+        (FilesystemScope::None, _) => true,
+        (_, FilesystemScope::None) => false,
+        (FilesystemScope::WorktreeRead, _) => true,
+        // A write tool needs a write ceiling, and needs at least one glob to
+        // survive the intersection — otherwise it can write nothing.
+        (FilesystemScope::Worktree { .. }, FilesystemScope::WorktreeRead) => false,
+        (left @ FilesystemScope::Worktree { .. }, right @ FilesystemScope::Worktree { .. }) => {
+            matches!(left.intersect(right), FilesystemScope::Worktree { .. })
         }
     }
 }
@@ -712,6 +847,266 @@ mod tests {
         assert_eq!(keys[0].2, "b");
         assert_eq!(keys[1].2, "c");
         assert_eq!(keys[2].2, "a");
+    }
+
+    /// Build a registry with one native read tool, one native write tool and
+    /// one MCP tool — the three shapes every selection test needs.
+    fn mixed_registry() -> CapabilityRegistry {
+        let mut registry = CapabilityRegistry::new();
+        let ceiling = ceiling();
+        registry.admit_tool(proposal("read_file", &["read"]), &ceiling);
+        registry.admit_tool(
+            ToolDescriptorProposal {
+                side_effect_class: SideEffectClass::Write,
+                filesystem_scope: FilesystemScope::maximum(),
+                ..proposal("write_file", &["write"])
+            },
+            &ceiling,
+        );
+        registry.admit_tool(
+            ToolDescriptorProposal {
+                id: crate::ToolId::mcp("github", "create_issue"),
+                provider: crate::ToolProvider::Mcp,
+                origin: DescriptorOrigin::RemoteDiscovery,
+                side_effect_class: SideEffectClass::Execute,
+                ..proposal("create_issue", &["issues"])
+            },
+            &ceiling,
+        );
+        registry
+    }
+
+    fn agent_with(tools: crate::ToolPolicy) -> crate::AgentDescriptor {
+        crate::AgentProfile {
+            name: "reviewer".into(),
+            description: String::new(),
+            capabilities: Default::default(),
+            model_role: None,
+            system_prompt: None,
+            tools,
+            permissions: Default::default(),
+            context: Default::default(),
+            skills: Default::default(),
+            priority: 0,
+            layer: ExtensionLayer::Project,
+        }
+        .restrict(&ceiling())
+        .0
+    }
+
+    #[test]
+    fn native_glob_cannot_expose_mcp_tools() {
+        // THE regression. `allow: [native:*]` is a restriction, so it must
+        // select the native namespace and nothing else — not "every registered
+        // tool" via an emptied allowlist.
+        let registry = mixed_registry();
+        let agent = agent_with(crate::ToolPolicy {
+            allow: vec!["native:*".into()],
+            deny: vec![],
+        });
+        let effective = registry.for_agent(&agent);
+
+        let ids: Vec<&str> = effective.tools().map(|d| d.id().as_str()).collect();
+        assert!(ids.contains(&"native:read_file"));
+        assert!(
+            !ids.contains(&"mcp:github/create_issue"),
+            "an MCP tool must not appear under `allow: [native:*]`, got {ids:?}"
+        );
+
+        // ...and it must be absent from the model manifest too, so what the
+        // model sees and what normalization accepts cannot disagree.
+        let manifest = effective.turn_schema(&agent);
+        let manifest = serde_json::to_string(&manifest).unwrap();
+        assert!(!manifest.contains("mcp:github/create_issue"));
+        assert!(manifest.contains("native:read_file"));
+    }
+
+    #[test]
+    fn mcp_glob_deny_removes_every_mcp_tool() {
+        let registry = mixed_registry();
+        let agent = agent_with(crate::ToolPolicy {
+            allow: vec!["native:*".into(), "mcp:*".into()],
+            deny: vec!["mcp:*".into()],
+        });
+        let effective = registry.for_agent(&agent);
+        let ids: Vec<&str> = effective.tools().map(|d| d.id().as_str()).collect();
+        assert!(ids.contains(&"native:read_file"));
+        assert!(
+            !ids.iter().any(|id| id.starts_with("mcp:")),
+            "deny beats allow for every MCP tool, got {ids:?}"
+        );
+    }
+
+    #[test]
+    fn omitted_tools_selects_only_safe_defaults() {
+        let registry = mixed_registry();
+        let agent = agent_with(crate::ToolPolicy::default());
+        let effective = registry.for_agent(&agent);
+        let ids: Vec<&str> = effective.tools().map(|d| d.id().as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["native:read_file"],
+            "an omitted `tools:` block is the built-in read set, never everything"
+        );
+    }
+
+    #[test]
+    fn a_write_tool_under_a_read_only_agent_is_forbidden_not_downgraded() {
+        // The ceiling intersection must REMOVE a capability the agent cannot
+        // have, not relabel the tool as a read tool and let it through.
+        let registry = mixed_registry();
+        let agent = crate::AgentProfile {
+            name: "reviewer".into(),
+            description: String::new(),
+            capabilities: Default::default(),
+            model_role: None,
+            system_prompt: None,
+            tools: crate::ToolPolicy {
+                allow: vec!["native:*".into()],
+                deny: vec![],
+            },
+            permissions: crate::PermissionRequest {
+                write: Some(false),
+                network: Some(NetworkScope::None),
+                maximum_side_effect: Some(SideEffectClass::Read),
+                approval: None,
+            },
+            context: Default::default(),
+            skills: Default::default(),
+            priority: 0,
+            layer: ExtensionLayer::Project,
+        }
+        .restrict(&ceiling())
+        .0;
+
+        let effective = registry.for_agent(&agent);
+        let write = effective
+            .tool(&crate::ToolId::native("write_file"))
+            .expect("kept for a precise refusal");
+        assert_eq!(
+            write.approval_policy(),
+            ApprovalPolicy::Forbidden,
+            "a write tool under a read-only ceiling must be Forbidden"
+        );
+        assert_eq!(write.filesystem_scope(), &FilesystemScope::None);
+        // ...and it must not be advertised to the model.
+        let manifest = serde_json::to_string(&effective.turn_schema(&agent)).unwrap();
+        assert!(!manifest.contains("native:write_file"));
+    }
+
+    #[test]
+    fn effective_descriptor_digest_reflects_the_agent_ceiling() {
+        // The digest the model manifest, PawGate, digest_v3 and evidence all
+        // bind to must be the INTERSECTED one, not the workspace one.
+        let registry = mixed_registry();
+        let permissive = agent_with(crate::ToolPolicy {
+            allow: vec!["native:*".into()],
+            deny: vec![],
+        });
+        let restricted = crate::AgentProfile {
+            name: "reviewer".into(),
+            description: String::new(),
+            capabilities: Default::default(),
+            model_role: None,
+            system_prompt: None,
+            tools: crate::ToolPolicy {
+                allow: vec!["native:*".into()],
+                deny: vec![],
+            },
+            permissions: crate::PermissionRequest {
+                approval: Some(ApprovalPolicy::AlwaysAsk),
+                ..Default::default()
+            },
+            context: Default::default(),
+            skills: Default::default(),
+            priority: 0,
+            layer: ExtensionLayer::Project,
+        }
+        .restrict(&ceiling())
+        .0;
+
+        let id = crate::ToolId::native("read_file");
+        let loose = registry.for_agent(&permissive);
+        let tight = registry.for_agent(&restricted);
+        assert_eq!(
+            tight.tool(&id).unwrap().approval_policy(),
+            ApprovalPolicy::AlwaysAsk,
+            "the agent's approval floor must reach the effective descriptor"
+        );
+        assert_ne!(
+            loose.tool(&id).unwrap().descriptor_digest(),
+            tight.tool(&id).unwrap().descriptor_digest(),
+            "a different ceiling must produce a different digest"
+        );
+    }
+
+    #[test]
+    fn a_changed_remote_descriptor_is_forbidden_until_repinned() {
+        // TOFU at ADMISSION: when the pin store says a remote server's
+        // descriptor digest changed since it was approved, the registry forbids
+        // the tool rather than quietly rebuilding around the new digest.
+        let mut registry = mixed_registry();
+        let id = crate::ToolId::mcp("github", "create_issue");
+        assert_ne!(
+            registry.tool(&id).unwrap().approval_policy(),
+            ApprovalPolicy::Forbidden,
+            "precondition: the tool is callable before the pin check"
+        );
+
+        registry.forbid_tool(&id, "descriptor changed since it was pinned");
+
+        let forbidden = registry.tool(&id).expect("kept, for a precise refusal");
+        assert_eq!(forbidden.approval_policy(), ApprovalPolicy::Forbidden);
+        assert_eq!(forbidden.filesystem_scope(), &FilesystemScope::None);
+        assert_eq!(forbidden.network_scope(), &NetworkScope::None);
+        assert!(
+            registry.diagnostics().iter().any(|d| {
+                d.subject == "mcp:github/create_issue"
+                    && d.severity == DiagnosticSeverity::Rejected
+                    && d.message.contains("pinned")
+            }),
+            "the refusal must be visible at /v1/extensions/diagnostics"
+        );
+
+        // ...and it must not be advertised to any agent, so the model never
+        // sees a tool that normalization will refuse.
+        let agent = agent_with(crate::ToolPolicy {
+            allow: vec!["mcp:*".into()],
+            deny: vec![],
+        });
+        let manifest =
+            serde_json::to_string(&registry.for_agent(&agent).turn_schema(&agent)).unwrap();
+        assert!(!manifest.contains("mcp:github/create_issue"));
+    }
+
+    #[test]
+    fn a_server_denied_tool_is_forbidden_through_the_generic_registry() {
+        // `deny_tools` is expressed as a ceiling denial, so the SAME admission
+        // path the model-driven registry uses produces Forbidden — the deny
+        // cannot be bypassed by invoking the tool generically instead of
+        // through the explicit /mcp endpoint.
+        let mut registry = CapabilityRegistry::new();
+        let ceiling = ToolCeiling {
+            denied_tool_ids: ["mcp:github/delete_repo".to_string()].into_iter().collect(),
+            ..ceiling()
+        };
+        let admitted = registry.admit_tool(
+            ToolDescriptorProposal {
+                id: crate::ToolId::mcp("github", "delete_repo"),
+                provider: crate::ToolProvider::Mcp,
+                origin: DescriptorOrigin::RemoteDiscovery,
+                approval_policy: ApprovalPolicy::PreAuthorized,
+                ..proposal("delete_repo", &[])
+            },
+            &ceiling,
+        );
+        assert_eq!(admitted.approval_policy(), ApprovalPolicy::Forbidden);
+        assert!(
+            registry
+                .diagnostics()
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Rejected)
+        );
     }
 
     #[test]

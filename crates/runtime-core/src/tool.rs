@@ -399,13 +399,25 @@ impl ToolDescriptor {
         &self.descriptor_digest
     }
 
+    /// Strip this descriptor of every capability and mark it `Forbidden`. Used
+    /// by [`crate::CapabilityRegistry::for_agent`] when an agent's ceiling
+    /// cannot support what the tool needs: the descriptor stays visible for a
+    /// precise refusal message, but it is not callable and claims nothing.
+    pub(crate) fn forbid(self) -> ToolDescriptor {
+        ToolDescriptor {
+            side_effect_class: SideEffectClass::Read,
+            network_scope: NetworkScope::None,
+            filesystem_scope: FilesystemScope::None,
+            approval_policy: ApprovalPolicy::Forbidden,
+            descriptor_digest: String::new(),
+            ..self
+        }
+        .recompute_digest()
+    }
+
     /// Re-restrict an already-admitted descriptor against a (possibly tighter)
-    /// ceiling. Idempotent against the ceiling it was admitted with.
-    ///
-    /// PR1 is types-only: the only caller today is the idempotency test. PR2
-    /// (PawGate `tool_ceiling`) wires the re-restriction path for real; the
-    /// `allow` is removed then.
-    #[allow(dead_code)]
+    /// ceiling. Idempotent against the ceiling it was admitted with. This is the
+    /// per-agent intersection `CapabilityRegistry::for_agent` applies.
     pub(crate) fn restrict(
         self,
         ceiling: &ToolCeiling,

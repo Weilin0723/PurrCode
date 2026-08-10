@@ -4,7 +4,9 @@ use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use purrcode_runtime_core::{CommandAction, ProposedAction, RepositoryReadAction, SessionEvent, ToolId};
+use purrcode_runtime_core::{
+    CommandAction, ProposedAction, RepositoryReadAction, SessionEvent, ToolId,
+};
 
 use crate::errors::AgentError;
 use crate::stream::is_unsafe_terminal_control;
@@ -155,13 +157,7 @@ impl From<AgentActionWire> for AgentAction {
                 path,
                 expected_digest,
             },
-            AgentActionWire::Tool {
-                tool_id,
-                arguments,
-            } => Self::Tool {
-                tool_id,
-                arguments,
-            },
+            AgentActionWire::Tool { tool_id, arguments } => Self::Tool { tool_id, arguments },
         }
     }
 }

@@ -10,8 +10,8 @@
 //! agent edit its own permissions mid-session.
 
 use purrcode_runtime_core::{
-    AdmissionDiagnostic, AgentProfile, CommandDescriptor, CommandExecutionSpec,
-    DiagnosticSeverity, ExtensionLayer, HookDescriptor, ToolCeiling,
+    AdmissionDiagnostic, AgentProfile, CommandDescriptor, CommandExecutionSpec, DiagnosticSeverity,
+    ExtensionLayer, HookDescriptor, ToolCeiling,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -353,8 +353,7 @@ mod tests {
         assert!(
             diagnostics
                 .iter()
-                .any(|d| d.severity == DiagnosticSeverity::Rejected
-                    && d.subject == "broken.yaml"),
+                .any(|d| d.severity == DiagnosticSeverity::Rejected && d.subject == "broken.yaml"),
             "the broken file must be diagnosed, not silently skipped"
         );
     }
@@ -370,8 +369,7 @@ mod tests {
         assert!(
             diagnostics
                 .iter()
-                .any(|d| d.severity == DiagnosticSeverity::Rejected
-                    && d.subject == "big.yaml"),
+                .any(|d| d.severity == DiagnosticSeverity::Rejected && d.subject == "big.yaml"),
             "the oversized file must be diagnosed"
         );
     }
@@ -389,8 +387,7 @@ mod tests {
         assert!(
             diagnostics
                 .iter()
-                .any(|d| d.severity == DiagnosticSeverity::Rejected
-                    && d.subject == "evil.yaml"),
+                .any(|d| d.severity == DiagnosticSeverity::Rejected && d.subject == "evil.yaml"),
             "a rejected project daemon command must be diagnosed"
         );
     }
@@ -412,8 +409,7 @@ mod tests {
         assert!(
             diagnostics
                 .iter()
-                .any(|d| d.severity == DiagnosticSeverity::Rejected
-                    && d.subject == "escape.yaml"),
+                .any(|d| d.severity == DiagnosticSeverity::Rejected && d.subject == "escape.yaml"),
             "an escaping path must be diagnosed"
         );
     }
