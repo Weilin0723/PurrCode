@@ -45,7 +45,7 @@ use futures::{FutureExt, StreamExt};
 use purrcode_agent_runtime::{
     AgentAction, AgentCancellation, AgentContextIndex, AgentStreamEvent, AgentStreamObserver,
     AgentTurn, CapabilityResolution, IndexingSignals, MemoryPressure, NativeAgent, SkillResolver,
-    Tier2Policy, bounded_agent_stream_channel,
+    Tier2Policy, ToolExecutor, bounded_agent_stream_channel,
 };
 use purrcode_claw::ToolRuntime;
 use purrcode_codex_bridge::{CodexBridge, CodexBridgeConfig, CodexDoctorReport};
@@ -128,7 +128,7 @@ mod file_watcher;
 mod hooks;
 mod project_context;
 
-use crate::commands::{CommandDescriptor, CommandExecution, builtin_commands, command_for};
+use crate::commands::{CommandExecution, builtin_commands, command_for};
 use file_watcher::run_worktree_watcher;
 
 #[derive(Clone)]
@@ -595,6 +595,7 @@ pub async fn bind_and_report(
         .route("/v1/repository/inspect", post(inspect_repository))
         .route("/v1/references/resolve", post(resolve_references))
         .route("/v1/commands", get(list_commands))
+        .route("/v1/sessions/{id}/commands/{name}", post(run_session_command))
         .route("/v1/agents", get(list_agents))
         .route("/v1/extensions/diagnostics", get(extension_diagnostics))
         .route("/v1/extensions/reload", post(extension_reload))
@@ -5268,7 +5269,14 @@ async fn run_agent_operation(
     });
     let agent = agent
         .with_tool_registry(Arc::new(registry_cache.registry.clone()))
-        .with_tool_executor(executor);
+        .with_tool_executor(executor)
+        // v1.3 PR D: attach the governed-hook dispatcher so lifecycle
+        // triggers (before_write/after_write/after_validation/
+        // after_agent_complete/before_commit) fire project-declared hooks.
+        .with_hook_evaluator(Arc::new(DaemonHookEvaluator {
+            state: state.clone(),
+            repository: repository.clone(),
+        }));
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
@@ -9676,10 +9684,146 @@ async fn resolve_one_reference(
 async fn list_commands(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<CommandDescriptor>>, ApiError> {
+    Query(query): Query<ExtensionQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
     authorize(&state, &headers)?;
-    let commands = builtin_commands();
+    let mut commands: Vec<serde_json::Value> = Vec::new();
+    // Built-in commands first: they win name collisions over project/user
+    // commands, which are appended only when they do not shadow a builtin.
+    for command in builtin_commands() {
+        commands.push(serde_json::json!({
+            "name": command.name,
+            "description": command.description,
+            "group": command.group,
+            "execution": command.execution,
+            "source": "builtin",
+        }));
+    }
+    // Extension commands are merged only when a repository is supplied; without
+    // one the endpoint returns the built-ins (v1.2 clients that predate the
+    // repository-scoped surface keep working).
+    if !query.repository.is_empty() {
+        let repository = PathBuf::from(&query.repository)
+            .canonicalize()
+            .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+        let set = load_extension_set(&state, &repository).await;
+        for command in set.commands.values() {
+            let name = command.name.clone();
+            if commands.iter().any(|c| c["name"] == name) {
+                continue; // builtin wins the name
+            }
+            // v1.3 PR D: an extension command's Agent execution is published as a
+            // daemon-style route (`POST /v1/sessions/{id}/commands/<name>`) so an
+            // unmodified v1.2 IDE can dispatch it without client changes (§10).
+            let execution = match &command.execution {
+                purrcode_runtime_core::CommandExecutionSpec::Agent { .. } => {
+                    serde_json::json!({
+                        "kind": "daemon",
+                        "method": "POST",
+                        "path": format!("/v1/sessions/{{id}}/commands/{name}"),
+                    })
+                }
+                other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
+            };
+            commands.push(serde_json::json!({
+                "name": name,
+                "description": command.description,
+                "group": command.group,
+                "execution": execution,
+                "source": format!("{:?}", command.layer),
+            }));
+        }
+    }
     Ok(Json(commands))
+}
+
+/// v1.3 PR D: execute a project/user extension command on a session. The
+/// command resolves from the repository's extension set. A `Prompt` command
+/// appends the prompt text as a user message and continues the turn; an
+/// `Agent` command runs the prompt under the named agent profile (which may
+/// differ from the session's bound agent). `Daemon` and `Client` commands are
+/// not executable here — they are dispatched by the daemon route or the client
+/// UI respectively.
+async fn run_session_command(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    AxumPath(name): AxumPath<String>,
+) -> Result<(StatusCode, Json<AcceptedSession>), ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let command_name = if name.starts_with('/') { name } else { format!("/{name}") };
+    let session = state.store.lock().await.load(id)?;
+    let repository = session
+        .repository
+        .clone()
+        .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
+    let set = load_extension_set(&state, &repository).await;
+    let command = set.commands.get(&command_name).ok_or(ApiError::NotFound)?;
+    let (prompt, agent) = match &command.execution {
+        purrcode_runtime_core::CommandExecutionSpec::Prompt { prompt } => {
+            (prompt.clone(), None)
+        }
+        purrcode_runtime_core::CommandExecutionSpec::Agent { agent, prompt } => {
+            // The named agent must resolve against the extension set.
+            if set.admitted(agent).is_none() {
+                return Err(ApiError::BadRequest(format!(
+                    "command `{command_name}` references unknown agent profile `{agent}`"
+                )));
+            }
+            (prompt.clone(), Some(agent.clone()))
+        }
+        other => {
+            return Err(ApiError::Conflict(format!(
+                "command `{command_name}` is not runnable from this endpoint: {other:?}"
+            )));
+        }
+    };
+    let ended_status = matches!(
+        session.status,
+        SessionStatus::Completed | SessionStatus::Failed | SessionStatus::Cancelled
+    );
+    // Record the command's prompt as a user message so the turn has it in
+    // conversation history, then continue the agent.
+    let mut store = state.store.lock().await;
+    if ended_status {
+        store.append(id, &SessionEvent::SessionResumed)?;
+    }
+    store.append(
+        id,
+        &SessionEvent::ConversationMessageAdded {
+            message: ConversationMessage {
+                id: Uuid::new_v4().to_string(),
+                role: "user".into(),
+                content: prompt.clone(),
+                timestamp: Utc::now(),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                model: None,
+                turn_id: Some(TurnId::new()),
+            },
+        },
+    )?;
+    drop(store);
+    let operation = AgentOperation::Continue { message: prompt };
+    let bound_agent = match agent {
+        Some(agent) => Some(agent),
+        None => state
+            .store
+            .lock()
+            .await
+            .load(id)
+            .ok()
+            .and_then(|s| s.selected_agent),
+    };
+    spawn_agent_operation(state.clone(), id, operation, bound_agent).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedSession {
+            id: id.0.to_string(),
+            status: "command accepted",
+        }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -9831,9 +9975,81 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
                 )));
             }
             purrcode_runtime_core::ToolProvider::Native => {
-                return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
-                    "native tool `{tool_id}` must flow through the legacy action path"
-                )));
+                // The only native tool that reaches the executor is
+                // `native:commit` (every other native tool converts back to a
+                // legacy action in normalize_action). It runs a whitelisted
+                // `git add` + `git commit` inside the session worktree.
+                if invocation.tool_id.as_str() != "native:commit" {
+                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
+                        format!("native tool `{tool_id}` must flow through the legacy action path"),
+                    ));
+                }
+                let message = invocation
+                    .arguments
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        purrcode_agent_runtime::AgentError::InvalidModelTurn(
+                            "native:commit requires a `message` argument".into(),
+                        )
+                    })?;
+                let paths: Vec<String> = invocation
+                    .arguments
+                    .get("paths")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|v| v.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let worktree = &constraints.working_directory;
+                // Whitelisted commit: `git add` the declared paths (or all)
+                // then `git commit`. Paths are passed as literal arguments so
+                // a hook or the model cannot smuggle shell syntax through.
+                let add_paths = if paths.is_empty() {
+                    vec!["-A".to_string()]
+                } else {
+                    paths
+                };
+                let add_status = tokio::process::Command::new("git")
+                    .arg("add")
+                    .args(&add_paths)
+                    .current_dir(worktree)
+                    .status()
+                    .await
+                    .map_err(|error| {
+                        purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                            "git add failed: {error}"
+                        ))
+                    })?;
+                if !add_status.success() {
+                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
+                        "git add failed; commit aborted".into(),
+                    ));
+                }
+                let commit_output = tokio::process::Command::new("git")
+                    .arg("commit")
+                    .arg("-m")
+                    .arg(message)
+                    .current_dir(worktree)
+                    .output()
+                    .await
+                    .map_err(|error| {
+                        purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                            "git commit failed: {error}"
+                        ))
+                    })?;
+                if !commit_output.status.success() {
+                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                        "git commit failed: {}",
+                        String::from_utf8_lossy(&commit_output.stderr)
+                    )));
+                }
+                let stdout = String::from_utf8_lossy(&commit_output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&commit_output.stderr).to_string();
+                (stdout, stderr, Some(0))
             }
         };
         // Durable tool evidence (v1.3 PR B). The descriptor digest is bound
@@ -9881,6 +10097,119 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
             affected_paths: Vec::new(),
             structured_output: None,
         })
+    }
+}
+
+/// The daemon's governed-hook lifecycle dispatcher (v1.3 §8 PR6). Implements
+/// the agent-runtime `HookEvaluator` seam: it loads the session's hook set
+/// from the repository extension cache, judges each hook's `HookAction::Tool`
+/// through `Policy::evaluate_tool` against the admitted descriptor, and
+/// executes it through the `ToolExecutor`. Returns `true` when a blocking hook
+/// aborted the turn.
+struct DaemonHookEvaluator {
+    state: AppState,
+    repository: PathBuf,
+}
+
+#[async_trait]
+impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
+    async fn dispatch(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        trigger: purrcode_runtime_core::HookTrigger,
+        depth: u8,
+    ) -> Result<bool, purrcode_agent_runtime::AgentError> {
+        let set = load_extension_set(&self.state, &self.repository).await;
+        let hooks: Vec<purrcode_runtime_core::HookDescriptor> = set
+            .hooks
+            .iter()
+            .filter(|hook| hook.trigger == trigger)
+            .cloned()
+            .collect();
+        if hooks.is_empty() {
+            return Ok(false);
+        }
+        let config = AppConfig::load(&self.state.app_config).ok();
+        let policy = match config {
+            Some(config) => effective_policy(&config, &self.repository)
+                .unwrap_or_else(|_| Policy::default()),
+            None => Policy::default(),
+        };
+        let registry_cache = load_tool_registry(&self.state, &self.repository).await;
+        let evaluate_closure = {
+            let registry = registry_cache.clone();
+            let repository = self.repository.clone();
+            let policy = policy.clone();
+            move |hook: &purrcode_runtime_core::HookDescriptor| {
+                // A hook can only invoke a REGISTERED tool; the descriptor is
+                // looked up from the repository registry and judged provider-blind.
+                let invocation = match &hook.action {
+                    purrcode_runtime_core::HookAction::Tool { tool_id, arguments } => {
+                        purrcode_runtime_core::ToolInvocation {
+                            tool_id: tool_id.clone(),
+                            arguments: arguments.clone(),
+                            working_directory: repository.clone(),
+                            descriptor_digest: hook.descriptor_digest.clone(),
+                        }
+                    }
+                    purrcode_runtime_core::HookAction::Capability { .. } => {
+                        return JudgmentDecision::Deny {
+                            reason: "capability hooks are not supported in v1.3".into(),
+                        };
+                    }
+                };
+                let Some(descriptor) = registry.registry.tool(&invocation.tool_id) else {
+                    return JudgmentDecision::Deny {
+                        reason: format!(
+                            "hook `{}` references unregistered tool `{}`",
+                            hook.id, invocation.tool_id
+                        ),
+                    };
+                };
+                policy.evaluate_tool(
+                    &purrcode_runtime_core::ProposedAction::Tool(invocation.clone()),
+                    descriptor,
+                    &repository,
+                )
+            }
+        };
+        // Judge + audit each hook synchronously (no borrow-across-await trap),
+        // then execute the PawGate-allowed hooks' tools with a fresh store borrow
+        // through the ToolExecutor.
+        let (outcomes, to_execute, aborted) = crate::hooks::dispatch_hooks(
+            store,
+            session_id,
+            trigger,
+            &hooks,
+            depth,
+            &evaluate_closure,
+        );
+        let executor = DaemonToolExecutor {
+            state: self.state.clone(),
+            registry: registry_cache,
+        };
+        for execution in to_execute {
+            let _ = executor
+                .execute_tool(
+                    store,
+                    session_id,
+                    None,
+                    ActionId::new(),
+                    &execution.invocation,
+                    &execution.constraints,
+                )
+                .await;
+            let _ = crate::hooks::record_completed_hook_run(
+                store,
+                session_id,
+                &execution,
+                trigger,
+                "succeeded",
+            );
+        }
+        // A blocking hook that denied or failed must abort the turn.
+        Ok(aborted || outcomes.iter().any(crate::hooks::HookRunOutcome::aborted))
     }
 }
 

@@ -26,7 +26,7 @@ pub use crate::stream::{
     AgentStreamEvent, AgentStreamObserver, AgentStreamObserverError, AgentStreamReceiver,
     MAX_STREAM_OBSERVER_CAPACITY, bounded_agent_stream_channel,
 };
-pub use crate::tool_executor::{ToolExecutionOutcome, ToolExecutor};
+pub use crate::tool_executor::{HookEvaluator, ToolExecutionOutcome, ToolExecutor};
 
 // P1-10: Re-export NativeAgent::compaction_window for daemon use in /compact.
 // The function is a pub(crate) associated fn on NativeAgent; re-export via a

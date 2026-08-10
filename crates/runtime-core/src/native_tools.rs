@@ -106,6 +106,35 @@ pub fn builtin_native_proposals() -> Vec<ToolDescriptorProposal> {
             approval_policy: ApprovalPolicy::ByClass,
             origin: DescriptorOrigin::Builtin,
         },
+        // ── Commit (v1.3 PR D) ─────────────────────────────────────────
+        // The only mutating git operation an agent can perform, and it is
+        // deliberately `AlwaysAsk`: a commit is durable and externally
+        // visible, so it always requires explicit human approval. It routes
+        // through the registry Tool path (the `before_commit` hook attaches
+        // here), never through the generic `command` tool.
+        ToolDescriptorProposal {
+            id: ToolId::native("commit"),
+            provider: ToolProvider::Native,
+            display_name: "commit".into(),
+            description: "Commit the current worktree changes".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "message": { "type": "string" },
+                    "paths": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["message"]
+            }),
+            capabilities: BTreeSet::new(),
+            side_effect_class: SideEffectClass::Execute,
+            network_scope: NetworkScope::None,
+            filesystem_scope: FilesystemScope::Worktree {
+                write_globs: vec!["**".into()],
+                maximum_changed_files: usize::MAX,
+            },
+            approval_policy: ApprovalPolicy::AlwaysAsk,
+            origin: DescriptorOrigin::Builtin,
+        },
     ]
 }
 
@@ -168,7 +197,7 @@ mod tests {
     fn builtin_registry_covers_all_proposals() {
         let registry = builtin_native_registry();
         let proposals = builtin_native_proposals();
-        assert_eq!(proposals.len(), 13);
+        assert_eq!(proposals.len(), 14);
         for proposal in proposals {
             assert!(
                 registry.tool(&proposal.id).is_some(),

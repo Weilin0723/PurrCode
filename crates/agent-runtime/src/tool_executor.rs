@@ -44,3 +44,19 @@ pub trait ToolExecutor: Send + Sync {
         constraints: &ActionConstraints,
     ) -> Result<ToolExecutionOutcome, AgentError>;
 }
+
+/// Governed-hook lifecycle dispatch (v1.3 §8 PR6). The agent turn loop calls
+/// this at before_write/after_write/after_validation/after_agent_complete/
+/// before_commit; the daemon implements it with the repository's hook set,
+/// PawGate, and the ToolExecutor. Returns `true` when a blocking hook aborted
+/// the turn (the caller must fail the turn).
+#[async_trait]
+pub trait HookEvaluator: Send + Sync {
+    async fn dispatch(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        trigger: purrcode_runtime_core::HookTrigger,
+        depth: u8,
+    ) -> Result<bool, AgentError>;
+}

@@ -515,6 +515,44 @@ impl SessionStore {
             .optional()?)
     }
 
+    /// Persist a governed hook firing into `hook_runs` (migration 0004). Called
+    /// by the hook dispatcher before the action is proposed, so a
+    /// triggered-but-denied hook is auditable. `layer` is serialized from the
+    /// `ExtensionLayer` name; `detail` is free-form status context.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_hook_run(
+        &mut self,
+        session_id: SessionId,
+        hook_id: &str,
+        hook_digest: &str,
+        trigger: purrcode_runtime_core::HookTrigger,
+        layer: &purrcode_runtime_core::ExtensionLayer,
+        action_id: Option<ActionId>,
+        status: &str,
+        detail: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO hook_runs(
+                id, session_id, hook_id, hook_digest, trigger, layer, action_id,
+                status, detail, started_at, finished_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                Uuid::new_v4().to_string(),
+                session_id.0.to_string(),
+                hook_id,
+                hook_digest,
+                serde_json::to_string(&trigger)?,
+                serde_json::to_string(layer)?,
+                action_id.map(|id| id.0.to_string()),
+                status,
+                detail,
+                Utc::now(),
+                Utc::now(),
+            ],
+        )?;
+        Ok(())
+    }
+
     pub fn events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>, StoreError> {
         let mut statement = self.connection.prepare(
             "SELECT payload FROM session_events WHERE session_id = ?1 ORDER BY sequence",

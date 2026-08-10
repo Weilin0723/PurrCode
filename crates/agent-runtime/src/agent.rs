@@ -80,7 +80,7 @@ use crate::schema::{
     validate_plan, validate_turn,
 };
 use crate::stream::{AgentStreamEvent, AgentStreamObserver, RationaleStreamExtractor};
-use crate::tool_executor::ToolExecutor;
+use crate::tool_executor::{HookEvaluator, ToolExecutor};
 
 const MAX_AUTONOMOUS_ITERATIONS: usize = 32;
 const MAX_CONSECUTIVE_POLICY_REJECTIONS: usize = 3;
@@ -243,6 +243,10 @@ pub struct NativeAgent<'a> {
     /// this with `McpHost` + the skill runtime; `None` means registry tools are
     /// not executable (the `Tool` arm of `ToolRuntime::execute` refuses them).
     tool_executor: Option<Arc<dyn ToolExecutor>>,
+    /// Governed-hook lifecycle dispatch (v1.3 PR D). The daemon implements this
+    /// with the repository's hook set + PawGate + the ToolExecutor; `None`
+    /// means no hooks fire on lifecycle triggers.
+    hook_evaluator: Option<Arc<dyn HookEvaluator>>,
 }
 
 impl<'a> NativeAgent<'a> {
@@ -265,6 +269,7 @@ impl<'a> NativeAgent<'a> {
             profile: None,
             tool_registry: None,
             tool_executor: None,
+            hook_evaluator: None,
         }
     }
 
@@ -362,6 +367,14 @@ impl<'a> NativeAgent<'a> {
         self
     }
 
+    /// Attach the governed-hook lifecycle dispatcher (v1.3 PR D). Without it,
+    /// no hooks fire on before_write/after_write/after_validation/
+    /// after_agent_complete/before_commit.
+    pub fn with_hook_evaluator(mut self, evaluator: Arc<dyn HookEvaluator>) -> Self {
+        self.hook_evaluator = Some(evaluator);
+        self
+    }
+
     /// The active profile, if any.
     pub fn profile(&self) -> Option<&AgentDescriptor> {
         self.profile.as_ref()
@@ -408,6 +421,26 @@ impl<'a> NativeAgent<'a> {
         } else {
             Some(tools)
         }
+    }
+
+    /// Fire a governed hook trigger at a lifecycle point. Returns an error when
+    /// a blocking hook aborted the turn. No-op when no hook evaluator is
+    /// attached (built-in sessions with no hooks).
+    async fn fire_hook(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        trigger: purrcode_runtime_core::HookTrigger,
+        depth: u8,
+    ) -> Result<(), AgentError> {
+        if let Some(evaluator) = &self.hook_evaluator
+            && evaluator.dispatch(store, session_id, trigger, depth).await?
+        {
+            return Err(AgentError::InvalidModelTurn(format!(
+                "a blocking {trigger} hook aborted the turn"
+            )));
+        }
+        Ok(())
     }
 
     fn budget(&self) -> BudgetConstraints {
@@ -1695,6 +1728,7 @@ impl<'a> NativeAgent<'a> {
                     &session_worktree,
                     Some(request.parent_turn_id),
                     self.tool_executor.as_ref(),
+                    self.hook_evaluator.as_ref(),
                 )
                 .await?;
 
@@ -1917,6 +1951,13 @@ impl<'a> NativeAgent<'a> {
                 },
             )?;
             store.append(session_id, &SessionEvent::SessionCompleted)?;
+            self.fire_hook(
+                store,
+                session_id,
+                purrcode_runtime_core::HookTrigger::AfterAgentComplete,
+                0,
+            )
+            .await?;
             return completed_outcome(store, session_id);
         }
         let SessionStatus::AwaitingApproval(action_id) = state.status else {
@@ -1982,6 +2023,7 @@ impl<'a> NativeAgent<'a> {
             // "current" turn to stamp this execution with.
             None,
             self.tool_executor.as_ref(),
+            self.hook_evaluator.as_ref(),
         )
         .await;
         let result = match result {
@@ -2953,6 +2995,13 @@ impl<'a> NativeAgent<'a> {
                 if self.controls.task_mode.read_only() || objective_requests_advice_only(&objective)
                 {
                     store.append(session_id, &SessionEvent::SessionCompleted)?;
+                    self.fire_hook(
+                        store,
+                        session_id,
+                        purrcode_runtime_core::HookTrigger::AfterAgentComplete,
+                        0,
+                    )
+                    .await?;
                     return completed_outcome(store, session_id);
                 }
                 let validation = ValidationDetector::detect(&worktree)?;
@@ -3049,6 +3098,13 @@ impl<'a> NativeAgent<'a> {
                         }
                     }
                     store.append(session_id, &SessionEvent::SessionCompleted)?;
+                    self.fire_hook(
+                        store,
+                        session_id,
+                        purrcode_runtime_core::HookTrigger::AfterAgentComplete,
+                        0,
+                    )
+                    .await?;
                     return completed_outcome(store, session_id);
                 }
                 validation_repair_cycles += 1;
@@ -3276,6 +3332,7 @@ impl<'a> NativeAgent<'a> {
                         &session_worktree,
                         Some(turn_id),
                         self.tool_executor.as_ref(),
+                        self.hook_evaluator.as_ref(),
                     )
                     .await;
                     match execution {
@@ -4291,6 +4348,14 @@ fn authorization_digest(
     }
 }
 
+/// True when a proposed action is the `native:commit` registry tool.
+fn is_native_commit(action: &ProposedAction) -> bool {
+    matches!(
+        action,
+        ProposedAction::Tool(invocation) if invocation.tool_id.as_str() == "native:commit"
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute_and_record(
     store: &mut SessionStore,
@@ -4301,9 +4366,48 @@ async fn execute_and_record(
     worktree: &SessionWorktree,
     turn_id: Option<TurnId>,
     tool_executor: Option<&Arc<dyn ToolExecutor>>,
+    hook_evaluator: Option<&Arc<dyn HookEvaluator>>,
 ) -> Result<ExecutionResult, AgentError> {
     let before = RepositoryEngine::snapshot(worktree).await?;
     store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+    // v1.3 PR D: before_write fires for a mutation (write/delete) and
+    // before_commit fires for the commit tool. A blocking hook that denies
+    // aborts the turn BEFORE the mutation executes.
+    let is_mutation = matches!(
+        action,
+        &ProposedAction::WriteFile(_) | &ProposedAction::DeleteFile(_)
+    );
+    let is_commit = is_native_commit(action);
+    if is_mutation
+        && let Some(evaluator) = hook_evaluator
+        && evaluator
+            .dispatch(
+                store,
+                session_id,
+                purrcode_runtime_core::HookTrigger::BeforeWrite,
+                0,
+            )
+            .await?
+    {
+        return Err(AgentError::InvalidModelTurn(
+            "a blocking before_write hook aborted the mutation".into(),
+        ));
+    }
+    if is_commit
+        && let Some(evaluator) = hook_evaluator
+        && evaluator
+            .dispatch(
+                store,
+                session_id,
+                purrcode_runtime_core::HookTrigger::BeforeCommit,
+                0,
+            )
+            .await?
+    {
+        return Err(AgentError::InvalidModelTurn(
+            "a blocking before_commit hook aborted the commit".into(),
+        ));
+    }
     let result = match (action, tool_executor) {
         // v1.3 PR B: a registered tool dispatches by provider through the
         // executor (Mcp → McpHost, Skill → skill runtime). Native tools and
@@ -4329,6 +4433,23 @@ async fn execute_and_record(
             .await
             .map_err(Into::into),
     };
+    // v1.3 PR D: after_write fires once the mutation (or commit) has executed.
+    // A blocking after_write hook that denies aborts the turn after the fact.
+    if (is_mutation || is_commit)
+        && let Some(evaluator) = hook_evaluator
+        && evaluator
+            .dispatch(
+                store,
+                session_id,
+                purrcode_runtime_core::HookTrigger::AfterWrite,
+                0,
+            )
+            .await?
+    {
+        return Err(AgentError::InvalidModelTurn(
+            "a blocking after_write hook aborted the turn".into(),
+        ));
+    }
     match result {
         Ok(mut result) => {
             let after = RepositoryEngine::snapshot(worktree).await?;
@@ -4369,6 +4490,23 @@ async fn execute_and_record(
                     ),
                 },
             )?;
+            // v1.3 PR D: after_validation fires once the action's validation
+            // is recorded. A blocking hook that denies aborts the turn.
+            if (is_mutation || is_commit)
+                && let Some(evaluator) = hook_evaluator
+                && evaluator
+                    .dispatch(
+                        store,
+                        session_id,
+                        purrcode_runtime_core::HookTrigger::AfterValidation,
+                        0,
+                    )
+                    .await?
+            {
+                return Err(AgentError::InvalidModelTurn(
+                    "a blocking after_validation hook aborted the turn".into(),
+                ));
+            }
             Ok(result)
         }
         Err(error) => {

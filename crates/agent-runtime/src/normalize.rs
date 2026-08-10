@@ -85,14 +85,18 @@ pub(crate) fn normalize_action(
             profile.ceiling().maximum_filesystem,
             purrcode_runtime_core::FilesystemScope::Worktree { .. }
         );
+        let is_commit = matches!(
+            &action,
+            AgentAction::Tool { tool_id, .. } if tool_id.as_str() == "native:commit"
+        );
         if !write_allowed
-            && matches!(
+            && (matches!(
                 action,
                 AgentAction::WriteFile { .. } | AgentAction::DeleteFile { .. }
-            )
+            ) || is_commit)
         {
             return Err(AgentError::InvalidModelTurn(
-                "this agent profile is read-only; file mutation is denied".into(),
+                "this agent profile is read-only; file mutation and commits are denied".into(),
             ));
         }
     }
