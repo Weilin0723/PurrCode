@@ -1272,6 +1272,7 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::SessionPaused { .. } => "session_paused",
         SessionEvent::SessionResumed => "session_resumed",
         SessionEvent::ModelSelected { .. } => "model_selected",
+        SessionEvent::AgentBound { .. } => "agent_bound",
         SessionEvent::SupervisorStarted { .. } => "supervisor_started",
         SessionEvent::WorkerStarted { .. } => "worker_started",
         SessionEvent::WorkerFinished { .. } => "worker_finished",

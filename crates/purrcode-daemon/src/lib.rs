@@ -74,9 +74,9 @@ use purrcode_runtime_core::adaptation::{
 };
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, AuthorityMode, Authorization,
-    ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
-    SessionEvent, SessionId, SessionState, SessionStatus, TurnId, ValidationStatus,
-    WriteFileAction,
+    ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, PinnedOrigin,
+    PinnedSection, ProposedAction, SessionEvent, SessionId, SessionState, SessionStatus, TurnId,
+    ValidationStatus, WriteFileAction,
 };
 use purrcode_skill_registry::{
     ExternalSearchAuthorization, GitHubRegistryAdapter, Qualifier as RegistryQualifier,
@@ -1988,6 +1988,11 @@ struct StartSessionRequest {
     permission_mode: Option<String>,
     #[serde(default)]
     max_tokens: Option<u64>,
+    /// The named agent profile to run this session under (v1.3 PR C). The name
+    /// resolves against the repository's `.purrcode/agents/` + `~/.purrcode/agents/`;
+    /// an unknown name fails preflight before the session starts.
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 impl StartSessionRequest {
@@ -2306,6 +2311,21 @@ async fn start_session(
         controls.task_mode = TaskMode::Plan;
     }
     validate_supported_controls(&controls)?;
+    // v1.3 PR C: a named agent profile must resolve before the session starts,
+    // so an unknown name fails preflight rather than erroring mid-turn.
+    if let Some(agent) = request.agent.as_deref() {
+        let set = load_extension_set(&state, &repository).await;
+        if set.admitted(agent).is_none() {
+            return Err(ApiError::BadRequest(format!(
+                "unknown agent profile `{agent}`; expected one of: {}",
+                set.admitted_agents
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    }
     let direct_reply = resolve_effective_task_mode(&request, &mut controls);
     let task_mode = controls.task_mode;
     let workflow = if direct_reply {
@@ -2332,6 +2352,9 @@ async fn start_session(
     store.append(id, &SessionEvent::SessionControlsUpdated { controls })?;
     if let Some(model) = request.model.clone() {
         store.append(id, &SessionEvent::ModelSelected { model })?;
+    }
+    if let Some(agent) = request.agent.clone() {
+        store.append(id, &SessionEvent::AgentBound { agent })?;
     }
     if let Some((decision, plan)) = workflow {
         store.append(id, &SessionEvent::WorkflowPlanCreated { decision, plan })?;
@@ -2385,7 +2408,7 @@ async fn start_session(
         TaskMode::Plan | TaskMode::Review => AgentOperation::Plan,
         TaskMode::Ask | TaskMode::Build => AgentOperation::Start,
     };
-    if let Err(error) = spawn_agent_operation(state.clone(), id, operation, None).await {
+    if let Err(error) = spawn_agent_operation(state.clone(), id, operation, request.agent.clone()).await {
         let reason = error_message(&error).chars().take(512).collect();
         state
             .store
@@ -2576,7 +2599,17 @@ async fn resume_or_restore_pause(
     ended_status: Option<SessionStatus>,
     operation: AgentOperation,
 ) -> Result<(), ApiError> {
-    let Err(error) = spawn_agent_operation(state.clone(), id, operation, None).await else {
+    // v1.3 PR C: a session bound to a named agent profile rebinds it on
+    // resume/continue so the profile (system prompt, allowlist, model role)
+    // stays attached without the client re-supplying the name.
+    let bound_agent = state
+        .store
+        .lock()
+        .await
+        .load(id)
+        .ok()
+        .and_then(|session| session.selected_agent);
+    let Err(error) = spawn_agent_operation(state.clone(), id, operation, bound_agent).await else {
         return Ok(());
     };
     if was_paused {
@@ -2880,7 +2913,15 @@ async fn approve_session(
     // Recheck before spawning so an invalid approval can never become an asynchronous
     // agent failure that corrupts an otherwise paused or terminal session.
     require_approval_boundary(&state.store.lock().await.load(id)?)?;
-    spawn_agent_operation(state, id, AgentOperation::Approve, None).await?;
+    // v1.3 PR C: rebind the session's agent profile on approval.
+    let bound_agent = state
+        .store
+        .lock()
+        .await
+        .load(id)
+        .ok()
+        .and_then(|session| session.selected_agent);
+    spawn_agent_operation(state, id, AgentOperation::Approve, bound_agent).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
@@ -5055,6 +5096,25 @@ async fn run_agent_operation(
         }
         None => None,
     };
+    // v1.3 PR C: a profile's `model_role` routes the coding model for this
+    // session. The role must name a configured `[models.roles]` entry; an
+    // unconfigured role fails loudly as a preflight error (never a silent
+    // fallback to coding_worker, which would route the wrong model under a
+    // reviewer/security profile).
+    if let Some(profile) = &profile
+        && let Some(role) = profile.model_role()
+        && role.as_str() != "coding_worker"
+    {
+        let role_model = role_models.get(role.as_str()).ok_or_else(|| {
+            DaemonError::AgentConfiguration(format!(
+                "profile `{}` names unconfigured model role `{}`",
+                profile.name(),
+                role.as_str()
+            ))
+        })?;
+        let provider = failover_for_role(&router, role_model)?;
+        role_providers.insert("coding_worker".into(), (provider, role_model.clone()));
+    }
     // ── Pinned context for this turn ──────────────────────────────────
     // The composer's `@file` chips and the Project Memory settings page both
     // promise the user that content is attached to the agent. This is where
@@ -5090,7 +5150,7 @@ async fn run_agent_operation(
         .clone()
         .unwrap_or_else(|| repository.clone());
     let memory_entries = store.memory(&repository, None).unwrap_or_default();
-    let assembled =
+    let mut assembled =
         project_context::assemble(&reference_root, &request_text, &memory_entries).await;
     // A reference the user typed and the daemon could not attach is recorded in
     // the conversation, not swallowed. Silence here is what let the composer
@@ -5132,6 +5192,61 @@ async fn run_agent_operation(
             let _ = store.touch_memory(memory_id);
         }
     }
+    // v1.3 PR C: a matched installed skill injects its instructions into the
+    // pinned context as an untrusted-framed section, gated by the active
+    // profile's allowed_skills (empty = allow all). The skill's SKILL.md body
+    // is byte-bounded and labelled as project-supplied instructions. This runs
+    // before the agent is built so the injected section is part of the pinned
+    // context every turn.
+    let resolver = DaemonSkillResolver::new(state).await;
+    if let Some(resolver) = &resolver {
+        let capability = infer_capability(&objective);
+        if let CapabilityResolution::InstalledSkill { skill_id, .. } =
+            resolver.resolve(&capability).await
+        {
+            let skill_allowed = profile
+                .as_ref()
+                .map(|profile| {
+                    profile.allowed_skills().is_empty()
+                        || profile.allowed_skills().contains(&skill_id)
+                })
+                .unwrap_or(true);
+            if skill_allowed {
+                if let Some(content) = installed_skill_instructions(state, &skill_id) {
+                    assembled.pinned.sections.push(PinnedSection {
+                        origin: PinnedOrigin::ProjectInstructions,
+                        label: format!("skill:{skill_id}"),
+                        content,
+                        memory_id: None,
+                    });
+                }
+            }
+            let previous_uses = skill_usage_count(state, &skill_id).unwrap_or(0);
+            store.append(
+                id,
+                &SessionEvent::InstalledSkillMatched {
+                    skill_id: skill_id.clone(),
+                    matched_capability: capability.clone(),
+                },
+            )?;
+            if previous_uses > 0 {
+                store.append(
+                    id,
+                    &SessionEvent::InstalledSkillReused {
+                        skill_id: skill_id.clone(),
+                        previous_uses: previous_uses.min(u32::MAX as u64) as u32,
+                    },
+                )?;
+            }
+            store.append(
+                id,
+                &SessionEvent::ExternalSearchAvoided {
+                    skill_id,
+                    matched_capability: capability,
+                },
+            )?;
+        }
+    }
     let agent = NativeAgent::new(role_providers, policy)
         .with_controls(controls)
         .with_usage_records(existing_usage)
@@ -5154,37 +5269,6 @@ async fn run_agent_operation(
     let agent = agent
         .with_tool_registry(Arc::new(registry_cache.registry.clone()))
         .with_tool_executor(executor);
-    let resolver = DaemonSkillResolver::new(state).await;
-    let capability = infer_capability(&objective);
-    if let CapabilityResolution::InstalledSkill { skill_id, .. } = agent
-        .resolve_capability(&capability, resolver.as_deref())
-        .await
-    {
-        let previous_uses = skill_usage_count(state, &skill_id).unwrap_or(0);
-        store.append(
-            id,
-            &SessionEvent::InstalledSkillMatched {
-                skill_id: skill_id.clone(),
-                matched_capability: capability.clone(),
-            },
-        )?;
-        if previous_uses > 0 {
-            store.append(
-                id,
-                &SessionEvent::InstalledSkillReused {
-                    skill_id: skill_id.clone(),
-                    previous_uses: previous_uses.min(u32::MAX as u64) as u32,
-                },
-            )?;
-        }
-        store.append(
-            id,
-            &SessionEvent::ExternalSearchAvoided {
-                skill_id,
-                matched_capability: capability,
-            },
-        )?;
-    }
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
@@ -5494,6 +5578,27 @@ fn skill_usage_count(state: &AppState, skill_id: &str) -> Option<u64> {
         .get(skill_id)
         .ok()
         .map(|skill| skill.successful_uses + skill.failed_uses)
+}
+
+/// The installed skill's SKILL.md body, byte-bounded, for injection into the
+/// pinned context. The skill lives at `{skills}/{scope}/{skill_id}/SKILL.md`;
+/// the store's `get` returns the scope, and the file is read under the same
+/// cap as project instruction files.
+fn installed_skill_instructions(state: &AppState, skill_id: &str) -> Option<String> {
+    let parent = state.database.parent().unwrap_or(Path::new("."));
+    let store = SkillStore::open(&parent.join("skills.db"), &parent.join("skills")).ok()?;
+    let record = store.get(skill_id).ok()?;
+    let root = parent.join("skills").join(record.scope.to_string()).join(skill_id);
+    let path = root.join("SKILL.md");
+    if !path.is_file() {
+        return None;
+    }
+    let meta = std::fs::metadata(&path).ok()?;
+    const MAX_SKILL_INSTRUCTION_BYTES: u64 = 16 * 1024;
+    if meta.len() > MAX_SKILL_INSTRUCTION_BYTES {
+        return None;
+    }
+    std::fs::read_to_string(&path).ok()
 }
 
 fn effective_policy(
@@ -12719,6 +12824,7 @@ mod tests {
             task_mode: None,
             permission_mode: None,
             max_tokens: None,
+            agent: None,
         };
         let controls = request.controls().unwrap();
         assert_eq!(controls.task_mode, TaskMode::Ask);
@@ -12746,6 +12852,7 @@ mod tests {
             task_mode: Some("auto".into()),
             permission_mode: None,
             max_tokens: None,
+            agent: None,
         };
 
         let greeting = request("hello");

@@ -4227,6 +4227,7 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionPaused { .. } => "session_paused",
         SessionResumed => "session_resumed",
         ModelSelected { .. } => "model_selected",
+        AgentBound { .. } => "agent_bound",
         SupervisorStarted { .. } => "supervisor_started",
         WorkerStarted { .. } => "worker_started",
         WorkerFinished { .. } => "worker_finished",

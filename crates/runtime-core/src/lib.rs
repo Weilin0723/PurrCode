@@ -1246,6 +1246,14 @@ pub enum SessionEvent {
     ModelSelected {
         model: String,
     },
+    /// The named agent profile this session runs under (v1.3 PR C). Recorded
+    /// durably on session creation so resume/continue/approve rebind the same
+    /// profile without the client re-supplying it. The name resolves against
+    /// the repository's extension set; an unknown name is rejected before the
+    /// session starts.
+    AgentBound {
+        agent: String,
+    },
     SupervisorStarted {
         workers: usize,
     },
@@ -1583,6 +1591,9 @@ pub struct SessionState {
     /// compaction; this chains additive merges so `failed_attempts` survive.
     pub checkpoint: Option<SemanticCheckpoint>,
     pub selected_model: Option<String>,
+    /// The named agent profile bound to this session (v1.3 PR C). Mirrors
+    /// `selected_model`: durable binding metadata, not replay state.
+    pub selected_agent: Option<String>,
     pub controls: adaptation::SessionControls,
     pub complexity_decision: Option<adaptation::ComplexityDecision>,
     pub workflow_plan: Option<adaptation::WorkflowPlan>,
@@ -1618,6 +1629,7 @@ impl SessionState {
             context_summary: None,
             checkpoint: None,
             selected_model: None,
+            selected_agent: None,
             controls: adaptation::SessionControls::default(),
             complexity_decision: None,
             workflow_plan: None,
@@ -2027,6 +2039,7 @@ impl SessionState {
                 self.status = SessionStatus::Active;
             }
             SessionEvent::ModelSelected { model } => self.selected_model = Some(model.clone()),
+            SessionEvent::AgentBound { agent } => self.selected_agent = Some(agent.clone()),
             SessionEvent::ConversationMessageAdded { message } => {
                 self.conversation_messages.push(message.clone());
             }
@@ -3034,6 +3047,32 @@ mod tests {
             state.event_count, 2,
             "event_count must not increment on invalid transitions"
         );
+    }
+
+    #[test]
+    fn agent_bound_reduces_into_selected_agent() {
+        let id = SessionId::new();
+        let mut state = SessionState::empty(id);
+        state
+            .reduce_event(&SessionEvent::SessionCreated {
+                objective: "review".into(),
+                repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::AgentBound {
+                agent: "security-reviewer".into(),
+            })
+            .unwrap();
+        assert_eq!(state.selected_agent.as_deref(), Some("security-reviewer"));
+        // Rebinding replaces the previous binding.
+        state
+            .reduce_event(&SessionEvent::AgentBound {
+                agent: "architect".into(),
+            })
+            .unwrap();
+        assert_eq!(state.selected_agent.as_deref(), Some("architect"));
     }
 
     #[test]
