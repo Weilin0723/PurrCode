@@ -124,6 +124,7 @@ use crate::ollama_pull::{
 
 mod commands;
 mod file_watcher;
+mod hooks;
 mod project_context;
 
 use crate::commands::{CommandDescriptor, CommandExecution, builtin_commands, command_for};
@@ -584,6 +585,7 @@ pub async fn bind_and_report(
         .route("/v1/agents", get(list_agents))
         .route("/v1/extensions/diagnostics", get(extension_diagnostics))
         .route("/v1/extensions/reload", post(extension_reload))
+        .route("/v1/hooks", get(list_hooks))
         .route("/v1/lsp/servers", get(list_lsp_servers))
         .route("/v1/lsp/open", post(lsp_open))
         .route("/v1/lsp/hover", post(lsp_hover))
@@ -2234,6 +2236,16 @@ async fn start_session(
         return Err(ApiError::BadRequest("objective cannot be empty".into()));
     }
     reject_secret_content(&request.objective)?;
+    // A command posted as a session objective is not an objective (v1.3 §8
+    // PR6). Forwarding `/undo` here would store it as user prose and hand it
+    // to the model, which answers "Sure, I'll undo that" while nothing is
+    // undone — the same refusal the follow-up path applies.
+    if let Some(command) = command_for(&request.objective) {
+        return Err(ApiError::BadRequest(format!(
+            "`{}` is a command, not a session objective",
+            command.name
+        )));
+    }
     let repository = request
         .repository
         .canonicalize()
@@ -9555,6 +9567,30 @@ async fn list_agents(
     Ok(Json(
         serde_json::json!({ "agents": agents, "diagnostics": set.diagnostics }),
     ))
+}
+
+/// v1.3 §7: list the governed hooks declared for a repository.
+async fn list_hooks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let set = load_extension_set(&state, &repository).await;
+    Ok(Json(serde_json::json!({
+        "hooks": set.hooks.iter().map(|hook| serde_json::json!({
+            "id": hook.id,
+            "layer": hook.layer,
+            "trigger": hook.trigger,
+            "path_filter": hook.path_filter,
+            "blocking": hook.blocking,
+            "action": hook.action,
+        })).collect::<Vec<_>>(),
+        "diagnostics": set.diagnostics,
+    })))
 }
 
 #[derive(Deserialize)]
