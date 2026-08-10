@@ -25,6 +25,7 @@ purrcode-extension-config = { path = "../extension-config" }
 purrcode-mcp-host = { path = "../mcp-host" }
 purrcode-provider-gateway = { path = "../provider-gateway" }
 purrcode-provider-import = { path = "../provider-import" }
+purrcode-project-graph = { path = "../project-graph" }
 purrcode-repository-engine = { path = "../repository-engine" }
 purrcode-runtime-core = { path = "../runtime-core" }
 purrcode-ninelives = { path = "../ninelives-recovery" }

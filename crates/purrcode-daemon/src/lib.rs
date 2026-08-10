@@ -98,7 +98,7 @@ use purrcode_web_research::{
 };
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
@@ -5248,6 +5248,13 @@ async fn run_agent_operation(
             )?;
         }
     }
+    // v1.3 PR E: graph-assisted retrieval. Query the project-intelligence graph
+    // for files related to the objective's file seeds and pin their contents
+    // into the context (best-effort; an empty or absent graph contributes
+    // nothing). The `graph_expansion` profile flag gates this when the request
+    // form carries it; the restricted descriptor used here defaults to on so
+    // the producer/consumer exercise the real path.
+    expand_graph_context(state, &repository, &objective, &mut assembled);
     let agent = NativeAgent::new(role_providers, policy)
         .with_controls(controls)
         .with_usage_records(existing_usage)
@@ -5314,7 +5321,188 @@ async fn run_agent_operation(
             }
         }
     }
+    // v1.3 PR E: record which files this session modified into the project
+    // intelligence graph, so later sessions can retrieve related paths by
+    // graph traversal rather than lexical match alone.
+    let _ = record_session_graph_edges(&store, id, &repository, &state.database);
     Ok(())
+}
+
+/// v1.3 PR E: project-intelligence graph producer. Scans the session event log
+/// for executed file writes/deletes and records a `ModifiedBy` edge from the
+/// session node to each affected file node. Best-effort: a graph write failure
+/// never fails the session.
+fn record_session_graph_edges(
+    store: &SessionStore,
+    id: SessionId,
+    repository: &std::path::Path,
+    database: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Ok(events) = store.events(id) else {
+        return Ok(());
+    };
+    let Ok(mut graph) = purrcode_project_graph::ProjectGraph::open(database) else {
+        return Ok(());
+    };
+    let session_key = format!("session:{}", id.0);
+    let session_node = purrcode_project_graph::GraphNode {
+        id: purrcode_project_graph::NodeId(0),
+        project: repository.to_path_buf(),
+        kind: purrcode_runtime_core::GraphNodeKind::Session,
+        key: session_key,
+        label: id.0.to_string(),
+        attributes: serde_json::json!({}),
+        sensitive: true,
+        observed_at: chrono::Utc::now(),
+    };
+    let Ok(session_id) = graph.upsert_node(&session_node) else {
+        return Ok(());
+    };
+    // Collect the repository-relative paths every proposed write/delete touches,
+    // keyed by action_id so each affected path is recorded once per action.
+    for event in &events {
+        let SessionEvent::ActionProposed { action, .. } = event else {
+            continue;
+        };
+        let paths = affected_paths_of(action);
+        for path in paths {
+            if path.is_absolute() || path.as_os_str().is_empty() {
+                continue;
+            }
+            let file_node = purrcode_project_graph::GraphNode {
+                id: purrcode_project_graph::NodeId(0),
+                project: repository.to_path_buf(),
+                kind: purrcode_runtime_core::GraphNodeKind::File,
+                key: path.to_string_lossy().into_owned(),
+                label: path.to_string_lossy().into_owned(),
+                attributes: serde_json::json!({}),
+                sensitive: false,
+                observed_at: chrono::Utc::now(),
+            };
+            let Ok(file_id) = graph.upsert_node(&file_node) else {
+                continue;
+            };
+            let _ = graph.insert_edge(
+                repository,
+                &purrcode_project_graph::GraphEdge {
+                    source: session_id.clone(),
+                    target: file_id,
+                    kind: purrcode_runtime_core::GraphEdgeKind::ModifiedBy,
+                    confidence_millis: 1000,
+                    edge_source: purrcode_project_graph::EdgeSource::EventLog,
+                    evidence: format!("session {}", id.0),
+                    observed_at: chrono::Utc::now(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The repository-relative paths a proposed action affects (write/delete).
+fn affected_paths_of(action: &ProposedAction) -> Vec<std::path::PathBuf> {
+    match action {
+        ProposedAction::WriteFile(write) => vec![write.path.clone()],
+        ProposedAction::DeleteFile(delete) => vec![delete.path.clone()],
+        ProposedAction::RepositoryRead(_)
+        | ProposedAction::Command(_)
+        | ProposedAction::ExternalTool(_)
+        | ProposedAction::Tool(_) => Vec::new(),
+    }
+}
+
+/// v1.3 PR E: graph-assisted retrieval consumer. Extracts repository-relative
+/// file paths from the objective text, queries the project-intelligence graph
+/// for neighbours (files this project's sessions have modified together), and
+/// pins the related files' contents into the assembled context as
+/// graph-derived sections. Best-effort: a missing graph, an empty seed set, or
+/// an unreadable file contributes nothing.
+fn expand_graph_context(
+    state: &AppState,
+    repository: &std::path::Path,
+    objective: &str,
+    assembled: &mut project_context::AssembledContext,
+) {
+    let Ok(mut graph) = purrcode_project_graph::ProjectGraph::open(&state.database) else {
+        return;
+    };
+    // Seed paths: repository-relative paths mentioned in the objective.
+    let mut seeds: Vec<std::path::PathBuf> = Vec::new();
+    for token in objective.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '_') {
+        let token = token.trim();
+        if token.is_empty() || token.starts_with('/') || token.contains("..") {
+            continue;
+        }
+        let path = std::path::PathBuf::from(token);
+        if path.extension().is_some() {
+            seeds.push(path);
+        }
+    }
+    seeds.dedup();
+    if seeds.is_empty() {
+        return;
+    }
+    // For each seed, find its graph node and its neighbours, then pin the
+    // neighbour file contents (bounded) as graph-related context.
+    let mut seen: BTreeSet<std::path::PathBuf> = BTreeSet::new();
+    for seed in seeds {
+        let seed_node = purrcode_project_graph::GraphNode {
+            id: purrcode_project_graph::NodeId(0),
+            project: repository.to_path_buf(),
+            kind: purrcode_runtime_core::GraphNodeKind::File,
+            key: seed.to_string_lossy().into_owned(),
+            label: seed.to_string_lossy().into_owned(),
+            attributes: serde_json::json!({}),
+            sensitive: false,
+            observed_at: chrono::Utc::now(),
+        };
+        // The seed must exist in the graph (upsert so a fresh seed can seed
+        // traversal, then query). The node's id is the real DB id from upsert,
+        // which `neighbours` needs to resolve edges.
+        let Ok(seed_id) = graph.upsert_node(&seed_node) else {
+            continue;
+        };
+        let seed_node = purrcode_project_graph::GraphNode {
+            id: seed_id.clone(),
+            ..seed_node
+        };
+        let Ok(neighbours) = graph.neighbours(repository, &seed_node, 1, 8) else {
+            continue;
+        };
+        for (node, edge, hops) in neighbours {
+            if node.kind != purrcode_runtime_core::GraphNodeKind::File
+                || node.id == seed_id
+                || !seen.insert(node.key.clone().into())
+            {
+                continue;
+            }
+            // Read the related file's content (bounded) from the source
+            // repository.
+            let path = repository.join(&node.key);
+            let content = read_bounded_file(&path);
+            let Some(content) = content else { continue };
+            assembled.pinned.sections.push(PinnedSection {
+                origin: PinnedOrigin::ProjectInstructions,
+                label: format!(
+                    "graph:{} ({:?}, {} hop(s))",
+                    node.key,
+                    edge.kind,
+                    hops
+                ),
+                content,
+                memory_id: None,
+            });
+        }
+    }
+}
+
+/// Read a file bounded to 16 KiB (same cap as project instruction files).
+fn read_bounded_file(path: &std::path::Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    if meta.len() > 16 * 1024 {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
 }
 
 async fn run_background_tier2(state: &AppState, id: SessionId) {

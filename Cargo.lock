@@ -4032,6 +4032,7 @@ dependencies = [
  "purrcode-mcp-host",
  "purrcode-ninelives",
  "purrcode-pawgate",
+ "purrcode-project-graph",
  "purrcode-provider-gateway",
  "purrcode-provider-import",
  "purrcode-reference-resolver",

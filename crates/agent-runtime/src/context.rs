@@ -837,6 +837,31 @@ pub(crate) fn build_messages(
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // v1.3 PR E: graph-derived hits (RelatedByGraph) are surfaced separately
+    // from lexical matches so the model can see WHY a file reached it — it was
+    // graph-related to the objective, not a keyword match.
+    let graph_context = context_hits
+        .iter()
+        .filter(|hit| matches!(hit.reason, purrcode_whisker::HitReason::RelatedByGraph { .. }))
+        .map(|hit| {
+            let reason = match &hit.reason {
+                purrcode_whisker::HitReason::RelatedByGraph {
+                    via_edge,
+                    from_node,
+                    hops,
+                } => format!("via {via_edge} from {from_node} ({hops} hop(s))"),
+                _ => String::new(),
+            };
+            format!(
+                "--- {}:{}-{} --- (graph: {reason})\n{}",
+                hit.path.display(),
+                hit.start_line,
+                hit.end_line,
+                hit.content
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let developer_instructions = match profile.and_then(|p| p.system_prompt()) {
         // A profile-supplied system prompt replaces the built-in developer
         // instructions entirely (v1.3 §4.3). It was byte-capped at admission.
@@ -884,6 +909,11 @@ pub(crate) fn build_messages(
     let validation_block =
         format!("## RECENT VALIDATION AND REPAIR ROUTING:\n{validation_context}\n\n");
     let retrieved_block = format!("## RETRIEVED REPOSITORY CONTEXT:\n{repository_context}\n\n");
+    let graph_block = if graph_context.is_empty() {
+        String::new()
+    } else {
+        format!("## GRAPH-RELATED CONTEXT (reached by project-graph edge, not keyword match):\n{graph_context}\n\n")
+    };
     let compacted_block = format!("## COMPACTED PRIOR CONTEXT:\n{compacted_context}\n\n");
     let output_format_and_schema = "## OUTPUT FORMAT — Respond with EXACTLY this JSON structure, filling in values:\n\
 {\n  \"rationale\": \"reason for action OR the complete user-facing answer if complete=true\",\n  \
@@ -930,7 +960,7 @@ CRITICAL RULES:\n\
         .unwrap_or_default();
     let final_user_content = format!(
         "{request_and_worktree}{pinned_block}{plan_block}{recent_actions_block}{validation_block}\
-{retrieved_block}{compacted_block}{output_format_and_schema}{tools_block}"
+{retrieved_block}{graph_block}{compacted_block}{output_format_and_schema}{tools_block}"
     );
     messages.push(ModelMessage {
         role: "user".into(),
@@ -1032,6 +1062,21 @@ CRITICAL RULES:\n\
             WhyIncluded::AlwaysPresent,
         ),
     ]);
+    // v1.3 PR E: graph-derived context is a separate ledger section so the
+    // ledger reflects that these hits were reached by graph traversal, not by
+    // keyword matching.
+    if !graph_block.is_empty() {
+        raw_sections.push((
+            ContextClass::RetrievedContext,
+            "graph_related_context".into(),
+            graph_block.as_str(),
+            WhyIncluded::RelatedByGraph {
+                via_edge: purrcode_runtime_core::GraphEdgeKind::ModifiedBy,
+                from_node: "session".into(),
+                hops: 1,
+            },
+        ));
+    }
     // The registry tool manifest is accounted for in the ledger when present,
     // exactly as it appears in the prompt (after the output-format block).
     let tools_ledger = tools_manifest
