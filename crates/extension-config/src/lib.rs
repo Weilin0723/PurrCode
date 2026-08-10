@@ -10,8 +10,8 @@
 //! agent edit its own permissions mid-session.
 
 use purrcode_runtime_core::{
-    AdmissionDiagnostic, AgentProfile, CommandDescriptor, CommandExecutionSpec, ExtensionLayer,
-    HookDescriptor, ToolCeiling,
+    AdmissionDiagnostic, AgentProfile, CommandDescriptor, CommandExecutionSpec,
+    DiagnosticSeverity, ExtensionLayer, HookDescriptor, ToolCeiling,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -67,18 +67,22 @@ impl ExtensionSet {
     ) -> (ExtensionSet, Vec<AdmissionDiagnostic>) {
         let mut set = ExtensionSet::default();
 
-        // Project tier: <repo>/.purrcode/{agents,commands,hooks}
-        let project_root = repository.join(".purrcode");
-        set.load_agents(&project_root, ExtensionSource::Project, ceiling);
-        set.load_commands(&project_root, ExtensionSource::Project);
-        set.load_hooks(&project_root, ExtensionSource::Project);
-
-        // User tier: ~/.purrcode/{agents,commands,hooks}
+        // Behavior resolution is Project > User > Builtin (v1.3 §5). The user
+        // tier loads FIRST and the project tier SECOND, so on a same-name
+        // collision the project file wins — a project can say "use our
+        // reviewer". This is separate from the permission-ceiling rule
+        // (Org > User > Project), which a project can never widen.
         if let Some(user) = user_root {
             set.load_agents(user, ExtensionSource::User, ceiling);
             set.load_commands(user, ExtensionSource::User);
             set.load_hooks(user, ExtensionSource::User);
         }
+
+        // Project tier: <repo>/.purrcode/{agents,commands,hooks}
+        let project_root = repository.join(".purrcode");
+        set.load_agents(&project_root, ExtensionSource::Project, ceiling);
+        set.load_commands(&project_root, ExtensionSource::Project);
+        set.load_hooks(&project_root, ExtensionSource::Project);
 
         // Diagnostics are collected into the set; return a copy for the route.
         let diagnostics = set.diagnostics.clone();
@@ -88,11 +92,24 @@ impl ExtensionSet {
     fn load_agents(&mut self, root: &Path, source: ExtensionSource, ceiling: &ToolCeiling) {
         let dir = root.join("agents");
         for path in list_yaml(&dir) {
+            let subject = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let Some(bytes) = read_bounded(&path) else {
+                self.reject(
+                    &path,
+                    subject,
+                    "extension file could not be read or exceeds the 16 KiB byte cap",
+                );
                 continue;
             };
-            let Ok(profile) = parse_agent(&path, &bytes, source) else {
-                continue;
+            let profile = match parse_agent(&path, &bytes, source) {
+                Ok(profile) => profile,
+                Err(error) => {
+                    self.reject(&path, subject, &error.to_string());
+                    continue;
+                }
             };
             // Restrict against the ceiling; keep both the request and the
             // admitted descriptor so GET /v1/agents/{name} can report the
@@ -108,11 +125,24 @@ impl ExtensionSet {
     fn load_commands(&mut self, root: &Path, source: ExtensionSource) {
         let dir = root.join("commands");
         for path in list_yaml(&dir) {
+            let subject = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let Some(bytes) = read_bounded(&path) else {
+                self.reject(
+                    &path,
+                    subject,
+                    "extension file could not be read or exceeds the 16 KiB byte cap",
+                );
                 continue;
             };
-            let Ok(command) = parse_command(&path, &bytes, source) else {
-                continue;
+            let command = match parse_command(&path, &bytes, source) {
+                Ok(command) => command,
+                Err(error) => {
+                    self.reject(&path, subject, &error.to_string());
+                    continue;
+                }
             };
             self.commands.insert(command.name.clone(), command);
         }
@@ -121,14 +151,41 @@ impl ExtensionSet {
     fn load_hooks(&mut self, root: &Path, source: ExtensionSource) {
         let dir = root.join("hooks");
         for path in list_yaml(&dir) {
+            let subject = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let Some(bytes) = read_bounded(&path) else {
+                self.reject(
+                    &path,
+                    subject,
+                    "extension file could not be read or exceeds the 16 KiB byte cap",
+                );
                 continue;
             };
-            let Ok(hook) = parse_hook(&path, &bytes, source) else {
-                continue;
+            let hook = match parse_hook(&path, &bytes, source) {
+                Ok(hook) => hook,
+                Err(error) => {
+                    self.reject(&path, subject, &error.to_string());
+                    continue;
+                }
             };
             self.hooks.push(hook);
         }
+    }
+
+    /// Record a `Rejected` diagnostic for a file that could not be loaded.
+    /// v1.3 §2.3: no silent extension failure — a broken YAML, an oversized
+    /// file, a path escape, or a parse error is surfaced at
+    /// `/v1/extensions/diagnostics` instead of vanishing into `continue`.
+    fn reject(&mut self, path: &Path, subject: String, message: &str) {
+        self.diagnostics.push(AdmissionDiagnostic {
+            source_path: Some(path.to_path_buf()),
+            subject,
+            severity: DiagnosticSeverity::Rejected,
+            message: message.to_owned(),
+            restricted_fields: Vec::new(),
+        });
     }
 
     pub fn agent(&self, name: &str) -> Option<&AgentProfile> {
@@ -284,13 +341,22 @@ mod tests {
             ".purrcode/agents/broken.yaml",
             "name: [unclosed\n",
         );
-        let (set, _) = ExtensionSet::load(root.path(), None, &ceiling());
+        let (set, diagnostics) = ExtensionSet::load(root.path(), None, &ceiling());
         assert_eq!(
             set.agents.len(),
             1,
             "the good file loads despite the broken one"
         );
         assert!(set.agents.contains_key("reviewer"));
+        // No silent failure: the broken file is surfaced as a Rejected
+        // diagnostic naming its source path.
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Rejected
+                    && d.subject == "broken.yaml"),
+            "the broken file must be diagnosed, not silently skipped"
+        );
     }
 
     #[test]
@@ -299,8 +365,15 @@ mod tests {
         let mut huge = String::from("name: x\n");
         huge.push_str(&"y".repeat(MAX_EXTENSION_BYTES + 10));
         write_yaml(root.path(), ".purrcode/agents/big.yaml", &huge);
-        let (set, _) = ExtensionSet::load(root.path(), None, &ceiling());
+        let (set, diagnostics) = ExtensionSet::load(root.path(), None, &ceiling());
         assert!(set.agents.is_empty());
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Rejected
+                    && d.subject == "big.yaml"),
+            "the oversized file must be diagnosed"
+        );
     }
 
     #[test]
@@ -311,24 +384,42 @@ mod tests {
             ".purrcode/commands/evil.yaml",
             "name: evil\ndescription: x\nexecution:\n  kind: daemon\n  method: POST\n  path: /v1/steal\n",
         );
-        let (set, _) = ExtensionSet::load(root.path(), None, &ceiling());
+        let (set, diagnostics) = ExtensionSet::load(root.path(), None, &ceiling());
         assert!(set.commands.is_empty());
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Rejected
+                    && d.subject == "evil.yaml"),
+            "a rejected project daemon command must be diagnosed"
+        );
     }
 
     #[test]
+    #[cfg(unix)]
     fn escaping_path_is_rejected() {
         let root = tempfile::tempdir().unwrap();
-        write_yaml(
-            root.path(),
-            ".purrcode/agents/../escape.yaml",
-            "name: esc\ndescription: x\n",
-        );
-        let (set, _) = ExtensionSet::load(root.path(), None, &ceiling());
+        // A symlink inside .purrcode/agents/ that points outside the extension
+        // root. read_dir lists it, then confined() rejects it (its canonical
+        // path escapes the root), and the rejection is diagnosed.
+        let outside = root.path().join("outside.yaml");
+        fs::write(&outside, "name: esc\ndescription: x\n").unwrap();
+        fs::create_dir_all(root.path().join(".purrcode/agents")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.path().join(".purrcode/agents/escape.yaml"))
+            .unwrap();
+        let (set, diagnostics) = ExtensionSet::load(root.path(), None, &ceiling());
         assert!(set.agents.is_empty());
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Rejected
+                    && d.subject == "escape.yaml"),
+            "an escaping path must be diagnosed"
+        );
     }
 
     #[test]
-    fn user_tier_overrides_project_tier_for_agents() {
+    fn project_tier_overrides_user_tier_for_agents() {
         let project = tempfile::tempdir().unwrap();
         let user = tempfile::tempdir().unwrap();
         write_yaml(
@@ -338,9 +429,12 @@ mod tests {
         );
         write_yaml(user.path(), "agents/a.yaml", "name: a\ndescription: user\n");
         let (set, _) = ExtensionSet::load(project.path(), Some(user.path()), &ceiling());
-        // User tier wins: the map holds one entry, the user one.
+        // Behavior resolution is Project > User > Builtin (v1.3 §5). A project
+        // file can say "use our reviewer"; it cannot widen permissions (that is
+        // the separate Org > User > Project ceiling rule). So the project tier
+        // wins the name.
         assert_eq!(set.agents.len(), 1);
-        assert_eq!(set.agents.get("a").unwrap().description, "user");
+        assert_eq!(set.agents.get("a").unwrap().description, "project");
     }
 
     #[test]

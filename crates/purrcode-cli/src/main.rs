@@ -23,7 +23,7 @@ use purrcode_mcp_host::{
 };
 use purrcode_model_selection::{ModelCandidate, SelectionBudget, select_coder, select_judge};
 use purrcode_ninelives::SessionStore;
-use purrcode_pawgate::{Policy, resolve_policy_path};
+use purrcode_pawgate::{Policy, resolve_policy_path, resolve_user_policy_path};
 use purrcode_provider_gateway::{
     AppConfig, JudgmentRuntimeConfig, ModelCapabilities, ModelId, ModelsConfig, PrivacyConfig,
     PrivacyMode, ProviderConfig, ProviderRouter, delete_credential, qualify_model,
@@ -3497,24 +3497,21 @@ fn canonical_repository(repository: Option<PathBuf>) -> Result<PathBuf> {
 }
 
 fn load_policy(repository: &Path, config_path: &Path) -> Result<Policy> {
-    let path = resolve_policy_path(repository);
+    let project = resolve_policy_path(repository);
+    let user = resolve_user_policy_path();
     let organization = if config_path.exists() {
         load_app_config(config_path)?.organization_policy
     } else {
         None
     };
-    if let Some(organization) = organization {
-        Policy::load_effective(
-            path.exists().then_some(path.as_path()),
-            &organization.pack,
-            &organization.ed25519_public_key,
-        )
-        .map_err(Into::into)
-    } else if path.exists() {
-        Policy::load(&path).map_err(Into::into)
-    } else {
-        Ok(Policy::default())
-    }
+    Policy::load_effective_v3(
+        user.as_deref(),
+        project.exists().then_some(project.as_path()),
+        organization
+            .as_ref()
+            .map(|org| (org.pack.as_path(), org.ed25519_public_key.as_str())),
+    )
+    .map_err(Into::into)
 }
 
 fn default_database_path() -> Result<PathBuf> {

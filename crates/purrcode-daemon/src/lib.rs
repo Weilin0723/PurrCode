@@ -56,9 +56,10 @@ use purrcode_mcp_host::{
     read_skill_manifest, skill_digest,
 };
 use purrcode_ninelives::{
-    Automation, ProjectMemoryEntry, SessionCheckpoint, SessionStore, StoreError,
+    Automation, PinVerdict, ProjectMemoryEntry, SessionCheckpoint, SessionStore, StoreError,
+    ToolDescriptorPin,
 };
-use purrcode_pawgate::{Policy, resolve_policy_path};
+use purrcode_pawgate::{Policy, resolve_policy_path, resolve_user_policy_path};
 use purrcode_provider_gateway::failover::FailoverProvider;
 use purrcode_provider_gateway::{
     AppConfig, ModelEvent, ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode,
@@ -586,6 +587,7 @@ pub async fn bind_and_report(
         .route("/v1/extensions/diagnostics", get(extension_diagnostics))
         .route("/v1/extensions/reload", post(extension_reload))
         .route("/v1/hooks", get(list_hooks))
+        .route("/v1/tools/{tool_id}/pin", post(approve_tool_pin).delete(revoke_tool_pin))
         .route("/v1/lsp/servers", get(list_lsp_servers))
         .route("/v1/lsp/open", post(lsp_open))
         .route("/v1/lsp/hover", post(lsp_hover))
@@ -3922,6 +3924,59 @@ async fn invoke_mcp(
             &ceiling,
         )
         .clone();
+    // ── Trust-on-first-use descriptor pinning (v1.3 §9) ─────────────────
+    // A remote MCP server authored this descriptor. The pin records the digest
+    // a human (or the trusted config) approved; if the server reports a
+    // different descriptor now, the tool is Forbidden until re-approved — the
+    // server cannot silently change what PawGate will auto-allow. Discovery
+    // probes are synthetic tool ids, not real tools, and carry no pin.
+    let mut pin_store = SessionStore::open(&state.database)?;
+    if !discovery {
+        let tool_id_str =
+            purrcode_runtime_core::ToolId::mcp(&request.server, &request.tool)
+                .as_str()
+                .to_owned();
+        let pin = ToolDescriptorPin {
+            project: repository.clone(),
+            tool_id: tool_id_str.clone(),
+            descriptor_digest: tool_descriptor.descriptor_digest().to_owned(),
+            provider: "mcp".into(),
+            origin: "remote_discovery".into(),
+            side_effect_class: serde_json::to_string(&tool_descriptor.side_effect_class())
+                .unwrap_or_else(|_| "null".into()),
+            network_scope: serde_json::to_string(&tool_descriptor.network_scope())
+                .unwrap_or_else(|_| "null".into()),
+            filesystem_scope: serde_json::to_string(&tool_descriptor.filesystem_scope())
+                .unwrap_or_else(|_| "null".into()),
+            approval_policy: serde_json::to_string(&tool_descriptor.approval_policy())
+                .unwrap_or_else(|_| "null".into()),
+            first_seen_at: Utc::now(),
+            approved_at: None,
+            approved_by: None,
+            revoked_at: None,
+        };
+        match pin_store.pin_verdict(&repository, &tool_id_str, &pin.descriptor_digest)? {
+            PinVerdict::Changed | PinVerdict::Revoked => {
+                return Err(ApiError::Conflict(format!(
+                    "MCP tool `{}/{}` descriptor changed or was revoked since it was approved; \
+                     re-approve it at POST /v1/tools/{}/pin",
+                    request.server, request.tool, tool_id_str
+                )));
+            }
+            PinVerdict::FirstUse => {
+                pin_store.record_pin_first_seen(&pin)?;
+                // A config-trusted tool is its own approval: the admin's
+                // `trusted_tools` entry is the authority, so first use
+                // approves the pin immediately.
+                if trusted {
+                    let authority = serde_json::to_string(&ApprovalAuthority::DeterministicPolicy)
+                        .unwrap_or_else(|_| "null".into());
+                    pin_store.approve_pin(&repository, &tool_id_str, &pin.descriptor_digest, &authority)?;
+                }
+            }
+            PinVerdict::Approved => {}
+        }
+    }
     // A deny-listed tool is a hard deny that overrides any approval.
     let decision = policy.evaluate_tool(&action, &tool_descriptor, &repository);
     let action_id = if let Some(action_id) = requested_action_id {
@@ -4027,6 +4082,20 @@ async fn invoke_mcp(
         )?;
         constraints
     };
+    // The human explicitly approved this exact proposed invocation, so its
+    // descriptor digest is now an approved pin (TOFU). Subsequent invocations
+    // of the same descriptor digest pass without re-approval; a changed
+    // descriptor is Forbidden until re-approved.
+    if !discovery && requested_action_id.is_some() {
+        let tool_id_str = purrcode_runtime_core::ToolId::mcp(&request.server, &request.tool)
+            .as_str()
+            .to_owned();
+        let authority =
+            serde_json::to_string(&ApprovalAuthority::Human).unwrap_or_else(|_| "null".into());
+        pin_store
+            .approve_pin(&repository, &tool_id_str, tool_descriptor.descriptor_digest(), &authority)
+            .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    }
     reserve_mcp_call(&mut store, id, &request.server, &request.tool)?;
     let skill_started = std::time::Instant::now();
     let skill_parent = state.database.parent().unwrap_or(Path::new("."));
@@ -5400,18 +5469,20 @@ fn effective_policy(
     config: &AppConfig,
     repository: &Path,
 ) -> Result<Policy, purrcode_pawgate::PolicyError> {
-    let local = resolve_policy_path(repository);
-    if let Some(organization) = &config.organization_policy {
-        Policy::load_effective(
-            local.exists().then_some(local.as_path()),
-            &organization.pack,
-            &organization.ed25519_public_key,
-        )
-    } else if local.exists() {
-        Policy::load(&local)
-    } else {
-        Ok(Policy::default())
-    }
+    let project = resolve_policy_path(repository);
+    let user = resolve_user_policy_path();
+    // v1.3 three-tier precedence: Default → User → Project → Signed Org. The
+    // user tier is machine-level and cannot be widened by a repository file;
+    // the org pack remains the outermost authority. The CLI uses the same
+    // loader so `purrcode policy-check` and the daemon agree exactly.
+    Policy::load_effective_v3(
+        user.as_deref(),
+        project.exists().then_some(project.as_path()),
+        config
+            .organization_policy
+            .as_ref()
+            .map(|org| (org.pack.as_path(), org.ed25519_public_key.as_str())),
+    )
 }
 
 async fn ensure_session_exists(state: &AppState, id: SessionId) -> Result<(), ApiError> {
@@ -9591,6 +9662,55 @@ async fn list_hooks(
         })).collect::<Vec<_>>(),
         "diagnostics": set.diagnostics,
     })))
+}
+
+/// v1.3 §9: approve the currently-seen remote tool descriptor for a
+/// repository, making it an approved pin. `?repository=` scopes the pin.
+async fn approve_tool_pin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+    AxumPath(tool_id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let mut store = SessionStore::open(&state.database)?;
+    // The tool must already have been seen (a first-seen pin row exists). The
+    // approval uses the digest recorded at first sighting, so a changed remote
+    // descriptor cannot be approved against a stale pin.
+    let Some(digest) = store
+        .pin_digest(&repository, &tool_id)
+        .map_err(|error| ApiError::Conflict(error.to_string()))?
+    else {
+        return Err(ApiError::NotFound);
+    };
+    let authority = serde_json::to_string(&ApprovalAuthority::Human)
+        .unwrap_or_else(|_| "null".into());
+    let approved = store
+        .approve_pin(&repository, &tool_id, &digest, &authority)
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    Ok(Json(serde_json::json!({ "approved": approved, "tool_id": tool_id })))
+}
+
+/// v1.3 §9: revoke a remote tool descriptor pin, hard-forbidding the tool
+/// until it is re-approved.
+async fn revoke_tool_pin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+    AxumPath(tool_id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let mut store = SessionStore::open(&state.database)?;
+    store
+        .revoke_pin(&repository, &tool_id)
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    Ok(Json(serde_json::json!({ "revoked": true, "tool_id": tool_id })))
 }
 
 #[derive(Deserialize)]

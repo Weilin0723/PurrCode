@@ -228,6 +228,40 @@ impl CapabilityRegistry {
             return self.admit_forbidden(forbidden, ceiling);
         }
 
+        // v1.3 does not enforce host-precise egress: Claw sandboxes network as
+        // a boolean (off / unrestricted) and MCP servers configure it the same
+        // way. A proposal that claims a `Hosts { allowed }` list would promise
+        // a guarantee nothing can honor, so it is admitted as Forbidden with a
+        // Rejected diagnostic rather than silently weakened to `Any`. The
+        // lattice `meet` keeps `Hosts` for future enforcement, but admission
+        // refuses to mint a callable tool from it.
+        if matches!(proposal.network_scope, super::NetworkScope::Hosts { .. }) {
+            let subject = proposal.id.as_str().to_string();
+            self.diagnostics.push(AdmissionDiagnostic {
+                source_path: None,
+                subject: subject.clone(),
+                severity: DiagnosticSeverity::Rejected,
+                message:
+                    "NetworkScope::Hosts is not enforceable in v1.3; a host-precise scope is denied"
+                        .into(),
+                restricted_fields: vec![("network_scope".into(), "hosts".into(), "none".into())],
+            });
+            let forbidden = ToolDescriptorProposal {
+                id: proposal.id.clone(),
+                provider: proposal.provider,
+                display_name: proposal.display_name,
+                description: proposal.description,
+                schema: proposal.schema,
+                capabilities: proposal.capabilities.clone(),
+                side_effect_class: super::SideEffectClass::Read,
+                network_scope: super::NetworkScope::None,
+                filesystem_scope: super::FilesystemScope::None,
+                approval_policy: super::ApprovalPolicy::Forbidden,
+                origin: proposal.origin,
+            };
+            return self.admit_forbidden(forbidden, ceiling);
+        }
+
         let (descriptor, diagnostics) = proposal.restrict(ceiling);
         self.diagnostics.extend(diagnostics);
 
@@ -580,6 +614,37 @@ mod tests {
                 .any(|d| d.subject == "native:read_file"
                     && d.severity == DiagnosticSeverity::Rejected),
             "the shadowing attempt must be surfaced as a Rejected diagnostic"
+        );
+    }
+
+    #[test]
+    fn hosts_network_scope_is_admitted_as_forbidden_with_a_rejected_diagnostic() {
+        let mut registry = CapabilityRegistry::new();
+        let ceiling = ceiling();
+        let admitted = registry.admit_tool(
+            ToolDescriptorProposal {
+                network_scope: NetworkScope::Hosts {
+                    allowed: ["api.example.com".into()].into_iter().collect(),
+                },
+                ..proposal("hosts_scope", &["read"])
+            },
+            &ceiling,
+        );
+        // Host-precise egress is not enforceable in v1.3 (Claw network is a
+        // boolean), so the tool must be admitted as Forbidden, never callable,
+        // and the refusal surfaced as a Rejected diagnostic.
+        assert_eq!(
+            admitted.approval_policy(),
+            ApprovalPolicy::Forbidden,
+            "a Hosts-scoped proposal must be admitted as Forbidden"
+        );
+        assert!(
+            registry
+                .diagnostics()
+                .iter()
+                .any(|d| d.subject == "native:hosts_scope"
+                    && d.severity == DiagnosticSeverity::Rejected),
+            "the Hosts-scoped proposal must be surfaced as a Rejected diagnostic"
         );
     }
 

@@ -102,6 +102,44 @@ pub struct RecoveryReport {
     pub unavailable: BTreeMap<SessionId, String>,
 }
 
+/// Trust-on-first-use pin for a remote tool descriptor (migration 0004
+/// `tool_descriptor_pins`). A descriptor discovered from an MCP server is
+/// authored by that server; the pin records the digest a human (or signed
+/// pack) accepted. A descriptor whose digest differs from an approved pin is
+/// Forbidden until re-approved — the remote server cannot silently change what
+/// PawGate will auto-allow.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolDescriptorPin {
+    pub project: PathBuf,
+    pub tool_id: String,
+    pub descriptor_digest: String,
+    pub provider: String,
+    pub origin: String,
+    pub side_effect_class: String,
+    pub network_scope: String,
+    pub filesystem_scope: String,
+    pub approval_policy: String,
+    pub first_seen_at: DateTime<Utc>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub approved_by: Option<String>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+/// What a pin lookup decided for a descriptor digest.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PinVerdict {
+    /// No pin yet — first use. The caller proceeds to approval and pins on
+    /// approval.
+    FirstUse,
+    /// An approved, unrevoked pin matches this exact digest — proceed.
+    Approved,
+    /// A pin exists but the digest differs — the remote descriptor changed
+    /// since it was approved. Forbidden until re-approval.
+    Changed,
+    /// The pin was explicitly revoked — hard forbidden.
+    Revoked,
+}
+
 impl SessionStore {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         let connection = Connection::open(path)?;
@@ -310,6 +348,171 @@ impl SessionStore {
                 })?;
         }
         Ok(state)
+    }
+
+    /// The trust-on-first-use verdict for a remote tool descriptor. Native
+    /// builtins (`DescriptorOrigin::Builtin`) carry no pin; only remote
+    /// descriptors (MCP) participate in the pin lifecycle.
+    pub fn pin_verdict(
+        &self,
+        project: &Path,
+        tool_id: &str,
+        descriptor_digest: &str,
+    ) -> Result<PinVerdict, StoreError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT descriptor_digest, approved_at, revoked_at
+                 FROM tool_descriptor_pins
+                 WHERE project = ?1 AND tool_id = ?2",
+                params![project.to_string_lossy(), tool_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((approved_digest, approved_at, revoked_at)) = row else {
+            return Ok(PinVerdict::FirstUse);
+        };
+        if revoked_at.is_some() {
+            return Ok(PinVerdict::Revoked);
+        }
+        if approved_at.is_some() && approved_digest == descriptor_digest {
+            return Ok(PinVerdict::Approved);
+        }
+        if approved_at.is_some() {
+            return Ok(PinVerdict::Changed);
+        }
+        // A first-seen row that was never approved (or was approved then the
+        // digest changed before approval) is not a trust decision.
+        Ok(PinVerdict::FirstUse)
+    }
+
+    /// Record a first sighting of a remote tool descriptor. The pin row is
+    /// created on first use so the digest is durable before any approval; the
+    /// approval itself flips `approved_at`.
+    pub fn record_pin_first_seen(
+        &mut self,
+        pin: &ToolDescriptorPin,
+    ) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO tool_descriptor_pins(
+                project, tool_id, descriptor_digest, provider, origin,
+                side_effect_class, network_scope, filesystem_scope, approval_policy,
+                first_seen_at, approved_at, approved_by, revoked_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL, NULL)",
+            params![
+                pin.project.to_string_lossy(),
+                pin.tool_id,
+                pin.descriptor_digest,
+                pin.provider,
+                pin.origin,
+                pin.side_effect_class,
+                pin.network_scope,
+                pin.filesystem_scope,
+                pin.approval_policy,
+                pin.first_seen_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Approve the descriptor currently recorded for `(project, tool_id)`.
+    /// The caller must have already verified the digest matches the pin
+    /// (or that there is no pin — first use). Returns false if the stored
+    /// digest changed between the read and the approval (TOFU race).
+    pub fn approve_pin(
+        &mut self,
+        project: &Path,
+        tool_id: &str,
+        descriptor_digest: &str,
+        approved_by: &str,
+    ) -> Result<bool, StoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored: Option<String> = transaction
+            .query_row(
+                "SELECT descriptor_digest FROM tool_descriptor_pins
+                 WHERE project = ?1 AND tool_id = ?2",
+                params![project.to_string_lossy(), tool_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match stored {
+            Some(existing) if existing == descriptor_digest => {}
+            Some(_) => return Ok(false),
+            None => {
+                // First-use approval: seed the row from the caller's digest.
+                transaction.execute(
+                    "INSERT INTO tool_descriptor_pins(
+                        project, tool_id, descriptor_digest, provider, origin,
+                        side_effect_class, network_scope, filesystem_scope, approval_policy,
+                        first_seen_at, approved_at, approved_by, revoked_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, NULL)",
+                    params![
+                        project.to_string_lossy(),
+                        tool_id,
+                        descriptor_digest,
+                        "",
+                        "",
+                        "",
+                        "null",
+                        "null",
+                        "",
+                        Utc::now(),
+                        Utc::now(),
+                        approved_by,
+                    ],
+                )?;
+                transaction.commit()?;
+                return Ok(true);
+            }
+        }
+        let updated = transaction.execute(
+            "UPDATE tool_descriptor_pins
+             SET approved_at = ?4, approved_by = ?5, revoked_at = NULL
+             WHERE project = ?1 AND tool_id = ?2 AND descriptor_digest = ?3",
+            params![
+                project.to_string_lossy(),
+                tool_id,
+                descriptor_digest,
+                Utc::now(),
+                approved_by,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(updated == 1)
+    }
+
+    /// Revoke a pin, making the tool hard-forbidden until re-approval.
+    pub fn revoke_pin(&mut self, project: &Path, tool_id: &str) -> Result<(), StoreError> {
+        self.connection.execute(
+            "UPDATE tool_descriptor_pins
+             SET revoked_at = ?3
+             WHERE project = ?1 AND tool_id = ?2",
+            params![project.to_string_lossy(), tool_id, Utc::now()],
+        )?;
+        Ok(())
+    }
+
+    /// The descriptor digest recorded at the pin's first sighting, or `None`
+    /// if the tool has never been seen. Used by the approve route so a changed
+    /// remote descriptor cannot be approved against a stale pin.
+    pub fn pin_digest(&self, project: &Path, tool_id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT descriptor_digest FROM tool_descriptor_pins
+                 WHERE project = ?1 AND tool_id = ?2",
+                params![project.to_string_lossy(), tool_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?)
     }
 
     pub fn events(&self, session_id: SessionId) -> Result<Vec<SessionEvent>, StoreError> {
@@ -1161,6 +1364,99 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, StoreError::InvalidEvent { .. }));
         assert!(store.events(session).unwrap().is_empty());
+    }
+
+    #[test]
+    fn tool_descriptor_pin_lifecycle_is_tofu() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let project = PathBuf::from("/repo");
+        let tool_id = "mcp:github/create_issue";
+        let digest_v1 = "descriptor-v1";
+        let digest_v2 = "descriptor-v2";
+
+        // First use: no pin, no trust decision.
+        assert_eq!(
+            store.pin_verdict(&project, tool_id, digest_v1).unwrap(),
+            PinVerdict::FirstUse
+        );
+
+        // Record a first sighting, then the verdict is still FirstUse (never
+        // approved) but the digest is durable.
+        let pin = ToolDescriptorPin {
+            project: project.clone(),
+            tool_id: tool_id.into(),
+            descriptor_digest: digest_v1.into(),
+            provider: "mcp".into(),
+            origin: "remote_discovery".into(),
+            side_effect_class: "write".into(),
+            network_scope: "null".into(),
+            filesystem_scope: "null".into(),
+            approval_policy: "always_ask".into(),
+            first_seen_at: Utc::now(),
+            approved_at: None,
+            approved_by: None,
+            revoked_at: None,
+        };
+        store.record_pin_first_seen(&pin).unwrap();
+        assert_eq!(
+            store.pin_verdict(&project, tool_id, digest_v1).unwrap(),
+            PinVerdict::FirstUse
+        );
+
+        // Approve v1: the exact digest now passes.
+        assert!(store
+            .approve_pin(
+                &project,
+                tool_id,
+                digest_v1,
+                &serde_json::to_string(&ApprovalAuthority::Human).unwrap()
+            )
+            .unwrap());
+        assert_eq!(
+            store.pin_verdict(&project, tool_id, digest_v1).unwrap(),
+            PinVerdict::Approved
+        );
+
+        // The server reports a changed descriptor: digest v2 is Forbidden.
+        assert_eq!(
+            store.pin_verdict(&project, tool_id, digest_v2).unwrap(),
+            PinVerdict::Changed
+        );
+
+        // Revocation hard-forbids even the approved digest.
+        store.revoke_pin(&project, tool_id).unwrap();
+        assert_eq!(
+            store.pin_verdict(&project, tool_id, digest_v1).unwrap(),
+            PinVerdict::Revoked
+        );
+
+        // Re-approval after revocation flips it back to Approved.
+        assert!(store
+            .approve_pin(
+                &project,
+                tool_id,
+                digest_v1,
+                &serde_json::to_string(&ApprovalAuthority::Human).unwrap()
+            )
+            .unwrap());
+        assert_eq!(
+            store.pin_verdict(&project, tool_id, digest_v1).unwrap(),
+            PinVerdict::Approved
+        );
+
+        // Approving a digest that differs from the stored pin is refused.
+        assert!(!store
+            .approve_pin(
+                &project,
+                tool_id,
+                digest_v2,
+                &serde_json::to_string(&ApprovalAuthority::Human).unwrap()
+            )
+            .unwrap());
+        assert_eq!(
+            store.pin_verdict(&project, tool_id, digest_v1).unwrap(),
+            PinVerdict::Approved
+        );
     }
 
     #[test]

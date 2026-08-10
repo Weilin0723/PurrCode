@@ -68,19 +68,6 @@ impl Policy {
         Ok(toml::from_str(&fs::read_to_string(path)?)?)
     }
 
-    pub fn load_effective(
-        repository_policy: Option<&Path>,
-        organization_pack: &Path,
-        public_key_hex: &str,
-    ) -> Result<Self, PolicyError> {
-        let local = match repository_policy {
-            Some(path) if path.exists() => Self::load(path)?,
-            _ => Self::default(),
-        };
-        let organization = SignedPolicyPack::load_verified(organization_pack, public_key_hex)?;
-        Ok(organization.restrict(local))
-    }
-
     /// v1.3 precedence. Three tiers instead of two:
     ///   `Policy::default()`              ← the floor
     ///     ↓ restrict_local(base, user)   ← `~/.purrcode/policy.toml` (or `config.toml [policy]`)
@@ -1002,6 +989,14 @@ pub fn resolve_policy_path(repository: &Path) -> PathBuf {
     repository.join("policies/default.toml")
 }
 
+/// The machine-level user policy tier: `~/.purrcode/policy.toml`. This is the
+/// "user" tier in `load_effective_v3`'s Default → User → Project → Org order.
+/// It is deliberately NOT loadable from a repository, so a repository can never
+/// widen the machine's bounds — only restrict them.
+pub fn resolve_user_policy_path() -> Option<PathBuf> {
+    std::env::home_dir().map(|home| home.join(".purrcode/policy.toml"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1131,9 +1126,7 @@ mod tests {
             }),
             capabilities: BTreeSet::new(),
             side_effect_class: SideEffectClass::Write,
-            network_scope: NetworkScope::Hosts {
-                allowed: ["api.github.com".into()].into_iter().collect(),
-            },
+            network_scope: NetworkScope::Any,
             filesystem_scope: FilesystemScope::WorktreeRead,
             approval_policy: ApprovalPolicy::PreAuthorized,
             origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
@@ -1163,9 +1156,7 @@ mod tests {
             schema: serde_json::json!({ "type": "object" }),
             capabilities: BTreeSet::new(),
             side_effect_class: SideEffectClass::Read,
-            network_scope: NetworkScope::Hosts {
-                allowed: ["api.github.com".into()].into_iter().collect(),
-            },
+            network_scope: NetworkScope::Any,
             filesystem_scope: FilesystemScope::WorktreeRead,
             approval_policy: ApprovalPolicy::PreAuthorized,
             origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
