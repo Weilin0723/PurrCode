@@ -165,6 +165,25 @@ pub(crate) fn normalize_action(
                         tool_id.as_str()
                     )));
                 }
+                // Enforce the profile's filesystem ceiling against the tool's
+                // descriptor. A read-only profile (ceiling = WorktreeRead)
+                // must refuse ANY tool that writes — including native tools
+                // like write_file/delete_file that convert to legacy actions
+                // and would otherwise reach PawGate with only the workspace
+                // policy, not the profile's ceiling.
+                let profile_allows_write = matches!(
+                    profile.ceiling().maximum_filesystem,
+                    purrcode_runtime_core::FilesystemScope::Worktree { .. }
+                );
+                if !profile_allows_write
+                    && descriptor.filesystem_scope()
+                        != &purrcode_runtime_core::FilesystemScope::WorktreeRead
+                {
+                    return Err(AgentError::InvalidModelTurn(format!(
+                        "tool `{}` mutates the worktree and is denied by this read-only agent profile",
+                        tool_id.as_str()
+                    )));
+                }
             }
             if descriptor.approval_policy() == purrcode_runtime_core::ApprovalPolicy::Forbidden {
                 return Err(AgentError::InvalidModelTurn(format!(
@@ -242,7 +261,8 @@ fn convert_native_tool(
         }),
         "git_show" => Some(Read::GitShow {
             revision: str_arg("revision").unwrap_or("HEAD").to_owned(),
-            path: path_arg("path")?,
+            // A bare `git show HEAD` (no path) is valid; default to empty path.
+            path: str_arg("path").map(PathBuf::from).unwrap_or_default(),
         }),
         "git_ls_files" => Some(Read::GitLsFiles {
             pathspec: paths_arg("pathspec"),
@@ -1215,6 +1235,56 @@ mod action_normalization_tests {
         )
         .unwrap();
         assert!(matches!(read, ProposedAction::RepositoryRead(..)));
+    }
+
+    #[test]
+    fn read_only_profile_cannot_bypass_via_native_write_tool() {
+        use purrcode_runtime_core::{
+            ApprovalPolicy, CapabilityRegistry, DescriptorOrigin, FilesystemScope, NetworkScope,
+            SideEffectClass, ToolCeiling, ToolDescriptorProposal, ToolId, ToolProvider,
+        };
+        use std::collections::BTreeSet;
+        let worktree = Path::new("/repo/.purrcode/worktrees/session");
+        let mut registry = CapabilityRegistry::new();
+        let ceiling = ToolCeiling {
+            maximum_side_effect: SideEffectClass::Destructive,
+            maximum_network: NetworkScope::Any,
+            maximum_filesystem: FilesystemScope::maximum(),
+            minimum_approval: ApprovalPolicy::PreAuthorized,
+            denied_tool_ids: BTreeSet::new(),
+        };
+        registry.admit_tool(
+            ToolDescriptorProposal {
+                id: ToolId::native("write_file"),
+                provider: ToolProvider::Native,
+                display_name: "write_file".into(),
+                description: "write".into(),
+                schema: serde_json::json!({ "type": "object" }),
+                capabilities: BTreeSet::new(),
+                side_effect_class: SideEffectClass::Write,
+                network_scope: NetworkScope::None,
+                filesystem_scope: FilesystemScope::maximum(),
+                approval_policy: ApprovalPolicy::ByClass,
+                origin: DescriptorOrigin::Builtin,
+            },
+            &ceiling,
+        );
+        // The default AgentDescriptor has a WorktreeRead ceiling (read-only).
+        let profile = AgentDescriptor::default();
+        let error = normalize_action(
+            AgentAction::Tool {
+                tool_id: ToolId::native("write_file"),
+                arguments: serde_json::json!({ "path": "src/file.txt", "content": "x" }),
+            },
+            worktree,
+            Some(&profile),
+            Some(&registry),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("read-only"),
+            "a read-only profile must refuse a native write tool, got {error}"
+        );
     }
 
     #[test]

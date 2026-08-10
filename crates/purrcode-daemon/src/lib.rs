@@ -10125,9 +10125,37 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
         let provider = invocation.tool_id.provider();
         let tool_id = invocation.tool_id.as_str();
         let descriptor = self.registry.registry.tool(&invocation.tool_id);
-        // MCP tools dispatch to the isolated MCP host. The authorization was
-        // already consumed in the turn loop (digest_v3), so we use the raw
-        // `call_authorized` path.
+        // v1.3 PR B: the turn loop authorized this invocation binding the
+        // descriptor digest (digest_v3). Consume the authorization here, BEFORE
+        // dispatch, so the at-most-once guarantee holds exactly like the legacy
+        // ToolRuntime::execute path — a replayed action_id can never execute
+        // twice, and recovery/audit sees a consumed row.
+        let descriptor_digest = descriptor.map(|d| d.descriptor_digest().to_owned());
+        let proposed = purrcode_runtime_core::ProposedAction::Tool(invocation.clone());
+        let expected_digest = match &descriptor_digest {
+            Some(digest) => proposed.digest_v3(constraints, digest).map_err(|error| {
+                purrcode_agent_runtime::AgentError::InvalidModelTurn(error.to_string())
+            })?,
+            None => {
+                return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                    "tool `{tool_id}` has no admitted descriptor; cannot authorize"
+                )));
+            }
+        };
+        let consumed = store
+            .consume_authorization(action_id, &expected_digest)
+            .map_err(|error| {
+                purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                    "tool `{tool_id}` authorization is missing, mismatched, or already consumed: {error}"
+                ))
+            })?;
+        if consumed.constraints != *constraints {
+            return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
+                "tool authorization constraints mismatch".into(),
+            ));
+        }
+        // MCP tools dispatch to the isolated MCP host. The authorization is
+        // already consumed above, so the raw `call_authorized` path applies.
         let (stdout, stderr, exit_code) = match provider {
             purrcode_runtime_core::ToolProvider::Mcp => {
                 let (server_id, tool_name) = invocation.tool_id.mcp_parts().ok_or_else(|| {
@@ -10308,6 +10336,15 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
         trigger: purrcode_runtime_core::HookTrigger,
         depth: u8,
     ) -> Result<bool, purrcode_agent_runtime::AgentError> {
+        // Hooks act on the session worktree (the tree the agent is changing),
+        // falling back to the source repository when the session has no
+        // worktree yet. This keeps hook tools inside the same isolation model
+        // as the agent's own actions — never the source checkout mid-turn.
+        let working_directory = store
+            .load(session_id)
+            .ok()
+            .and_then(|session| session.worktree)
+            .unwrap_or_else(|| self.repository.clone());
         let set = load_extension_set(&self.state, &self.repository).await;
         let hooks: Vec<purrcode_runtime_core::HookDescriptor> = set
             .hooks
@@ -10327,18 +10364,26 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
         let registry_cache = load_tool_registry(&self.state, &self.repository).await;
         let evaluate_closure = {
             let registry = registry_cache.clone();
-            let repository = self.repository.clone();
+            let worktree = working_directory.clone();
             let policy = policy.clone();
             move |hook: &purrcode_runtime_core::HookDescriptor| {
                 // A hook can only invoke a REGISTERED tool; the descriptor is
-                // looked up from the repository registry and judged provider-blind.
+                // looked up from the repository registry and judged provider-blind
+                // against the worktree (the tree the hook will act on).
                 let invocation = match &hook.action {
                     purrcode_runtime_core::HookAction::Tool { tool_id, arguments } => {
                         purrcode_runtime_core::ToolInvocation {
                             tool_id: tool_id.clone(),
                             arguments: arguments.clone(),
-                            working_directory: repository.clone(),
-                            descriptor_digest: hook.descriptor_digest.clone(),
+                            working_directory: worktree.clone(),
+                            // The invocation binds the REGISTERED tool's
+                            // descriptor digest (what the executor consumes),
+                            // not the hook file's own digest.
+                            descriptor_digest: registry
+                                .registry
+                                .tool(tool_id)
+                                .map(|d| d.descriptor_digest().to_owned())
+                                .unwrap_or_else(|| hook.descriptor_digest.clone()),
                         }
                     }
                     purrcode_runtime_core::HookAction::Capability { .. } => {
@@ -10358,7 +10403,7 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
                 policy.evaluate_tool(
                     &purrcode_runtime_core::ProposedAction::Tool(invocation.clone()),
                     descriptor,
-                    &repository,
+                    &worktree,
                 )
             }
         };
@@ -10375,25 +10420,50 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
         );
         let executor = DaemonToolExecutor {
             state: self.state.clone(),
-            registry: registry_cache,
+            registry: registry_cache.clone(),
         };
         for execution in to_execute {
-            let _ = executor
+            let action_id = ActionId::new();
+            // Authorize the hook's allowed tool exactly like a model-proposed
+            // invocation: bind the registered tool's descriptor digest
+            // (digest_v3) so the executor's consume_authorization matches and
+            // at-most-once holds.
+            let proposed = purrcode_runtime_core::ProposedAction::Tool(
+                execution.invocation.clone(),
+            );
+            let digest = proposed
+                .digest_v3(&execution.constraints, &execution.invocation.descriptor_digest)
+                .unwrap_or_else(|_| {
+                    proposed.digest(&execution.constraints).unwrap_or_default()
+                });
+            let _ = store.authorize(&Authorization {
+                action_id,
+                session_id,
+                action_digest: digest,
+                constraints: execution.constraints.clone(),
+                authorized_at: Utc::now(),
+                approved_by: ApprovalAuthority::DeterministicPolicy,
+            });
+            let hook_status = match executor
                 .execute_tool(
                     store,
                     session_id,
                     None,
-                    ActionId::new(),
+                    action_id,
                     &execution.invocation,
                     &execution.constraints,
                 )
-                .await;
+                .await
+            {
+                Ok(_) => "succeeded",
+                Err(_) => "failed",
+            };
             let _ = crate::hooks::record_completed_hook_run(
                 store,
                 session_id,
                 &execution,
                 trigger,
-                "succeeded",
+                hook_status,
             );
         }
         // A blocking hook that denied or failed must abort the turn.
