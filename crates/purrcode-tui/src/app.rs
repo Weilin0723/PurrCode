@@ -1612,6 +1612,7 @@ impl App {
             crate::provider_setup::ProviderType::Ollama => "ollama",
             crate::provider_setup::ProviderType::LmStudio => "lm-studio",
             crate::provider_setup::ProviderType::Openai => "openai",
+            crate::provider_setup::ProviderType::Anthropic => "anthropic",
             crate::provider_setup::ProviderType::OpenaiCompatible
             | crate::provider_setup::ProviderType::NvidiaNim => "nvidia-nim",
             crate::provider_setup::ProviderType::EnterpriseGateway => {

@@ -9,6 +9,16 @@ type = "openai"
 base_url = "https://api.openai.com/v1/"
 api_key_env = "OPENAI_API_KEY"
 
+# Anthropic (Claude). A first-class provider type, NOT an OpenAI-compatible
+# endpoint — the Messages API is a different wire format, so `type =
+# "openai-compatible"` pointed at api.anthropic.com will not work. Auth is the
+# `x-api-key` header; the value is resolved from an environment variable or a
+# `credentials.toml` entry of the same name, never stored here.
+[providers.anthropic]
+type = "anthropic"
+base_url = "https://api.anthropic.com/v1/"
+api_key_env = "ANTHROPIC_API_KEY"
+
 [providers.local]
 type = "openai-compatible"
 base_url = "http://127.0.0.1:1234/v1/"

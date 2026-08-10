@@ -431,6 +431,11 @@ fn derive_provider_type(base_url: &str) -> String {
         "ollama".to_owned()
     } else if url.contains("nvidia") {
         "nvidia-nim".to_owned()
+    } else if url.contains("anthropic.com") {
+        // Anthropic must NOT fall through to `openai-compatible`: the Messages
+        // API is a different wire format, so a mis-derived type produces a
+        // provider that fails on the first request rather than at setup.
+        "anthropic".to_owned()
     } else if url.contains("openai.com") || url.contains("openai.azure") {
         "openai".to_owned()
     } else {

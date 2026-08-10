@@ -11,10 +11,26 @@ pub enum ProviderType {
     Ollama,
     LmStudio,
     Openai,
+    /// Anthropic's Messages API. A distinct provider type, not an
+    /// OpenAI-compatible endpoint — the wire format differs, so selecting
+    /// "OpenAI-compatible" and typing api.anthropic.com does not work.
+    Anthropic,
     OpenaiCompatible,
     NvidiaNim,
     EnterpriseGateway,
 }
+
+/// The discovery list, in display order. Kept as one table so the picker's
+/// rendering, its index-to-variant mapping, and its length stay in sync — an
+/// off-by-one here silently selects the wrong provider.
+pub const PROVIDER_CHOICES: &[ProviderType] = &[
+    ProviderType::Ollama,
+    ProviderType::LmStudio,
+    ProviderType::Openai,
+    ProviderType::Anthropic,
+    ProviderType::OpenaiCompatible,
+    ProviderType::EnterpriseGateway,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SetupScreen {
@@ -124,6 +140,7 @@ impl ProviderSetup {
                     ProviderType::OpenaiCompatible
                 }
             }
+            "anthropic" => ProviderType::Anthropic,
             "enterprise-gateway" => ProviderType::EnterpriseGateway,
             other => return Err(format!("unsupported saved provider type `{other}`")),
         };
@@ -167,17 +184,14 @@ impl ProviderSetup {
     }
 
     pub fn choose_selected(&mut self) {
-        if self.selected == 5 {
+        if self.selected == PROVIDER_CHOICES.len() {
             self.screen = SetupScreen::ImportSource;
             return;
         }
-        let provider = match self.selected {
-            0 => ProviderType::Ollama,
-            1 => ProviderType::LmStudio,
-            2 => ProviderType::Openai,
-            3 => ProviderType::OpenaiCompatible,
-            _ => ProviderType::EnterpriseGateway,
-        };
+        let provider = PROVIDER_CHOICES
+            .get(self.selected)
+            .copied()
+            .unwrap_or(ProviderType::EnterpriseGateway);
         self.select_provider(provider);
     }
 
@@ -195,6 +209,9 @@ impl ProviderSetup {
             }
             ProviderType::Openai => {
                 self.configure_defaults("openai", "https://api.openai.com/v1", false, false)
+            }
+            ProviderType::Anthropic => {
+                self.configure_defaults("anthropic", "https://api.anthropic.com/v1", false, false)
             }
             ProviderType::OpenaiCompatible => {
                 self.configure_defaults("openai-compatible", "", false, false)
