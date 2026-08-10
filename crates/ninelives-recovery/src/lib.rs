@@ -13,6 +13,7 @@ const MIGRATION_1: &str = include_str!("../../../migrations/0001_initial.sql");
 const MIGRATION_2: &str = include_str!("../../../migrations/0002_automations.sql");
 const MIGRATION_3: &str = include_str!("../../../migrations/0003_session_workspace.sql");
 const MIGRATION_4: &str = include_str!("../../../migrations/0004_extension_platform.sql");
+const MIGRATION_5: &str = include_str!("../../../migrations/0005_project_graph.sql");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Automation {
@@ -128,6 +129,7 @@ impl SessionStore {
         transaction.execute_batch(MIGRATION_2)?;
         transaction.execute_batch(MIGRATION_3)?;
         transaction.execute_batch(MIGRATION_4)?;
+        transaction.execute_batch(MIGRATION_5)?;
         transaction.commit()?;
         Ok(())
     }
@@ -1262,7 +1264,7 @@ mod tests {
             .create_automation("run repository health check", repository.path(), 60)
             .unwrap();
         assert!(automation.enabled);
-        assert_eq!(store.schema_version().unwrap(), 4);
+        assert_eq!(store.schema_version().unwrap(), 5);
         assert!(store.due_automations(Utc::now()).unwrap().is_empty());
         store
             .connection

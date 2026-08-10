@@ -4229,6 +4229,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "purrcode-project-graph"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "purrcode-runtime-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "purrcode-provider-gateway"
 version = "1.0.0"
 dependencies = [

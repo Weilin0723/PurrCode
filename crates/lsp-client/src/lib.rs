@@ -785,15 +785,22 @@ impl LspManager {
         }
     }
 
-    fn key(file: &Path) -> String {
-        file.extension()
+    /// The server cache key. Must include the workspace root, not just the
+    /// file extension: a second worktree with `.rs` files must not silently
+    /// reuse the server rooted at the first root, or cross-project symbol
+    /// answers come from the wrong workspace (v1.3 §8 PR7).
+    fn key(file: &Path, root: &Path) -> String {
+        let root_key = root.to_string_lossy();
+        let ext = file
+            .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or_default()
-            .to_ascii_lowercase()
+            .to_ascii_lowercase();
+        format!("{root_key}|{ext}")
     }
 
     async fn server_for(&mut self, file: &Path, root: &Path) -> Result<&mut LspServer, LspError> {
-        let key = Self::key(file);
+        let key = Self::key(file, root);
         if !self.servers.contains_key(&key) {
             let server = start_server(file, root, &self.commands).await?;
             self.servers.insert(key.clone(), server);
@@ -922,8 +929,8 @@ impl LspManager {
             .collect()
     }
 
-    pub fn drop_server(&mut self, file: &Path) {
-        let key = Self::key(file);
+    pub fn drop_server(&mut self, file: &Path, root: &Path) {
+        let key = Self::key(file, root);
         self.servers.remove(&key);
     }
 

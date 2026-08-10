@@ -35,6 +35,7 @@ members = [
   "crates/ui-contracts",
   "crates/studio-shell",
   "crates/extension-config",
+  "crates/project-graph",
 ]
 resolver = "2"
 
