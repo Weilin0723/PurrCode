@@ -29,7 +29,25 @@ pub struct AgentTurn {
     pub action: Option<AgentAction>,
     #[serde(default)]
     pub actions: Vec<AgentAction>,
+    /// How the agent would split this work across specialists (v1.4 §PR2).
+    ///
+    /// A *proposal*, not an instruction. The runtime derives its own signals
+    /// from these units and may answer "single agent" — which is the common
+    /// answer. Kept as a turn-level field rather than an `AgentAction` because
+    /// delegating is not an action PawGate can execute: it produces workers,
+    /// and their actions are what get judged.
+    #[serde(default)]
+    pub delegation: Vec<purrcode_runtime_core::delegation::DelegationUnitProposal>,
     pub complete: bool,
+}
+
+impl AgentTurn {
+    /// True when the turn asks to split work and nothing else. A turn that both
+    /// delegates and acts is answered by delegating first: the action would be
+    /// computed against a tree the workers are about to change.
+    pub fn proposes_delegation(&self) -> bool {
+        !self.delegation.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, JsonSchema, Serialize, Deserialize)]
@@ -246,12 +264,50 @@ pub(crate) fn validate_turn(turn: &AgentTurn) -> Result<(), AgentError> {
                 "actions[] and action are mutually exclusive".into(),
             ));
         }
-    } else if turn.complete == turn.action.is_some() {
+    } else if turn.complete == turn.action.is_some() && !turn.proposes_delegation() {
         // Single-action backward-compat path: exactly one of complete=true or
         // action must be supplied.
+        //
+        // A delegating turn is the third shape: its content is the split it
+        // proposes, so it carries neither an action nor completion. It is still
+        // required not to carry both a split and an action — see below.
         return Err(AgentError::InvalidModelTurn(
             "exactly one of complete=true or action must be supplied".into(),
         ));
+    }
+    if turn.proposes_delegation() {
+        // Delegating and acting in the same turn is refused rather than
+        // ordered: whichever ran second would be computed against a tree the
+        // other had just changed, and the model gets a clear reason instead of
+        // a silently dropped action.
+        if turn.action.is_some() || !turn.actions.is_empty() {
+            return Err(AgentError::InvalidModelTurn(
+                "a turn that proposes delegation cannot also propose an action; \
+                 delegate first, then act on the result"
+                    .into(),
+            ));
+        }
+        if turn.complete {
+            return Err(AgentError::InvalidModelTurn(
+                "complete=true cannot accompany a delegation proposal".into(),
+            ));
+        }
+        const MAX_DELEGATION_UNITS_PER_TURN: usize = 8;
+        if turn.delegation.len() > MAX_DELEGATION_UNITS_PER_TURN {
+            return Err(AgentError::InvalidModelTurn(format!(
+                "delegation exceeds the per-turn limit of {MAX_DELEGATION_UNITS_PER_TURN} units"
+            )));
+        }
+        if let Some(unit) = turn
+            .delegation
+            .iter()
+            .find(|unit| unit.key.trim().is_empty() || unit.objective.trim().is_empty())
+        {
+            return Err(AgentError::InvalidModelTurn(format!(
+                "delegation unit `{}` needs both a key and an objective",
+                unit.key
+            )));
+        }
     }
     if turn
         .plan

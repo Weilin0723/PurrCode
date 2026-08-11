@@ -1855,6 +1855,100 @@ async fn supervisor_status(
 // integration review are projections of durable state; accepting, rejecting or
 // stopping appends an event. There is no client-side delegation state to drift.
 
+/// The daemon's implementation of the agent's delegation seam (v1.4 §PR2).
+///
+/// The agent loop asks; this decides, runs and reports. It deliberately runs
+/// the workers to completion before returning: the parent's next turn needs to
+/// know what the specialists actually produced, and a fire-and-forget round
+/// would have the agent reasoning about work that has not happened.
+struct DaemonDelegationPlanner {
+    state: AppState,
+    repository: PathBuf,
+    /// The ceiling the parent agent itself is running under this turn. One of
+    /// the three terms in the authority fold; passing the workspace ceiling
+    /// here instead would let a narrowed parent delegate more than it has.
+    parent_ceiling: purrcode_runtime_core::ToolCeiling,
+}
+
+#[async_trait]
+impl purrcode_agent_runtime::DelegationPlanner for DaemonDelegationPlanner {
+    async fn delegate(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        turn_id: TurnId,
+        objective: &str,
+        units: &[purrcode_runtime_core::delegation::DelegationUnitProposal],
+    ) -> Result<purrcode_agent_runtime::DelegationHandoff, purrcode_agent_runtime::AgentError> {
+        let governance = purrcode_runtime_core::delegation::DelegationGovernance::default();
+        let config = AppConfig::load(&self.state.app_config).map_err(|error| {
+            purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                "delegation needs the daemon configuration: {error}"
+            ))
+        })?;
+        let policy = effective_policy(&config, &self.repository).map_err(|error| {
+            purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                "delegation needs the effective policy: {error}"
+            ))
+        })?;
+        let workspace_ceiling = policy.tool_ceiling(&self.repository);
+        let registry = load_tool_registry(&self.state, &self.repository)
+            .await
+            .registry
+            .clone();
+
+        let (plan, admitted, refused) = delegation::run_delegation_round(
+            store,
+            session_id,
+            turn_id,
+            objective,
+            units,
+            &registry,
+            &workspace_ceiling,
+            &self.parent_ceiling,
+            &governance,
+        )
+        .await
+        .map_err(|error| {
+            purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                "the proposed delegation could not be planned: {error:?}"
+            ))
+        })?;
+
+        if admitted.is_empty() {
+            return Ok(purrcode_agent_runtime::DelegationHandoff {
+                classification: plan.classification.label().to_owned(),
+                reason: plan.reason.clone(),
+                delegated: false,
+                outcomes: Vec::new(),
+                refusals: refused
+                    .into_iter()
+                    .map(|refusal| format!("{}: {}", refusal.key, refusal.reason))
+                    .collect(),
+                awaiting_decision: 0,
+            });
+        }
+
+        // The workers run here rather than in a detached task: the agent's next
+        // turn is about their results, so returning before they finish would
+        // hand it an empty answer it could only guess at.
+        drive_delegations(self.state.clone(), session_id, self.repository.clone()).await;
+
+        let after = store.load(session_id)?;
+        Ok(purrcode_agent_runtime::DelegationHandoff {
+            classification: plan.classification.label().to_owned(),
+            reason: plan.reason.clone(),
+            delegated: true,
+            outcomes: delegation::round_outcomes(&after, &admitted),
+            refusals: refused
+                .into_iter()
+                .map(|refusal| format!("{}: {}", refusal.key, refusal.reason))
+                .collect(),
+            awaiting_decision: after.delegations_awaiting_decision().count(),
+        })
+    }
+}
+
 /// Drive the delegation tree forward until nothing more can start (§PR4).
 ///
 /// The scheduler is a pure function of the durable projection, so this loop
@@ -6125,6 +6219,16 @@ async fn run_agent_operation(
         output_schemas: registry_cache.output_schemas.clone(),
     });
     let hook_registry = effective_registry.clone();
+    let parent_ceiling = profile
+        .as_ref()
+        .map(|profile| profile.ceiling().clone())
+        .unwrap_or_else(|| {
+            AppConfig::load(&state.app_config)
+                .ok()
+                .and_then(|config| effective_policy(&config, &repository).ok())
+                .unwrap_or_default()
+                .tool_ceiling(&repository)
+        });
     let agent = agent
         .with_tool_registry(effective_registry)
         .with_tool_executor(executor)
@@ -6139,6 +6243,14 @@ async fn run_agent_operation(
             repository: repository.clone(),
             registry: hook_registry,
             output_schemas: registry_cache.output_schemas.clone(),
+        }))
+        // v1.4: the agent may ask to split the work. The planner is given the
+        // PARENT's effective ceiling, not the workspace one, so a narrowed
+        // profile cannot delegate authority it does not itself hold.
+        .with_delegation_planner(Arc::new(DaemonDelegationPlanner {
+            state: state.clone(),
+            repository: repository.clone(),
+            parent_ceiling,
         }));
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),

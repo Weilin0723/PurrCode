@@ -2418,3 +2418,226 @@ async fn auto_permission_mode_still_asks_before_an_always_ask_registry_tool() {
         "the durable judgment must record that a human is required, got {judgment:?}"
     );
 }
+
+// ── v1.4: the agent asks to delegate (§PR2) ──────────────────────────────
+
+/// A planner double that records what it was asked and answers with a script.
+struct ScriptedPlanner {
+    asked: Arc<Mutex<Vec<Vec<purrcode_runtime_core::delegation::DelegationUnitProposal>>>>,
+    handoff: crate::DelegationHandoff,
+}
+
+#[async_trait]
+impl crate::DelegationPlanner for ScriptedPlanner {
+    async fn delegate(
+        &self,
+        _store: &mut SessionStore,
+        _session_id: SessionId,
+        _turn_id: purrcode_runtime_core::TurnId,
+        _objective: &str,
+        units: &[purrcode_runtime_core::delegation::DelegationUnitProposal],
+    ) -> Result<crate::DelegationHandoff, AgentError> {
+        self.asked.lock().unwrap().push(units.to_vec());
+        Ok(self.handoff.clone())
+    }
+}
+
+fn delegating_turn() -> Value {
+    serde_json::json!({
+        "rationale": "this splits cleanly across two specialists",
+        "complete": false,
+        "delegation": [
+            {
+                "key": "backend",
+                "objective": "implement the token exchange",
+                "capability": "implement_backend",
+                "allowed_paths": ["src/auth/**"]
+            },
+            {
+                "key": "migration",
+                "objective": "add the account-link table",
+                "capability": "database_migration",
+                "allowed_paths": ["migrations/**"]
+            }
+        ]
+    })
+}
+
+fn completing_turn() -> Value {
+    serde_json::json!({
+        "rationale": "the specialists covered it",
+        "complete": true
+    })
+}
+
+#[tokio::test]
+async fn a_turn_that_proposes_delegation_reaches_the_planner_and_reports_back() {
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let planner = Arc::new(ScriptedPlanner {
+        asked: asked.clone(),
+        handoff: crate::DelegationHandoff {
+            classification: "parallel".into(),
+            reason: "2 independent components can run in isolated worktrees".into(),
+            delegated: true,
+            outcomes: vec!["backend-specialist [implement_backend] completed: done".into()],
+            refusals: Vec::new(),
+            // Nothing pending, so the loop keeps going.
+            awaiting_decision: 0,
+        },
+    });
+    // Responses pop from the back: delegate first, then complete.
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![completing_turn(), delegating_turn()])),
+    };
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_delegation_planner(planner);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+
+    let outcome = agent
+        .start(&mut store, repository.path(), "add oauth support")
+        .await
+        .expect("the run must finish");
+
+    // The planner saw exactly the units the model proposed.
+    let asked = asked.lock().unwrap();
+    assert_eq!(asked.len(), 1, "one delegation round");
+    assert_eq!(asked[0].len(), 2);
+    assert_eq!(asked[0][0].key, "backend");
+    assert_eq!(asked[0][1].capability, "database_migration");
+
+    // The outcome came back into the conversation, where the next turn sees it.
+    let state = store.load(session_id_of(&outcome)).unwrap();
+    let system = state
+        .conversation_messages
+        .iter()
+        .find(|message| message.role == "system" && message.content.contains("Delegation outcome"))
+        .expect("the handoff must be recorded in the conversation");
+    assert!(system.content.contains("parallel"));
+    assert!(system.content.contains("backend-specialist"));
+}
+
+#[tokio::test]
+async fn pending_worker_changes_park_the_parent_for_a_human_decision() {
+    // §PR7: a worker's changes are a proposal. The parent must not carry on
+    // reasoning about code that is not in its worktree and may be rejected.
+    let planner = Arc::new(ScriptedPlanner {
+        asked: Arc::new(Mutex::new(Vec::new())),
+        handoff: crate::DelegationHandoff {
+            classification: "parallel".into(),
+            reason: "two components".into(),
+            delegated: true,
+            outcomes: vec!["backend [implement_backend] completed (awaiting your decision)".into()],
+            refusals: Vec::new(),
+            awaiting_decision: 2,
+        },
+    });
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![completing_turn(), delegating_turn()])),
+    };
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_delegation_planner(planner);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+
+    let outcome = agent
+        .start(&mut store, repository.path(), "add oauth support")
+        .await
+        .expect("the run must park, not fail");
+    let session_id = match outcome {
+        AgentOutcome::AwaitingOutcomeReview { session_id, reason } => {
+            assert!(reason.contains("waiting for your decision"), "{reason}");
+            session_id
+        }
+        other => panic!("expected the parent to park for a decision, got {other:?}"),
+    };
+    let state = store.load(session_id).unwrap();
+    assert_eq!(
+        state.status,
+        purrcode_runtime_core::SessionStatus::AwaitingReview
+    );
+}
+
+#[tokio::test]
+async fn without_a_planner_a_delegating_turn_continues_single_agent() {
+    // A delegated worker's own runtime has no planner. That is what bounds
+    // delegation depth to one level — a specialist asking for helpers is told
+    // no and does the work itself.
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![completing_turn(), delegating_turn()])),
+    };
+    let agent =
+        NativeAgent::new(role_map(provider), Policy::default()).with_controls(build_controls());
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+
+    let outcome = agent
+        .start(&mut store, repository.path(), "add oauth support")
+        .await
+        .expect("the run must continue rather than fail");
+    let state = store.load(session_id_of(&outcome)).unwrap();
+    let system = state
+        .conversation_messages
+        .iter()
+        .find(|message| message.content.contains("Delegation outcome"))
+        .expect("the refusal is still reported");
+    assert!(system.content.contains("not available"));
+    assert!(system.content.contains("continue the work yourself"));
+}
+
+#[tokio::test]
+async fn a_run_cannot_keep_proposing_delegation_instead_of_working() {
+    // §PR14: the ledger bounds workers; this bounds how many times the agent
+    // may stop and re-plan rather than make progress.
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let planner = Arc::new(ScriptedPlanner {
+        asked: asked.clone(),
+        handoff: crate::DelegationHandoff {
+            classification: "single".into(),
+            reason: "not worth splitting".into(),
+            delegated: false,
+            outcomes: Vec::new(),
+            refusals: Vec::new(),
+            awaiting_decision: 0,
+        },
+    });
+    // Five delegating turns in a row; the loop must stop asking after the bound.
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![
+            completing_turn(),
+            delegating_turn(),
+            delegating_turn(),
+            delegating_turn(),
+            delegating_turn(),
+        ])),
+    };
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_delegation_planner(planner);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+
+    let _ = agent
+        .start(&mut store, repository.path(), "add oauth support")
+        .await
+        .expect("the run must finish");
+    assert!(
+        asked.lock().unwrap().len() <= 2,
+        "the planner must not be asked more than the round bound, got {}",
+        asked.lock().unwrap().len()
+    );
+}
+
+/// The session id from any outcome shape.
+fn session_id_of(outcome: &AgentOutcome) -> SessionId {
+    match outcome {
+        AgentOutcome::AwaitingApproval { session_id, .. }
+        | AgentOutcome::AwaitingOutcomeReview { session_id, .. }
+        | AgentOutcome::Completed { session_id, .. }
+        | AgentOutcome::ValidationFailed { session_id, .. }
+        | AgentOutcome::IterationLimit { session_id }
+        | AgentOutcome::ActionExecuted { session_id, .. } => *session_id,
+    }
+}

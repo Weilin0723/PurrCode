@@ -27,8 +27,8 @@ pub use crate::stream::{
     MAX_STREAM_OBSERVER_CAPACITY, bounded_agent_stream_channel,
 };
 pub use crate::tool_executor::{
-    HookEvaluator, HookOutcome, HookSuspension, ToolExecutionContext, ToolExecutionOutcome,
-    ToolExecutor,
+    DelegationHandoff, DelegationPlanner, HookEvaluator, HookOutcome, HookSuspension,
+    ToolExecutionContext, ToolExecutionOutcome, ToolExecutor,
 };
 
 // P1-10: Re-export NativeAgent::compaction_window for daemon use in /compact.

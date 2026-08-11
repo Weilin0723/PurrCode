@@ -1064,6 +1064,123 @@ pub fn repair_for_failure(
     ))
 }
 
+/// Run one delegation round the main agent asked for, start to finish.
+///
+/// This is the whole of §2's flow behind one call: classify (and routinely
+/// refuse), admit, route, provision, run, propose, conflict-check — then hand
+/// the parent a summary and stop. It never applies a patch: anything a worker
+/// produced is waiting for a human in the agent workspace, and the returned
+/// `awaiting_decision` count is what tells the agent loop to park.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_delegation_round(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    turn_id: TurnId,
+    objective: &str,
+    units: &[purrcode_runtime_core::delegation::DelegationUnitProposal],
+    registry: &CapabilityRegistry,
+    workspace_ceiling: &ToolCeiling,
+    parent_ceiling: &ToolCeiling,
+    governance: &DelegationGovernance,
+) -> Result<(DelegationPlan, Vec<PlannedDelegation>, Vec<RefusedUnit>), ApiError> {
+    // The signals are measured from the proposal and from what the registry can
+    // actually staff — never taken from the model's own account of how hard the
+    // task is.
+    let available = purrcode_delegation_runtime::routing::available_specialist_count(
+        registry,
+        &units
+            .iter()
+            .filter_map(|unit| CapabilityId::parse(&unit.capability).ok())
+            .collect::<Vec<_>>(),
+    );
+    let signals = DelegationSignals::from_proposal(objective, units, available);
+    let mut plan = classify(&signals);
+    if plan.classification.delegates() {
+        plan.units = units
+            .iter()
+            .map(unit_from_proposal)
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Err(error) = plan.validate() {
+            // A malformed graph is refused as a plan, not as a crash: the agent
+            // is told why and can continue single-agent.
+            plan.units.clear();
+            plan.classification =
+                purrcode_runtime_core::delegation::DelegationClassification::Single;
+            plan.reason = format!("the proposed delegation graph is invalid: {error}");
+        }
+    }
+
+    let state = store.load(session_id)?;
+    let (admitted, refused) = record_plan(
+        store,
+        session_id,
+        turn_id,
+        &plan,
+        registry,
+        workspace_ceiling,
+        parent_ceiling,
+        governance,
+        &state,
+    )?;
+    Ok((plan, admitted, refused))
+}
+
+/// Summarize what a delegation round produced, for the parent's context.
+pub fn round_outcomes(state: &SessionState, admitted: &[PlannedDelegation]) -> Vec<String> {
+    admitted
+        .iter()
+        .filter_map(|planned| state.delegations.get(&planned.delegation.id()))
+        .map(|record| {
+            let integration = match record.integration {
+                IntegrationState::Applied => "integrated",
+                IntegrationState::Conflicted => "CONFLICT — needs your decision",
+                IntegrationState::Proposed => "awaiting your decision",
+                IntegrationState::Rejected => "rejected",
+                IntegrationState::Approved => "approved, applying",
+                IntegrationState::NotProposed => "no changes proposed",
+            };
+            let findings = record
+                .result
+                .as_ref()
+                .map(|result| result.findings.len())
+                .unwrap_or(0);
+            format!(
+                "{} [{}] {}: {} ({integration}{})",
+                record
+                    .assignment
+                    .as_ref()
+                    .map(|assignment| assignment.agent_profile.as_str())
+                    .unwrap_or("unassigned"),
+                record.delegation.capability(),
+                status_label(record.status()),
+                record
+                    .result
+                    .as_ref()
+                    .map(|result| result.summary.as_str())
+                    .unwrap_or("no result recorded"),
+                if findings > 0 {
+                    format!(", {findings} finding(s)")
+                } else {
+                    String::new()
+                }
+            )
+        })
+        .collect()
+}
+
+fn unit_from_proposal(
+    proposal: &purrcode_runtime_core::delegation::DelegationUnitProposal,
+) -> Result<PlannedUnit, ApiError> {
+    unit_from_request(&DelegationUnitRequest {
+        key: proposal.key.clone(),
+        objective: proposal.objective.clone(),
+        capability: proposal.capability.clone(),
+        allowed_paths: proposal.allowed_paths.clone(),
+        expected_output: proposal.expected_output.clone(),
+        depends_on: proposal.depends_on.clone(),
+    })
+}
+
 /// Build the repair delegation for a failure routed back to a worker (§PR9).
 ///
 /// A repair is a **new** delegation with the same scope and specialist, not a

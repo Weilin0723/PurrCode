@@ -97,6 +97,129 @@ impl DelegationSignals {
     }
 }
 
+/// One unit as *proposed* — by the main agent mid-turn, or by an API caller.
+///
+/// Deliberately lenient: every field is a plain string, so a model that names a
+/// capability that does not exist produces a refusable unit rather than a turn
+/// that fails to deserialize. Validation happens where it can be reported
+/// (`PlannedUnit` conversion), not in serde.
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct DelegationUnitProposal {
+    /// Stable within one proposal, so `depends_on` can name siblings.
+    pub key: String,
+    pub objective: String,
+    pub capability: String,
+    #[serde(default)]
+    pub allowed_paths: Vec<String>,
+    /// `patch` | `review` | `investigation` | `validation`. Absent means patch.
+    #[serde(default)]
+    pub expected_output: Option<String>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+}
+
+impl DelegationUnitProposal {
+    /// True when this unit is expected to return findings rather than a patch.
+    pub fn is_read_only(&self) -> bool {
+        matches!(
+            self.expected_output.as_deref(),
+            Some("review" | "investigation" | "validation")
+        )
+    }
+}
+
+/// Words that mark a change as security-sensitive. Matched against the
+/// objective and the delegated paths, so the signal is measured from the
+/// request rather than taken from the model's own assessment of its work.
+const SECURITY_SENSITIVE_MARKERS: &[&str] = &[
+    "auth",
+    "oauth",
+    "login",
+    "session",
+    "token",
+    "password",
+    "credential",
+    "secret",
+    "crypto",
+    "encrypt",
+    "signature",
+    "permission",
+    "privilege",
+    "payment",
+    "billing",
+    "invoice",
+];
+
+impl DelegationSignals {
+    /// Derive the classifier's inputs from a proposal (v1.4 §PR2).
+    ///
+    /// Every signal here is *measured* — from the units, their paths and the
+    /// objective text — rather than asked of the model. A model that wants
+    /// three workers cannot get them by claiming the task is complex; it gets
+    /// them only if three independent units with distinct scopes are actually
+    /// present and specialists exist to run them.
+    pub fn from_proposal(
+        objective: &str,
+        units: &[DelegationUnitProposal],
+        available_specialist_capabilities: u32,
+    ) -> Self {
+        let haystack = {
+            let mut haystack = objective.to_ascii_lowercase();
+            for unit in units {
+                haystack.push(' ');
+                haystack.push_str(&unit.objective.to_ascii_lowercase());
+                for path in &unit.allowed_paths {
+                    haystack.push(' ');
+                    haystack.push_str(&path.to_ascii_lowercase());
+                }
+            }
+            haystack
+        };
+        let security_sensitive = SECURITY_SENSITIVE_MARKERS
+            .iter()
+            .any(|marker| haystack.contains(marker));
+
+        // Distinct top-level directories across every delegated path.
+        let spanned_modules: std::collections::BTreeSet<&str> = units
+            .iter()
+            .flat_map(|unit| unit.allowed_paths.iter())
+            .filter_map(|path| path.split('/').next())
+            .filter(|segment| !segment.is_empty() && *segment != "**")
+            .collect();
+
+        // A scope naming only concrete files (no glob) in one place is a
+        // localized fix however many units were proposed for it.
+        let concrete_paths: Vec<&String> = units
+            .iter()
+            .flat_map(|unit| unit.allowed_paths.iter())
+            .collect();
+        let localized_fix = !concrete_paths.is_empty()
+            && concrete_paths.len() <= 1
+            && concrete_paths
+                .iter()
+                .all(|path| !path.contains('*') && path.contains('.'));
+
+        let writer_units = units.iter().filter(|unit| !unit.is_read_only()).count() as u32;
+        Self {
+            independent_components: writer_units.max(1),
+            estimated_files: 0,
+            spanned_modules: spanned_modules.len() as u32,
+            available_specialist_capabilities,
+            components_are_independent: units.iter().all(|unit| unit.depends_on.is_empty()),
+            security_sensitive,
+            review_requested: units.iter().any(|unit| {
+                unit.expected_output.as_deref() == Some("review")
+                    || unit.capability.contains("review")
+            }),
+            tests_separable: units
+                .iter()
+                .any(|unit| unit.capability.contains("test") || unit.key.contains("test")),
+            localized_fix,
+            complexity_hint: 0,
+        }
+    }
+}
+
 /// What the runtime decided to do (v1.4 §PR2).
 #[derive(
     Clone, Copy, Debug, Default, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
@@ -478,6 +601,166 @@ mod tests {
             reason: "test".into(),
             units,
         }
+    }
+
+    fn proposal(key: &str, capability: &str, paths: &[&str]) -> DelegationUnitProposal {
+        DelegationUnitProposal {
+            key: key.into(),
+            objective: format!("do {key}"),
+            capability: capability.into(),
+            allowed_paths: paths.iter().map(|p| (*p).to_owned()).collect(),
+            expected_output: None,
+            depends_on: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn signals_are_measured_from_the_proposal_not_claimed_by_the_model() {
+        let units = vec![
+            proposal("backend", "implement_backend", &["src/auth/**"]),
+            proposal("migration", "database_migration", &["migrations/**"]),
+            DelegationUnitProposal {
+                expected_output: Some("review".into()),
+                ..proposal("review", "security_review", &["src/**"])
+            },
+        ];
+        let signals = DelegationSignals::from_proposal("add oauth login", &units, 3);
+        // Reviewers are not implementation components: two writers, one review.
+        assert_eq!(signals.independent_components, 2);
+        assert!(signals.review_requested);
+        assert!(
+            signals.security_sensitive,
+            "`oauth`/`auth` is security-sensitive"
+        );
+        assert!(signals.components_are_independent);
+        assert_eq!(signals.spanned_modules, 2);
+        assert!(!signals.localized_fix);
+        assert_eq!(signals.available_specialist_capabilities, 3);
+    }
+
+    #[test]
+    fn two_small_ordered_components_are_not_worth_splitting() {
+        // The cost model doing its job. "Add an endpoint, then test it" is two
+        // components, but ordering them removes the parallelism that would pay
+        // for two worktrees and two context assemblies.
+        let units = vec![
+            proposal("backend", "implement_backend", &["src/api/**"]),
+            DelegationUnitProposal {
+                depends_on: vec!["backend".into()],
+                ..proposal("tests", "write_tests", &["tests/**"])
+            },
+        ];
+        let signals = DelegationSignals::from_proposal("add an endpoint", &units, 2);
+        assert!(!signals.components_are_independent);
+        assert!(signals.tests_separable);
+        let plan = classify(&signals);
+        assert_eq!(plan.classification, DelegationClassification::Single);
+        assert!(plan.expected_benefit < plan.coordination_cost, "{plan:?}");
+    }
+
+    #[test]
+    fn a_dependency_makes_a_worthwhile_split_sequential_rather_than_parallel() {
+        let units = vec![
+            proposal("migration", "database_migration", &["migrations/**"]),
+            DelegationUnitProposal {
+                depends_on: vec!["migration".into()],
+                ..proposal("backend", "implement_backend", &["src/auth/**"])
+            },
+            DelegationUnitProposal {
+                depends_on: vec!["backend".into()],
+                ..proposal("tests", "write_tests", &["tests/auth/**"])
+            },
+            DelegationUnitProposal {
+                expected_output: Some("review".into()),
+                depends_on: vec!["backend".into()],
+                ..proposal("review", "security_review", &["src/**"])
+            },
+        ];
+        let signals = DelegationSignals::from_proposal("add oauth account linking", &units, 4);
+        assert!(!signals.components_are_independent);
+        assert_eq!(
+            signals.independent_components, 3,
+            "the reviewer is not a component"
+        );
+        let plan = classify(&signals);
+        assert_eq!(
+            plan.classification,
+            DelegationClassification::SequentialDelegation,
+            "{plan:?}"
+        );
+    }
+
+    #[test]
+    fn the_north_star_task_delegates_from_a_measured_proposal() {
+        // §2: "Add OAuth support, update the database schema, add tests, and
+        // perform a security review." Derived signals only — nothing the model
+        // asserted about complexity.
+        let units = vec![
+            proposal("backend", "implement_backend", &["src/auth/**"]),
+            proposal("migration", "database_migration", &["migrations/**"]),
+            proposal("tests", "write_tests", &["tests/auth/**"]),
+            DelegationUnitProposal {
+                expected_output: Some("review".into()),
+                ..proposal("review", "security_review", &["src/**"])
+            },
+        ];
+        let signals = DelegationSignals::from_proposal(
+            "Add OAuth support, update the database schema, add tests, and perform a security review",
+            &units,
+            4,
+        );
+        let plan = classify(&signals);
+        assert_eq!(
+            plan.classification,
+            DelegationClassification::ParallelDelegation,
+            "{plan:?}"
+        );
+        assert!(plan.expected_benefit - plan.coordination_cost >= 1);
+    }
+
+    #[test]
+    fn a_single_concrete_file_stays_single_agent_however_many_units_are_proposed() {
+        // The guard against a model splitting a one-line change three ways:
+        // the scope is one concrete file, so the runtime refuses regardless.
+        let units = vec![proposal("a", "implement_backend", &["src/lib.rs"])];
+        let signals = DelegationSignals::from_proposal("rename the retry limit", &units, 5);
+        assert!(signals.localized_fix);
+        let plan = classify(&signals);
+        assert_eq!(plan.classification, DelegationClassification::Single);
+        assert!(plan.reason.contains("localized"));
+    }
+
+    #[test]
+    fn a_proposal_with_no_specialists_available_does_not_delegate() {
+        let units = vec![
+            proposal("backend", "implement_backend", &["src/auth/**"]),
+            proposal("frontend", "implement_frontend", &["web/**"]),
+        ];
+        // No registered specialist can satisfy either capability.
+        let signals = DelegationSignals::from_proposal("wire up sign-in", &units, 0);
+        let plan = classify(&signals);
+        assert_eq!(
+            plan.classification,
+            DelegationClassification::Single,
+            "specialists that do not exist cannot help: {}",
+            plan.reason
+        );
+    }
+
+    #[test]
+    fn a_read_only_unit_is_recognized_without_parsing() {
+        let review = DelegationUnitProposal {
+            expected_output: Some("review".into()),
+            ..proposal("r", "security_review", &[])
+        };
+        assert!(review.is_read_only());
+        assert!(!proposal("w", "implement_backend", &[]).is_read_only());
+        // An unknown output kind is not silently treated as read-only.
+        let unknown = DelegationUnitProposal {
+            expected_output: Some("something-else".into()),
+            ..proposal("u", "implement_backend", &[])
+        };
+        assert!(!unknown.is_read_only());
     }
 
     #[test]

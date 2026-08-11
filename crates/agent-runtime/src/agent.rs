@@ -80,9 +80,15 @@ use crate::schema::{
     validate_plan, validate_turn,
 };
 use crate::stream::{AgentStreamEvent, AgentStreamObserver, RationaleStreamExtractor};
-use crate::tool_executor::{HookEvaluator, HookOutcome, ToolExecutionContext, ToolExecutor};
+use crate::tool_executor::{
+    DelegationPlanner, HookEvaluator, HookOutcome, ToolExecutionContext, ToolExecutor,
+};
 
 const MAX_AUTONOMOUS_ITERATIONS: usize = 32;
+/// How many times one run may ask to delegate (v1.4 §PR14). The resource
+/// ledger already bounds how many workers exist; this bounds how many times the
+/// agent may stop and re-plan instead of making progress itself.
+const MAX_DELEGATION_ROUNDS: usize = 2;
 const MAX_CONSECUTIVE_POLICY_REJECTIONS: usize = 3;
 const MAX_ACTIONS_IN_PROMPT: usize = 12;
 /// How many of the most recent proposed actions survive a compaction.
@@ -247,6 +253,10 @@ pub struct NativeAgent<'a> {
     /// with the repository's hook set + PawGate + the ToolExecutor; `None`
     /// means no hooks fire on lifecycle triggers.
     hook_evaluator: Option<Arc<dyn HookEvaluator>>,
+    /// Runs a delegation the agent proposes (v1.4). Absent in a worker's own
+    /// runtime, which is what bounds delegation depth to one level: a
+    /// specialist has no planner, so its proposal is answered "unavailable".
+    delegation_planner: Option<Arc<dyn DelegationPlanner>>,
 }
 
 impl<'a> NativeAgent<'a> {
@@ -270,6 +280,7 @@ impl<'a> NativeAgent<'a> {
             tool_registry: None,
             tool_executor: None,
             hook_evaluator: None,
+            delegation_planner: None,
         }
     }
 
@@ -372,6 +383,15 @@ impl<'a> NativeAgent<'a> {
     /// after_agent_complete/before_commit.
     pub fn with_hook_evaluator(mut self, evaluator: Arc<dyn HookEvaluator>) -> Self {
         self.hook_evaluator = Some(evaluator);
+        self
+    }
+
+    /// Attach the v1.4 delegation planner. Without it, a turn that proposes
+    /// delegation is told delegation is unavailable and continues single-agent
+    /// — which is also exactly what a delegated worker's own runtime does, so
+    /// a specialist cannot delegate again.
+    pub fn with_delegation_planner(mut self, planner: Arc<dyn DelegationPlanner>) -> Self {
+        self.delegation_planner = Some(planner);
         self
     }
 
@@ -2366,6 +2386,10 @@ impl<'a> NativeAgent<'a> {
         let mut consecutive_policy_rejections = 0_usize;
         let mut validation_repair_cycles = 0_usize;
         let mut focused_repair_stages = BTreeSet::<ValidationStage>::new();
+        // v1.4: how many times this run has asked to delegate. Bounded so a
+        // model that keeps proposing workers instead of doing the work runs
+        // out of ways to avoid it.
+        let mut delegation_rounds = 0_usize;
         let mut iteration = 0_usize;
         for _ in 0..MAX_AUTONOMOUS_ITERATIONS {
             iteration += 1;
@@ -2551,6 +2575,26 @@ impl<'a> NativeAgent<'a> {
                         .unwrap_or(purrcode_runtime_core::adaptation::WorkflowProfile::Direct)
                 )
             );
+            // v1.4: tell the model delegation exists, and tell it honestly.
+            // Advertised only when a planner is attached — a worker's own
+            // runtime has none, so a specialist is never invited to ask for
+            // helpers it cannot have. The wording is deliberately discouraging:
+            // the runtime refuses most proposals, and a model that learns to
+            // reach for workers by default would spend a planning turn to be
+            // told no.
+            let contract_content = match (&self.delegation_planner, delegation_rounds) {
+                (Some(_), rounds) if rounds < MAX_DELEGATION_ROUNDS => format!(
+                    "{contract_content} DELEGATION: for work that splits into genuinely \
+                     independent components with distinct file scopes — and only then — you may \
+                     return `delegation: [{{key, objective, capability, allowed_paths, \
+                     expected_output, depends_on}}]` instead of an action. The runtime measures \
+                     the split itself and usually answers 'single agent'; a one-file change, a \
+                     rename, or a fix always does. Specialists work in isolated worktrees and \
+                     their changes need your review before they land, so do not delegate work \
+                     you could finish in this turn."
+                ),
+                _ => contract_content,
+            };
             let contract = ModelMessage {
                 role: "system".into(),
                 content: contract_content,
@@ -2863,6 +2907,71 @@ impl<'a> NativeAgent<'a> {
             // path. Keep the boundary strict, but give the provider one
             // bounded opportunity to express the same action with a safe,
             // repository-relative path instead of failing the whole session.
+            // ── v1.4: the agent asks to split the work ────────────────────
+            //
+            // Handled before the action and before completion, because both
+            // would otherwise be computed against a tree the workers are about
+            // to change. The runtime, not the model, decides whether to
+            // delegate; the common answer is "no", and the reasoning goes back
+            // into the conversation either way.
+            if turn.proposes_delegation() {
+                delegation_rounds += 1;
+                let handoff = match (&self.delegation_planner, delegation_rounds) {
+                    (Some(planner), rounds) if rounds <= MAX_DELEGATION_ROUNDS => {
+                        planner
+                            .delegate(store, session_id, turn_id, &objective, &turn.delegation)
+                            .await?
+                    }
+                    (Some(_), _) => crate::tool_executor::DelegationHandoff {
+                        classification: "single".into(),
+                        reason: format!(
+                            "this session has already planned delegation {MAX_DELEGATION_ROUNDS} \
+                             time(s); continue the work yourself"
+                        ),
+                        ..Default::default()
+                    },
+                    (None, _) => crate::tool_executor::DelegationHandoff {
+                        classification: "single".into(),
+                        reason: "delegation is not available in this runtime".into(),
+                        ..Default::default()
+                    },
+                };
+                store.append(
+                    session_id,
+                    &SessionEvent::ConversationMessageAdded {
+                        message: ConversationMessage {
+                            id: ActionId::new().0.to_string(),
+                            role: "system".into(),
+                            content: handoff.as_context_message(),
+                            timestamp: Utc::now(),
+                            tool_calls: Vec::new(),
+                            tool_results: Vec::new(),
+                            model: None,
+                            turn_id: Some(turn_id),
+                        },
+                    },
+                )?;
+                if handoff.awaiting_decision > 0 {
+                    // Worker changes are proposals until a human accepts them.
+                    // Continuing here would have the agent reason about code
+                    // that is not in its worktree and may never be.
+                    let reason = format!(
+                        "{} delegated change set(s) are waiting for your decision in the \
+                         agent workspace; accept or reject them, then resume",
+                        handoff.awaiting_decision
+                    );
+                    store.append(
+                        session_id,
+                        &SessionEvent::OutcomeReviewRequired {
+                            reason: reason.clone(),
+                        },
+                    )?;
+                    return Ok(AgentOutcome::AwaitingOutcomeReview { session_id, reason });
+                }
+                // Nothing is pending: take another turn with the outcome in
+                // context. A repeated proposal hits the round bound above.
+                continue;
+            }
             let mut proposed_action = None;
             if turn.actions.len() > 1 {
                 // ── Batch (multi-read) path ──────────────────────────────

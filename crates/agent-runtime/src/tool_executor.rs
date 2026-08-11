@@ -98,6 +98,81 @@ pub trait ToolExecutor: Send + Sync {
     ) -> Result<ToolExecutionOutcome, AgentError>;
 }
 
+/// What came back from a delegation the agent proposed (v1.4 §PR6).
+///
+/// This — never a worker's transcript — is what re-enters the parent's context.
+/// It is deliberately small: the agent needs to know what was decided, what
+/// landed, and what still needs a human, and can ask for a specific diff if it
+/// needs more.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DelegationHandoff {
+    /// `single` | `parallel` | `sequential` | `review`.
+    pub classification: String,
+    /// Why the runtime decided that, in the classifier's own words.
+    pub reason: String,
+    /// True when workers actually ran.
+    pub delegated: bool,
+    /// One line per delegation: specialist, outcome, and integration state.
+    pub outcomes: Vec<String>,
+    /// Units the runtime refused, with the reason. Surfaced so the agent is not
+    /// left waiting for a specialist that was never started.
+    pub refusals: Vec<String>,
+    /// Delegations whose changes are waiting on a human decision.
+    pub awaiting_decision: usize,
+}
+
+impl DelegationHandoff {
+    /// The message injected into the parent's context. Structured prose, not a
+    /// dump: every line is traceable to a delegation the user can inspect.
+    pub fn as_context_message(&self) -> String {
+        let mut message = String::from("Delegation outcome\n");
+        message.push_str(&format!(
+            "Decision: {} — {}\n",
+            self.classification, self.reason
+        ));
+        if !self.delegated {
+            message.push_str(
+                "No specialists were started; continue the work yourself in this session.\n",
+            );
+            return message;
+        }
+        for outcome in &self.outcomes {
+            message.push_str(&format!("- {outcome}\n"));
+        }
+        for refusal in &self.refusals {
+            message.push_str(&format!("- refused: {refusal}\n"));
+        }
+        if self.awaiting_decision > 0 {
+            message.push_str(&format!(
+                "{} worker change set(s) are waiting on a human decision in the agent \
+                 workspace; they are NOT in this worktree yet. Do not re-implement them.\n",
+                self.awaiting_decision
+            ));
+        }
+        message
+    }
+}
+
+/// Runs a delegation the main agent proposed (v1.4 §PR2, §PR4).
+///
+/// The agent loop owns *when* to ask; this owns *whether and how*. The
+/// implementation classifies the proposal — and routinely answers "single
+/// agent, here is why" — then admits, schedules and integrates. It lives
+/// behind a trait for the same reason [`ToolExecutor`] does: the daemon holds
+/// the provider router, the worktrees and the store, and a second execution
+/// path inside `agent-runtime` would be a second unaudited one.
+#[async_trait]
+pub trait DelegationPlanner: Send + Sync {
+    async fn delegate(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        turn_id: TurnId,
+        objective: &str,
+        units: &[purrcode_runtime_core::delegation::DelegationUnitProposal],
+    ) -> Result<DelegationHandoff, AgentError>;
+}
+
 /// Governed-hook lifecycle dispatch (v1.3 §8 PR6). The agent turn loop calls
 /// this at before_write/after_write/after_validation/after_agent_complete/
 /// before_commit; the daemon implements it with the repository's hook set,

@@ -38,7 +38,10 @@ use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub use decision::{DelegationClassification, DelegationPlan, DelegationSignals, PlannedUnit};
+pub use decision::{
+    DelegationClassification, DelegationPlan, DelegationSignals, DelegationUnitProposal,
+    PlannedUnit,
+};
 pub use integration::{
     IntegrationConflict, IntegrationConflictKind, IntegrationDecision, IntegrationProposal,
     PatchHunk, detect_conflicts, parse_unified_diff,

@@ -25,11 +25,12 @@ pub use capability::{
 pub use delegation::{
     AuthorityInputs, ContextRef, Delegation, DelegationBudget, DelegationClassification,
     DelegationError, DelegationGovernance, DelegationId, DelegationLedger, DelegationOrigin,
-    DelegationPlan, DelegationRequest, DelegationSignals, DelegationStatus, ExpectedOutput,
-    FindingSeverity, IntegrationConflict, IntegrationConflictKind, IntegrationDecision,
-    IntegrationProposal, OpenIssue, PathPattern, PlannedUnit, RepairDecision, ReviewResult,
-    RoutingDecision, StructuredFinding, UsageSummary, ValidationEvidence, WorkerAssignment,
-    WorkerId, WorkerResult, WorkerResultStatus, WorkerWorkspaceRecord, WorkspaceAccess,
+    DelegationPlan, DelegationRequest, DelegationSignals, DelegationStatus, DelegationUnitProposal,
+    ExpectedOutput, FindingSeverity, IntegrationConflict, IntegrationConflictKind,
+    IntegrationDecision, IntegrationProposal, OpenIssue, PathPattern, PlannedUnit, RepairDecision,
+    ReviewResult, RoutingDecision, StructuredFinding, UsageSummary, ValidationEvidence,
+    WorkerAssignment, WorkerId, WorkerResult, WorkerResultStatus, WorkerWorkspaceRecord,
+    WorkspaceAccess,
 };
 pub use evidence::{EvidenceInitiator, ExecutionEvidence, ExecutionOutcome, RedactionClass};
 pub use extension::{
