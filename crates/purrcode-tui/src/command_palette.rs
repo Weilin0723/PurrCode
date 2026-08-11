@@ -1293,8 +1293,15 @@ async fn dispatch_dynamic_command(app: &mut App, cmd: &str, arguments: &str) {
     let commands = match app.request(reqwest::Method::GET, &path, None).await {
         Ok(value) => value,
         Err(error) => {
-            app.message_bar =
-                format!("Unknown command: /{cmd}. The daemon command list is unavailable: {error}");
+            // NOT "unknown" — the client could not check. A project may well
+            // declare `/{cmd}` in `.purrcode/commands/`, and telling the user
+            // their command does not exist when the lookup itself failed sends
+            // them to fix the wrong thing. Say what actually happened, and
+            // still offer the one command that works without the daemon.
+            app.message_bar = format!(
+                "Could not check /{cmd} against the daemon's command list ({error}). \
+                 Type /help for the commands this client knows."
+            );
             return;
         }
     };
