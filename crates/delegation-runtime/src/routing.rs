@@ -29,7 +29,11 @@ pub struct RoutedSpecialist {
 }
 
 /// How to choose when several profiles can satisfy a capability.
-#[derive(Clone, Debug)]
+///
+/// The default refuses rather than falling back: routing `security_review` to
+/// whatever agent happens to exist is worse than telling the user nothing can
+/// do it, so `fallback_profile` is `None` unless a caller sets one.
+#[derive(Clone, Debug, Default)]
 pub struct RoutingPolicy {
     /// Profiles that may never be selected by the planner (e.g. one the user
     /// disabled). Deny beats rank.
@@ -37,17 +41,6 @@ pub struct RoutingPolicy {
     /// A profile to fall back to when no provider declares the capability.
     /// `None` means "refuse", which is the safe default for a specialist task.
     pub fallback_profile: Option<String>,
-}
-
-impl Default for RoutingPolicy {
-    fn default() -> Self {
-        Self {
-            denied_profiles: Vec::new(),
-            // No implicit fallback: routing `security_review` to whatever agent
-            // happens to exist is worse than telling the user nothing can do it.
-            fallback_profile: None,
-        }
-    }
 }
 
 /// Resolve one capability to a specialist.

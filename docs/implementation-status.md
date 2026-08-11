@@ -1,5 +1,33 @@
 # Implementation status
 
+Updated: 2026-08-11 (v1.4 collaborative agent development on
+`feature/v1.4-collaborative-agent-development`)
+
+## v1.4 — Collaborative agent development
+
+Full design in [`v1.4-architecture.md`](v1.4-architecture.md), including the
+release-gate table and an explicit list of what is *not* yet proven.
+
+**Shipped.** Typed delegation contracts with a structural authority fold
+(`runtime-core::delegation`); the deterministic delegate-or-not classifier;
+isolated writer worktrees seeded from the parent snapshot; a DAG scheduler that
+is a pure function of the durable projection; capability-based specialist
+routing over the v1.3 registry; bounded worker context; evidence-gated
+integration with hunk-level conflict detection; read-only review workers;
+bounded repair; durable recovery with at-most-once execution; parent-bounded
+budgets; the agent workspace and integration review in the TUI; migration 0006
+for the queryable projection; `Policy::evaluate_delegated` as the runtime scope
+gate.
+
+**Not yet done.** The PR15 comparative benchmark has not been run, so
+"delegation beats single-agent often enough to justify its cost" remains a
+design argument rather than a measurement. Delegated workers run a bounded
+read/write loop without registry tools, MCP or skills. The main agent does not
+yet start a delegation from inside its own turn loop — planning is a daemon
+command today.
+
+---
+
 Updated: 2026-08-08 (v1.2 semantic-gap closure on `feature/v1.2-daily-driver-backend`)
 
 ## v1.2 semantic-gap closure — UI affordances now match runtime semantics

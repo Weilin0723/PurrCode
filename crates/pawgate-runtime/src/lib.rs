@@ -563,9 +563,15 @@ fn narrow_constraints(
         .allowed_write_globs
         .into_iter()
         .filter(|granted| {
+            // Separators are normalized before comparison. A granted glob comes
+            // from a `PathBuf` and may carry `\` on Windows, while a delegated
+            // pattern is always normalized to `/` — comparing them raw would
+            // make the same delegation authorize different writes on different
+            // platforms, which is the worst kind of permission bug.
+            let granted = granted.replace('\\', "/");
             delegated
                 .iter()
-                .any(|permitted| purrcode_runtime_core::tool::glob_covers(permitted, granted))
+                .any(|permitted| purrcode_runtime_core::tool::glob_covers(permitted, &granted))
         })
         .collect();
     ActionConstraints {
@@ -1758,6 +1764,44 @@ mod tests {
             policy.evaluate_delegated(&command("curl", &["https://x"]), &repository, &delegation),
             JudgmentDecision::Deny { .. }
         ));
+    }
+
+    #[test]
+    fn a_delegated_scope_decides_the_same_way_on_either_separator() {
+        // The same delegation must authorize the same writes whatever the
+        // platform spells a path like. A `PathBuf`-derived glob carrying `\`
+        // used to fall out of the intersection entirely, which would have made
+        // a scoped write succeed on Linux and produce an empty write set on
+        // Windows.
+        let policy = Policy {
+            auto_allow_worktree_writes: true,
+            ..Policy::default()
+        };
+        let delegation = delegation(
+            &["src/auth/**"],
+            purrcode_runtime_core::delegation::ExpectedOutput::Patch,
+        );
+        for path in ["src/auth/token.rs", r"src\auth\token.rs"] {
+            let action = ProposedAction::WriteFile(purrcode_runtime_core::WriteFileAction {
+                path: PathBuf::from(path),
+                content: "contents".into(),
+                expected_digest: None,
+            });
+            match policy.evaluate_delegated(&action, &delegated_worktree(), &delegation) {
+                JudgmentDecision::AllowWithConstraints(constraints) => assert_eq!(
+                    constraints.allowed_write_globs.len(),
+                    1,
+                    "`{path}` must keep its write glob after narrowing"
+                ),
+                // A Windows-style path is rejected as unsafe on Unix before it
+                // reaches narrowing; what must never happen is an *allow* whose
+                // write set was silently emptied.
+                other => assert!(
+                    matches!(other, JudgmentDecision::Deny { .. }),
+                    "`{path}` produced {other:?}"
+                ),
+            }
+        }
     }
 
     #[test]

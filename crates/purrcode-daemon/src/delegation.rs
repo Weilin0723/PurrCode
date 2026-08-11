@@ -648,7 +648,17 @@ pub async fn finish_worker(
         .filter(|conflict| conflict.delegations.contains(&delegation.id()))
         .collect();
 
-    let decision = evaluate_proposal(&proposal, &mine, delegation.access().is_writable());
+    // `require_evidence` is false here, and the reason matters. A worker's own
+    // validations are not yet produced by the daemon's worker loop, so
+    // requiring them would auto-reject every proposal before a human ever saw
+    // it — a gate that blocks the product rather than protecting it. What
+    // replaces it is honest visibility plus a real gate downstream: the review
+    // shows an empty validation list, no patch can be applied without an
+    // explicit human accept, and the parent's own validation runs afterwards
+    // through `POST /v1/sessions/{id}/delegations/validate`, which routes a
+    // failure back to the responsible worker. The parameter stays so a caller
+    // that *does* have per-worker evidence can demand it.
+    let decision = evaluate_proposal(&proposal, &mine, false);
     let mut proposal = proposal;
     proposal.conflicts.extend(mine.iter().cloned());
     store.append(
@@ -1037,7 +1047,7 @@ pub fn repair_for_failure(
         .filter(|record| record.integration == IntegrationState::Applied)
         .filter_map(|record| record.result.as_ref())
         .collect();
-    let responsible = attribute_failure(detail, candidates.into_iter())?;
+    let responsible = attribute_failure(detail, candidates)?;
     let record = state.delegations.get(&responsible.delegation_id)?;
     let trigger = RepairTrigger::ValidationFailed {
         name: validation_name.to_owned(),
