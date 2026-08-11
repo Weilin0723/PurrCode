@@ -4287,6 +4287,27 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         HookTriggered { .. } => "hook_triggered",
         ActionDeferredForHook { .. } => "action_deferred_for_hook",
         ActionResumedAfterHook { .. } => "action_resumed_after_hook",
+        // v1.4 collaborative-agent lifecycle.
+        DelegationPlanned { .. } => "delegation_planned",
+        DelegationCreated { .. } => "delegation_created",
+        DelegationRoutingRecorded { .. } => "delegation_routing_recorded",
+        DelegationReady { .. } => "delegation_ready",
+        DelegationBlocked { .. } => "delegation_blocked",
+        DelegationWorkerAssigned { .. } => "delegation_worker_assigned",
+        DelegationWorkerStarted { .. } => "delegation_worker_started",
+        DelegationWorkerPaused { .. } => "delegation_worker_paused",
+        DelegationWorkerCompleted { .. } => "delegation_worker_completed",
+        DelegationWorkerFailed { .. } => "delegation_worker_failed",
+        DelegationWorkerCancelled { .. } => "delegation_worker_cancelled",
+        DelegationResultRecorded { .. } => "delegation_result_recorded",
+        DelegationRepairRequested { .. } => "delegation_repair_requested",
+        IntegrationProposed { .. } => "integration_proposed",
+        IntegrationConflictDetected { .. } => "integration_conflict_detected",
+        IntegrationApproved { .. } => "integration_approved",
+        IntegrationRejected { .. } => "integration_rejected",
+        IntegrationApplied { .. } => "integration_applied",
+        DelegationCompleted { .. } => "delegation_completed",
+        DelegationCancelled { .. } => "delegation_cancelled",
     }
 }
 

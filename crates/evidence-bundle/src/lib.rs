@@ -453,6 +453,27 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::HookTriggered { .. } => "hook_triggered",
         SessionEvent::ActionDeferredForHook { .. } => "action_deferred_for_hook",
         SessionEvent::ActionResumedAfterHook { .. } => "action_resumed_after_hook",
+        // v1.4 collaborative-agent lifecycle.
+        SessionEvent::DelegationPlanned { .. } => "delegation_planned",
+        SessionEvent::DelegationCreated { .. } => "delegation_created",
+        SessionEvent::DelegationRoutingRecorded { .. } => "delegation_routing_recorded",
+        SessionEvent::DelegationReady { .. } => "delegation_ready",
+        SessionEvent::DelegationBlocked { .. } => "delegation_blocked",
+        SessionEvent::DelegationWorkerAssigned { .. } => "delegation_worker_assigned",
+        SessionEvent::DelegationWorkerStarted { .. } => "delegation_worker_started",
+        SessionEvent::DelegationWorkerPaused { .. } => "delegation_worker_paused",
+        SessionEvent::DelegationWorkerCompleted { .. } => "delegation_worker_completed",
+        SessionEvent::DelegationWorkerFailed { .. } => "delegation_worker_failed",
+        SessionEvent::DelegationWorkerCancelled { .. } => "delegation_worker_cancelled",
+        SessionEvent::DelegationResultRecorded { .. } => "delegation_result_recorded",
+        SessionEvent::DelegationRepairRequested { .. } => "delegation_repair_requested",
+        SessionEvent::IntegrationProposed { .. } => "integration_proposed",
+        SessionEvent::IntegrationConflictDetected { .. } => "integration_conflict_detected",
+        SessionEvent::IntegrationApproved { .. } => "integration_approved",
+        SessionEvent::IntegrationRejected { .. } => "integration_rejected",
+        SessionEvent::IntegrationApplied { .. } => "integration_applied",
+        SessionEvent::DelegationCompleted { .. } => "delegation_completed",
+        SessionEvent::DelegationCancelled { .. } => "delegation_cancelled",
     }
 }
 

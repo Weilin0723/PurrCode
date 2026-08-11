@@ -3,6 +3,7 @@ members = [
   "crates/runtime-core",
   "crates/pawgate-runtime",
   "crates/contextual-judgment",
+  "crates/delegation-runtime",
   "crates/ninelives-recovery",
   "crates/claw-sandbox",
   "crates/terminal-runtime",

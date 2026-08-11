@@ -3,6 +3,7 @@
 pub mod adaptation;
 pub mod authority;
 pub mod capability;
+pub mod delegation;
 pub mod evidence;
 pub mod extension;
 pub mod graph;
@@ -20,6 +21,15 @@ pub use authority::{
 pub use capability::{
     AdmissionDiagnostic, CapabilityId, CapabilityProvider, CapabilityRegistry, DiagnosticSeverity,
     ExtensionLayer,
+};
+pub use delegation::{
+    AuthorityInputs, ContextRef, Delegation, DelegationBudget, DelegationClassification,
+    DelegationError, DelegationGovernance, DelegationId, DelegationLedger, DelegationOrigin,
+    DelegationPlan, DelegationRequest, DelegationSignals, DelegationStatus, ExpectedOutput,
+    FindingSeverity, IntegrationConflict, IntegrationConflictKind, IntegrationDecision,
+    IntegrationProposal, OpenIssue, PathPattern, PlannedUnit, RepairDecision, ReviewResult,
+    RoutingDecision, StructuredFinding, UsageSummary, ValidationEvidence, WorkerAssignment,
+    WorkerId, WorkerResult, WorkerResultStatus, WorkerWorkspaceRecord, WorkspaceAccess,
 };
 pub use evidence::{EvidenceInitiator, ExecutionEvidence, ExecutionOutcome, RedactionClass};
 pub use extension::{
@@ -1599,6 +1609,109 @@ pub enum SessionEvent {
         action_id: ActionId,
         hook_action_id: ActionId,
     },
+    // ── v1.4 collaborative-agent events (appended at the end so logs written
+    //    by v1.3 still deserialize) ────────────────────────────────────────
+    //
+    // These are named `Delegation*` rather than the bare `Worker*` of the v1.4
+    // PRD because `WorkerStarted`/`WorkerFinished` already exist above for the
+    // v1.2 supervisor. Two different things called the same name in one log is
+    // how an audit trail starts lying.
+    /// The classifier's explainable decision about whether to delegate at all.
+    /// Recorded even when the answer is "no": *not* delegating is a decision the
+    /// user is entitled to see the reasoning for.
+    DelegationPlanned {
+        plan: Box<delegation::DelegationPlan>,
+    },
+    /// One admitted delegation. The payload carries its effective authority, so
+    /// replay reconstructs what the worker was allowed to do without consulting
+    /// any policy file that may since have changed.
+    DelegationCreated {
+        delegation: Box<delegation::Delegation>,
+    },
+    /// Which specialist the capability registry chose, and why.
+    DelegationRoutingRecorded {
+        delegation_id: delegation::DelegationId,
+        decision: delegation::RoutingDecision,
+    },
+    /// Dependencies satisfied; the delegation may be assigned a worker.
+    DelegationReady {
+        delegation_id: delegation::DelegationId,
+    },
+    /// A dependency failed or was cancelled, so this delegation will not run.
+    DelegationBlocked {
+        delegation_id: delegation::DelegationId,
+        blocking_dependency: delegation::DelegationId,
+    },
+    DelegationWorkerAssigned {
+        assignment: Box<delegation::WorkerAssignment>,
+    },
+    DelegationWorkerStarted {
+        delegation_id: delegation::DelegationId,
+        worker_id: delegation::WorkerId,
+    },
+    /// The worker stopped mid-flight without a result — a daemon restart, or a
+    /// user pause. Distinct from failure: its worktree and partial patch are
+    /// preserved.
+    DelegationWorkerPaused {
+        delegation_id: delegation::DelegationId,
+        worker_id: delegation::WorkerId,
+        reason: String,
+    },
+    DelegationWorkerCompleted {
+        delegation_id: delegation::DelegationId,
+        worker_id: delegation::WorkerId,
+    },
+    DelegationWorkerFailed {
+        delegation_id: delegation::DelegationId,
+        worker_id: delegation::WorkerId,
+        reason: String,
+    },
+    DelegationWorkerCancelled {
+        delegation_id: delegation::DelegationId,
+        worker_id: delegation::WorkerId,
+        reason: String,
+    },
+    /// The structured handoff. This — never a raw assistant paragraph — is what
+    /// the parent integrates from.
+    DelegationResultRecorded {
+        result: Box<delegation::WorkerResult>,
+    },
+    /// A bounded repair cycle was routed back to the responsible worker.
+    DelegationRepairRequested {
+        delegation_id: delegation::DelegationId,
+        cycle: u8,
+        reason: String,
+    },
+    IntegrationProposed {
+        proposal: Box<delegation::IntegrationProposal>,
+    },
+    IntegrationConflictDetected {
+        delegation_id: delegation::DelegationId,
+        conflicts: Vec<delegation::IntegrationConflict>,
+    },
+    IntegrationApproved {
+        delegation_id: delegation::DelegationId,
+        /// The digest of what was approved — the amended one when the user
+        /// selected a subset of hunks.
+        patch_digest: String,
+        authority: ApprovalAuthority,
+    },
+    IntegrationRejected {
+        delegation_id: delegation::DelegationId,
+        reason: String,
+    },
+    IntegrationApplied {
+        delegation_id: delegation::DelegationId,
+        patch_digest: String,
+        changed_paths: Vec<PathBuf>,
+    },
+    DelegationCompleted {
+        delegation_id: delegation::DelegationId,
+    },
+    DelegationCancelled {
+        delegation_id: delegation::DelegationId,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
@@ -1664,6 +1777,15 @@ pub struct SessionState {
     /// Inspector data only — every entry is also durably replayable from the
     /// full NineLives event log regardless of this in-memory cap.
     pub recent_context_ledger: VecDeque<ContextLedgerEntry>,
+    /// The delegation classifier's most recent decision, including a decision
+    /// *not* to delegate (v1.4 §PR2).
+    pub delegation_plan: Option<delegation::DelegationPlan>,
+    /// Every delegation this session created, with its worker, result and
+    /// integration state (v1.4 §PR10). Rebuilt by replay, so a daemon restart
+    /// knows exactly which workers finished and must not be rerun.
+    pub delegations: BTreeMap<delegation::DelegationId, delegation::DelegationRecord>,
+    /// Running totals across the whole delegation tree (v1.4 §PR14).
+    pub delegation_ledger: delegation::DelegationLedger,
 }
 
 impl SessionState {
@@ -1696,7 +1818,36 @@ impl SessionState {
             proposed_terminal_actions: BTreeMap::new(),
             terminal_judgments: BTreeMap::new(),
             recent_context_ledger: VecDeque::new(),
+            delegation_plan: None,
+            delegations: BTreeMap::new(),
+            delegation_ledger: delegation::DelegationLedger::default(),
         }
+    }
+
+    /// Delegations that are still live, in creation order. The scheduler and
+    /// the agent workspace both read this rather than tracking their own.
+    pub fn live_delegations(&self) -> impl Iterator<Item = &delegation::DelegationRecord> {
+        self.delegations
+            .values()
+            .filter(|record| record.status().is_live())
+    }
+
+    /// How many workers are executing right now. Governance clamps against
+    /// this, so a restart cannot lose count and over-spawn.
+    pub fn running_worker_count(&self) -> u32 {
+        self.delegations
+            .values()
+            .filter(|record| record.is_running())
+            .count() as u32
+    }
+
+    /// Delegations whose changes are waiting on a human decision.
+    pub fn delegations_awaiting_decision(
+        &self,
+    ) -> impl Iterator<Item = &delegation::DelegationRecord> {
+        self.delegations
+            .values()
+            .filter(|record| record.awaits_decision())
     }
 
     /// Authoritative state reducer.
@@ -1964,7 +2115,278 @@ impl SessionState {
             SessionEvent::SessionFailed { .. } => {
                 self.require_transition(Failed, "session failed", event)?;
             }
+            // ── v1.4 delegation lifecycle ────────────────────────────────
+            //
+            // The whole point of validating here rather than in the daemon is
+            // that `SessionStore::append` refuses to persist an event the
+            // reducer rejects. A completed worker cannot be restarted, a patch
+            // cannot be applied without an approval, and a result cannot be
+            // recorded twice — even if a caller tries, and even across a daemon
+            // restart, because the durable log is the thing being checked.
+            SessionEvent::DelegationCreated { delegation } => {
+                if self.delegations.contains_key(&delegation.id()) {
+                    return Err(DomainError::DuplicateEvent {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                    });
+                }
+            }
+            SessionEvent::DelegationReady { delegation_id } => {
+                self.require_delegation_transition(
+                    *delegation_id,
+                    delegation::DelegationStatus::Ready,
+                    event,
+                )?;
+            }
+            SessionEvent::DelegationBlocked { delegation_id, .. } => {
+                self.require_delegation_transition(
+                    *delegation_id,
+                    delegation::DelegationStatus::Blocked,
+                    event,
+                )?;
+            }
+            SessionEvent::DelegationWorkerAssigned { assignment } => {
+                let record = self.require_delegation(assignment.delegation_id, event)?;
+                if record.assignment.is_some() {
+                    return Err(DomainError::DuplicateEvent {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                    });
+                }
+                if !assignment.workspace.is_coherent() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "a writer worker must have its own worktree and a read-only \
+                                 worker must have none"
+                            .into(),
+                    });
+                }
+            }
+            SessionEvent::DelegationWorkerStarted { delegation_id, .. } => {
+                self.require_delegation_transition(
+                    *delegation_id,
+                    delegation::DelegationStatus::Running,
+                    event,
+                )?;
+                let record = self.require_delegation(*delegation_id, event)?;
+                if record.assignment.is_none() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "a worker cannot start before it is assigned a workspace".into(),
+                    });
+                }
+            }
+            SessionEvent::DelegationWorkerPaused { delegation_id, .. } => {
+                let record = self.require_delegation(*delegation_id, event)?;
+                if !record.is_running() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!(
+                            "only a running worker can pause, not {:?}",
+                            record.status()
+                        ),
+                    });
+                }
+            }
+            SessionEvent::DelegationWorkerCompleted { delegation_id, .. } => {
+                self.require_delegation_transition(
+                    *delegation_id,
+                    delegation::DelegationStatus::Completed,
+                    event,
+                )?;
+            }
+            SessionEvent::DelegationWorkerFailed { delegation_id, .. } => {
+                self.require_delegation_transition(
+                    *delegation_id,
+                    delegation::DelegationStatus::Failed,
+                    event,
+                )?;
+            }
+            SessionEvent::DelegationWorkerCancelled { delegation_id, .. }
+            | SessionEvent::DelegationCancelled { delegation_id, .. } => {
+                self.require_delegation_transition(
+                    *delegation_id,
+                    delegation::DelegationStatus::Cancelled,
+                    event,
+                )?;
+            }
+            SessionEvent::DelegationResultRecorded { result } => {
+                let record = self.require_delegation(result.delegation_id, event)?;
+                if record.result.is_some() {
+                    // At-most-once: a replayed or duplicated result must not
+                    // overwrite the one that was already integrated against.
+                    return Err(DomainError::DuplicateEvent {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                    });
+                }
+                result
+                    .validate_against(&record.delegation)
+                    .map_err(|error| DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    })?;
+            }
+            SessionEvent::DelegationRepairRequested {
+                delegation_id,
+                cycle,
+                ..
+            } => {
+                let record = self.require_delegation(*delegation_id, event)?;
+                if *cycle == 0 || *cycle > delegation::MAXIMUM_REPAIR_CYCLES {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!(
+                            "repair cycle {cycle} is outside 1..={}",
+                            delegation::MAXIMUM_REPAIR_CYCLES
+                        ),
+                    });
+                }
+                if *cycle != record.repair_cycles + 1 {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!(
+                            "repair cycle {cycle} does not follow {}",
+                            record.repair_cycles
+                        ),
+                    });
+                }
+            }
+            SessionEvent::IntegrationProposed { proposal } => {
+                let record = self.require_delegation(proposal.delegation_id, event)?;
+                if record.result.is_none() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "an integration cannot be proposed before the worker's result \
+                                 is recorded"
+                            .into(),
+                    });
+                }
+                if record.integration == delegation::IntegrationState::Applied {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "this delegation's patch has already been applied".into(),
+                    });
+                }
+            }
+            SessionEvent::IntegrationConflictDetected { delegation_id, .. } => {
+                self.require_delegation(*delegation_id, event)?;
+            }
+            SessionEvent::IntegrationApproved { delegation_id, .. } => {
+                let record = self.require_delegation(*delegation_id, event)?;
+                let Some(proposal) = record.proposal.as_ref() else {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "there is no integration proposal to approve".into(),
+                    });
+                };
+                // Same-hunk overlap is never approvable: it has to be resolved
+                // into a different patch first, which produces a new proposal.
+                if proposal
+                    .conflicts
+                    .iter()
+                    .chain(record.conflicts.iter())
+                    .any(|conflict| !conflict.kind.is_auto_mergeable())
+                {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "unresolved conflicts must be resolved before approval".into(),
+                    });
+                }
+            }
+            SessionEvent::IntegrationRejected { delegation_id, .. } => {
+                let record = self.require_delegation(*delegation_id, event)?;
+                if record.proposal.is_none() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "there is no integration proposal to reject".into(),
+                    });
+                }
+            }
+            SessionEvent::IntegrationApplied {
+                delegation_id,
+                patch_digest,
+                ..
+            } => {
+                let record = self.require_delegation(*delegation_id, event)?;
+                if !record.integration.can_apply() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!(
+                            "a patch may only be applied from Approved, not {:?}",
+                            record.integration
+                        ),
+                    });
+                }
+                // The applied bytes must be the approved bytes. A selected-hunk
+                // integration carries its own digest precisely so this check can
+                // catch an apply that drifted from what a human saw.
+                let approved = record
+                    .proposal
+                    .as_ref()
+                    .map(|proposal| proposal.effective_patch_digest().to_owned())
+                    .unwrap_or_default();
+                if &approved != patch_digest {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "the applied patch digest differs from the approved one".into(),
+                    });
+                }
+            }
+            SessionEvent::DelegationCompleted { delegation_id } => {
+                self.require_delegation(*delegation_id, event)?;
+            }
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Look up a delegation the event refers to, or fail the transition. An
+    /// event naming a delegation that was never created is a bug or a tampered
+    /// log; either way it must not silently do nothing.
+    fn require_delegation(
+        &self,
+        id: delegation::DelegationId,
+        event: &SessionEvent,
+    ) -> Result<&delegation::DelegationRecord, DomainError> {
+        self.delegations
+            .get(&id)
+            .ok_or_else(|| DomainError::InvalidStateTransition {
+                session: self.id,
+                event: format!("{event:?}"),
+                reason: format!("delegation {id} was never created"),
+            })
+    }
+
+    fn require_delegation_transition(
+        &self,
+        id: delegation::DelegationId,
+        next: delegation::DelegationStatus,
+        event: &SessionEvent,
+    ) -> Result<(), DomainError> {
+        let record = self.require_delegation(id, event)?;
+        if !record.status().can_transition_to(next) {
+            return Err(DomainError::InvalidStateTransition {
+                session: self.id,
+                event: format!("{event:?}"),
+                reason: format!(
+                    "delegation {id} cannot move from {:?} to {next:?}",
+                    record.status()
+                ),
+            });
         }
         Ok(())
     }
@@ -2151,7 +2573,145 @@ impl SessionState {
             // Durable audit of completion-repair attempts; changes no session
             // state.
             SessionEvent::CompletionRepairRecorded { .. } => {}
+            // ── v1.4 delegation projection ───────────────────────────────
+            SessionEvent::DelegationPlanned { plan } => {
+                self.delegation_plan = Some((**plan).clone());
+            }
+            SessionEvent::DelegationCreated { delegation } => {
+                self.delegations.insert(
+                    delegation.id(),
+                    delegation::DelegationRecord::new((**delegation).clone()),
+                );
+            }
+            SessionEvent::DelegationRoutingRecorded {
+                delegation_id,
+                decision,
+            } => {
+                if let Some(record) = self.delegations.get_mut(delegation_id) {
+                    record.routing = Some(decision.clone());
+                }
+            }
+            SessionEvent::DelegationReady { delegation_id } => {
+                self.set_delegation_status(*delegation_id, delegation::DelegationStatus::Ready);
+            }
+            SessionEvent::DelegationBlocked {
+                delegation_id,
+                blocking_dependency,
+            } => {
+                self.set_delegation_status(*delegation_id, delegation::DelegationStatus::Blocked);
+                if let Some(record) = self.delegations.get_mut(delegation_id) {
+                    record.blocked_by = Some(*blocking_dependency);
+                }
+            }
+            SessionEvent::DelegationWorkerAssigned { assignment } => {
+                if let Some(record) = self.delegations.get_mut(&assignment.delegation_id) {
+                    record.assignment = Some((**assignment).clone());
+                }
+            }
+            SessionEvent::DelegationWorkerStarted { delegation_id, .. } => {
+                self.set_delegation_status(*delegation_id, delegation::DelegationStatus::Running);
+                if let Some(record) = self.delegations.get_mut(delegation_id) {
+                    record.paused_reason = None;
+                }
+                self.delegation_ledger.workers_started += 1;
+            }
+            SessionEvent::DelegationWorkerPaused {
+                delegation_id,
+                reason,
+                ..
+            } => {
+                // Status stays `Running`: a paused worker is reconciled on
+                // restart, not restarted. Recording it as anything terminal
+                // would license a rerun.
+                if let Some(record) = self.delegations.get_mut(delegation_id) {
+                    record.paused_reason = Some(reason.clone());
+                }
+            }
+            SessionEvent::DelegationWorkerCompleted { delegation_id, .. } => {
+                self.set_delegation_status(*delegation_id, delegation::DelegationStatus::Completed);
+                self.delegation_ledger.workers_completed += 1;
+            }
+            SessionEvent::DelegationWorkerFailed { delegation_id, .. } => {
+                self.set_delegation_status(*delegation_id, delegation::DelegationStatus::Failed);
+            }
+            SessionEvent::DelegationWorkerCancelled { delegation_id, .. }
+            | SessionEvent::DelegationCancelled { delegation_id, .. } => {
+                self.set_delegation_status(*delegation_id, delegation::DelegationStatus::Cancelled);
+            }
+            SessionEvent::DelegationResultRecorded { result } => {
+                // Parent usage includes child usage (§6.3): the ledger is the
+                // single place that total is kept, so a worker cannot spend
+                // outside the session's accounting.
+                self.delegation_ledger.record_usage(&result.usage);
+                if let Some(record) = self.delegations.get_mut(&result.delegation_id) {
+                    record.result = Some((**result).clone());
+                }
+            }
+            SessionEvent::DelegationRepairRequested {
+                delegation_id,
+                cycle,
+                ..
+            } => {
+                if let Some(record) = self.delegations.get_mut(delegation_id) {
+                    record.repair_cycles = *cycle;
+                }
+            }
+            SessionEvent::IntegrationProposed { proposal } => {
+                if let Some(record) = self.delegations.get_mut(&proposal.delegation_id) {
+                    record.conflicts = proposal.conflicts.clone();
+                    record.integration = if proposal.conflicts.is_empty() {
+                        delegation::IntegrationState::Proposed
+                    } else {
+                        delegation::IntegrationState::Conflicted
+                    };
+                    record.proposal = Some((**proposal).clone());
+                }
+            }
+            SessionEvent::IntegrationConflictDetected {
+                delegation_id,
+                conflicts,
+            } => {
+                if let Some(record) = self.delegations.get_mut(delegation_id) {
+                    record.conflicts.extend(conflicts.iter().cloned());
+                    record.integration = delegation::IntegrationState::Conflicted;
+                }
+            }
+            SessionEvent::IntegrationApproved { delegation_id, .. } => {
+                if let Some(record) = self.delegations.get_mut(delegation_id) {
+                    record.integration = delegation::IntegrationState::Approved;
+                }
+            }
+            SessionEvent::IntegrationRejected { delegation_id, .. } => {
+                if let Some(record) = self.delegations.get_mut(delegation_id) {
+                    record.integration = delegation::IntegrationState::Rejected;
+                }
+            }
+            SessionEvent::IntegrationApplied { delegation_id, .. } => {
+                if let Some(record) = self.delegations.get_mut(delegation_id) {
+                    record.integration = delegation::IntegrationState::Applied;
+                }
+            }
+            SessionEvent::DelegationCompleted { delegation_id } => {
+                // Idempotent: a delegation may already be Completed from its
+                // worker event. `set_delegation_status` refuses illegal moves.
+                self.set_delegation_status(*delegation_id, delegation::DelegationStatus::Completed);
+            }
             _ => {}
+        }
+    }
+
+    /// Apply a delegation status change, ignoring an illegal one.
+    ///
+    /// `validate_event` has already refused the transitions that must not
+    /// happen; this is the belt to that pair of braces, and it means the
+    /// projection can never hold a status the state machine forbids.
+    fn set_delegation_status(
+        &mut self,
+        id: delegation::DelegationId,
+        next: delegation::DelegationStatus,
+    ) {
+        if let Some(record) = self.delegations.get_mut(&id) {
+            let _ = record.delegation.transition_to(next);
         }
     }
 
@@ -2893,6 +3453,551 @@ mod tests {
                 started_at: chrono::Utc::now(),
                 finished_at: chrono::Utc::now(),
             }),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    // ── v1.4 delegation lifecycle (§PR1, §PR10) ──────────────────────────
+
+    fn delegation_session() -> SessionState {
+        let mut state = SessionState::empty(SessionId::new());
+        state
+            .reduce_event(&SessionEvent::SessionCreated {
+                objective: "add oauth".into(),
+                repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
+            })
+            .unwrap();
+        state
+    }
+
+    fn admitted_delegation(paths: &[&str], expected: delegation::ExpectedOutput) -> Delegation {
+        let ceiling = ToolCeiling::maximum();
+        let remaining = delegation::DelegationBudget::modest();
+        delegation::DelegationRequest {
+            parent_session_id: SessionId::new(),
+            parent_turn_id: TurnId::new(),
+            objective: "implement token exchange".into(),
+            capability: CapabilityId::parse("implement_backend").unwrap(),
+            acceptance_criteria: Vec::new(),
+            context_refs: Vec::new(),
+            allowed_paths: paths
+                .iter()
+                .map(|p| delegation::PathPattern::parse(p).unwrap())
+                .collect(),
+            expected_output: expected,
+            dependencies: Vec::new(),
+            budget: delegation::DelegationBudget::modest(),
+        }
+        .admit(delegation::AuthorityInputs {
+            workspace: &ceiling,
+            parent: &ceiling,
+            profile: &ceiling,
+            parent_remaining_budget: &remaining,
+            depth: 1,
+        })
+        .unwrap()
+    }
+
+    fn assignment(delegation: &Delegation, worker_id: WorkerId) -> delegation::WorkerAssignment {
+        delegation::WorkerAssignment {
+            worker_id,
+            delegation_id: delegation.id(),
+            agent_profile: "backend-specialist".into(),
+            profile_digest: "profile-digest".into(),
+            model_role: None,
+            workspace: delegation::WorkerWorkspaceRecord {
+                parent_worktree: PathBuf::from("/repo/.purrcode/worktrees/parent"),
+                worker_worktree: Some(PathBuf::from("/repo/.purrcode/worktrees/parent/worker-a")),
+                base_commit: "abc123".into(),
+                base_snapshot_digest: "snapshot".into(),
+                access: delegation::WorkspaceAccess::Writable,
+            },
+            assigned_at: chrono::Utc::now(),
+        }
+    }
+
+    fn worker_result(
+        delegation: &Delegation,
+        worker_id: WorkerId,
+        paths: &[&str],
+    ) -> delegation::WorkerResult {
+        delegation::WorkerResult {
+            delegation_id: delegation.id(),
+            worker_id,
+            status: delegation::WorkerResultStatus::Completed,
+            summary: "implemented".into(),
+            changed_paths: paths.iter().map(PathBuf::from).collect(),
+            patch_digest: Some("patch-digest".into()),
+            findings: Vec::new(),
+            validations: vec![delegation::ValidationEvidence {
+                name: "cargo test".into(),
+                status: ValidationStatus::Passed,
+                detail: "ok".into(),
+                evidence_id: None,
+            }],
+            unresolved: Vec::new(),
+            evidence_ids: Vec::new(),
+            usage: delegation::UsageSummary {
+                input_tokens: 1_000,
+                output_tokens: 500,
+                tool_calls: 4,
+                model_calls: 2,
+                duration_seconds: 30,
+                changed_files: paths.len(),
+            },
+            completed_at: chrono::Utc::now(),
+        }
+    }
+
+    /// Drive one delegation from creation to a recorded result.
+    fn run_delegation_to_result(
+        state: &mut SessionState,
+        delegation: &Delegation,
+        worker_id: WorkerId,
+        paths: &[&str],
+    ) {
+        state
+            .reduce_event(&SessionEvent::DelegationCreated {
+                delegation: Box::new(delegation.clone()),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationReady {
+                delegation_id: delegation.id(),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationWorkerAssigned {
+                assignment: Box::new(assignment(delegation, worker_id)),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationWorkerStarted {
+                delegation_id: delegation.id(),
+                worker_id,
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationResultRecorded {
+                result: Box::new(worker_result(delegation, worker_id, paths)),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationWorkerCompleted {
+                delegation_id: delegation.id(),
+                worker_id,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_delegation_replays_from_creation_to_integration() {
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        let worker_id = WorkerId::new();
+        run_delegation_to_result(&mut state, &delegation, worker_id, &["src/auth/token.rs"]);
+
+        let record = &state.delegations[&delegation.id()];
+        assert_eq!(record.status(), delegation::DelegationStatus::Completed);
+        assert!(record.result.is_some());
+        assert_eq!(state.delegation_ledger.workers_started, 1);
+        assert_eq!(state.delegation_ledger.workers_completed, 1);
+        // Parent usage includes child usage.
+        assert_eq!(
+            state.delegation_ledger.total_worker_usage.input_tokens,
+            1_000
+        );
+
+        let proposal = delegation::IntegrationProposal {
+            delegation_id: delegation.id(),
+            worker_id,
+            patch_digest: "patch-digest".into(),
+            changed_paths: vec![PathBuf::from("src/auth/token.rs")],
+            base_snapshot_digest: "snapshot".into(),
+            evidence_ids: Vec::new(),
+            validation_summary: Default::default(),
+            conflicts: Vec::new(),
+            amended_patch_digest: None,
+        };
+        state
+            .reduce_event(&SessionEvent::IntegrationProposed {
+                proposal: Box::new(proposal),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::IntegrationApproved {
+                delegation_id: delegation.id(),
+                patch_digest: "patch-digest".into(),
+                authority: ApprovalAuthority::Human,
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::IntegrationApplied {
+                delegation_id: delegation.id(),
+                patch_digest: "patch-digest".into(),
+                changed_paths: vec![PathBuf::from("src/auth/token.rs")],
+            })
+            .unwrap();
+        assert_eq!(
+            state.delegations[&delegation.id()].integration,
+            delegation::IntegrationState::Applied
+        );
+    }
+
+    #[test]
+    fn a_completed_worker_cannot_be_restarted() {
+        // v1.4 §PR10: completed workers are NEVER rerun. The reducer refuses the
+        // event, so `SessionStore::append` refuses to persist it — a restarted
+        // daemon cannot double-execute by replaying its own intent.
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        let worker_id = WorkerId::new();
+        run_delegation_to_result(&mut state, &delegation, worker_id, &["src/auth/token.rs"]);
+
+        let restart = state.reduce_event(&SessionEvent::DelegationWorkerStarted {
+            delegation_id: delegation.id(),
+            worker_id,
+        });
+        assert!(
+            matches!(restart, Err(DomainError::InvalidStateTransition { .. })),
+            "a completed worker must not be restartable, got {restart:?}"
+        );
+    }
+
+    #[test]
+    fn a_worker_result_cannot_be_recorded_twice() {
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        let worker_id = WorkerId::new();
+        run_delegation_to_result(&mut state, &delegation, worker_id, &["src/auth/token.rs"]);
+        let duplicate = state.reduce_event(&SessionEvent::DelegationResultRecorded {
+            result: Box::new(worker_result(
+                &delegation,
+                worker_id,
+                &["src/auth/token.rs"],
+            )),
+        });
+        assert!(matches!(duplicate, Err(DomainError::DuplicateEvent { .. })));
+        // …and the ledger did not double-count.
+        assert_eq!(
+            state.delegation_ledger.total_worker_usage.input_tokens,
+            1_000
+        );
+    }
+
+    #[test]
+    fn a_scope_escaping_result_is_refused_by_the_reducer() {
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        let worker_id = WorkerId::new();
+        state
+            .reduce_event(&SessionEvent::DelegationCreated {
+                delegation: Box::new(delegation.clone()),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationReady {
+                delegation_id: delegation.id(),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationWorkerAssigned {
+                assignment: Box::new(assignment(&delegation, worker_id)),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationWorkerStarted {
+                delegation_id: delegation.id(),
+                worker_id,
+            })
+            .unwrap();
+        let escaped = state.reduce_event(&SessionEvent::DelegationResultRecorded {
+            result: Box::new(worker_result(
+                &delegation,
+                worker_id,
+                &["src/payments/billing.rs"],
+            )),
+        });
+        assert!(
+            matches!(escaped, Err(DomainError::InvalidStateTransition { ref reason, .. })
+                if reason.contains("outside its delegated scope")),
+            "got {escaped:?}"
+        );
+    }
+
+    #[test]
+    fn a_patch_cannot_be_applied_without_an_approval() {
+        // The release gate "all worker changes enter the parent through an
+        // IntegrationProposal" is enforced by the log, not by the daemon's
+        // control flow.
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        let worker_id = WorkerId::new();
+        run_delegation_to_result(&mut state, &delegation, worker_id, &["src/auth/token.rs"]);
+
+        let premature = state.reduce_event(&SessionEvent::IntegrationApplied {
+            delegation_id: delegation.id(),
+            patch_digest: "patch-digest".into(),
+            changed_paths: vec![PathBuf::from("src/auth/token.rs")],
+        });
+        assert!(matches!(
+            premature,
+            Err(DomainError::InvalidStateTransition { .. })
+        ));
+    }
+
+    #[test]
+    fn an_unresolved_conflict_cannot_be_approved() {
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        let worker_id = WorkerId::new();
+        run_delegation_to_result(&mut state, &delegation, worker_id, &["src/auth/token.rs"]);
+        state
+            .reduce_event(&SessionEvent::IntegrationProposed {
+                proposal: Box::new(delegation::IntegrationProposal {
+                    delegation_id: delegation.id(),
+                    worker_id,
+                    patch_digest: "patch-digest".into(),
+                    changed_paths: vec![PathBuf::from("src/auth/token.rs")],
+                    base_snapshot_digest: "snapshot".into(),
+                    evidence_ids: Vec::new(),
+                    validation_summary: Default::default(),
+                    conflicts: vec![delegation::IntegrationConflict {
+                        path: PathBuf::from("src/auth/token.rs"),
+                        kind: delegation::IntegrationConflictKind::SameHunk,
+                        delegations: vec![delegation.id()],
+                        detail: "overlapping hunks".into(),
+                    }],
+                    amended_patch_digest: None,
+                }),
+            })
+            .unwrap();
+        assert_eq!(
+            state.delegations[&delegation.id()].integration,
+            delegation::IntegrationState::Conflicted
+        );
+        let approval = state.reduce_event(&SessionEvent::IntegrationApproved {
+            delegation_id: delegation.id(),
+            patch_digest: "patch-digest".into(),
+            authority: ApprovalAuthority::Human,
+        });
+        assert!(
+            matches!(approval, Err(DomainError::InvalidStateTransition { ref reason, .. })
+                if reason.contains("unresolved conflicts")),
+            "got {approval:?}"
+        );
+    }
+
+    #[test]
+    fn applying_a_digest_other_than_the_approved_one_is_refused() {
+        // A selected-hunk integration carries its own digest; applying anything
+        // else means the bytes that landed are not the bytes a human saw.
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        let worker_id = WorkerId::new();
+        run_delegation_to_result(&mut state, &delegation, worker_id, &["src/auth/token.rs"]);
+        state
+            .reduce_event(&SessionEvent::IntegrationProposed {
+                proposal: Box::new(delegation::IntegrationProposal {
+                    delegation_id: delegation.id(),
+                    worker_id,
+                    patch_digest: "worker-patch".into(),
+                    changed_paths: vec![PathBuf::from("src/auth/token.rs")],
+                    base_snapshot_digest: "snapshot".into(),
+                    evidence_ids: Vec::new(),
+                    validation_summary: Default::default(),
+                    conflicts: Vec::new(),
+                    amended_patch_digest: Some("selected-hunks".into()),
+                }),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::IntegrationApproved {
+                delegation_id: delegation.id(),
+                patch_digest: "selected-hunks".into(),
+                authority: ApprovalAuthority::Human,
+            })
+            .unwrap();
+        let wrong = state.reduce_event(&SessionEvent::IntegrationApplied {
+            delegation_id: delegation.id(),
+            patch_digest: "worker-patch".into(),
+            changed_paths: vec![PathBuf::from("src/auth/token.rs")],
+        });
+        assert!(matches!(
+            wrong,
+            Err(DomainError::InvalidStateTransition { .. })
+        ));
+        // The amended digest applies cleanly.
+        state
+            .reduce_event(&SessionEvent::IntegrationApplied {
+                delegation_id: delegation.id(),
+                patch_digest: "selected-hunks".into(),
+                changed_paths: vec![PathBuf::from("src/auth/token.rs")],
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_worker_cannot_start_before_it_has_a_workspace() {
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        state
+            .reduce_event(&SessionEvent::DelegationCreated {
+                delegation: Box::new(delegation.clone()),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationReady {
+                delegation_id: delegation.id(),
+            })
+            .unwrap();
+        let premature = state.reduce_event(&SessionEvent::DelegationWorkerStarted {
+            delegation_id: delegation.id(),
+            worker_id: WorkerId::new(),
+        });
+        assert!(matches!(
+            premature,
+            Err(DomainError::InvalidStateTransition { .. })
+        ));
+    }
+
+    #[test]
+    fn two_writers_cannot_be_assigned_the_same_worktree() {
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        state
+            .reduce_event(&SessionEvent::DelegationCreated {
+                delegation: Box::new(delegation.clone()),
+            })
+            .unwrap();
+        let mut shared = assignment(&delegation, WorkerId::new());
+        shared.workspace.worker_worktree = Some(shared.workspace.parent_worktree.clone());
+        let refused = state.reduce_event(&SessionEvent::DelegationWorkerAssigned {
+            assignment: Box::new(shared),
+        });
+        assert!(
+            matches!(refused, Err(DomainError::InvalidStateTransition { ref reason, .. })
+                if reason.contains("own worktree")),
+            "got {refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_paused_worker_stays_running_so_recovery_reconciles_rather_than_reruns() {
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        let worker_id = WorkerId::new();
+        state
+            .reduce_event(&SessionEvent::DelegationCreated {
+                delegation: Box::new(delegation.clone()),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationReady {
+                delegation_id: delegation.id(),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationWorkerAssigned {
+                assignment: Box::new(assignment(&delegation, worker_id)),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationWorkerStarted {
+                delegation_id: delegation.id(),
+                worker_id,
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationWorkerPaused {
+                delegation_id: delegation.id(),
+                worker_id,
+                reason: "daemon restarted".into(),
+            })
+            .unwrap();
+        let record = &state.delegations[&delegation.id()];
+        assert_eq!(record.status(), delegation::DelegationStatus::Running);
+        assert_eq!(record.paused_reason.as_deref(), Some("daemon restarted"));
+        // Its worktree is retained: an unresolved patch is never silently
+        // deleted.
+        assert!(record.retained_worktree().is_some());
+        assert_eq!(state.running_worker_count(), 1);
+    }
+
+    #[test]
+    fn repair_cycles_must_be_consecutive_and_bounded() {
+        let mut state = delegation_session();
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        state
+            .reduce_event(&SessionEvent::DelegationCreated {
+                delegation: Box::new(delegation.clone()),
+            })
+            .unwrap();
+        // Skipping straight to cycle 2 is refused.
+        assert!(
+            state
+                .reduce_event(&SessionEvent::DelegationRepairRequested {
+                    delegation_id: delegation.id(),
+                    cycle: 2,
+                    reason: "tests failed".into(),
+                })
+                .is_err()
+        );
+        state
+            .reduce_event(&SessionEvent::DelegationRepairRequested {
+                delegation_id: delegation.id(),
+                cycle: 1,
+                reason: "tests failed".into(),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::DelegationRepairRequested {
+                delegation_id: delegation.id(),
+                cycle: 2,
+                reason: "still failing".into(),
+            })
+            .unwrap();
+        // …and there is no third cycle. No infinite multi-agent ping-pong.
+        assert!(
+            state
+                .reduce_event(&SessionEvent::DelegationRepairRequested {
+                    delegation_id: delegation.id(),
+                    cycle: 3,
+                    reason: "again".into(),
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn events_for_an_unknown_delegation_are_refused() {
+        let mut state = delegation_session();
+        let ghost = delegation::DelegationId::new();
+        assert!(
+            state
+                .reduce_event(&SessionEvent::DelegationReady {
+                    delegation_id: ghost
+                })
+                .is_err()
+        );
+        assert!(
+            state
+                .reduce_event(&SessionEvent::DelegationWorkerStarted {
+                    delegation_id: ghost,
+                    worker_id: WorkerId::new(),
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_v1_4_delegation_event_round_trips_through_serde() {
+        let delegation = admitted_delegation(&["src/auth/**"], delegation::ExpectedOutput::Patch);
+        let event = SessionEvent::DelegationCreated {
+            delegation: Box::new(delegation),
         };
         let json = serde_json::to_string(&event).unwrap();
         let back: SessionEvent = serde_json::from_str(&json).unwrap();

@@ -197,7 +197,43 @@ impl RepositoryEngine {
         repository: &Path,
         session_id: SessionId,
     ) -> Result<SessionWorktree, RepositoryError> {
-        let snapshot = Self::inspect(repository).await?;
+        Self::create_worktree_at(repository, session_id, None).await
+    }
+
+    /// Create an isolated worktree checked out at a specific commit.
+    ///
+    /// v1.4 workers branch from the *parent session's* base commit, not from
+    /// wherever the source repository happens to point now. Checking out the
+    /// repository HEAD instead would give a worker a different base from the
+    /// parent it is meant to extend, and every patch it produced would be
+    /// computed against lines the parent never had.
+    ///
+    /// `base_commit` is passed to git verbatim as a revision; git rejects an
+    /// unknown one, so a bad value fails loudly here rather than silently
+    /// producing a worktree at the wrong revision.
+    pub async fn create_worktree_at(
+        repository: &Path,
+        session_id: SessionId,
+        base_commit: Option<&str>,
+    ) -> Result<SessionWorktree, RepositoryError> {
+        let mut snapshot = Self::inspect(repository).await?;
+        if let Some(commit) = base_commit {
+            // Resolve first: `git worktree add` accepts a symbolic revision, but
+            // the recorded `base_head` must be the concrete sha a later diff can
+            // be taken against.
+            let resolved = git_text(&snapshot.root, &["rev-parse", "--verify", commit])
+                .await?
+                .trim()
+                .to_owned();
+            snapshot.head = resolved;
+        }
+        Self::create_worktree_from_snapshot(snapshot, session_id).await
+    }
+
+    async fn create_worktree_from_snapshot(
+        snapshot: RepositorySnapshot,
+        session_id: SessionId,
+    ) -> Result<SessionWorktree, RepositoryError> {
         let path = snapshot
             .root
             .join(".purrcode")
@@ -783,6 +819,80 @@ impl RepositoryEngine {
     /// HEAD) to the isolated worktree. Used after a rollback to reproduce a
     /// checkpoint's code state exactly. A conflict aborts without touching
     /// anything.
+    /// Seed a freshly created worker worktree with the parent's uncommitted
+    /// work and commit it, so the worker's `HEAD` *is* the parent snapshot
+    /// (v1.4 §PR3).
+    ///
+    /// Without this a worker starts from the parent's base commit and its
+    /// eventual diff would re-propose every change the parent had already made
+    /// — the parent would be asked to integrate its own work back into itself.
+    /// Committing the seed rather than leaving it dirty is what makes
+    /// [`Self::effects`] on the worker return the worker's own delta and nothing
+    /// else.
+    ///
+    /// Returns the seed commit sha. An empty patch is legitimate (a clean
+    /// parent); the parent's base commit is returned unchanged in that case.
+    pub async fn seed_worker_worktree(
+        worktree: &SessionWorktree,
+        parent_patch: &[u8],
+        label: &str,
+    ) -> Result<String, RepositoryError> {
+        ensure_session_path(
+            &worktree.source_repository,
+            worktree.session_id,
+            &worktree.path,
+        )?;
+        if parent_patch.is_empty() {
+            return Ok(worktree.base_head.clone());
+        }
+        Self::apply_patch(worktree, parent_patch).await?;
+        git_bytes(&worktree.path, &["add", "--all", "--", "."]).await?;
+        // Identity: a worker worktree inherits the repository's git config, but
+        // a repository with no user.name configured would fail the commit. The
+        // seed commit is machine bookkeeping, not authorship, so it carries an
+        // explicit identity rather than depending on ambient config.
+        git_bytes(
+            &worktree.path,
+            &[
+                "-c",
+                "user.name=PurrCode",
+                "-c",
+                "user.email=purrcode@localhost",
+                "commit",
+                "--no-verify",
+                "--no-gpg-sign",
+                "-m",
+                &format!("purrcode: worker base snapshot ({label})"),
+            ],
+        )
+        .await?;
+        Ok(git_text(&worktree.path, &["rev-parse", "HEAD"])
+            .await?
+            .trim()
+            .to_owned())
+    }
+
+    /// Remove an isolated worktree and its git metadata.
+    ///
+    /// Callers must decide *whether* to remove: v1.4 §PR3 retains a worker's
+    /// worktree while its patch is unresolved, and this function has no way to
+    /// know that. It is the mechanism, not the policy.
+    pub async fn remove_worktree(worktree: &SessionWorktree) -> Result<(), RepositoryError> {
+        ensure_session_path(
+            &worktree.source_repository,
+            worktree.session_id,
+            &worktree.path,
+        )?;
+        let path = git_compatible_path(&worktree.path)?;
+        let _metadata_guard = WORKTREE_METADATA_GATE.lock().await;
+        git_bytes(
+            &worktree.source_repository,
+            &["worktree", "remove", "--force", &path],
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn apply_patch(
         worktree: &SessionWorktree,
         patch: &[u8],

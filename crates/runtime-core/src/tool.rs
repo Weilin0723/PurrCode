@@ -261,6 +261,102 @@ impl FilesystemScope {
         .collapse_empty_write_globs()
     }
 
+    /// Narrow this scope to a requested subset of paths (v1.4 §5.3).
+    ///
+    /// This is **not** [`Self::intersect`]. Intersect combines two independent
+    /// *ceilings* and is deliberately exact-string, so `src/**` ∩ `**` is empty.
+    /// A delegation's `allowed_paths` is not a ceiling — it is a request to work
+    /// inside a subset of what the ceiling already permits — so each requested
+    /// pattern survives when some ceiling glob *covers* it, and the surviving
+    /// patterns (never the ceiling's own, wider ones) become the new write set.
+    ///
+    /// The result can only be narrower: a requested pattern the ceiling does not
+    /// cover is dropped, and a request that survives nothing collapses to
+    /// `WorktreeRead`. `maximum_changed_files` is carried through unchanged;
+    /// callers clamp it separately from the delegation budget.
+    pub fn narrow_to_paths<'a, I>(&self, requested: I) -> FilesystemScope
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        match self {
+            FilesystemScope::None => FilesystemScope::None,
+            FilesystemScope::WorktreeRead => FilesystemScope::WorktreeRead,
+            FilesystemScope::Worktree {
+                write_globs,
+                maximum_changed_files,
+            } => {
+                let surviving: Vec<String> = requested
+                    .into_iter()
+                    .filter(|candidate| {
+                        write_globs
+                            .iter()
+                            .any(|permitted| glob_covers(permitted, candidate))
+                    })
+                    .map(str::to_owned)
+                    .collect();
+                FilesystemScope::Worktree {
+                    write_globs: surviving,
+                    maximum_changed_files: *maximum_changed_files,
+                }
+                .collapse_empty_write_globs()
+            }
+        }
+    }
+
+    /// Clamp the changed-file budget down. Never raises it.
+    pub fn with_changed_file_limit(self, limit: usize) -> FilesystemScope {
+        match self {
+            FilesystemScope::Worktree {
+                write_globs,
+                maximum_changed_files,
+            } => FilesystemScope::Worktree {
+                write_globs,
+                maximum_changed_files: maximum_changed_files.min(limit),
+            }
+            .collapse_empty_write_globs(),
+            other => other,
+        }
+    }
+
+    /// True when `self` permits no more than `bound` — a genuine containment
+    /// predicate, unlike `intersect(bound) == self`, which is exact-string on
+    /// globs and would call `src/**` wider than `**`.
+    pub fn is_within(&self, bound: &FilesystemScope) -> bool {
+        use FilesystemScope::*;
+        match (self, bound) {
+            (None, _) => true,
+            (_, None) => false,
+            (WorktreeRead, WorktreeRead | Worktree { .. }) => true,
+            (Worktree { .. }, WorktreeRead) => false,
+            (
+                Worktree {
+                    write_globs: inner,
+                    maximum_changed_files: inner_max,
+                },
+                Worktree {
+                    write_globs: outer,
+                    maximum_changed_files: outer_max,
+                },
+            ) => {
+                inner_max <= outer_max
+                    && inner.iter().all(|candidate| {
+                        outer
+                            .iter()
+                            .any(|permitted| glob_covers(permitted, candidate))
+                    })
+            }
+        }
+    }
+
+    /// The write globs this scope permits, or an empty slice for a scope that
+    /// permits no writes.
+    pub fn write_globs(&self) -> &[String] {
+        match self {
+            FilesystemScope::Worktree { write_globs, .. } => write_globs,
+            _ => &[],
+        }
+    }
+
     /// A `Worktree` scope whose glob intersection produced no surviving globs
     /// permits no writes — collapse it to `WorktreeRead` so the descriptor
     /// reads honestly instead of carrying an empty glob list.
@@ -274,6 +370,40 @@ impl FilesystemScope {
             }
             other => other,
         }
+    }
+}
+
+/// Does write glob `outer` permit everything `inner` permits?
+///
+/// Deliberately syntactic and conservative — a full glob-containment solver is
+/// undecidable in the general case, and the safe direction for a permission
+/// check is to answer "no" when unsure. Three rules cover every scope PurrCode
+/// actually writes: the universal glob, an exact match, and a directory prefix
+/// glob (`src/**` covers `src/auth/**` and `src/auth/mod.rs`). Anything else is
+/// refused, which can only narrow authority, never widen it.
+pub fn glob_covers(outer: &str, inner: &str) -> bool {
+    if outer == "**" || outer == inner {
+        return true;
+    }
+    match outer.strip_suffix("**") {
+        // `src/**` → prefix `src/`; `**` alone was handled above.
+        Some(prefix) if !prefix.is_empty() => {
+            inner.starts_with(prefix) && !inner[prefix.len()..].is_empty()
+        }
+        _ => false,
+    }
+}
+
+/// True when network scope `inner` reaches no further than `outer`.
+pub fn network_is_within(inner: &NetworkScope, outer: &NetworkScope) -> bool {
+    use NetworkScope::*;
+    match (inner, outer) {
+        (None, _) => true,
+        (_, None) => false,
+        (Hosts { allowed }, Hosts { allowed: permitted }) => allowed.is_subset(permitted),
+        (Hosts { .. }, Any) => true,
+        (Any, Any) => true,
+        (Any, Hosts { .. }) => false,
     }
 }
 
@@ -641,7 +771,7 @@ impl ToolDescriptorProposal {
 /// The workspace-wide upper bound. Derived from `purrcode_pawgate::Policy` by
 /// `Policy::tool_ceiling()` — pawgate stays the authority, runtime-core stays
 /// pure lattice math with no crypto beyond the digest and no I/O.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 pub struct ToolCeiling {
     pub maximum_side_effect: SideEffectClass,
     pub maximum_network: NetworkScope,
@@ -650,6 +780,80 @@ pub struct ToolCeiling {
     pub minimum_approval: ApprovalPolicy,
     /// Tools whose ids match are Forbidden outright. Deny beats everything.
     pub denied_tool_ids: BTreeSet<String>,
+}
+
+impl ToolCeiling {
+    /// The most permissive ceiling that can exist: unbounded worktree write,
+    /// unrestricted egress, destructive side effects, no denied ids. Every
+    /// narrower ceiling is a `meet` away from this one, so it is the identity
+    /// element callers fold over.
+    pub fn maximum() -> Self {
+        Self {
+            maximum_side_effect: SideEffectClass::Destructive,
+            maximum_network: NetworkScope::Any,
+            maximum_filesystem: FilesystemScope::maximum(),
+            minimum_approval: ApprovalPolicy::PreAuthorized,
+            denied_tool_ids: BTreeSet::new(),
+        }
+    }
+    /// A ceiling that authorizes nothing: no side effects beyond reading, no
+    /// egress, no filesystem, and every proposal forbidden.
+    pub fn nothing() -> Self {
+        Self {
+            maximum_side_effect: SideEffectClass::Read,
+            maximum_network: NetworkScope::None,
+            maximum_filesystem: FilesystemScope::None,
+            minimum_approval: ApprovalPolicy::Forbidden,
+            denied_tool_ids: BTreeSet::new(),
+        }
+    }
+
+    /// The lattice meet of two ceilings — the v1.4 delegation invariant
+    /// *authority can only shrink* in one function.
+    ///
+    /// Every capability axis takes the tighter value (min / lattice meet) and
+    /// the approval axis takes the higher friction (max), exactly as
+    /// [`ToolDescriptorProposal::restrict`] does for a single descriptor. Deny
+    /// sets union: a tool denied by *either* input stays denied, because a deny
+    /// is the one direction a combination must never be able to undo.
+    ///
+    /// `meet` is commutative, associative and idempotent, which is what lets a
+    /// delegation fold `workspace ∩ parent ∩ profile ∩ task` in any order and
+    /// still be unable to produce authority none of the inputs had.
+    pub fn meet(&self, other: &ToolCeiling) -> ToolCeiling {
+        ToolCeiling {
+            maximum_side_effect: self.maximum_side_effect.min(other.maximum_side_effect),
+            maximum_network: self.maximum_network.meet(&other.maximum_network),
+            maximum_filesystem: self.maximum_filesystem.intersect(&other.maximum_filesystem),
+            minimum_approval: self.minimum_approval.max(other.minimum_approval),
+            denied_tool_ids: self
+                .denied_tool_ids
+                .union(&other.denied_tool_ids)
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// True when `self` grants no more than `bound` on every axis. This is the
+    /// predicate the delegation contract asserts before a worker may run.
+    ///
+    /// Containment, not `meet(bound) == self`: glob intersection is
+    /// exact-string, so the equality form would report `src/**` as wider than
+    /// `**`. Deny sets are the one axis where *more* is narrower, so `bound`'s
+    /// denials must all be present in `self`.
+    pub fn is_within(&self, bound: &ToolCeiling) -> bool {
+        self.maximum_side_effect <= bound.maximum_side_effect
+            && network_is_within(&self.maximum_network, &bound.maximum_network)
+            && self.maximum_filesystem.is_within(&bound.maximum_filesystem)
+            && self.minimum_approval >= bound.minimum_approval
+            && bound.denied_tool_ids.is_subset(&self.denied_tool_ids)
+    }
+
+    /// True when the ceiling permits writing to the filesystem at all.
+    pub fn permits_write(&self) -> bool {
+        self.maximum_side_effect >= SideEffectClass::Write
+            && matches!(self.maximum_filesystem, FilesystemScope::Worktree { .. })
+    }
 }
 
 /// An invocation of a registered tool. Replaces the five provider-shaped
@@ -1035,6 +1239,130 @@ mod tests {
             FilesystemScope::None.intersect(&w(&["src/**"], 5)),
             FilesystemScope::None
         );
+    }
+
+    #[test]
+    fn ceiling_meet_is_commutative_associative_and_only_shrinks() {
+        // The v1.4 §5.3 fold relies on all three properties: without them,
+        // `workspace ∩ parent ∩ profile` would depend on the order the terms
+        // happened to be written in.
+        let a = ToolCeiling {
+            maximum_side_effect: SideEffectClass::Write,
+            maximum_network: NetworkScope::Any,
+            maximum_filesystem: FilesystemScope::maximum(),
+            minimum_approval: ApprovalPolicy::ByClass,
+            denied_tool_ids: BTreeSet::from(["native:a".to_string()]),
+        };
+        let b = ToolCeiling {
+            maximum_side_effect: SideEffectClass::Destructive,
+            maximum_network: NetworkScope::None,
+            maximum_filesystem: FilesystemScope::WorktreeRead,
+            minimum_approval: ApprovalPolicy::AlwaysAsk,
+            denied_tool_ids: BTreeSet::from(["native:b".to_string()]),
+        };
+        let c = ToolCeiling {
+            maximum_side_effect: SideEffectClass::Read,
+            ..permissive_ceiling()
+        };
+
+        assert_eq!(a.meet(&b), b.meet(&a), "meet must be commutative");
+        assert_eq!(
+            a.meet(&b).meet(&c),
+            a.meet(&b.meet(&c)),
+            "meet must be associative"
+        );
+        assert_eq!(a.meet(&a), a, "meet must be idempotent");
+
+        let met = a.meet(&b);
+        assert!(met.is_within(&a) && met.is_within(&b));
+        // Deny sets union: a tool either side denied stays denied.
+        assert!(met.denied_tool_ids.contains("native:a"));
+        assert!(met.denied_tool_ids.contains("native:b"));
+        // Friction only rises.
+        assert_eq!(met.minimum_approval, ApprovalPolicy::AlwaysAsk);
+        // `nothing()` is the absorbing element.
+        assert!(
+            ToolCeiling::nothing()
+                .meet(&a)
+                .is_within(&ToolCeiling::nothing())
+        );
+        assert_eq!(ToolCeiling::maximum().meet(&a), a);
+    }
+
+    #[test]
+    fn glob_coverage_is_conservative_but_handles_directory_prefixes() {
+        assert!(glob_covers("**", "src/auth/**"));
+        assert!(glob_covers("src/**", "src/auth/**"));
+        assert!(glob_covers("src/**", "src/auth/token.rs"));
+        assert!(glob_covers("src/auth/**", "src/auth/token.rs"));
+        assert!(glob_covers("src/auth/token.rs", "src/auth/token.rs"));
+        // Not covered: a sibling directory, a parent directory, or a prefix
+        // that only matches as a string rather than as a path segment.
+        assert!(!glob_covers("src/auth/**", "src/payments/billing.rs"));
+        assert!(!glob_covers("src/auth/**", "src/**"));
+        assert!(!glob_covers("src/**", "src"));
+        assert!(!glob_covers("src/a*.rs", "src/auth.rs"));
+    }
+
+    #[test]
+    fn narrow_to_paths_narrows_where_intersect_would_wrongly_empty() {
+        let ceiling = FilesystemScope::maximum();
+        // Exact-string intersect treats `**` and `src/auth/**` as disjoint…
+        assert_eq!(
+            ceiling.intersect(&FilesystemScope::Worktree {
+                write_globs: vec!["src/auth/**".into()],
+                maximum_changed_files: 10,
+            }),
+            FilesystemScope::WorktreeRead
+        );
+        // …but narrowing keeps the requested subset, which is what a delegated
+        // path scope means.
+        let narrowed = ceiling.narrow_to_paths(["src/auth/**"]);
+        assert_eq!(narrowed.write_globs(), ["src/auth/**"]);
+        assert!(narrowed.is_within(&ceiling));
+
+        // A request the ceiling does not cover is dropped, never granted.
+        let bounded = FilesystemScope::Worktree {
+            write_globs: vec!["src/auth/**".into()],
+            maximum_changed_files: 10,
+        };
+        assert_eq!(
+            bounded.narrow_to_paths(["src/payments/**"]),
+            FilesystemScope::WorktreeRead,
+            "an uncovered request must survive as no write authority at all"
+        );
+        assert_eq!(
+            bounded
+                .narrow_to_paths(["src/auth/token.rs", "src/payments/**"])
+                .write_globs(),
+            ["src/auth/token.rs"],
+        );
+        // Read-only stays read-only whatever is requested.
+        assert_eq!(
+            FilesystemScope::WorktreeRead.narrow_to_paths(["src/**"]),
+            FilesystemScope::WorktreeRead
+        );
+    }
+
+    #[test]
+    fn filesystem_containment_is_a_real_predicate() {
+        let wide = FilesystemScope::maximum();
+        let narrow = FilesystemScope::Worktree {
+            write_globs: vec!["src/auth/**".into()],
+            maximum_changed_files: 5,
+        };
+        assert!(narrow.is_within(&wide));
+        assert!(!wide.is_within(&narrow));
+        assert!(FilesystemScope::WorktreeRead.is_within(&narrow));
+        assert!(!narrow.is_within(&FilesystemScope::WorktreeRead));
+        assert!(FilesystemScope::None.is_within(&FilesystemScope::None));
+        // A larger changed-file budget is wider even with the same globs.
+        let looser = FilesystemScope::Worktree {
+            write_globs: vec!["src/auth/**".into()],
+            maximum_changed_files: 50,
+        };
+        assert!(narrow.is_within(&looser));
+        assert!(!looser.is_within(&narrow));
     }
 
     #[test]
