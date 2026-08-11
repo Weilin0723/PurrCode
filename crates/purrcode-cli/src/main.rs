@@ -4285,6 +4285,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         CompletionRepairRecorded { .. } => "completion_repair_recorded",
         ToolEvidenceRecorded { .. } => "tool_evidence_recorded",
         HookTriggered { .. } => "hook_triggered",
+        ActionDeferredForHook { .. } => "action_deferred_for_hook",
+        ActionResumedAfterHook { .. } => "action_resumed_after_hook",
     }
 }
 

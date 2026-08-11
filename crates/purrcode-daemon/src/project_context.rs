@@ -76,6 +76,63 @@ pub(crate) struct AssembledContext {
     pub references: Vec<ReferenceOutcome>,
 }
 
+/// What the active agent profile's `context:` block asks of one assembly.
+///
+/// This is how a profile's declared context policy becomes behaviour rather
+/// than a field nothing reads: `auto: false` stops the daemon attaching the
+/// repository's standing instructions, `project_memory: false` is honoured by
+/// the caller passing no memory, and `references:` are attached every turn as
+/// if the user had typed them.
+#[derive(Clone, Debug)]
+pub(crate) struct AssemblyPolicy {
+    /// Attach `AGENTS.md` / `CLAUDE.md` / `.purrcode.md`.
+    pub project_instructions: bool,
+    /// Reference tokens the profile attaches on every turn (e.g. `@diff`).
+    pub standing_references: Vec<String>,
+}
+
+impl Default for AssemblyPolicy {
+    fn default() -> Self {
+        Self {
+            project_instructions: true,
+            standing_references: Vec::new(),
+        }
+    }
+}
+
+/// Graph-first resolution for `#symbol`.
+///
+/// Holds the graph's database path and the SOURCE repository, because graph
+/// identity is project-scoped even when the content is read from a session
+/// worktree. Opening the connection per lookup is deliberate: `#symbol` is a
+/// handful of references per turn, and a long-lived handle would have to be
+/// threaded through every caller of [`assemble`] for no measurable gain.
+pub(crate) struct SymbolLookup<'a> {
+    pub database: &'a Path,
+    pub project: &'a Path,
+}
+
+impl SymbolLookup<'_> {
+    /// At most `MAX_SYMBOL_DEFINITIONS` definition sites for `name`. An absent
+    /// or empty graph returns nothing, which is what makes the `git grep`
+    /// fallback the normal path in a repository the graph has not indexed.
+    fn definitions(&self, name: &str) -> Vec<purrcode_project_graph::SymbolDefinition> {
+        purrcode_project_graph::ProjectGraph::open(self.database)
+            .ok()
+            .and_then(|graph| {
+                graph
+                    .symbol_definitions(self.project, name, MAX_SYMBOL_DEFINITIONS)
+                    .ok()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// How many definition sites one `#symbol` attaches. A symbol defined in a
+/// dozen places is a name collision, not a useful answer, so the reference is
+/// bounded like every other attachment.
+const MAX_SYMBOL_DEFINITIONS: usize = 4;
+
 /// Build the pinned context for a turn.
 ///
 /// `repository` is the tree references resolve against — the session worktree
@@ -90,20 +147,24 @@ pub(crate) async fn assemble(
     repository: &Path,
     request_text: &str,
     memory: &[ProjectMemoryEntry],
+    policy: &AssemblyPolicy,
+    symbols: Option<&SymbolLookup<'_>>,
 ) -> AssembledContext {
     let mut sections = Vec::new();
     let mut references = Vec::new();
 
     // Project instructions first: they are the standing rules the rest of the
     // turn is read against.
-    for name in INSTRUCTION_FILES {
-        if let Some(content) = read_bounded(&repository.join(name), MAX_INSTRUCTION_BYTES) {
-            sections.push(PinnedSection {
-                origin: PinnedOrigin::ProjectInstructions,
-                label: name.to_owned(),
-                content,
-                memory_id: None,
-            });
+    if policy.project_instructions {
+        for name in INSTRUCTION_FILES {
+            if let Some(content) = read_bounded(&repository.join(name), MAX_INSTRUCTION_BYTES) {
+                sections.push(PinnedSection {
+                    origin: PinnedOrigin::ProjectInstructions,
+                    label: name.to_owned(),
+                    content,
+                    memory_id: None,
+                });
+            }
         }
     }
 
@@ -111,9 +172,20 @@ pub(crate) async fn assemble(
         sections.push(section);
     }
 
+    // The profile's standing references are resolved through the same path as
+    // the ones the user typed, and share the same budget — a profile that
+    // declares `references: ["@diff"]` gets the diff attached to every turn,
+    // and gets told when it could not be.
+    let standing = policy.standing_references.join(" ");
+    let parsed_references: Vec<_> = resolve_refs(request_text)
+        .unwrap_or_default()
+        .into_iter()
+        .chain(resolve_refs(&standing).unwrap_or_default())
+        .collect();
+
     let mut spent = 0usize;
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    for parsed in resolve_refs(request_text).unwrap_or_default() {
+    for parsed in parsed_references {
         let display = parsed.reference.display();
         // The same reference typed twice is attached once. Two copies of a file
         // is budget spent to tell the model nothing new.
@@ -129,7 +201,7 @@ pub(crate) async fn assemble(
             continue;
         }
         let remaining = (MAX_REFERENCE_BYTES_TOTAL - spent).min(MAX_ATTACHMENT_BYTES);
-        match attach_reference(repository, &parsed.reference, remaining).await {
+        match attach_reference(repository, &parsed.reference, remaining, symbols).await {
             Ok(content) => {
                 spent += content.len();
                 references.push(ReferenceOutcome {
@@ -174,8 +246,9 @@ const MAX_PREVIEW_BYTES: usize = 600;
 pub(crate) async fn preview_reference(
     repository: &Path,
     reference: &Reference,
+    symbols: Option<&SymbolLookup<'_>>,
 ) -> (bool, Option<String>, Option<String>) {
-    match attach_reference(repository, reference, MAX_PREVIEW_BYTES).await {
+    match attach_reference(repository, reference, MAX_PREVIEW_BYTES, symbols).await {
         Ok(content) => (true, Some(content), None),
         Err(reason) => (false, None, Some(reason)),
     }
@@ -286,6 +359,7 @@ async fn attach_reference(
     repository: &Path,
     reference: &Reference,
     budget: usize,
+    symbols: Option<&SymbolLookup<'_>>,
 ) -> Result<String, String> {
     match reference {
         Reference::File { path, range } => {
@@ -339,6 +413,40 @@ async fn attach_reference(
             Ok(format!("UNTRUSTED GIT REVISION — {reference}:\n{text}"))
         }
         Reference::Symbol { name } => {
+            // Graph first. The project-intelligence graph knows where a symbol
+            // is DEFINED; `git grep` only knows where the word appears, so it
+            // answers "#AuthMiddleware" with fifty call sites and the one
+            // definition buried among them. The grep stays as the fallback for
+            // symbols no producer has recorded yet — which is every symbol in a
+            // repository the graph has not seen.
+            let definitions = symbols
+                .map(|lookup| lookup.definitions(name))
+                .unwrap_or_default();
+            if !definitions.is_empty() {
+                let mut rendered = String::new();
+                let mut spent = 0usize;
+                for definition in &definitions {
+                    if spent >= budget {
+                        break;
+                    }
+                    let located = match definition.line {
+                        Some(line) => format!("{}:{line}", definition.path.display()),
+                        None => definition.path.display().to_string(),
+                    };
+                    let excerpt = read_bounded(
+                        &repository.join(&definition.path),
+                        (budget - spent).min(MAX_ATTACHMENT_BYTES / 2),
+                    )
+                    .unwrap_or_default();
+                    spent += excerpt.len();
+                    rendered.push_str(&format!("── {located}\n{excerpt}\n"));
+                }
+                if !rendered.is_empty() {
+                    return Ok(format!(
+                        "UNTRUSTED SYMBOL DEFINITIONS (project graph) — {name}:\n{rendered}"
+                    ));
+                }
+            }
             // `--untracked` matters: in an agent IDE the file a user is asking
             // about is very often one that was just created and never staged,
             // and a plain `git grep` reports it as "not found".
@@ -594,9 +702,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_profile_standing_reference_is_attached_like_a_typed_one() {
+        // `context.references: ["@src/auth.rs"]` in an agent profile has to put
+        // bytes in the prompt. Before the policy was read it was config that
+        // did nothing — the exact class of false affordance this module exists
+        // to prevent.
+        let directory = tempdir();
+        std::fs::create_dir_all(directory.join("src")).unwrap();
+        std::fs::write(directory.join("src/auth.rs"), "fn authenticate() {}").unwrap();
+        let policy = AssemblyPolicy {
+            project_instructions: true,
+            standing_references: vec!["@src/auth.rs".into()],
+        };
+        let assembled = assemble(&directory, "no references here", &[], &policy, None).await;
+        let attached = assembled
+            .pinned
+            .sections
+            .iter()
+            .find(|section| section.origin == PinnedOrigin::ComposerReference)
+            .expect("the profile's standing reference is attached");
+        assert_eq!(attached.label, "@src/auth.rs");
+        assert!(attached.content.contains("fn authenticate() {}"));
+    }
+
+    #[tokio::test]
+    async fn auto_context_off_suppresses_the_repository_instruction_files() {
+        let directory = tempdir();
+        std::fs::write(directory.join("AGENTS.md"), "standing project rules").unwrap();
+        let on = assemble(&directory, "hello", &[], &AssemblyPolicy::default(), None).await;
+        assert!(
+            on.pinned
+                .sections
+                .iter()
+                .any(|section| section.label == "AGENTS.md"),
+            "the default attaches project instructions"
+        );
+        let policy = AssemblyPolicy {
+            project_instructions: false,
+            standing_references: Vec::new(),
+        };
+        let off = assemble(&directory, "hello", &[], &policy, None).await;
+        assert!(
+            !off.pinned
+                .sections
+                .iter()
+                .any(|section| section.label == "AGENTS.md"),
+            "`auto: false` means the profile gets only what it named"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_graph_known_symbol_attaches_its_definition_instead_of_grep_hits() {
+        // Graph-first `#symbol`. `git grep` answers with every mention of the
+        // word; the graph knows which file DEFINES it.
+        let directory = tempdir();
+        std::fs::create_dir_all(directory.join("src")).unwrap();
+        std::fs::write(
+            directory.join("src/auth.rs"),
+            "pub struct AuthMiddleware;\n",
+        )
+        .unwrap();
+        let database = directory.join("sessions.db");
+        // ninelives owns the migrations that create the graph tables.
+        purrcode_ninelives::SessionStore::open(&database).unwrap();
+        let mut graph = purrcode_project_graph::ProjectGraph::open(&database).unwrap();
+        graph
+            .upsert_node(&purrcode_project_graph::GraphNode {
+                id: purrcode_project_graph::NodeId(0),
+                project: directory.clone(),
+                kind: purrcode_runtime_core::GraphNodeKind::Symbol,
+                key: "src/auth.rs#AuthMiddleware".into(),
+                label: "AuthMiddleware".into(),
+                attributes: serde_json::json!({ "line": 1 }),
+                sensitive: false,
+                observed_at: chrono::Utc::now(),
+            })
+            .unwrap();
+        let lookup = SymbolLookup {
+            database: &database,
+            project: &directory,
+        };
+        let assembled = assemble(
+            &directory,
+            "explain #AuthMiddleware",
+            &[],
+            &AssemblyPolicy::default(),
+            Some(&lookup),
+        )
+        .await;
+        let attached = assembled
+            .pinned
+            .sections
+            .iter()
+            .find(|section| section.origin == PinnedOrigin::ComposerReference)
+            .expect("the symbol resolves");
+        assert!(
+            attached
+                .content
+                .contains("SYMBOL DEFINITIONS (project graph)"),
+            "the graph answers before git grep does: {}",
+            attached.content
+        );
+        assert!(attached.content.contains("src/auth.rs:1"));
+    }
+
+    #[tokio::test]
     async fn an_unresolvable_reference_is_reported_and_not_attached() {
         let directory = tempdir();
-        let assembled = assemble(&directory, "please read @src/missing.rs", &[]).await;
+        let assembled = assemble(
+            &directory,
+            "please read @src/missing.rs",
+            &[],
+            &AssemblyPolicy::default(),
+            None,
+        )
+        .await;
         assert!(
             assembled
                 .pinned
@@ -619,7 +839,14 @@ mod tests {
         let directory = tempdir();
         std::fs::create_dir_all(directory.join("src")).unwrap();
         std::fs::write(directory.join("src/auth.rs"), "fn authenticate() {}").unwrap();
-        let assembled = assemble(&directory, "fix this using @src/auth.rs", &[]).await;
+        let assembled = assemble(
+            &directory,
+            "fix this using @src/auth.rs",
+            &[],
+            &AssemblyPolicy::default(),
+            None,
+        )
+        .await;
         let attached = assembled
             .pinned
             .sections
@@ -654,7 +881,14 @@ mod tests {
                 .is_ok_and(|status| status.success())
         );
         std::fs::write(directory.join("auth.rs"), "pub struct AuthMiddleware;\n").unwrap();
-        let assembled = assemble(&directory, "explain #AuthMiddleware", &[]).await;
+        let assembled = assemble(
+            &directory,
+            "explain #AuthMiddleware",
+            &[],
+            &AssemblyPolicy::default(),
+            None,
+        )
+        .await;
         let outcome = assembled
             .references
             .iter()
@@ -678,7 +912,14 @@ mod tests {
     async fn project_instructions_are_attached_when_present() {
         let directory = tempdir();
         std::fs::write(directory.join("AGENTS.md"), "Use tabs, never spaces.").unwrap();
-        let assembled = assemble(&directory, "add a function", &[]).await;
+        let assembled = assemble(
+            &directory,
+            "add a function",
+            &[],
+            &AssemblyPolicy::default(),
+            None,
+        )
+        .await;
         let instructions = assembled
             .pinned
             .sections
@@ -693,7 +934,14 @@ mod tests {
     async fn the_same_reference_twice_is_attached_once() {
         let directory = tempdir();
         std::fs::write(directory.join("a.rs"), "fn a() {}").unwrap();
-        let assembled = assemble(&directory, "compare @a.rs with @a.rs", &[]).await;
+        let assembled = assemble(
+            &directory,
+            "compare @a.rs with @a.rs",
+            &[],
+            &AssemblyPolicy::default(),
+            None,
+        )
+        .await;
         assert_eq!(
             assembled
                 .pinned
@@ -724,7 +972,14 @@ mod tests {
         std::fs::create_dir_all(worktree.join("src")).unwrap();
         std::fs::write(worktree.join("src/auth.rs"), "let retry = 5;\n").unwrap();
 
-        let assembled = assemble(&worktree, "Now refactor @src/auth.rs", &[]).await;
+        let assembled = assemble(
+            &worktree,
+            "Now refactor @src/auth.rs",
+            &[],
+            &AssemblyPolicy::default(),
+            None,
+        )
+        .await;
         let attached = assembled
             .pinned
             .sections
@@ -778,7 +1033,14 @@ mod tests {
         // The agent changes the file in its own worktree.
         std::fs::write(worktree.join("a.rs"), "fn a() { changed(); }\n").unwrap();
 
-        let assembled = assemble(&worktree, "review @diff", &[]).await;
+        let assembled = assemble(
+            &worktree,
+            "review @diff",
+            &[],
+            &AssemblyPolicy::default(),
+            None,
+        )
+        .await;
         let attached = assembled
             .pinned
             .sections

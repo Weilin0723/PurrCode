@@ -80,7 +80,7 @@ use crate::schema::{
     validate_plan, validate_turn,
 };
 use crate::stream::{AgentStreamEvent, AgentStreamObserver, RationaleStreamExtractor};
-use crate::tool_executor::{HookEvaluator, ToolExecutor};
+use crate::tool_executor::{HookEvaluator, HookOutcome, ToolExecutionContext, ToolExecutor};
 
 const MAX_AUTONOMOUS_ITERATIONS: usize = 32;
 const MAX_CONSECUTIVE_POLICY_REJECTIONS: usize = 3;
@@ -416,27 +416,35 @@ impl<'a> NativeAgent<'a> {
         if tools.is_empty() { None } else { Some(tools) }
     }
 
-    /// Fire a governed hook trigger at a lifecycle point. Returns an error when
-    /// a blocking hook aborted the turn. No-op when no hook evaluator is
-    /// attached (built-in sessions with no hooks).
+    /// Fire a governed hook trigger at a lifecycle point that has no action of
+    /// its own (today: `after_agent_complete`).
+    ///
+    /// Returns an error when a blocking hook aborted the turn, and
+    /// `Ok(Some(hook_action_id))` when one needs approval — a pause, never an
+    /// error. No-op when no hook evaluator is attached (built-in sessions with
+    /// no hooks).
     async fn fire_hook(
         &self,
         store: &mut SessionStore,
         session_id: SessionId,
         trigger: purrcode_runtime_core::HookTrigger,
         depth: u8,
-    ) -> Result<(), AgentError> {
+    ) -> Result<Option<ActionId>, AgentError> {
         if let Some(evaluator) = &self.hook_evaluator {
             let outcome = evaluator
-                .dispatch(store, session_id, trigger, depth)
+                .dispatch(store, session_id, trigger, depth, &BTreeSet::new())
                 .await?;
-            if outcome.stops_turn() {
-                return Err(AgentError::InvalidModelTurn(hook_stop_reason(
-                    trigger, outcome,
-                )));
+            match outcome {
+                HookOutcome::Continued => {}
+                HookOutcome::Suspended(suspension) => {
+                    return Ok(Some(suspension.hook_action_id));
+                }
+                HookOutcome::Aborted => {
+                    return Err(AgentError::InvalidModelTurn(hook_abort_reason(trigger)));
+                }
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     fn budget(&self) -> BudgetConstraints {
@@ -1567,7 +1575,7 @@ impl<'a> NativeAgent<'a> {
 
         let model = self.model_for(role).1.clone();
 
-        loop {
+        'scout: loop {
             if action_count >= request.max_actions || token_used >= request.max_tokens {
                 conclusions.push(format!(
                     "scout halted at limit: {action_count} actions, {token_used} tokens used"
@@ -1715,7 +1723,7 @@ impl<'a> NativeAgent<'a> {
                 };
                 store.authorize(&authorization)?;
 
-                let execution = execute_and_record(
+                let execution = match execute_and_record(
                     store,
                     session_id,
                     action_id,
@@ -1725,8 +1733,22 @@ impl<'a> NativeAgent<'a> {
                     Some(request.parent_turn_id),
                     self.tool_executor.as_ref(),
                     self.hook_evaluator.as_ref(),
+                    &ToolExecutionContext::model(request.parent_turn_id),
+                    self.tool_registry.as_deref(),
                 )
-                .await?;
+                .await?
+                {
+                    ExecutionFlow::Completed(result) => result,
+                    // A scout only reads, so no lifecycle hook fires for its
+                    // actions. If one ever does and it needs approval, the
+                    // scout reports what it has rather than failing the
+                    // session out from under a pending approval.
+                    ExecutionFlow::Suspended { .. } => {
+                        conclusions
+                            .push("scout halted: a lifecycle hook is waiting for approval".into());
+                        break 'scout;
+                    }
+                };
 
                 // P0: Structured per-action evidence. Grep output is
                 // `path:line:content`, find/list output is one path per line —
@@ -1947,13 +1969,22 @@ impl<'a> NativeAgent<'a> {
                 },
             )?;
             store.append(session_id, &SessionEvent::SessionCompleted)?;
-            self.fire_hook(
-                store,
-                session_id,
-                purrcode_runtime_core::HookTrigger::AfterAgentComplete,
-                0,
-            )
-            .await?;
+            if let Some(hook_action_id) = self
+                .fire_hook(
+                    store,
+                    session_id,
+                    purrcode_runtime_core::HookTrigger::AfterAgentComplete,
+                    0,
+                )
+                .await?
+            {
+                return awaiting_hook_approval(
+                    store,
+                    session_id,
+                    hook_action_id,
+                    AFTER_COMPLETE_HOOK_APPROVAL.into(),
+                );
+            }
             return completed_outcome(store, session_id);
         }
         let SessionStatus::AwaitingApproval(action_id) = state.status else {
@@ -2017,7 +2048,7 @@ impl<'a> NativeAgent<'a> {
             task_id,
             "human approval started the current plan task",
         )?;
-        let result = execute_and_record(
+        let flow = execute_and_record(
             store,
             session_id,
             action_id,
@@ -2030,10 +2061,21 @@ impl<'a> NativeAgent<'a> {
             None,
             self.tool_executor.as_ref(),
             self.hook_evaluator.as_ref(),
+            // The authority is the person who just approved. Recording this as
+            // `DeterministicPolicy` is what made every human-approved MCP call
+            // claim in its own evidence that a policy allowed it.
+            &self.approval_context(store, session_id, action_id),
+            self.tool_registry.as_deref(),
         )
         .await;
-        let result = match result {
-            Ok(result) => {
+        let result = match flow {
+            Ok(ExecutionFlow::Suspended {
+                hook_action_id,
+                reason,
+            }) => {
+                return awaiting_hook_approval(store, session_id, hook_action_id, reason);
+            }
+            Ok(ExecutionFlow::Completed(result)) => {
                 let validation = if result.exit_code == Some(0) {
                     ValidationStatus::Passed
                 } else {
@@ -2079,11 +2121,142 @@ impl<'a> NativeAgent<'a> {
                 return Err(error);
             }
         };
+        // The approved action may itself be a hook that an earlier action was
+        // parked behind. Now that the hook has run exactly once, the work it
+        // interrupted continues — that is what "approve the pending action to
+        // continue" has to mean, and without it the parent write would silently
+        // never happen.
+        if let Some(resumed) = self
+            .resume_deferred_action(store, session_id, action_id)
+            .await?
+        {
+            return Ok(resumed);
+        }
         Ok(AgentOutcome::ActionExecuted {
             session_id,
             action_id,
             result,
         })
+    }
+
+    /// The execution context for an approved action: the authority recorded in
+    /// its durable judgment, not an assumption.
+    fn approval_context(
+        &self,
+        store: &SessionStore,
+        session_id: SessionId,
+        action_id: ActionId,
+    ) -> ToolExecutionContext {
+        // A hook's pending action is the hook's, even when a human released it:
+        // the hook is what proposed the invocation, and the audit trail has to
+        // say so. `HookTriggered` carries that linkage.
+        let hook = store.events(session_id).ok().and_then(|events| {
+            events.into_iter().rev().find_map(|event| match event {
+                SessionEvent::HookTriggered {
+                    hook_id,
+                    trigger,
+                    action_id: Some(hook_action),
+                } if hook_action == action_id => Some((hook_id, trigger)),
+                _ => None,
+            })
+        });
+        match hook {
+            Some((hook_id, trigger)) => ToolExecutionContext::hook(hook_id, trigger),
+            None => ToolExecutionContext::human(),
+        }
+    }
+
+    /// Continue an action that a hook approval was blocking.
+    ///
+    /// Returns `Ok(None)` when nothing was waiting on `hook_action_id`. The
+    /// resumed run skips the hooks already satisfied for that action (recorded
+    /// in the deferral), so the chain advances instead of re-asking for the
+    /// approval that was just granted.
+    async fn resume_deferred_action(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        hook_action_id: ActionId,
+    ) -> Result<Option<AgentOutcome>, AgentError> {
+        let events = store.events(session_id)?;
+        let mut deferred: Option<ActionId> = None;
+        for event in &events {
+            match event {
+                SessionEvent::ActionDeferredForHook {
+                    action_id,
+                    hook_action_id: waiting_on,
+                    ..
+                } if *waiting_on == hook_action_id => deferred = Some(*action_id),
+                // Exactly-once: a replayed approval must not run the deferred
+                // action a second time.
+                SessionEvent::ActionResumedAfterHook {
+                    hook_action_id: resumed,
+                    ..
+                } if *resumed == hook_action_id => deferred = None,
+                _ => {}
+            }
+        }
+        let Some(action_id) = deferred else {
+            return Ok(None);
+        };
+        let state = store.load(session_id)?;
+        let Some(action) = state.proposed_actions.get(&action_id).cloned() else {
+            return Ok(None);
+        };
+        let Some(constraints) =
+            state
+                .judgments
+                .get(&action_id)
+                .and_then(|judgment| match judgment {
+                    JudgmentDecision::AllowWithConstraints(constraints)
+                    | JudgmentDecision::RequireApproval { constraints, .. } => {
+                        Some(constraints.clone())
+                    }
+                    _ => None,
+                })
+        else {
+            return Ok(None);
+        };
+        let worktree = session_worktree(&state)?;
+        store.append(
+            session_id,
+            &SessionEvent::ActionResumedAfterHook {
+                action_id,
+                hook_action_id,
+            },
+        )?;
+        let flow = execute_and_record(
+            store,
+            session_id,
+            action_id,
+            &action,
+            &constraints,
+            &worktree,
+            None,
+            self.tool_executor.as_ref(),
+            self.hook_evaluator.as_ref(),
+            &ToolExecutionContext::human(),
+            self.tool_registry.as_deref(),
+        )
+        .await?;
+        match flow {
+            ExecutionFlow::Completed(result) => Ok(Some(AgentOutcome::ActionExecuted {
+                session_id,
+                action_id,
+                result,
+            })),
+            // A later hook in the same chain also wants a person. Park again;
+            // the accumulated `completed_hooks` guarantees this terminates.
+            ExecutionFlow::Suspended {
+                hook_action_id,
+                reason,
+            } => Ok(Some(awaiting_hook_approval(
+                store,
+                session_id,
+                hook_action_id,
+                reason,
+            )?)),
+        }
     }
 
     pub fn reject(
@@ -3001,13 +3174,22 @@ impl<'a> NativeAgent<'a> {
                 if self.controls.task_mode.read_only() || objective_requests_advice_only(&objective)
                 {
                     store.append(session_id, &SessionEvent::SessionCompleted)?;
-                    self.fire_hook(
-                        store,
-                        session_id,
-                        purrcode_runtime_core::HookTrigger::AfterAgentComplete,
-                        0,
-                    )
-                    .await?;
+                    if let Some(hook_action_id) = self
+                        .fire_hook(
+                            store,
+                            session_id,
+                            purrcode_runtime_core::HookTrigger::AfterAgentComplete,
+                            0,
+                        )
+                        .await?
+                    {
+                        return awaiting_hook_approval(
+                            store,
+                            session_id,
+                            hook_action_id,
+                            AFTER_COMPLETE_HOOK_APPROVAL.into(),
+                        );
+                    }
                     return completed_outcome(store, session_id);
                 }
                 let validation = ValidationDetector::detect(&worktree)?;
@@ -3104,13 +3286,22 @@ impl<'a> NativeAgent<'a> {
                         }
                     }
                     store.append(session_id, &SessionEvent::SessionCompleted)?;
-                    self.fire_hook(
-                        store,
-                        session_id,
-                        purrcode_runtime_core::HookTrigger::AfterAgentComplete,
-                        0,
-                    )
-                    .await?;
+                    if let Some(hook_action_id) = self
+                        .fire_hook(
+                            store,
+                            session_id,
+                            purrcode_runtime_core::HookTrigger::AfterAgentComplete,
+                            0,
+                        )
+                        .await?
+                    {
+                        return awaiting_hook_approval(
+                            store,
+                            session_id,
+                            hook_action_id,
+                            AFTER_COMPLETE_HOOK_APPROVAL.into(),
+                        );
+                    }
                     return completed_outcome(store, session_id);
                 }
                 validation_repair_cycles += 1;
@@ -3338,10 +3529,38 @@ impl<'a> NativeAgent<'a> {
                         Some(turn_id),
                         self.tool_executor.as_ref(),
                         self.hook_evaluator.as_ref(),
+                        &ToolExecutionContext::model(turn_id),
+                        self.tool_registry.as_deref(),
                     )
                     .await;
                     match execution {
-                        Ok(result) => {
+                        // A hook is waiting on a person. The session is parked
+                        // on the hook's own pending action with this action
+                        // durably deferred behind it, so this returns Ok — an
+                        // Err here reaches the daemon's task wrapper, which
+                        // appends SessionFailed to any non-terminal session and
+                        // destroys the approval the user was just asked for.
+                        Ok(ExecutionFlow::Suspended {
+                            hook_action_id,
+                            reason,
+                        }) => {
+                            append_task_evidence(
+                                store,
+                                session_id,
+                                task_id,
+                                Some(action_id),
+                                ValidationStatus::Uncertain,
+                                &reason,
+                                false,
+                            )?;
+                            return awaiting_hook_approval(
+                                store,
+                                session_id,
+                                hook_action_id,
+                                reason,
+                            );
+                        }
+                        Ok(ExecutionFlow::Completed(result)) => {
                             let validation = if result.exit_code == Some(0) {
                                 ValidationStatus::Passed
                             } else {
@@ -4353,21 +4572,147 @@ fn authorization_digest(
     }
 }
 
-/// How to report a hook chain that stopped the turn.
+/// How to report a hook chain that aborted the turn.
 ///
-/// A suspension is not a failure: the session is parked on a durable pending
-/// action, and saying "aborted" would tell the user their turn died when what
-/// it actually needs is one approval.
-fn hook_stop_reason(
+/// Only aborts reach here. A suspension is not a failure — it is a durable
+/// pause with a pending action — so it never becomes an error string, and never
+/// becomes an `AgentError` (which the daemon's task wrapper turns into
+/// `SessionFailed`).
+fn hook_abort_reason(trigger: purrcode_runtime_core::HookTrigger) -> String {
+    format!("a blocking {trigger} hook aborted the turn")
+}
+
+/// What one action's execution did.
+///
+/// A hook that needs approval produces `Suspended`, not `Err`. The distinction
+/// is the whole fix: an `AgentError` propagates to the daemon task wrapper,
+/// which appends `SessionFailed` for any non-terminal session — so a session
+/// that had correctly reached `AwaitingApproval` was immediately marked failed,
+/// and the pending action the user was told to approve became unreachable.
+#[derive(Debug)]
+enum ExecutionFlow {
+    Completed(ExecutionResult),
+    Suspended {
+        /// The hook's pending action — what the human approves.
+        hook_action_id: ActionId,
+        reason: String,
+    },
+}
+
+/// The hooks already satisfied for `action_id`, from the durable deferral
+/// record. Empty for an action that was never parked.
+fn completed_hooks_for(
+    store: &SessionStore,
+    session_id: SessionId,
+    action_id: ActionId,
+) -> BTreeSet<String> {
+    let Ok(events) = store.events(session_id) else {
+        return BTreeSet::new();
+    };
+    events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::ActionDeferredForHook {
+                action_id: deferred,
+                completed_hooks,
+                ..
+            } if *deferred == action_id => Some(completed_hooks.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// Fire one lifecycle trigger for an action that is mid-execution.
+///
+/// Returns `Ok(None)` to continue, `Ok(Some(flow))` when the chain suspended
+/// (the caller returns it up), and `Err` only for a real abort.
+/// `defer` distinguishes the two kinds of lifecycle point. A PRE-execution
+/// trigger parks an action that has not run yet, so the suspension is recorded
+/// as a deferral and approving the hook resumes the action. A POST-execution
+/// trigger fires for work that has already happened and been recorded — there
+/// is nothing to resume, and writing a deferral would make `approve` re-execute
+/// an action whose authorization is already consumed.
+async fn dispatch_action_hooks(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    action_id: ActionId,
     trigger: purrcode_runtime_core::HookTrigger,
-    outcome: crate::tool_executor::HookOutcome,
-) -> String {
+    evaluator: &Arc<dyn HookEvaluator>,
+    defer: bool,
+) -> Result<Option<ExecutionFlow>, AgentError> {
+    let completed = completed_hooks_for(store, session_id, action_id);
+    let outcome = evaluator
+        .dispatch(store, session_id, trigger, 0, &completed)
+        .await?;
     match outcome {
-        crate::tool_executor::HookOutcome::Suspended => format!(
-            "a {trigger} hook needs approval before it can run; approve the pending action to continue"
-        ),
-        _ => format!("a blocking {trigger} hook aborted the turn"),
+        HookOutcome::Continued => Ok(None),
+        HookOutcome::Suspended(suspension) => {
+            // The parent action is parked, not abandoned: this record is what
+            // lets `approve` find it again, and what stops the already-approved
+            // part of the chain from asking for the same approval on resume.
+            if defer {
+                let mut completed_hooks: Vec<String> = completed.into_iter().collect();
+                for hook_id in suspension.completed_hooks {
+                    if !completed_hooks.contains(&hook_id) {
+                        completed_hooks.push(hook_id);
+                    }
+                }
+                store.append(
+                    session_id,
+                    &SessionEvent::ActionDeferredForHook {
+                        action_id,
+                        hook_action_id: suspension.hook_action_id,
+                        trigger,
+                        completed_hooks,
+                    },
+                )?;
+            }
+            let reason = if suspension.reason.trim().is_empty() {
+                ACTION_HOOK_APPROVAL.to_owned()
+            } else {
+                format!("{}; {ACTION_HOOK_APPROVAL}", suspension.reason)
+            };
+            Ok(Some(ExecutionFlow::Suspended {
+                hook_action_id: suspension.hook_action_id,
+                reason,
+            }))
+        }
+        HookOutcome::Aborted => Err(AgentError::InvalidModelTurn(hook_abort_reason(trigger))),
     }
+}
+
+/// Why the session is parked when a completion hook needs approval.
+const AFTER_COMPLETE_HOOK_APPROVAL: &str = "an after_agent_complete hook needs approval before it can run; approve the pending action \
+     to finish the session";
+
+/// Why the session is parked when a hook interrupts an action mid-flight.
+const ACTION_HOOK_APPROVAL: &str = "a lifecycle hook needs approval before this action can proceed; approving it runs the hook \
+     once and resumes the action";
+
+/// The `AwaitingApproval` outcome for a hook that is waiting on a person.
+///
+/// Loads the hook's own pending action so the client renders the same approval
+/// card it does for a model-proposed action — a hook pause the UI cannot
+/// display is indistinguishable from a session that hung.
+fn awaiting_hook_approval(
+    store: &SessionStore,
+    session_id: SessionId,
+    hook_action_id: ActionId,
+    reason: String,
+) -> Result<AgentOutcome, AgentError> {
+    let state = store.load(session_id)?;
+    let action = state
+        .proposed_actions
+        .get(&hook_action_id)
+        .cloned()
+        .ok_or_else(|| AgentError::CorruptSession("suspended hook action is missing".into()))?;
+    Ok(AgentOutcome::AwaitingApproval {
+        session_id,
+        action_id: hook_action_id,
+        reason,
+        action,
+    })
 }
 
 /// True when a proposed action is the `native:commit` registry tool.
@@ -4389,12 +4734,18 @@ async fn execute_and_record(
     turn_id: Option<TurnId>,
     tool_executor: Option<&Arc<dyn ToolExecutor>>,
     hook_evaluator: Option<&Arc<dyn HookEvaluator>>,
-) -> Result<ExecutionResult, AgentError> {
+    context: &ToolExecutionContext,
+    registry: Option<&CapabilityRegistry>,
+) -> Result<ExecutionFlow, AgentError> {
     let before = RepositoryEngine::snapshot(worktree).await?;
-    store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
     // v1.3 PR D: before_write fires for a mutation (write/delete) and
     // before_commit fires for the commit tool. A blocking hook that denies
-    // aborts the turn BEFORE the mutation executes.
+    // aborts the turn BEFORE the mutation executes; one that needs approval
+    // parks the action and leaves the session resumable.
+    //
+    // The pre-hooks run BEFORE `ExecutionStarted`, so a parked action has not
+    // "started" — an interrupted execution and a deferred one are different
+    // things in the log, and only the second one is resumable.
     let is_mutation = matches!(
         action,
         &ProposedAction::WriteFile(_) | &ProposedAction::DeleteFile(_)
@@ -4402,22 +4753,24 @@ async fn execute_and_record(
     let is_commit = is_native_commit(action);
     if is_mutation && let Some(evaluator) = hook_evaluator {
         let trigger = purrcode_runtime_core::HookTrigger::BeforeWrite;
-        let outcome = evaluator.dispatch(store, session_id, trigger, 0).await?;
-        if outcome.stops_turn() {
-            return Err(AgentError::InvalidModelTurn(hook_stop_reason(
-                trigger, outcome,
-            )));
+        if let Some(flow) =
+            dispatch_action_hooks(store, session_id, action_id, trigger, evaluator, true).await?
+        {
+            return Ok(flow);
         }
     }
     if is_commit && let Some(evaluator) = hook_evaluator {
         let trigger = purrcode_runtime_core::HookTrigger::BeforeCommit;
-        let outcome = evaluator.dispatch(store, session_id, trigger, 0).await?;
-        if outcome.stops_turn() {
-            return Err(AgentError::InvalidModelTurn(hook_stop_reason(
-                trigger, outcome,
-            )));
+        if let Some(flow) =
+            dispatch_action_hooks(store, session_id, action_id, trigger, evaluator, true).await?
+        {
+            return Ok(flow);
         }
     }
+    store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+    let started_at = Utc::now();
+    // Evidence for this invocation, finalized after the effect delta is known.
+    let mut evidence: Option<Box<purrcode_runtime_core::ExecutionEvidence>> = None;
     let result = match (action, tool_executor) {
         // v1.3 PR B: a registered tool dispatches by provider through the
         // executor (Mcp → McpHost, Skill → skill runtime). Native tools and
@@ -4431,43 +4784,65 @@ async fn execute_and_record(
                     action_id,
                     invocation,
                     constraints,
+                    context,
                 )
                 .await
             {
-                Ok(outcome) => Ok(ExecutionResult {
-                    exit_code: outcome.exit_code,
-                    stdout: outcome.stdout.into_bytes(),
-                    stderr: outcome.stderr.into_bytes(),
-                    truncated: outcome.truncated,
-                    affected_paths: outcome.affected_paths,
-                    sandbox_level: purrcode_claw::SandboxLevel::WorktreeWriteNoShell,
-                    sandbox_backend: "tool-executor".into(),
-                }),
+                Ok(outcome) => {
+                    evidence = outcome.evidence;
+                    Ok(ExecutionResult {
+                        exit_code: outcome.exit_code,
+                        stdout: outcome.stdout.into_bytes(),
+                        stderr: outcome.stderr.into_bytes(),
+                        truncated: outcome.truncated,
+                        affected_paths: outcome.affected_paths,
+                        sandbox_level: purrcode_claw::SandboxLevel::WorktreeWriteNoShell,
+                        sandbox_backend: "tool-executor".into(),
+                    })
+                }
+                // A dispatch failure records its own `Failed` evidence inside
+                // the executor, where the consumed authority is still in hand.
                 Err(error) => Err(error),
             }
         }
-        _ => ToolRuntime::execute(store, action_id, action, constraints)
-            .await
-            .map_err(Into::into),
-    };
-    // v1.3 PR D: after_write fires once the mutation (or commit) has executed.
-    // A blocking after_write hook that denies aborts the turn after the fact.
-    if (is_mutation || is_commit)
-        && let Some(evaluator) = hook_evaluator
-    {
-        let trigger = purrcode_runtime_core::HookTrigger::AfterWrite;
-        let outcome = evaluator.dispatch(store, session_id, trigger, 0).await?;
-        if outcome.stops_turn() {
-            return Err(AgentError::InvalidModelTurn(hook_stop_reason(
-                trigger, outcome,
-            )));
+        _ => {
+            let outcome = ToolRuntime::execute(store, action_id, action, constraints)
+                .await
+                .map_err(AgentError::from);
+            // Every provider, including the native/legacy path. A `write_file`
+            // that ran without an `ExecutionEvidence` row is a hole in exactly
+            // the record the product claims is complete.
+            evidence = native_evidence_draft(
+                session_id,
+                turn_id,
+                action_id,
+                action,
+                constraints,
+                context,
+                registry,
+                started_at,
+            );
+            outcome
         }
-    }
+    };
     match result {
         Ok(mut result) => {
             let after = RepositoryEngine::snapshot(worktree).await?;
             result.affected_paths =
                 RepositoryEngine::validate_effect_delta(&before, &after, constraints)?;
+            // The evidence's outcome and effects are only knowable here: the
+            // exit status the provider returned, and the paths the repository
+            // actually shows as changed and PawGate accepted as within scope.
+            finalize_tool_evidence(
+                store,
+                session_id,
+                evidence,
+                purrcode_runtime_core::ExecutionOutcome::from_execution(
+                    result.exit_code,
+                    result.truncated,
+                    result.affected_paths.clone(),
+                ),
+            )?;
             store.append(
                 session_id,
                 &SessionEvent::ExecutionFinished {
@@ -4488,6 +4863,22 @@ async fn execute_and_record(
                     turn_id,
                 },
             )?;
+            // v1.3 PR D: after_write fires once the mutation (or commit) has
+            // executed and been recorded. A blocking hook that denies aborts
+            // the turn after the fact; one that needs approval pauses it.
+            //
+            // A post-execution suspension must NOT swallow the rest of the
+            // action's record: the write happened, so the log has to say what
+            // it did whether or not a hook is now waiting on a person.
+            let mut suspended = None;
+            if (is_mutation || is_commit)
+                && let Some(evaluator) = hook_evaluator
+            {
+                let trigger = purrcode_runtime_core::HookTrigger::AfterWrite;
+                suspended =
+                    dispatch_action_hooks(store, session_id, action_id, trigger, evaluator, false)
+                        .await?;
+            }
             store.append(
                 session_id,
                 &SessionEvent::ValidationRecorded {
@@ -4505,20 +4896,30 @@ async fn execute_and_record(
             )?;
             // v1.3 PR D: after_validation fires once the action's validation
             // is recorded. A blocking hook that denies aborts the turn.
-            if (is_mutation || is_commit)
+            if suspended.is_none()
+                && (is_mutation || is_commit)
                 && let Some(evaluator) = hook_evaluator
             {
                 let trigger = purrcode_runtime_core::HookTrigger::AfterValidation;
-                let outcome = evaluator.dispatch(store, session_id, trigger, 0).await?;
-                if outcome.stops_turn() {
-                    return Err(AgentError::InvalidModelTurn(hook_stop_reason(
-                        trigger, outcome,
-                    )));
-                }
+                suspended =
+                    dispatch_action_hooks(store, session_id, action_id, trigger, evaluator, false)
+                        .await?;
             }
-            Ok(result)
+            if let Some(flow) = suspended {
+                return Ok(flow);
+            }
+            Ok(ExecutionFlow::Completed(result))
         }
         Err(error) => {
+            finalize_tool_evidence(
+                store,
+                session_id,
+                evidence,
+                purrcode_runtime_core::ExecutionOutcome::Failed {
+                    reason: error.to_string(),
+                    exit_code: None,
+                },
+            )?;
             store.append(
                 session_id,
                 &SessionEvent::ValidationRecorded {
@@ -4530,6 +4931,94 @@ async fn execute_and_record(
             Err(error)
         }
     }
+}
+
+/// Persist an evidence draft with its real outcome.
+///
+/// Both the durable event and the `tool_evidence` projection are written here,
+/// so there is exactly one place where an evidence row becomes final and it is
+/// after the execution boundary.
+fn finalize_tool_evidence(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    evidence: Option<Box<purrcode_runtime_core::ExecutionEvidence>>,
+    outcome: purrcode_runtime_core::ExecutionOutcome,
+) -> Result<(), AgentError> {
+    let Some(mut evidence) = evidence else {
+        return Ok(());
+    };
+    evidence.outcome = outcome;
+    evidence.finished_at = Utc::now();
+    let _ = store.record_tool_evidence(&evidence);
+    store.append(
+        session_id,
+        &SessionEvent::ToolEvidenceRecorded {
+            evidence: evidence.clone(),
+        },
+    )?;
+    Ok(())
+}
+
+/// An evidence draft for an action that executed through the native/legacy
+/// path (`RepositoryRead`, `WriteFile`, `DeleteFile`, `Command`).
+///
+/// Native registry tools convert back to legacy actions in `normalize_action`,
+/// so without this they executed with no `ExecutionEvidence` at all — and the
+/// architecture's "one per authorized invocation, for EVERY provider" was true
+/// only for MCP and skills. The descriptor is looked up from the registry by
+/// the action's canonical native tool id, so the recorded scopes are the ones
+/// the tool was actually admitted with.
+#[allow(clippy::too_many_arguments)]
+fn native_evidence_draft(
+    session_id: SessionId,
+    turn_id: Option<TurnId>,
+    action_id: ActionId,
+    action: &ProposedAction,
+    constraints: &purrcode_runtime_core::ActionConstraints,
+    context: &ToolExecutionContext,
+    registry: Option<&CapabilityRegistry>,
+    started_at: chrono::DateTime<Utc>,
+) -> Option<Box<purrcode_runtime_core::ExecutionEvidence>> {
+    let tool_id = purrcode_runtime_core::native_tools::native_tool_id_for(action)?;
+    let descriptor = registry.and_then(|registry| registry.tool(&tool_id));
+    Some(Box::new(purrcode_runtime_core::ExecutionEvidence {
+        action_id,
+        session_id,
+        turn_id,
+        provider: purrcode_runtime_core::ToolProvider::Native,
+        descriptor_digest: descriptor
+            .map(|descriptor| descriptor.descriptor_digest().to_owned())
+            .unwrap_or_default(),
+        decision: purrcode_runtime_core::JudgmentDecision::AllowWithConstraints(
+            constraints.clone(),
+        ),
+        // The authority is resolved by the caller that authorized the action;
+        // a native action reaching here was authorized by whoever the
+        // execution context names.
+        approved_by: match &context.initiator {
+            purrcode_runtime_core::EvidenceInitiator::Human => {
+                purrcode_runtime_core::ApprovalAuthority::Human
+            }
+            _ => purrcode_runtime_core::ApprovalAuthority::DeterministicPolicy,
+        },
+        effective_network_scope: descriptor
+            .map(|descriptor| descriptor.network_scope().clone())
+            .unwrap_or(purrcode_runtime_core::NetworkScope::None),
+        effective_filesystem_scope: descriptor
+            .map(|descriptor| descriptor.filesystem_scope().clone())
+            .unwrap_or(purrcode_runtime_core::FilesystemScope::WorktreeRead),
+        constraints: constraints.clone(),
+        initiator: context.initiator.clone(),
+        outcome: purrcode_runtime_core::ExecutionOutcome::Failed {
+            reason: "execution did not complete".into(),
+            exit_code: None,
+        },
+        structured_output: None,
+        redaction_class: purrcode_runtime_core::RedactionClass::Public,
+        tool_id,
+        started_at,
+        finished_at: started_at,
+    }))
 }
 
 #[derive(Clone, Debug)]

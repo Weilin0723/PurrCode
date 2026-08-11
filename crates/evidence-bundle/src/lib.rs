@@ -451,6 +451,8 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::CompletionRepairRecorded { .. } => "completion_repair_recorded",
         SessionEvent::ToolEvidenceRecorded { .. } => "tool_evidence_recorded",
         SessionEvent::HookTriggered { .. } => "hook_triggered",
+        SessionEvent::ActionDeferredForHook { .. } => "action_deferred_for_hook",
+        SessionEvent::ActionResumedAfterHook { .. } => "action_resumed_after_hook",
     }
 }
 

@@ -269,6 +269,63 @@ impl ProjectGraph {
         Ok(result)
     }
 
+    /// Symbol nodes whose name matches `name`, with the files they are
+    /// `DefinedIn`.
+    ///
+    /// Symbol node keys are `path#symbol`, so a name lookup is an exact match
+    /// on the part after `#`. This is the graph-first half of `#symbol`
+    /// resolution: a definition the graph already knows is a better answer than
+    /// a `git grep` that returns every mention of the word, and the grep stays
+    /// as the fallback for symbols no producer has recorded yet.
+    pub fn symbol_definitions(
+        &self,
+        project: &Path,
+        name: &str,
+        limit: usize,
+    ) -> Result<Vec<SymbolDefinition>, GraphError> {
+        let suffix = format!("#{name}");
+        let mut stmt = self.conn.prepare(
+            "SELECT key, label, attributes FROM graph_nodes
+             WHERE project = ?1 AND kind = 'symbol' AND key LIKE ?2 ESCAPE '\\'
+             ORDER BY key
+             LIMIT ?3",
+        )?;
+        let pattern = format!("%{}", escape_like(&suffix));
+        let rows = stmt.query_map(
+            params![project.to_string_lossy(), pattern, limit as i64],
+            |row| {
+                let key: String = row.get(0)?;
+                let label: String = row.get(1)?;
+                let attributes: serde_json::Value =
+                    serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or_default();
+                Ok((key, label, attributes))
+            },
+        )?;
+        let mut definitions = Vec::new();
+        for row in rows {
+            let (key, label, attributes) = row?;
+            // Defensive: `LIKE '%#name'` also matches `other#prefix_name` in no
+            // sane keying, but an exact suffix check costs nothing and keeps
+            // the contract "the symbol is called exactly this".
+            let Some((path, symbol)) = key.rsplit_once('#') else {
+                continue;
+            };
+            if symbol != name {
+                continue;
+            }
+            definitions.push(SymbolDefinition {
+                path: PathBuf::from(path),
+                symbol: symbol.to_owned(),
+                label,
+                line: attributes
+                    .get("line")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|line| line as u32),
+            });
+        }
+        Ok(definitions)
+    }
+
     /// Delete a node by id and cascade its edges (foreign_keys ON).
     pub fn delete_node(&mut self, project: &Path, node_id: NodeId) -> Result<(), GraphError> {
         self.conn.execute(
@@ -277,6 +334,24 @@ impl ProjectGraph {
         )?;
         Ok(())
     }
+}
+
+/// Where the graph says a symbol is defined.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolDefinition {
+    pub path: PathBuf,
+    pub symbol: String,
+    pub label: String,
+    pub line: Option<u32>,
+}
+
+/// Escape SQL `LIKE` wildcards so a symbol named `foo_bar` does not match
+/// `fooXbar`.
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn node_kind_name(kind: &GraphNodeKind) -> &'static str {
@@ -494,6 +569,59 @@ mod tests {
         let hits = graph.neighbours(project, &seed, 5, 10).unwrap();
         assert_eq!(hits.len(), 1, "a cycle visits each node once");
         assert_eq!(hits[0].0.key, "b.rs");
+    }
+
+    #[test]
+    fn symbol_lookup_returns_definitions_and_never_a_near_miss() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut graph = graph_with_schema(&temporary.path().join("graph.db"));
+        let project = Path::new("/repo");
+        for key in [
+            "src/auth.rs#AuthMiddleware",
+            "src/mw.rs#AuthMiddleware",
+            // A different symbol whose name merely ENDS with the query. The
+            // `LIKE '%#name'` prefilter cannot distinguish these, so the exact
+            // suffix check has to — otherwise `#Middleware` would answer with
+            // `AuthMiddleware` and send retrieval to the wrong definition.
+            "src/other.rs#NotAuthMiddleware",
+        ] {
+            let mut node = node(project, GraphNodeKind::Symbol, key);
+            node.attributes = serde_json::json!({ "line": 42 });
+            graph.upsert_node(&node).unwrap();
+        }
+        let hits = graph
+            .symbol_definitions(project, "AuthMiddleware", 8)
+            .unwrap();
+        let paths: Vec<String> = hits
+            .iter()
+            .map(|hit| hit.path.display().to_string())
+            .collect();
+        assert_eq!(paths, vec!["src/auth.rs", "src/mw.rs"]);
+        assert_eq!(hits[0].line, Some(42));
+        assert!(
+            graph
+                .symbol_definitions(project, "Nothing", 8)
+                .unwrap()
+                .is_empty(),
+            "an unknown symbol falls through to the caller's git grep"
+        );
+    }
+
+    #[test]
+    fn symbol_lookup_does_not_treat_underscores_as_wildcards() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut graph = graph_with_schema(&temporary.path().join("graph.db"));
+        let project = Path::new("/repo");
+        graph
+            .upsert_node(&node(project, GraphNodeKind::Symbol, "src/a.rs#readXfile"))
+            .unwrap();
+        assert!(
+            graph
+                .symbol_definitions(project, "read_file", 8)
+                .unwrap()
+                .is_empty(),
+            "`_` is a SQL LIKE wildcard and must be escaped"
+        );
     }
 
     #[test]

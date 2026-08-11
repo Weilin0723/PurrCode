@@ -337,6 +337,17 @@ impl CapabilityRegistry {
         self.tools.insert(id.clone(), descriptor.forbid());
     }
 
+    /// Record a diagnostic for a provider that never produced a proposal.
+    ///
+    /// A server the host refuses to run (no isolation backend, unreachable)
+    /// contributes no descriptors, so there is nothing to `forbid_tool`. Without
+    /// this seam its absence is indistinguishable from "not configured", and the
+    /// diagnostics endpoint — the surface that is supposed to explain why a
+    /// configured capability is missing — says nothing at all.
+    pub fn record_diagnostic(&mut self, diagnostic: AdmissionDiagnostic) {
+        self.diagnostics.push(diagnostic);
+    }
+
     /// Admit an agent profile (restricted to its ceiling) into the registry.
     pub fn admit_agent(
         &mut self,

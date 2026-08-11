@@ -127,6 +127,7 @@ mod commands;
 mod file_watcher;
 mod hooks;
 mod project_context;
+mod project_graph_producers;
 
 use crate::commands::{CommandExecution, builtin_commands, command_for};
 use file_watcher::run_worktree_watcher;
@@ -5123,9 +5124,43 @@ async fn run_agent_operation(
         .worktree
         .clone()
         .unwrap_or_else(|| repository.clone());
-    let memory_entries = store.memory(&repository, None).unwrap_or_default();
-    let mut assembled =
-        project_context::assemble(&reference_root, &request_text, &memory_entries).await;
+    // ── The active profile's ContextPolicy (v1.3 §8 PR4) ──────────────
+    // A profile that declares `project_memory: false`, `graph_expansion: false`
+    // and `references: ["@diff"]` is describing the context it wants; until
+    // these were read, all three were config that did nothing. `auto: false`
+    // means "attach only what I named" — no repository instruction files, no
+    // memory, no graph expansion.
+    let context_policy = profile
+        .as_ref()
+        .map(|profile| profile.context().clone())
+        .unwrap_or_default();
+    let auto_context = context_policy.auto.unwrap_or(true);
+    let use_project_memory = auto_context && context_policy.project_memory.unwrap_or(true);
+    let use_graph_expansion = auto_context && context_policy.graph_expansion.unwrap_or(true);
+    let memory_entries = if use_project_memory {
+        store.memory(&repository, None).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    // `#symbol` consults the project graph before falling back to `git grep`.
+    // Graph identity is keyed on the SOURCE repository even though content is
+    // read from the worktree.
+    let symbol_lookup = project_context::SymbolLookup {
+        database: state.database.as_path(),
+        project: repository.as_path(),
+    };
+    let assembly_policy = project_context::AssemblyPolicy {
+        project_instructions: auto_context,
+        standing_references: context_policy.references.clone(),
+    };
+    let mut assembled = project_context::assemble(
+        &reference_root,
+        &request_text,
+        &memory_entries,
+        &assembly_policy,
+        Some(&symbol_lookup),
+    )
+    .await;
     // A reference the user typed and the daemon could not attach is recorded in
     // the conversation, not swallowed. Silence here is what let the composer
     // show a chip for context the model never received.
@@ -5180,7 +5215,17 @@ async fn run_agent_operation(
     // "User Intent → CapabilityRegistry.resolve() → Agent/Skill/Command/Tool"
     // a real path rather than an architecture claim.
     let registry_cache = load_tool_registry(state, &repository).await;
-    let capability = infer_capability(&objective);
+    // What THIS turn is about. A follow-up ("now run a security review on
+    // src/auth.rs") is a different intent from the session's opening objective
+    // ("implement login UI"), and resolving capabilities, skills and graph
+    // seeds against the objective made every follow-up retrieve context for
+    // work that was already finished.
+    let current_turn_intent = if request_text.trim().is_empty() {
+        objective.clone()
+    } else {
+        request_text.clone()
+    };
+    let capability = infer_capability(&current_turn_intent);
     let registry_choice = match purrcode_runtime_core::CapabilityId::parse(&capability) {
         Ok(capability_id) => {
             let providers = registry_cache.registry.resolve(&capability_id).to_vec();
@@ -5271,13 +5316,21 @@ async fn run_agent_operation(
     // nothing). The `graph_expansion` profile flag gates this when the request
     // form carries it; the restricted descriptor used here defaults to on so
     // the producer/consumer exercise the real path.
-    expand_graph_context(
-        state,
-        &repository,
-        session.worktree.as_deref(),
-        &objective,
-        &mut assembled,
-    );
+    if use_graph_expansion {
+        expand_graph_context(
+            state,
+            &repository,
+            session.worktree.as_deref(),
+            &current_turn_intent,
+            &mut assembled,
+        );
+    }
+    // The profile's input ceiling is a CLAMP, never a widening: `min()` against
+    // whatever the session's budget already allows.
+    let controls = match context_policy.maximum_input_tokens {
+        Some(profile_limit) => clamp_input_tokens(controls, profile_limit),
+        None => controls,
+    };
     let agent = NativeAgent::new(role_providers, policy)
         .with_controls(controls)
         .with_usage_records(existing_usage)
@@ -5355,93 +5408,42 @@ async fn run_agent_operation(
             }
         }
     }
-    // v1.3 PR E: record which files this session modified into the project
-    // intelligence graph, so later sessions can retrieve related paths by
-    // graph traversal rather than lexical match alone.
-    let _ = record_session_graph_edges(&store, id, &repository, &state.database);
+    // v1.3 PR E: teach the project intelligence graph what this session
+    // actually did — modified files (from succeeded evidence, not proposals),
+    // what changed together, the symbols and imports of what changed, the
+    // validations that failed, and the memory that relates to it.
+    let graph_memory = store.memory(&repository, None).unwrap_or_default();
+    let worktree_for_graph = store.load(id).ok().and_then(|session| session.worktree);
+    let _ = crate::project_graph_producers::record_session_graph(
+        &store,
+        id,
+        &repository,
+        worktree_for_graph.as_deref(),
+        &state.database,
+        &graph_memory,
+    );
     Ok(())
 }
 
-/// v1.3 PR E: project-intelligence graph producer. Scans the session event log
-/// for executed file writes/deletes and records a `ModifiedBy` edge from the
-/// session node to each affected file node. Best-effort: a graph write failure
-/// never fails the session.
-fn record_session_graph_edges(
-    store: &SessionStore,
-    id: SessionId,
-    repository: &std::path::Path,
-    database: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let Ok(events) = store.events(id) else {
-        return Ok(());
-    };
-    let Ok(mut graph) = purrcode_project_graph::ProjectGraph::open(database) else {
-        return Ok(());
-    };
-    let session_key = format!("session:{}", id.0);
-    let session_node = purrcode_project_graph::GraphNode {
-        id: purrcode_project_graph::NodeId(0),
-        project: repository.to_path_buf(),
-        kind: purrcode_runtime_core::GraphNodeKind::Session,
-        key: session_key,
-        label: id.0.to_string(),
-        attributes: serde_json::json!({}),
-        sensitive: true,
-        observed_at: chrono::Utc::now(),
-    };
-    let Ok(session_id) = graph.upsert_node(&session_node) else {
-        return Ok(());
-    };
-    // Collect the repository-relative paths every proposed write/delete touches,
-    // keyed by action_id so each affected path is recorded once per action.
-    for event in &events {
-        let SessionEvent::ActionProposed { action, .. } = event else {
-            continue;
-        };
-        let paths = affected_paths_of(action);
-        for path in paths {
-            if path.is_absolute() || path.as_os_str().is_empty() {
-                continue;
-            }
-            let file_node = purrcode_project_graph::GraphNode {
-                id: purrcode_project_graph::NodeId(0),
-                project: repository.to_path_buf(),
-                kind: purrcode_runtime_core::GraphNodeKind::File,
-                key: path.to_string_lossy().into_owned(),
-                label: path.to_string_lossy().into_owned(),
-                attributes: serde_json::json!({}),
-                sensitive: false,
-                observed_at: chrono::Utc::now(),
-            };
-            let Ok(file_id) = graph.upsert_node(&file_node) else {
-                continue;
-            };
-            let _ = graph.insert_edge(
-                repository,
-                &purrcode_project_graph::GraphEdge {
-                    source: session_id.clone(),
-                    target: file_id,
-                    kind: purrcode_runtime_core::GraphEdgeKind::ModifiedBy,
-                    confidence_millis: 1000,
-                    edge_source: purrcode_project_graph::EdgeSource::EventLog,
-                    evidence: format!("session {}", id.0),
-                    observed_at: chrono::Utc::now(),
-                },
-            );
-        }
-    }
-    Ok(())
-}
-
-/// The repository-relative paths a proposed action affects (write/delete).
-fn affected_paths_of(action: &ProposedAction) -> Vec<std::path::PathBuf> {
-    match action {
-        ProposedAction::WriteFile(write) => vec![write.path.clone()],
-        ProposedAction::DeleteFile(delete) => vec![delete.path.clone()],
-        ProposedAction::RepositoryRead(_)
-        | ProposedAction::Command(_)
-        | ProposedAction::ExternalTool(_)
-        | ProposedAction::Tool(_) => Vec::new(),
+/// Lower a session's input-token budget to the active profile's ceiling.
+///
+/// A profile may only make the budget SMALLER. Switching the profile to
+/// `Custom` with a larger number would be a project file granting itself more
+/// context than the user's own budget allows.
+fn clamp_input_tokens(
+    controls: purrcode_runtime_core::adaptation::SessionControls,
+    profile_limit: u64,
+) -> purrcode_runtime_core::adaptation::SessionControls {
+    let mut budget = controls.effective_budget();
+    let clamped = budget
+        .maximum_input_tokens
+        .map(|existing| existing.min(profile_limit))
+        .unwrap_or(profile_limit);
+    budget.maximum_input_tokens = Some(clamped);
+    purrcode_runtime_core::adaptation::SessionControls {
+        budget_profile: purrcode_runtime_core::adaptation::BudgetProfileKind::Custom,
+        custom_budget: Some(budget),
+        ..controls
     }
 }
 
@@ -5578,6 +5580,20 @@ async fn run_background_tier2(state: &AppState, id: SessionId) {
         Ok(session) => session,
         Err(_) => return,
     };
+    // Index the repository's own structure into the project graph.
+    //
+    // Without a repository-wide pass the graph only knows the files sessions
+    // happened to touch, so graph-first `#symbol` would fall back to `git grep`
+    // for every symbol the agent has not already edited — which is nearly all
+    // of them, and would make "the graph answers first" true only in theory.
+    // Bounded by file count and file size, and off the request path.
+    if let Some(repository) = session.repository.clone() {
+        let database = state.database.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            crate::project_graph_producers::index_repository_structure(&repository, &database)
+        })
+        .await;
+    }
     let Some(worktree) = session.worktree else {
         return;
     };
@@ -5815,8 +5831,15 @@ fn panic_payload_message(panic: Box<dyn std::any::Any + Send>) -> String {
         .unwrap_or_else(|| "non-string panic payload".into())
 }
 
-fn infer_capability(objective: &str) -> String {
-    let normalized = objective.to_ascii_lowercase();
+/// The capability id a turn is asking for, from THIS TURN's intent.
+///
+/// The parameter is deliberately named `intent`, not `objective`: passing the
+/// session's opening objective meant a follow-up ("now run a security review on
+/// src/auth.rs") kept resolving the capability of work that was already
+/// finished, and the skill/agent the registry picked was the one for the first
+/// message of the session.
+fn infer_capability(intent: &str) -> String {
+    let normalized = intent.to_ascii_lowercase();
     for capability in [
         "terraform-schema-inspection",
         "terraform",
@@ -9900,6 +9923,10 @@ async fn resolve_references(
     // to the source checkout. An unknown or worktree-less session falls back
     // rather than failing — a draft is still previewable before the session has
     // a worktree.
+    // Graph identity stays on the SOURCE repository even when content is read
+    // from a worktree, so the symbol lookup is keyed on the path the client
+    // sent, not on `root`.
+    let project = repository.clone();
     let mut root = repository;
     if let Some(session_id) = body.session_id.as_deref()
         && let Ok(session_id) = parse_session_id(session_id)
@@ -9910,11 +9937,16 @@ async fn resolve_references(
         root = canonical;
     }
     let repository = root;
+    let symbols = project_context::SymbolLookup {
+        database: state.database.as_path(),
+        project: project.as_path(),
+    };
     let parsed = resolve_refs(&body.text).unwrap_or_default();
     let mut views = Vec::new();
     for parsed in parsed {
         let ParsedReference { reference, .. } = parsed;
-        let (resolved, preview, diagnostics) = resolve_one_reference(&repository, &reference).await;
+        let (resolved, preview, diagnostics) =
+            resolve_one_reference(&repository, &reference, Some(&symbols)).await;
         views.push(ResolvedReferenceView {
             display: reference.display(),
             resolved,
@@ -9934,8 +9966,9 @@ async fn resolve_references(
 async fn resolve_one_reference(
     repository: &std::path::Path,
     reference: &Reference,
+    symbols: Option<&project_context::SymbolLookup<'_>>,
 ) -> (bool, Option<String>, Option<String>) {
-    project_context::preview_reference(repository, reference).await
+    project_context::preview_reference(repository, reference, symbols).await
 }
 
 /// The canonical set of built-in composer commands. This is the daemon's
@@ -10235,9 +10268,24 @@ async fn load_tool_registry(state: &AppState, repository: &Path) -> Arc<ToolRegi
                         }
                     }
                 }
-                Err(_) => {
+                Err(error) => {
                     // Leave the server's tools absent; the runtime handles
-                    // a missing tool as a clear "not admitted" error.
+                    // a missing tool as a clear "not admitted" error. The
+                    // reason is still recorded, because "this server is
+                    // unavailable and here is why" and "you never configured
+                    // it" must not look the same in the diagnostics endpoint —
+                    // that is exactly the case where a host with no isolation
+                    // backend withholds every stdio tool.
+                    registry.record_diagnostic(purrcode_runtime_core::AdmissionDiagnostic {
+                        source_path: None,
+                        subject: format!("mcp:{}", server.id),
+                        severity: purrcode_runtime_core::DiagnosticSeverity::Rejected,
+                        message: format!(
+                            "MCP server `{}` contributed no tools: {error}",
+                            server.id
+                        ),
+                        restricted_fields: Vec::new(),
+                    });
                 }
             }
         }
@@ -10512,29 +10560,28 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
         action_id: ActionId,
         invocation: &purrcode_runtime_core::ToolInvocation,
         constraints: &purrcode_runtime_core::ActionConstraints,
+        context: &purrcode_agent_runtime::ToolExecutionContext,
     ) -> Result<purrcode_agent_runtime::ToolExecutionOutcome, purrcode_agent_runtime::AgentError>
     {
         let started_at = Utc::now();
         let provider = invocation.tool_id.provider();
         let tool_id = invocation.tool_id.as_str();
-        let descriptor = self.registry.tool(&invocation.tool_id);
         // v1.3 PR B: the turn loop authorized this invocation binding the
         // descriptor digest (digest_v3). Consume the authorization here, BEFORE
         // dispatch, so the at-most-once guarantee holds exactly like the legacy
         // ToolRuntime::execute path — a replayed action_id can never execute
         // twice, and recovery/audit sees a consumed row.
-        let descriptor_digest = descriptor.map(|d| d.descriptor_digest().to_owned());
-        let proposed = purrcode_runtime_core::ProposedAction::Tool(invocation.clone());
-        let expected_digest = match &descriptor_digest {
-            Some(digest) => proposed.digest_v3(constraints, digest).map_err(|error| {
-                purrcode_agent_runtime::AgentError::InvalidModelTurn(error.to_string())
-            })?,
-            None => {
-                return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                    format!("tool `{tool_id}` has no admitted descriptor; cannot authorize"),
-                ));
-            }
+        let Some(descriptor) = self.registry.tool(&invocation.tool_id) else {
+            return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
+                format!("tool `{tool_id}` has no admitted descriptor; cannot authorize"),
+            ));
         };
+        let proposed = purrcode_runtime_core::ProposedAction::Tool(invocation.clone());
+        let expected_digest = proposed
+            .digest_v3(constraints, descriptor.descriptor_digest())
+            .map_err(|error| {
+                purrcode_agent_runtime::AgentError::InvalidModelTurn(error.to_string())
+            })?;
         let consumed = store
             .consume_authorization(action_id, &expected_digest)
             .map_err(|error| {
@@ -10547,24 +10594,75 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
                 "tool authorization constraints mismatch".into(),
             ));
         }
+        // From here on the invocation IS authorized, so it gets evidence
+        // whatever happens to it — including a dispatch that fails. The
+        // architecture's record is "one per authorized invocation"; returning
+        // early on an MCP transport error with no evidence meant the one class
+        // of event an operator most wants to see (an authorized external tool
+        // that tried to run and failed) was the one class that left no trace.
+        let evidence_base =
+            |outcome: purrcode_runtime_core::ExecutionOutcome,
+             structured_output: Option<serde_json::Value>| {
+                Box::new(purrcode_runtime_core::ExecutionEvidence {
+                    action_id,
+                    session_id,
+                    turn_id,
+                    tool_id: invocation.tool_id.clone(),
+                    provider,
+                    descriptor_digest: descriptor.descriptor_digest().to_owned(),
+                    decision: purrcode_runtime_core::JudgmentDecision::AllowWithConstraints(
+                        constraints.clone(),
+                    ),
+                    // The REAL authority, read back from the authorization that was
+                    // just consumed. Hard-coding `DeterministicPolicy` made every
+                    // human-approved AlwaysAsk tool claim a policy had allowed it.
+                    approved_by: consumed.approved_by.clone(),
+                    constraints: constraints.clone(),
+                    effective_network_scope: descriptor.network_scope().clone(),
+                    effective_filesystem_scope: descriptor.filesystem_scope().clone(),
+                    // WHO asked, from the caller. A hook, a person and the model are
+                    // three different answers and the executor cannot guess.
+                    initiator: context.initiator.clone(),
+                    outcome,
+                    structured_output,
+                    // The redaction class travels WITH the evidence rather than
+                    // being inferred from an event-type table downstream: the
+                    // bundle exporter must be able to decide what to strip from a
+                    // structured payload it has never seen a shape for.
+                    redaction_class: redaction_class_for(descriptor, false),
+                    started_at,
+                    finished_at: Utc::now(),
+                })
+            };
+        macro_rules! fail_dispatch {
+            ($reason:expr) => {{
+                let reason: String = $reason;
+                let evidence = evidence_base(
+                    purrcode_runtime_core::ExecutionOutcome::Failed {
+                        reason: reason.clone(),
+                        exit_code: None,
+                    },
+                    None,
+                );
+                let _ = store.record_tool_evidence(&evidence);
+                let _ = store.append(session_id, &SessionEvent::ToolEvidenceRecorded { evidence });
+                return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(reason));
+            }};
+        }
         // MCP tools dispatch to the isolated MCP host. The authorization is
         // already consumed above, so the raw `call_authorized` path applies.
         let mut structured_candidate: Option<serde_json::Value> = None;
         let (stdout, stderr, exit_code) = match provider {
             purrcode_runtime_core::ToolProvider::Mcp => {
-                let (server_id, tool_name) = invocation.tool_id.mcp_parts().ok_or_else(|| {
-                    purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
-                        "malformed mcp tool id `{tool_id}`"
-                    ))
-                })?;
+                let Some((server_id, tool_name)) = invocation.tool_id.mcp_parts() else {
+                    fail_dispatch!(format!("malformed mcp tool id `{tool_id}`"));
+                };
                 let config = AppConfig::load(&self.state.app_config)
                     .ok()
                     .and_then(|config| mcp_section(&config).ok())
                     .and_then(|section| section.servers.get(server_id).cloned());
                 let Some(server) = config else {
-                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                        format!("mcp server `{server_id}` is not configured"),
-                    ));
+                    fail_dispatch!(format!("mcp server `{server_id}` is not configured"));
                 };
                 match McpHost::call_authorized(&server, tool_name, &invocation.arguments).await {
                     Ok(result) => {
@@ -10582,9 +10680,7 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
                         (stdout, result.stderr, Some(0))
                     }
                     Err(error) => {
-                        return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                            format!("mcp tool `{tool_id}` failed: {error}"),
-                        ));
+                        fail_dispatch!(format!("mcp tool `{tool_id}` failed: {error}"));
                     }
                 }
             }
@@ -10597,38 +10693,37 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
                 // is bounded by the same sandbox as any other command.
                 let rest = tool_id.strip_prefix("skill:").unwrap_or_default();
                 let Some((skill_id, entrypoint)) = rest.split_once('/') else {
-                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                        format!("malformed skill tool id `{tool_id}`"),
-                    ));
+                    fail_dispatch!(format!("malformed skill tool id `{tool_id}`"));
                 };
                 let Some(skill) = installed_skill_descriptors(&self.state)
                     .into_iter()
                     .find(|skill| skill.descriptor.skill_id == skill_id)
                 else {
-                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                        format!("skill `{skill_id}` is not installed or is disabled"),
+                    fail_dispatch!(format!(
+                        "skill `{skill_id}` is not installed or is disabled"
                     ));
                 };
                 let Some(relative) = skill.descriptor.entrypoints.get(entrypoint) else {
-                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                        format!("skill `{skill_id}` declares no entrypoint `{entrypoint}`"),
+                    fail_dispatch!(format!(
+                        "skill `{skill_id}` declares no entrypoint `{entrypoint}`"
                     ));
                 };
-                let canonical_root = skill.root.canonicalize().map_err(|error| {
-                    purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                let canonical_root = match skill.root.canonicalize() {
+                    Ok(root) => root,
+                    Err(error) => fail_dispatch!(format!(
                         "skill root for `{skill_id}` is unavailable: {error}"
-                    ))
-                })?;
-                let program = canonical_root
+                    )),
+                };
+                let Some(program) = canonical_root
                     .join(relative)
                     .canonicalize()
                     .ok()
                     .filter(|path| path.starts_with(&canonical_root))
-                    .ok_or_else(|| {
-                        purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
-                            "skill entrypoint `{entrypoint}` escapes the skill root"
-                        ))
-                    })?;
+                else {
+                    fail_dispatch!(format!(
+                        "skill entrypoint `{entrypoint}` escapes the skill root"
+                    ));
+                };
                 let arguments: Vec<String> = invocation
                     .arguments
                     .get("arguments")
@@ -10648,13 +10743,17 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
                         environment: BTreeMap::new(),
                     },
                 );
-                let result = purrcode_claw::ToolRuntime::execute_authorized(&action, constraints)
-                    .await
-                    .map_err(|error| {
-                        purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
-                            "skill tool `{tool_id}` failed: {error}"
-                        ))
-                    })?;
+                let result = match purrcode_claw::ToolRuntime::execute_authorized(
+                    &action,
+                    constraints,
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        fail_dispatch!(format!("skill tool `{tool_id}` failed: {error}"))
+                    }
+                };
                 let stdout = String::from_utf8_lossy(&result.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&result.stderr).to_string();
                 structured_candidate = serde_json::from_str::<serde_json::Value>(&stdout).ok();
@@ -10666,19 +10765,17 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
                 // legacy action in normalize_action). It runs a whitelisted
                 // `git add` + `git commit` inside the session worktree.
                 if invocation.tool_id.as_str() != "native:commit" {
-                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                        format!("native tool `{tool_id}` must flow through the legacy action path"),
+                    fail_dispatch!(format!(
+                        "native tool `{tool_id}` must flow through the legacy action path"
                     ));
                 }
-                let message = invocation
+                let Some(message) = invocation
                     .arguments
                     .get("message")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| {
-                        purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                            "native:commit requires a `message` argument".into(),
-                        )
-                    })?;
+                else {
+                    fail_dispatch!("native:commit requires a `message` argument".to_string());
+                };
                 let paths: Vec<String> = invocation
                     .arguments
                     .get("paths")
@@ -10699,40 +10796,34 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
                 } else {
                     paths
                 };
-                let add_status = tokio::process::Command::new("git")
+                let add_status = match tokio::process::Command::new("git")
                     .arg("add")
                     .args(&add_paths)
                     .current_dir(worktree)
                     .status()
                     .await
-                    .map_err(|error| {
-                        purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
-                            "git add failed: {error}"
-                        ))
-                    })?;
+                {
+                    Ok(status) => status,
+                    Err(error) => fail_dispatch!(format!("git add failed: {error}")),
+                };
                 if !add_status.success() {
-                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                        "git add failed; commit aborted".into(),
-                    ));
+                    fail_dispatch!("git add failed; commit aborted".to_string());
                 }
-                let commit_output = tokio::process::Command::new("git")
+                let commit_output = match tokio::process::Command::new("git")
                     .arg("commit")
                     .arg("-m")
                     .arg(message)
                     .current_dir(worktree)
                     .output()
                     .await
-                    .map_err(|error| {
-                        purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
-                            "git commit failed: {error}"
-                        ))
-                    })?;
+                {
+                    Ok(output) => output,
+                    Err(error) => fail_dispatch!(format!("git commit failed: {error}")),
+                };
                 if !commit_output.status.success() {
-                    return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
-                        format!(
-                            "git commit failed: {}",
-                            String::from_utf8_lossy(&commit_output.stderr)
-                        ),
+                    fail_dispatch!(format!(
+                        "git commit failed: {}",
+                        String::from_utf8_lossy(&commit_output.stderr)
                     ));
                 }
                 let stdout = String::from_utf8_lossy(&commit_output.stdout).to_string();
@@ -10749,50 +10840,20 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
             Some(message) => format!("{stderr}\n{message}"),
             None => stderr,
         };
-        // Durable tool evidence (v1.3 PR B). The descriptor digest is bound
-        // into the authorization digest, so this records exactly what was
-        // judged. tool_evidence is a projection; the event log stays the audit
-        // source of truth.
-        if let Some(descriptor) = descriptor {
-            let evidence = purrcode_runtime_core::ExecutionEvidence {
-                action_id,
-                session_id,
-                turn_id,
-                tool_id: invocation.tool_id.clone(),
-                provider,
-                descriptor_digest: descriptor.descriptor_digest().to_owned(),
-                decision: purrcode_runtime_core::JudgmentDecision::AllowWithConstraints(
-                    constraints.clone(),
-                ),
-                approved_by: purrcode_runtime_core::ApprovalAuthority::DeterministicPolicy,
-                constraints: constraints.clone(),
-                effective_network_scope: descriptor.network_scope().clone(),
-                effective_filesystem_scope: descriptor.filesystem_scope().clone(),
-                initiator: purrcode_runtime_core::EvidenceInitiator::Model {
-                    turn_id: turn_id.unwrap_or_default(),
-                },
-                outcome: purrcode_runtime_core::ExecutionOutcome::Succeeded {
-                    exit_code,
-                    truncated: false,
-                    affected_paths: Vec::new(),
-                },
-                structured_output: structured_output.clone(),
-                // The redaction class travels WITH the evidence rather than
-                // being inferred from an event-type table downstream: the
-                // bundle exporter must be able to decide what to strip from a
-                // structured payload it has never seen a shape for.
-                redaction_class: redaction_class_for(descriptor, structured_output.is_some()),
-                started_at,
-                finished_at: Utc::now(),
-            };
-            store.record_tool_evidence(&evidence)?;
-            store.append(
-                session_id,
-                &SessionEvent::ToolEvidenceRecorded {
-                    evidence: Box::new(evidence),
-                },
-            )?;
-        }
+        // Durable tool evidence (v1.3 PR B), handed BACK rather than written
+        // here. The descriptor digest is bound into the authorization digest,
+        // so this records exactly what was judged — but the outcome and the
+        // affected paths are not known yet. Writing `Succeeded { affected_paths:
+        // [] }` at this point is what made a write-capable skill's evidence say
+        // it changed nothing. The caller finalizes it after the effect delta.
+        let mut evidence = evidence_base(
+            purrcode_runtime_core::ExecutionOutcome::Failed {
+                reason: "execution did not complete".into(),
+                exit_code: None,
+            },
+            structured_output.clone(),
+        );
+        evidence.redaction_class = redaction_class_for(descriptor, structured_output.is_some());
         Ok(purrcode_agent_runtime::ToolExecutionOutcome {
             stdout,
             stderr,
@@ -10800,6 +10861,7 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
             truncated: false,
             affected_paths: Vec::new(),
             structured_output,
+            evidence: Some(evidence),
         })
     }
 }
@@ -10823,6 +10885,7 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
         session_id: SessionId,
         trigger: purrcode_runtime_core::HookTrigger,
         depth: u8,
+        completed: &BTreeSet<String>,
     ) -> Result<purrcode_agent_runtime::HookOutcome, purrcode_agent_runtime::AgentError> {
         // Hooks act on the session worktree (the tree the agent is changing),
         // falling back to the source repository when the session has no
@@ -10851,81 +10914,81 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
             None => Policy::default(),
         };
         let registry_cache = load_tool_registry(&self.state, &self.repository).await;
-        let evaluate_closure = {
+        // Resolution happens ONCE, before anything is judged: a `HookAction`
+        // becomes a concrete `ToolInvocation` or it is denied with a reason.
+        // Judging one shape and executing another is what let a capability hook
+        // be recorded as "succeeded" without ever running.
+        let resolve_closure = {
             let registry = registry_cache.registry.clone();
             let worktree = working_directory.clone();
-            let policy = policy.clone();
-            move |hook: &purrcode_runtime_core::HookDescriptor| {
-                // A hook can only invoke a REGISTERED tool; the descriptor is
-                // looked up from the repository registry and judged provider-blind
-                // against the worktree (the tree the hook will act on).
-                let invocation = match &hook.action {
+            move |hook: &purrcode_runtime_core::HookDescriptor| -> crate::hooks::ResolvedHookAction {
+                let (tool_id, arguments) = match &hook.action {
                     purrcode_runtime_core::HookAction::Tool { tool_id, arguments } => {
-                        purrcode_runtime_core::ToolInvocation {
-                            tool_id: tool_id.clone(),
-                            arguments: arguments.clone(),
-                            working_directory: worktree.clone(),
-                            // The invocation binds the REGISTERED tool's
-                            // descriptor digest (what the executor consumes),
-                            // not the hook file's own digest.
-                            descriptor_digest: registry
-                                .tool(tool_id)
-                                .map(|d| d.descriptor_digest().to_owned())
-                                .unwrap_or_else(|| hook.descriptor_digest.clone()),
-                        }
+                        (tool_id.clone(), arguments.clone())
                     }
                     // A capability hook names an INTENT; the registry resolves
                     // it to a concrete provider. Only a Tool provider is
                     // executable as a hook — an agent or command provider would
                     // start a nested turn, which the hook lifecycle has no
                     // reentrancy story for — so anything else is denied with a
-                    // reason that says which provider it resolved to, rather
-                    // than the blanket "not supported" that made a whole
-                    // configured feature silently inert.
+                    // reason that says which provider it resolved to.
                     purrcode_runtime_core::HookAction::Capability { id } => {
                         let providers = registry.resolve(id);
                         let Some(provider) = providers.first() else {
-                            return JudgmentDecision::Deny {
-                                reason: format!(
-                                    "hook `{}` names capability `{id}`, which no admitted \
-                                     provider satisfies",
-                                    hook.id
-                                ),
-                            };
+                            return Err(format!(
+                                "hook `{}` names capability `{id}`, which no admitted provider \
+                                 satisfies",
+                                hook.id
+                            ));
                         };
                         match provider {
                             purrcode_runtime_core::CapabilityProvider::Tool { tool_id, .. } => {
-                                purrcode_runtime_core::ToolInvocation {
-                                    tool_id: tool_id.clone(),
-                                    arguments: serde_json::json!({}),
-                                    working_directory: worktree.clone(),
-                                    descriptor_digest: registry
-                                        .tool(tool_id)
-                                        .map(|d| d.descriptor_digest().to_owned())
-                                        .unwrap_or_default(),
-                                }
+                                (tool_id.clone(), serde_json::json!({}))
                             }
                             other => {
-                                return JudgmentDecision::Deny {
-                                    reason: format!(
-                                        "hook `{}` resolved capability `{id}` to a {} provider; \
-                                         only tool providers are executable from a hook",
-                                        hook.id,
-                                        match other {
-                                            purrcode_runtime_core::CapabilityProvider::Agent {
-                                                ..
-                                            } => "agent",
-                                            purrcode_runtime_core::CapabilityProvider::Skill {
-                                                ..
-                                            } => "skill",
-                                            _ => "command",
-                                        }
-                                    ),
-                                };
+                                return Err(format!(
+                                    "hook `{}` resolved capability `{id}` to a {} provider; only \
+                                     tool providers are executable from a hook",
+                                    hook.id,
+                                    match other {
+                                        purrcode_runtime_core::CapabilityProvider::Agent {
+                                            ..
+                                        } => "agent",
+                                        purrcode_runtime_core::CapabilityProvider::Skill {
+                                            ..
+                                        } => "skill",
+                                        _ => "command",
+                                    }
+                                ));
                             }
                         }
                     }
                 };
+                // A hook can only invoke a REGISTERED tool, and the invocation
+                // must carry the REGISTERED TOOL's descriptor digest — that is
+                // what the executor recomputes to consume the authorization,
+                // so the hook file's own digest would produce an authorization
+                // nothing can consume.
+                let Some(descriptor) = registry.tool(&tool_id) else {
+                    return Err(format!(
+                        "hook `{}` references unregistered tool `{tool_id}`",
+                        hook.id
+                    ));
+                };
+                Ok(purrcode_runtime_core::ToolInvocation {
+                    tool_id,
+                    arguments,
+                    working_directory: worktree.clone(),
+                    descriptor_digest: descriptor.descriptor_digest().to_owned(),
+                })
+            }
+        };
+        let evaluate_closure = {
+            let registry = registry_cache.registry.clone();
+            let worktree = working_directory.clone();
+            let policy = policy.clone();
+            move |hook: &purrcode_runtime_core::HookDescriptor,
+                  invocation: &purrcode_runtime_core::ToolInvocation| {
                 let Some(descriptor) = registry.tool(&invocation.tool_id) else {
                     return JudgmentDecision::Deny {
                         reason: format!(
@@ -10941,17 +11004,6 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
                 )
             }
         };
-        // The invocation a hook proposes must carry the REGISTERED TOOL's
-        // descriptor digest, because that is what the executor recomputes to
-        // consume the authorization.
-        let digest_closure = {
-            let registry = registry_cache.registry.clone();
-            move |tool_id: &purrcode_runtime_core::ToolId| {
-                registry
-                    .tool(tool_id)
-                    .map(|descriptor| descriptor.descriptor_digest().to_owned())
-            }
-        };
         // Judge + audit each hook synchronously (no borrow-across-await trap),
         // then execute the PawGate-allowed hooks' tools with a fresh store borrow
         // through the ToolExecutor.
@@ -10959,15 +11011,16 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
             outcomes,
             to_execute,
             aborted,
-            awaiting_approval,
+            suspension,
         } = crate::hooks::dispatch_hooks(
             store,
             session_id,
             trigger,
             &hooks,
             depth,
+            completed,
+            &resolve_closure,
             &evaluate_closure,
-            &digest_closure,
         );
         let executor = DaemonToolExecutor {
             state: self.state.clone(),
@@ -10996,7 +11049,15 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
                 authorized_at: Utc::now(),
                 approved_by: ApprovalAuthority::DeterministicPolicy,
             });
-            let hook_status = match executor
+            // The hook is the initiator, not the model. `EvidenceInitiator::Hook`
+            // exists precisely so an audit trail can say "the security scanner
+            // ran this", and stamping it as Model made hook activity
+            // indistinguishable from something the model chose to do.
+            let context = purrcode_agent_runtime::ToolExecutionContext::hook(
+                execution.hook_id.clone(),
+                trigger,
+            );
+            let (hook_status, evidence, outcome) = match executor
                 .execute_tool(
                     store,
                     session_id,
@@ -11004,12 +11065,36 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
                     action_id,
                     &execution.invocation,
                     &execution.constraints,
+                    &context,
                 )
                 .await
             {
-                Ok(_) => "succeeded",
-                Err(_) => "failed",
+                Ok(result) => {
+                    let outcome = purrcode_runtime_core::ExecutionOutcome::from_execution(
+                        result.exit_code,
+                        result.truncated,
+                        result.affected_paths.clone(),
+                    );
+                    let status = if matches!(
+                        outcome,
+                        purrcode_runtime_core::ExecutionOutcome::Succeeded { .. }
+                    ) {
+                        "succeeded"
+                    } else {
+                        "failed"
+                    };
+                    (status, result.evidence, Some(outcome))
+                }
+                // A dispatch failure records its own `Failed` evidence inside
+                // the executor, where the consumed authority is in hand.
+                Err(_) => ("failed", None, None),
             };
+            if let (Some(mut evidence), Some(outcome)) = (evidence, outcome) {
+                evidence.outcome = outcome;
+                evidence.finished_at = Utc::now();
+                let _ = store.record_tool_evidence(&evidence);
+                let _ = store.append(session_id, &SessionEvent::ToolEvidenceRecorded { evidence });
+            }
             let _ = crate::hooks::record_completed_hook_run(
                 store,
                 session_id,
@@ -11027,8 +11112,15 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
         if aborted || outcomes.iter().any(crate::hooks::HookRunOutcome::aborted) {
             return Ok(purrcode_agent_runtime::HookOutcome::Aborted);
         }
-        if awaiting_approval {
-            return Ok(purrcode_agent_runtime::HookOutcome::Suspended);
+        if let Some(suspension) = suspension {
+            return Ok(purrcode_agent_runtime::HookOutcome::Suspended(
+                purrcode_agent_runtime::HookSuspension {
+                    hook_id: suspension.hook_id,
+                    hook_action_id: suspension.hook_action_id,
+                    reason: suspension.reason,
+                    completed_hooks: suspension.completed_hooks,
+                },
+            ));
         }
         Ok(purrcode_agent_runtime::HookOutcome::Continued)
     }

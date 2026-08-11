@@ -1440,6 +1440,8 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::SessionFailed { .. } => "session_failed",
         SessionEvent::ToolEvidenceRecorded { .. } => "tool_evidence_recorded",
         SessionEvent::HookTriggered { .. } => "hook_triggered",
+        SessionEvent::ActionDeferredForHook { .. } => "action_deferred_for_hook",
+        SessionEvent::ActionResumedAfterHook { .. } => "action_resumed_after_hook",
         _ => "research_event",
     }
 }

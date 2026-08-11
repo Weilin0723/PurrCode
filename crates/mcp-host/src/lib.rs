@@ -940,9 +940,64 @@ fn isolated_server_command(server: &McpServerConfig) -> Result<Command, HostErro
             .args(&server.arguments);
         return Ok(command);
     }
-    let mut command = Command::new(&server.program);
-    command.args(&server.arguments);
-    Ok(command)
+    // No backend, no execution.
+    //
+    // The descriptor this server was admitted with tells PawGate, the model and
+    // the evidence record that the process is confined to (for example)
+    // `FilesystemScope::WorktreeRead` and `NetworkScope::None`. A bare
+    // `Command::new(&server.program)` enforces neither: the child would inherit
+    // ordinary filesystem and network access while every surface above it kept
+    // claiming the narrow scope. That breaks the invariant the whole authority
+    // model rests on — the scope PawGate authorized has to be the scope the
+    // runtime can actually enforce — so an unavailable backend makes the tool
+    // unavailable instead of silently downgrading it to an unsandboxed process.
+    Err(HostError::IsolationUnavailable {
+        required: format!(
+            "filesystem={}, network={}",
+            match server.filesystem {
+                McpFilesystemAccess::ReadOnly => "read_only",
+                McpFilesystemAccess::WorkingDirectoryWrite => "working_directory_write",
+            },
+            if server.network { "allowed" } else { "denied" }
+        ),
+        backend: missing_backend_description(),
+    })
+}
+
+/// Which isolation backend this host would need, and why it is not usable.
+fn missing_backend_description() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "sandbox-exec (/usr/bin/sandbox-exec) is not present on this host".to_owned()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "bubblewrap (`bwrap`) is not installed or not on PATH".to_owned()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        "no process isolation backend is implemented for this platform".to_owned()
+    }
+}
+
+/// Whether a stdio MCP server can be confined on this host.
+///
+/// Callers that enumerate tools use this to mark a server unavailable rather
+/// than discovering the failure at call time. HTTP transports do not spawn a
+/// child process and are not gated by it.
+pub fn stdio_isolation_available() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        Path::new("/usr/bin/sandbox-exec").is_file()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        executable_on_path("bwrap")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        false
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1042,6 +1097,14 @@ pub enum HostError {
     SkillIntegrity(String),
     #[error("MCP server configuration is invalid")]
     InvalidServer,
+    /// The host cannot confine a stdio server to the scope its descriptor
+    /// claims. Fail closed: the tool becomes unavailable rather than running
+    /// unsandboxed under a descriptor that promises isolation.
+    #[error(
+        "MCP stdio isolation is unavailable on this host (required: {required}); {backend}. \
+         The tool is unavailable rather than running unsandboxed."
+    )]
+    IsolationUnavailable { required: String, backend: String },
     #[error("MCP action does not match persisted authorization or server grants")]
     ConstraintMismatch,
     #[error("MCP host received a non-external action")]
@@ -1930,6 +1993,47 @@ mod tests {
     }
 
     #[test]
+    fn a_stdio_server_is_either_confined_or_unavailable_never_raw() {
+        // The invariant this closes: there is no third state. Either the host
+        // can build a confined command, or building one fails — a bare
+        // `Command::new(program)` under a descriptor that claims WorktreeRead
+        // and NetworkScope::None is not an outcome the host may produce.
+        let repository = tempfile::tempdir().unwrap();
+        let server = McpServerConfig {
+            program: "/bin/echo".into(),
+            working_directory: repository.path().canonicalize().unwrap(),
+            ..config(&[], &[])
+        };
+        match isolated_server_command(&server) {
+            Ok(command) => {
+                assert!(
+                    stdio_isolation_available(),
+                    "a command was built without an isolation backend"
+                );
+                let program = command
+                    .as_std()
+                    .get_program()
+                    .to_string_lossy()
+                    .into_owned();
+                assert_ne!(
+                    program, "/bin/echo",
+                    "the confined command must run through the sandbox backend, not the server \
+                     program directly"
+                );
+            }
+            Err(HostError::IsolationUnavailable { required, backend }) => {
+                assert!(
+                    !stdio_isolation_available(),
+                    "isolation reported available but no command could be built"
+                );
+                assert!(required.contains("filesystem="), "{required}");
+                assert!(!backend.is_empty());
+            }
+            Err(other) => panic!("unexpected isolation error: {other:?}"),
+        }
+    }
+
+    #[test]
     fn deny_tools_is_folded_into_the_generic_descriptor_proposal() {
         // The regression: `deny_tools` was honoured by the explicit `/mcp`
         // endpoint but not by the descriptor the model-driven registry path
@@ -2028,22 +2132,22 @@ mod tests {
             filesystem: McpFilesystemAccess::ReadOnly,
             ..config(&[], &[])
         };
-        let backend_available = {
-            #[cfg(target_os = "macos")]
-            {
-                Path::new("/usr/bin/sandbox-exec").is_file()
-            }
-            #[cfg(target_os = "linux")]
-            {
-                executable_on_path("bwrap")
-            }
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-            {
-                false
-            }
-        };
-        if !backend_available {
-            eprintln!("no sandbox backend on this host; write-containment is unverified");
+        if !stdio_isolation_available() {
+            // No backend means no execution at all. The claim under test —
+            // "a WorktreeRead descriptor cannot write the worktree" — still
+            // has to hold, and it holds for a stronger reason: the host
+            // refuses to spawn the server instead of running it unconfined.
+            let error = McpHost::call_authorized(&server, "scan", &json!({}))
+                .await
+                .expect_err("an unconfinable stdio server must not run");
+            assert!(
+                matches!(error, HostError::IsolationUnavailable { .. }),
+                "expected fail-closed isolation, got {error:?}"
+            );
+            assert!(
+                !evil.exists(),
+                "a server that was never spawned cannot have written anything"
+            );
             return;
         }
         let _ = McpHost::call_authorized(&server, "scan", &json!({})).await;

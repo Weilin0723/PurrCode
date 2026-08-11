@@ -75,12 +75,47 @@ pub enum ExecutionOutcome {
     },
     Failed {
         reason: String,
+        /// Present when the provider ran and returned a non-zero status, absent
+        /// when it never got that far (dispatch error, transport failure). A
+        /// non-zero exit is a FAILURE: recording it as `Succeeded { exit_code:
+        /// Some(1) }` made the evidence contradict itself.
+        #[serde(default)]
+        exit_code: Option<i32>,
     },
     DeniedByPolicy {
         reason: String,
     },
     Cancelled,
     TimedOut,
+}
+
+impl ExecutionOutcome {
+    /// Classify a completed execution.
+    ///
+    /// A non-zero exit code is a FAILURE. Recording it as
+    /// `Succeeded { exit_code: Some(1) }` is self-contradictory, and it made
+    /// every downstream reader that filters on "succeeded" — the model-facing
+    /// findings projection included — treat a failed skill run as a result.
+    /// An unknown exit code (a provider that reports no status) is treated as
+    /// success only when the dispatch itself reported no error, which is the
+    /// only way this constructor is reached.
+    pub fn from_execution(
+        exit_code: Option<i32>,
+        truncated: bool,
+        affected_paths: Vec<PathBuf>,
+    ) -> Self {
+        match exit_code {
+            Some(code) if code != 0 => ExecutionOutcome::Failed {
+                reason: format!("the tool exited with status {code}"),
+                exit_code: Some(code),
+            },
+            _ => ExecutionOutcome::Succeeded {
+                exit_code,
+                truncated,
+                affected_paths,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]

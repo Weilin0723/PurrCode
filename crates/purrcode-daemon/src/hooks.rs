@@ -11,8 +11,8 @@
 
 use purrcode_ninelives::SessionStore;
 use purrcode_runtime_core::{
-    ActionConstraints, ActionId, HookAction, HookDescriptor, HookTrigger, JudgmentDecision,
-    SessionEvent, SessionId, ToolInvocation,
+    ActionConstraints, ActionId, HookDescriptor, HookTrigger, JudgmentDecision, SessionEvent,
+    SessionId, ToolInvocation,
 };
 
 /// How one hook firing resolved. Recorded in `hook_runs` for audit.
@@ -31,27 +31,24 @@ impl HookRunOutcome {
     }
 }
 
-/// Build a hook's tool invocation, binding the REGISTERED TOOL's descriptor
-/// digest.
+/// What a `HookAction` resolves to before anything judges it.
 ///
-/// This must not be the hook file's own digest. The executor recomputes
-/// `digest_v3(action, constraints, descriptor_digest)` from the registry to
-/// consume the authorization, so binding the hook's digest here produces an
-/// authorization nothing can consume — every allowed hook would fail at
-/// dispatch. Falling back to the hook digest when the tool is unregistered is
-/// harmless: that hook is denied before it reaches execution.
-fn hook_invocation(
-    tool_id: &purrcode_runtime_core::ToolId,
-    arguments: &serde_json::Value,
-    constraints: &ActionConstraints,
-    resolve_digest: &(dyn Fn(&purrcode_runtime_core::ToolId) -> Option<String> + Sync),
-) -> ToolInvocation {
-    ToolInvocation {
-        tool_id: tool_id.clone(),
-        arguments: arguments.clone(),
-        working_directory: constraints.working_directory.clone(),
-        descriptor_digest: resolve_digest(tool_id).unwrap_or_default(),
-    }
+/// Resolution happens ONCE, up front, and everything downstream sees a concrete
+/// invocation. The bug this closes: `HookAction::Capability` was resolved
+/// inside the PawGate closure but the execution path still pattern-matched on
+/// `HookAction::Tool`, so a capability hook was judged, allowed, recorded as
+/// "succeeded" — and never ran. A false success in an audit trail is worse than
+/// a failure.
+pub(crate) type ResolvedHookAction = Result<ToolInvocation, String>;
+
+/// A single judgment of one hook, over its already-resolved invocation.
+pub(crate) struct JudgedHook {
+    pub decision: JudgmentDecision,
+    pub invocation: Option<ToolInvocation>,
+    pub constraints: Option<ActionConstraints>,
+    /// The pending action a human approves, when the decision was
+    /// `RequireApproval`.
+    pub pending_action_id: Option<ActionId>,
 }
 
 /// Judge a single hook and record its outcome (but do not execute it). Returns
@@ -65,13 +62,9 @@ pub(crate) fn judge_hook(
     session_id: SessionId,
     trigger: HookTrigger,
     hook: &HookDescriptor,
-    evaluate: &(dyn Fn(&HookDescriptor) -> JudgmentDecision + Sync),
-    resolve_digest: &(dyn Fn(&purrcode_runtime_core::ToolId) -> Option<String> + Sync),
-) -> (
-    JudgmentDecision,
-    Option<ToolInvocation>,
-    Option<ActionConstraints>,
-) {
+    resolve: &(dyn Fn(&HookDescriptor) -> ResolvedHookAction + Sync),
+    evaluate: &(dyn Fn(&HookDescriptor, &ToolInvocation) -> JudgmentDecision + Sync),
+) -> JudgedHook {
     let action_id = ActionId::new();
     let _ = store.append(
         session_id,
@@ -92,7 +85,32 @@ pub(crate) fn judge_hook(
         "triggered",
         None,
     );
-    let decision = evaluate(hook);
+    // Resolve first. A hook whose action cannot become a concrete invocation is
+    // DENIED here — it can never reach a state where it is judged allowed but
+    // has nothing to execute.
+    let invocation = match resolve(hook) {
+        Ok(invocation) => invocation,
+        Err(reason) => {
+            let _ = record_hook_run(
+                store,
+                session_id,
+                &hook.id,
+                &hook.descriptor_digest,
+                trigger,
+                &hook.layer,
+                Some(action_id),
+                "denied",
+                Some(&reason),
+            );
+            return JudgedHook {
+                decision: JudgmentDecision::Deny { reason },
+                invocation: None,
+                constraints: None,
+                pending_action_id: None,
+            };
+        }
+    };
+    let decision = evaluate(hook, &invocation);
     match &decision {
         JudgmentDecision::Deny { reason } => {
             let _ = record_hook_run(
@@ -108,29 +126,23 @@ pub(crate) fn judge_hook(
             );
         }
         JudgmentDecision::AllowWithConstraints(constraints) => {
-            if let HookAction::Tool { tool_id, arguments } = &hook.action {
-                let _ = record_hook_run(
-                    store,
-                    session_id,
-                    &hook.id,
-                    &hook.descriptor_digest,
-                    trigger,
-                    &hook.layer,
-                    Some(action_id),
-                    "executing",
-                    None,
-                );
-                return (
-                    decision.clone(),
-                    Some(hook_invocation(
-                        tool_id,
-                        arguments,
-                        constraints,
-                        resolve_digest,
-                    )),
-                    Some(constraints.clone()),
-                );
-            }
+            let _ = record_hook_run(
+                store,
+                session_id,
+                &hook.id,
+                &hook.descriptor_digest,
+                trigger,
+                &hook.layer,
+                Some(action_id),
+                "executing",
+                None,
+            );
+            return JudgedHook {
+                decision: decision.clone(),
+                invocation: Some(with_working_directory(invocation, constraints)),
+                constraints: Some(constraints.clone()),
+                pending_action_id: None,
+            };
         }
         JudgmentDecision::RequireApproval { constraints, .. } => {
             // A hook that needs approval must produce a REAL approval boundary,
@@ -143,42 +155,24 @@ pub(crate) fn judge_hook(
             // digest_v3 (action + constraints + descriptor digest), and the
             // executor's `consume_authorization` gives exactly-once: a replay
             // of the approval cannot run the hook twice.
-            if let HookAction::Tool { tool_id, arguments } = &hook.action {
-                let invocation = hook_invocation(tool_id, arguments, constraints, resolve_digest);
-                let proposed = purrcode_runtime_core::ProposedAction::Tool(invocation.clone());
-                let _ = store.append(
-                    session_id,
-                    &SessionEvent::ActionProposed {
-                        action_id,
-                        action: proposed,
-                        turn_id: None,
-                    },
-                );
-                let _ = store.append(
-                    session_id,
-                    &SessionEvent::JudgmentRecorded {
-                        action_id,
-                        decision: decision.clone(),
-                        turn_id: None,
-                    },
-                );
-                let _ = record_hook_run(
-                    store,
-                    session_id,
-                    &hook.id,
-                    &hook.descriptor_digest,
-                    trigger,
-                    &hook.layer,
-                    Some(action_id),
-                    "awaiting_approval",
-                    Some("approve this action to run the hook and continue the chain"),
-                );
-                return (
-                    decision.clone(),
-                    Some(invocation),
-                    Some(constraints.clone()),
-                );
-            }
+            let invocation = with_working_directory(invocation, constraints);
+            let proposed = purrcode_runtime_core::ProposedAction::Tool(invocation.clone());
+            let _ = store.append(
+                session_id,
+                &SessionEvent::ActionProposed {
+                    action_id,
+                    action: proposed,
+                    turn_id: None,
+                },
+            );
+            let _ = store.append(
+                session_id,
+                &SessionEvent::JudgmentRecorded {
+                    action_id,
+                    decision: decision.clone(),
+                    turn_id: None,
+                },
+            );
             let _ = record_hook_run(
                 store,
                 session_id,
@@ -188,8 +182,14 @@ pub(crate) fn judge_hook(
                 &hook.layer,
                 Some(action_id),
                 "awaiting_approval",
-                None,
+                Some("approve this action to run the hook and continue the chain"),
             );
+            return JudgedHook {
+                decision: decision.clone(),
+                invocation: Some(invocation),
+                constraints: Some(constraints.clone()),
+                pending_action_id: Some(action_id),
+            };
         }
         _ => {
             let _ = record_hook_run(
@@ -205,7 +205,21 @@ pub(crate) fn judge_hook(
             );
         }
     }
-    (decision, None, None)
+    JudgedHook {
+        decision,
+        invocation: None,
+        constraints: None,
+        pending_action_id: None,
+    }
+}
+
+/// Re-home an invocation onto the directory PawGate actually authorized.
+fn with_working_directory(
+    mut invocation: ToolInvocation,
+    constraints: &ActionConstraints,
+) -> ToolInvocation {
+    invocation.working_directory = constraints.working_directory.clone();
+    invocation
 }
 
 /// Dispatch one trigger against a set of hooks, judging and auditing each but
@@ -224,8 +238,9 @@ pub(crate) fn dispatch_hooks(
     trigger: HookTrigger,
     hooks: &[HookDescriptor],
     depth: u8,
-    evaluate: &(dyn Fn(&HookDescriptor) -> JudgmentDecision + Sync),
-    resolve_digest: &(dyn Fn(&purrcode_runtime_core::ToolId) -> Option<String> + Sync),
+    completed: &std::collections::BTreeSet<String>,
+    resolve: &(dyn Fn(&HookDescriptor) -> ResolvedHookAction + Sync),
+    evaluate: &(dyn Fn(&HookDescriptor, &ToolInvocation) -> JudgmentDecision + Sync),
 ) -> HookDispatch {
     if depth > 4 {
         let outcomes = hooks
@@ -241,17 +256,30 @@ pub(crate) fn dispatch_hooks(
             outcomes,
             to_execute: Vec::new(),
             aborted: true,
-            awaiting_approval: false,
+            suspension: None,
         };
     }
     let mut outcomes = Vec::new();
     let mut to_execute = Vec::new();
     let mut aborted = false;
-    let mut awaiting_approval = false;
+    let mut suspension = None;
+    // Hooks satisfied on an earlier pass of this same action. They already ran
+    // (or were already approved), so firing them again would re-ask for an
+    // approval the user just granted and the action would never proceed.
+    let mut ran: Vec<String> = Vec::new();
     for hook in hooks {
-        let (decision, invocation, constraints) =
-            judge_hook(store, session_id, trigger, hook, evaluate, resolve_digest);
-        match decision {
+        if completed.contains(&hook.id) {
+            outcomes.push(HookRunOutcome {
+                hook_id: hook.id.clone(),
+                status: "already_satisfied",
+                detail: Some("this hook already ran for the deferred action".into()),
+                action_id: None,
+            });
+            ran.push(hook.id.clone());
+            continue;
+        }
+        let judged = judge_hook(store, session_id, trigger, hook, resolve, evaluate);
+        match judged.decision {
             JudgmentDecision::Deny { reason } => {
                 outcomes.push(HookRunOutcome {
                     hook_id: hook.id.clone(),
@@ -265,7 +293,9 @@ pub(crate) fn dispatch_hooks(
                 }
             }
             JudgmentDecision::AllowWithConstraints(_) => {
-                if let (Some(invocation), Some(constraints)) = (invocation, constraints) {
+                if let (Some(invocation), Some(constraints)) =
+                    (judged.invocation, judged.constraints)
+                {
                     to_execute.push(HookExecution {
                         hook_id: hook.id.clone(),
                         hook_digest: hook.descriptor_digest.clone(),
@@ -273,15 +303,32 @@ pub(crate) fn dispatch_hooks(
                         invocation,
                         constraints,
                     });
+                    ran.push(hook.id.clone());
+                    outcomes.push(HookRunOutcome {
+                        hook_id: hook.id.clone(),
+                        status: "succeeded",
+                        detail: None,
+                        action_id: None,
+                    });
+                } else {
+                    // Allowed with nothing to run is the false-success case.
+                    // It is a failure, and a blocking hook in that state stops
+                    // the chain like any other blocking failure.
+                    outcomes.push(HookRunOutcome {
+                        hook_id: hook.id.clone(),
+                        status: "failed",
+                        detail: Some(
+                            "the hook was allowed but produced no executable invocation".into(),
+                        ),
+                        action_id: None,
+                    });
+                    if hook.blocking {
+                        aborted = true;
+                        break;
+                    }
                 }
-                outcomes.push(HookRunOutcome {
-                    hook_id: hook.id.clone(),
-                    status: "succeeded",
-                    detail: None,
-                    action_id: None,
-                });
             }
-            JudgmentDecision::RequireApproval { .. } => {
+            JudgmentDecision::RequireApproval { reason, .. } => {
                 outcomes.push(HookRunOutcome {
                     hook_id: hook.id.clone(),
                     status: "awaiting_approval",
@@ -290,14 +337,28 @@ pub(crate) fn dispatch_hooks(
                          exactly once and the chain continues"
                             .into(),
                     ),
-                    action_id: None,
+                    action_id: judged.pending_action_id,
                 });
                 // A hook waiting on a human is a PAUSE, not a failure, so the
                 // remaining hooks in the chain do not fire behind its back —
                 // the same reason a blocking denial stops the chain. The
                 // difference is that this one is resumable: the pending action
                 // is durable, and approving it continues from here.
-                awaiting_approval = true;
+                if let Some(pending) = judged.pending_action_id {
+                    // The suspended hook counts as satisfied on resume: the
+                    // approval runs it, so re-firing it would loop forever.
+                    ran.push(hook.id.clone());
+                    suspension = Some(HookSuspensionRecord {
+                        hook_id: hook.id.clone(),
+                        hook_action_id: pending,
+                        reason,
+                        completed_hooks: ran.clone(),
+                    });
+                    break;
+                }
+                // No durable pending action means there is nothing to approve.
+                // Refusing to continue is the honest outcome.
+                aborted = true;
                 break;
             }
             _ => {
@@ -318,22 +379,31 @@ pub(crate) fn dispatch_hooks(
         outcomes,
         to_execute,
         aborted,
-        awaiting_approval,
+        suspension,
     }
+}
+
+/// The chain stopped on a hook that needs a person.
+#[derive(Clone, Debug)]
+pub(crate) struct HookSuspensionRecord {
+    pub hook_id: String,
+    pub hook_action_id: ActionId,
+    pub reason: String,
+    pub completed_hooks: Vec<String>,
 }
 
 /// The result of dispatching one trigger.
 ///
-/// `awaiting_approval` is deliberately distinct from `aborted`: an aborted
-/// chain failed and the turn should fail with it, whereas an
-/// approval-suspended chain is a durable pause with a pending action a person
-/// can complete. Collapsing the two is what made "awaiting_approval" an audit
-/// row with no way to act on it.
+/// `suspension` is deliberately distinct from `aborted`: an aborted chain
+/// failed and the turn should fail with it, whereas an approval-suspended chain
+/// is a durable pause with a pending action a person can complete. Collapsing
+/// the two is what made "awaiting_approval" an audit row with no way to act on
+/// it — and then a `SessionFailed`.
 pub(crate) struct HookDispatch {
     pub outcomes: Vec<HookRunOutcome>,
     pub to_execute: Vec<HookExecution>,
     pub aborted: bool,
-    pub awaiting_approval: bool,
+    pub suspension: Option<HookSuspensionRecord>,
 }
 
 /// A hook that PawGate allowed, ready for the daemon to execute with the exact
@@ -397,6 +467,8 @@ fn record_hook_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use purrcode_runtime_core::HookAction;
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     fn hook(id: &str, blocking: bool) -> HookDescriptor {
@@ -415,9 +487,36 @@ mod tests {
         }
     }
 
-    /// The registry descriptor digest a real dispatch would resolve.
-    fn digests(_: &purrcode_runtime_core::ToolId) -> Option<String> {
-        Some("registry-descriptor-digest".to_string())
+    /// A capability hook: names an intent, not a tool. This is the shape that
+    /// used to be judged and then silently skipped at execution.
+    fn capability_hook(id: &str, blocking: bool) -> HookDescriptor {
+        HookDescriptor {
+            action: HookAction::Capability {
+                id: purrcode_runtime_core::CapabilityId::parse("security_scan").unwrap(),
+            },
+            blocking,
+            ..hook(id, blocking)
+        }
+    }
+
+    /// The daemon's real resolver, in miniature: a `Tool` action keeps its own
+    /// id, a `Capability` action resolves to one, and both bind the REGISTRY's
+    /// descriptor digest rather than the hook file's.
+    fn resolve(hook: &HookDescriptor) -> ResolvedHookAction {
+        let tool_id = match &hook.action {
+            HookAction::Tool { tool_id, .. } => tool_id.clone(),
+            HookAction::Capability { .. } => purrcode_runtime_core::ToolId::native("command"),
+        };
+        Ok(ToolInvocation {
+            tool_id,
+            arguments: serde_json::json!({}),
+            working_directory: PathBuf::from("/repo"),
+            descriptor_digest: "registry-descriptor-digest".into(),
+        })
+    }
+
+    fn allow(_: &HookDescriptor, _: &ToolInvocation) -> JudgmentDecision {
+        JudgmentDecision::AllowWithConstraints(ActionConstraints::read_only(PathBuf::from("/repo")))
     }
 
     fn session(store: &mut SessionStore) -> SessionId {
@@ -446,10 +545,11 @@ mod tests {
             HookTrigger::BeforeWrite,
             &hooks,
             0,
-            &|_| JudgmentDecision::Deny {
+            &BTreeSet::new(),
+            &resolve,
+            &|_, _| JudgmentDecision::Deny {
                 reason: "policy refuses".into(),
             },
-            &digests,
         );
         assert!(dispatch.aborted, "a denied blocking hook aborts the chain");
         assert!(
@@ -472,12 +572,9 @@ mod tests {
             HookTrigger::BeforeWrite,
             &hooks,
             0,
-            &|_| {
-                JudgmentDecision::AllowWithConstraints(ActionConstraints::read_only(PathBuf::from(
-                    "/repo",
-                )))
-            },
-            &digests,
+            &BTreeSet::new(),
+            &resolve,
+            &allow,
         );
         assert!(!dispatch.aborted);
         assert_eq!(
@@ -504,6 +601,60 @@ mod tests {
     }
 
     #[test]
+    fn an_allowed_capability_hook_actually_executes() {
+        // The regression: a capability hook resolved to a tool, was judged
+        // Allow, and was recorded "succeeded" — but the execution path matched
+        // only `HookAction::Tool`, so nothing ran. "Succeeded" for a hook that
+        // never fired is a false entry in the audit trail, and the security
+        // scanner nobody noticed was not running is exactly the case that
+        // matters.
+        let mut store = SessionStore::in_memory().unwrap();
+        let session_id = session(&mut store);
+        let hooks = vec![capability_hook("scan", false)];
+        let dispatch = dispatch_hooks(
+            &mut store,
+            session_id,
+            HookTrigger::BeforeWrite,
+            &hooks,
+            0,
+            &BTreeSet::new(),
+            &resolve,
+            &allow,
+        );
+        assert_eq!(
+            dispatch.to_execute.len(),
+            1,
+            "a capability hook that PawGate allowed must be scheduled to run"
+        );
+        assert_eq!(
+            dispatch.to_execute[0].invocation.tool_id.as_str(),
+            "native:command",
+            "the scheduled invocation is the resolved provider"
+        );
+        assert_eq!(dispatch.outcomes[0].status, "succeeded");
+    }
+
+    #[test]
+    fn an_unresolvable_hook_is_denied_not_silently_successful() {
+        let mut store = SessionStore::in_memory().unwrap();
+        let session_id = session(&mut store);
+        let hooks = vec![capability_hook("scan", true)];
+        let dispatch = dispatch_hooks(
+            &mut store,
+            session_id,
+            HookTrigger::BeforeWrite,
+            &hooks,
+            0,
+            &BTreeSet::new(),
+            &|hook| Err(format!("no provider satisfies `{}`", hook.id)),
+            &allow,
+        );
+        assert!(dispatch.to_execute.is_empty());
+        assert_eq!(dispatch.outcomes[0].status, "denied");
+        assert!(dispatch.aborted, "a blocking hook that cannot run aborts");
+    }
+
+    #[test]
     fn an_approval_requiring_hook_leaves_a_real_pending_approval() {
         // The closure the review asked for: `awaiting_approval` must be an
         // actionable boundary, not just an audit row. After dispatch the
@@ -519,16 +670,17 @@ mod tests {
             HookTrigger::BeforeWrite,
             &hooks,
             0,
-            &|_| JudgmentDecision::RequireApproval {
+            &BTreeSet::new(),
+            &resolve,
+            &|_, _| JudgmentDecision::RequireApproval {
                 reason: "destructive hook".into(),
-                constraints: constraints.clone(),
+                constraints: ActionConstraints::read_only(PathBuf::from("/repo")),
             },
-            &digests,
         );
-        assert!(
-            dispatch.awaiting_approval,
-            "an approval-requiring hook suspends the chain"
-        );
+        let suspension = dispatch
+            .suspension
+            .as_ref()
+            .expect("an approval-requiring hook suspends the chain");
         assert!(
             !dispatch.aborted,
             "waiting for a human is a pause, not a failure"
@@ -536,6 +688,11 @@ mod tests {
         assert!(
             dispatch.to_execute.is_empty(),
             "the hook must not run before the human approves"
+        );
+        assert_eq!(
+            suspension.completed_hooks,
+            vec!["h1".to_string()],
+            "the suspended hook counts as satisfied on resume, or approving it would ask again"
         );
 
         let state = store.load(session_id).unwrap();
@@ -545,6 +702,10 @@ mod tests {
                 state.status
             );
         };
+        assert_eq!(
+            suspension.hook_action_id, pending,
+            "the suspension names the action the human will approve"
+        );
         let action = state
             .proposed_actions
             .get(&pending)
@@ -597,7 +758,9 @@ mod tests {
             HookTrigger::BeforeWrite,
             &hooks,
             0,
-            &|hook| {
+            &BTreeSet::new(),
+            &resolve,
+            &|hook, _| {
                 if hook.id == "h1" {
                     JudgmentDecision::RequireApproval {
                         reason: "needs a human".into(),
@@ -609,11 +772,54 @@ mod tests {
                     ))
                 }
             },
-            &digests,
         );
-        assert!(dispatch.awaiting_approval);
+        assert!(dispatch.suspension.is_some());
         assert_eq!(dispatch.outcomes.len(), 1, "the chain stopped at h1");
         assert!(dispatch.to_execute.is_empty());
+    }
+
+    #[test]
+    fn resuming_skips_the_hook_that_was_already_approved_and_runs_the_rest() {
+        // What makes the suspension converge. On resume the approved hook must
+        // not fire again — it already ran through the approval — while the rest
+        // of the chain, which never fired, still has to.
+        let mut store = SessionStore::in_memory().unwrap();
+        let session_id = session(&mut store);
+        let hooks = vec![hook("h1", false), hook("h2", false)];
+        let completed = BTreeSet::from(["h1".to_string()]);
+        let dispatch = dispatch_hooks(
+            &mut store,
+            session_id,
+            HookTrigger::BeforeWrite,
+            &hooks,
+            0,
+            &completed,
+            &resolve,
+            &|hook, _| {
+                if hook.id == "h1" {
+                    // Would suspend again — and loop forever — if it fired.
+                    JudgmentDecision::RequireApproval {
+                        reason: "needs a human".into(),
+                        constraints: ActionConstraints::read_only(PathBuf::from("/repo")),
+                    }
+                } else {
+                    JudgmentDecision::AllowWithConstraints(ActionConstraints::read_only(
+                        PathBuf::from("/repo"),
+                    ))
+                }
+            },
+        );
+        assert!(
+            dispatch.suspension.is_none(),
+            "the already-approved hook must not ask for approval a second time"
+        );
+        assert_eq!(dispatch.outcomes[0].status, "already_satisfied");
+        assert_eq!(
+            dispatch.to_execute.len(),
+            1,
+            "the rest of the chain still runs"
+        );
+        assert_eq!(dispatch.to_execute[0].hook_id, "h2");
     }
 
     #[test]
@@ -627,12 +833,9 @@ mod tests {
             HookTrigger::AfterWrite,
             &hooks,
             5, // beyond the depth guard
-            &|_| {
-                JudgmentDecision::AllowWithConstraints(ActionConstraints::read_only(PathBuf::from(
-                    "/repo",
-                )))
-            },
-            &digests,
+            &BTreeSet::new(),
+            &resolve,
+            &allow,
         );
         assert_eq!(dispatch.outcomes[0].status, "skipped");
     }

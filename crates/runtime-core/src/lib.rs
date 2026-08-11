@@ -1578,6 +1578,27 @@ pub enum SessionEvent {
         trigger: HookTrigger,
         action_id: Option<ActionId>,
     },
+    /// A lifecycle hook needs human approval, so the action that triggered it
+    /// is parked rather than executed or failed.
+    ///
+    /// This is what makes a hook suspension resumable instead of terminal. The
+    /// session moves to `AwaitingApproval(hook_action_id)`; when that approval
+    /// lands, `action_id` is the work that was waiting on it and
+    /// `completed_hooks` is the part of the chain that must not fire a second
+    /// time (approving a hook must not re-ask for the same approval).
+    ActionDeferredForHook {
+        action_id: ActionId,
+        hook_action_id: ActionId,
+        trigger: HookTrigger,
+        completed_hooks: Vec<String>,
+    },
+    /// A deferred action resumed after its hook approval was granted. Paired
+    /// with `ActionDeferredForHook` so the audit trail shows the pause and the
+    /// continuation, and so a replayed approval cannot resume it twice.
+    ActionResumedAfterHook {
+        action_id: ActionId,
+        hook_action_id: ActionId,
+    },
 }
 
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]

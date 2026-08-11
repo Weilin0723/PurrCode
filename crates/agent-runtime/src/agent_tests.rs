@@ -1888,3 +1888,433 @@ fn read_evidence_kind_classifies_grep_and_find() {
     assert_eq!(read_evidence_kind(&find_action), "find");
     assert_eq!(read_evidence_kind(&read_file_action), "other");
 }
+
+// ── Governed hook lifecycle (v1.3 closure P0-1) ─────────────────────────
+
+/// A hook chain with exactly one `before_write` hook that needs approval.
+///
+/// Mirrors what the daemon's real evaluator does on `RequireApproval`: propose
+/// the hook's own invocation, record the judgment (which is what moves the
+/// session into `AwaitingApproval`), and report a suspension rather than a
+/// failure. On resume the hook is in `completed`, so it does not fire again.
+struct ApprovalHook {
+    on: purrcode_runtime_core::HookTrigger,
+    dispatches: Arc<Mutex<Vec<(purrcode_runtime_core::HookTrigger, bool)>>>,
+}
+
+#[async_trait]
+impl crate::HookEvaluator for ApprovalHook {
+    async fn dispatch(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        trigger: purrcode_runtime_core::HookTrigger,
+        _depth: u8,
+        completed: &std::collections::BTreeSet<String>,
+    ) -> Result<crate::HookOutcome, AgentError> {
+        let already = completed.contains("scan");
+        self.dispatches.lock().unwrap().push((trigger, already));
+        if trigger != self.on || already {
+            return Ok(crate::HookOutcome::Continued);
+        }
+        let hook_action_id = ActionId::new();
+        let constraints = purrcode_runtime_core::ActionConstraints::read_only(
+            store.load(session_id).unwrap().worktree.unwrap(),
+        );
+        let invocation = purrcode_runtime_core::ToolInvocation {
+            tool_id: purrcode_runtime_core::ToolId::native("command"),
+            arguments: serde_json::json!({}),
+            working_directory: constraints.working_directory.clone(),
+            descriptor_digest: "hook-descriptor".into(),
+        };
+        store
+            .append(
+                session_id,
+                &SessionEvent::HookTriggered {
+                    hook_id: "scan".into(),
+                    trigger,
+                    action_id: Some(hook_action_id),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::ActionProposed {
+                    action_id: hook_action_id,
+                    action: ProposedAction::Tool(invocation),
+                    turn_id: None,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session_id,
+                &SessionEvent::JudgmentRecorded {
+                    action_id: hook_action_id,
+                    decision: purrcode_runtime_core::JudgmentDecision::RequireApproval {
+                        reason: "the security scan needs approval".into(),
+                        constraints,
+                    },
+                    turn_id: None,
+                },
+            )
+            .unwrap();
+        Ok(crate::HookOutcome::Suspended(crate::HookSuspension {
+            hook_id: "scan".into(),
+            hook_action_id,
+            reason: "the security scan needs approval".into(),
+            completed_hooks: vec!["scan".into()],
+        }))
+    }
+}
+
+/// Counts how many times the hook's tool actually ran, and consumes the
+/// authorization so exactly-once is enforced by the same mechanism production
+/// uses.
+struct CountingExecutor {
+    runs: Arc<Mutex<usize>>,
+}
+
+#[async_trait]
+impl crate::ToolExecutor for CountingExecutor {
+    async fn execute_tool(
+        &self,
+        store: &mut SessionStore,
+        _session_id: SessionId,
+        _turn_id: Option<purrcode_runtime_core::TurnId>,
+        action_id: ActionId,
+        invocation: &purrcode_runtime_core::ToolInvocation,
+        constraints: &purrcode_runtime_core::ActionConstraints,
+        context: &crate::ToolExecutionContext,
+    ) -> Result<crate::ToolExecutionOutcome, AgentError> {
+        let proposed = ProposedAction::Tool(invocation.clone());
+        let digest = proposed.digest(constraints).unwrap();
+        store
+            .consume_authorization(action_id, &digest)
+            .map_err(|error| AgentError::InvalidModelTurn(error.to_string()))?;
+        *self.runs.lock().unwrap() += 1;
+        assert!(
+            matches!(
+                context.initiator,
+                purrcode_runtime_core::EvidenceInitiator::Hook { .. }
+            ),
+            "a hook's own tool must be attributed to the hook, got {:?}",
+            context.initiator
+        );
+        Ok(crate::ToolExecutionOutcome {
+            stdout: "clean".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            truncated: false,
+            affected_paths: Vec::new(),
+            structured_output: None,
+            evidence: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_before_write_hook_awaiting_approval_pauses_the_session_and_then_resumes_the_write() {
+    // The v1.3 closure regression. Before this, a hook that required approval
+    // correctly reached `AwaitingApproval` and was then immediately destroyed:
+    // the suspension travelled up as `AgentError`, and the daemon's task
+    // wrapper appends `SessionFailed` for any non-terminal session. The user
+    // was told to approve a pending action that no longer existed.
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![serde_json::json!({
+            "plan": ["write isolated file"],
+            "rationale": "implement objective",
+            "action": {
+                "type": "write_file",
+                "path": "new.txt",
+                "content": "created",
+                "expected_digest": null
+            },
+            "complete": false
+        })])),
+    };
+    let dispatches = Arc::new(Mutex::new(Vec::new()));
+    let runs = Arc::new(Mutex::new(0usize));
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_hook_evaluator(Arc::new(ApprovalHook {
+            on: purrcode_runtime_core::HookTrigger::BeforeWrite,
+            dispatches: dispatches.clone(),
+        }))
+        .with_tool_executor(Arc::new(CountingExecutor { runs: runs.clone() }));
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+
+    // The write itself needs approval first (Ask mode), exactly as today.
+    let AgentOutcome::AwaitingApproval {
+        session_id,
+        action_id: write_action,
+        ..
+    } = agent
+        .start(&mut store, repository.path(), "create new.txt")
+        .await
+        .unwrap()
+    else {
+        panic!("the write did not reach its approval boundary");
+    };
+
+    // Approving the write fires before_write, which needs its own approval.
+    // That is a PAUSE: `Ok`, a new pending action, and no failure anywhere.
+    let outcome = agent
+        .approve(&mut store, session_id)
+        .await
+        .expect("a hook that needs approval must not fail the turn");
+    let AgentOutcome::AwaitingApproval {
+        action_id: hook_action,
+        reason,
+        ..
+    } = outcome
+    else {
+        panic!("the suspended hook did not surface as an approval boundary");
+    };
+    assert_ne!(hook_action, write_action, "the hook has its own action");
+    assert!(
+        reason.contains("approval"),
+        "the pause has to say what it is waiting for: {reason}"
+    );
+    assert_eq!(
+        store.load(session_id).unwrap().status,
+        SessionStatus::AwaitingApproval(hook_action),
+        "the session is parked on the hook's pending action"
+    );
+    assert_eq!(*runs.lock().unwrap(), 0, "the hook has not run yet");
+    let events = store.events(session_id).unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SessionFailed { .. })),
+        "a suspension is not a failure"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            SessionEvent::ActionDeferredForHook { action_id, .. } if *action_id == write_action
+        )),
+        "the parked write must be durably linked to the approval it is waiting on"
+    );
+    assert!(
+        !repository.path().join("new.txt").exists(),
+        "the write must not have happened before the hook was approved"
+    );
+
+    // Approving the hook runs it exactly once and the parent write continues.
+    let outcome = agent.approve(&mut store, session_id).await.unwrap();
+    let AgentOutcome::ActionExecuted {
+        action_id: executed,
+        ..
+    } = outcome
+    else {
+        panic!("the deferred write did not resume, got {outcome:?}");
+    };
+    assert_eq!(executed, write_action, "the parent write is what resumed");
+    assert_eq!(*runs.lock().unwrap(), 1, "the hook ran exactly once");
+    let state = store.load(session_id).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(state.worktree.clone().unwrap().join("new.txt")).unwrap(),
+        "created",
+        "the write the hook was gating finally happened"
+    );
+    let events = store.events(session_id).unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SessionFailed { .. })),
+        "no SessionFailed anywhere in the lifecycle"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            SessionEvent::ActionResumedAfterHook { action_id, .. } if *action_id == write_action
+        )),
+        "the resumption is auditable"
+    );
+    // On resume the approved hook is reported as already satisfied, so the
+    // chain advances instead of re-asking for the approval just granted.
+    let dispatched = dispatches.lock().unwrap().clone();
+    assert!(
+        dispatched.iter().any(|(trigger, already)| *trigger
+            == purrcode_runtime_core::HookTrigger::BeforeWrite
+            && *already),
+        "the resumed dispatch must see the hook as already completed: {dispatched:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_native_write_records_execution_evidence_with_its_real_effects() {
+    // "One per authorized invocation, for EVERY provider". Native tools convert
+    // back to legacy actions, so before this they executed with no evidence at
+    // all — and the evidence that did exist claimed `affected_paths: []`
+    // because it was written before the effect delta was known.
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![serde_json::json!({
+            "plan": ["write isolated file"],
+            "rationale": "implement objective",
+            "action": {
+                "type": "write_file",
+                "path": "new.txt",
+                "content": "created",
+                "expected_digest": null
+            },
+            "complete": false
+        })])),
+    };
+    let agent =
+        NativeAgent::new(role_map(provider), Policy::default()).with_controls(build_controls());
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let AgentOutcome::AwaitingApproval { session_id, .. } = agent
+        .start(&mut store, repository.path(), "create new.txt")
+        .await
+        .unwrap()
+    else {
+        panic!("the write did not reach its approval boundary");
+    };
+    agent.approve(&mut store, session_id).await.unwrap();
+
+    let evidence = store
+        .events(session_id)
+        .unwrap()
+        .into_iter()
+        .find_map(|event| match event {
+            SessionEvent::ToolEvidenceRecorded { evidence } => Some(evidence),
+            _ => None,
+        })
+        .expect("a native write produces execution evidence");
+    assert_eq!(evidence.tool_id.as_str(), "native:write_file");
+    assert_eq!(
+        evidence.approved_by,
+        ApprovalAuthority::Human,
+        "a human approved this write, and the evidence has to say so"
+    );
+    assert!(
+        matches!(
+            evidence.initiator,
+            purrcode_runtime_core::EvidenceInitiator::Human
+        ),
+        "got {:?}",
+        evidence.initiator
+    );
+    let purrcode_runtime_core::ExecutionOutcome::Succeeded { affected_paths, .. } =
+        &evidence.outcome
+    else {
+        panic!("expected a succeeded outcome, got {:?}", evidence.outcome);
+    };
+    assert_eq!(
+        affected_paths,
+        &vec![PathBuf::from("new.txt")],
+        "the recorded effects are the validated effect delta, not an empty placeholder"
+    );
+}
+
+#[test]
+fn a_non_zero_exit_is_recorded_as_a_failure_not_a_success() {
+    // `Succeeded { exit_code: Some(1) }` is self-contradictory, and it made the
+    // model-facing findings projection treat a failed skill run as a result.
+    let failed = purrcode_runtime_core::ExecutionOutcome::from_execution(Some(1), false, vec![]);
+    assert!(matches!(
+        failed,
+        purrcode_runtime_core::ExecutionOutcome::Failed {
+            exit_code: Some(1),
+            ..
+        }
+    ));
+    let succeeded = purrcode_runtime_core::ExecutionOutcome::from_execution(Some(0), false, vec![]);
+    assert!(matches!(
+        succeeded,
+        purrcode_runtime_core::ExecutionOutcome::Succeeded { .. }
+    ));
+}
+
+#[tokio::test]
+async fn an_after_write_hook_awaiting_approval_still_records_what_the_write_did() {
+    // A post-execution hook fires for work that ALREADY happened. Pausing there
+    // must not swallow the action's own record, and it must not defer the
+    // action: re-running a write whose authorization was already consumed would
+    // fail the session on the next approval.
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![serde_json::json!({
+            "plan": ["write isolated file"],
+            "rationale": "implement objective",
+            "action": {
+                "type": "write_file",
+                "path": "new.txt",
+                "content": "created",
+                "expected_digest": null
+            },
+            "complete": false
+        })])),
+    };
+    let runs = Arc::new(Mutex::new(0usize));
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_hook_evaluator(Arc::new(ApprovalHook {
+            on: purrcode_runtime_core::HookTrigger::AfterWrite,
+            dispatches: Arc::new(Mutex::new(Vec::new())),
+        }))
+        .with_tool_executor(Arc::new(CountingExecutor { runs: runs.clone() }));
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let AgentOutcome::AwaitingApproval {
+        session_id,
+        action_id: write_action,
+        ..
+    } = agent
+        .start(&mut store, repository.path(), "create new.txt")
+        .await
+        .unwrap()
+    else {
+        panic!("the write did not reach its approval boundary");
+    };
+
+    let outcome = agent.approve(&mut store, session_id).await.unwrap();
+    assert!(
+        matches!(outcome, AgentOutcome::AwaitingApproval { .. }),
+        "the after_write hook pauses the turn, got {outcome:?}"
+    );
+    let state = store.load(session_id).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(state.worktree.unwrap().join("new.txt")).unwrap(),
+        "created",
+        "the write already happened"
+    );
+    let events = store.events(session_id).unwrap();
+    for expected in ["execution_finished", "action_output", "validation"] {
+        let present = events.iter().any(|event| match (expected, event) {
+            ("execution_finished", SessionEvent::ExecutionFinished { action_id, .. })
+            | ("action_output", SessionEvent::ActionOutputRecorded { action_id, .. })
+            | ("validation", SessionEvent::ValidationRecorded { action_id, .. }) => {
+                *action_id == write_action
+            }
+            _ => false,
+        });
+        assert!(
+            present,
+            "the completed write is missing its {expected} record"
+        );
+    }
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::ActionDeferredForHook { .. })),
+        "an action that already ran has nothing to resume, so it must not be deferred"
+    );
+
+    // Approving the hook runs it and does NOT re-execute the write.
+    let outcome = agent.approve(&mut store, session_id).await.unwrap();
+    assert!(matches!(outcome, AgentOutcome::ActionExecuted { .. }));
+    assert_eq!(*runs.lock().unwrap(), 1, "the hook ran exactly once");
+    assert!(
+        !store
+            .events(session_id)
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SessionFailed { .. })),
+        "no SessionFailed anywhere in the lifecycle"
+    );
+}
