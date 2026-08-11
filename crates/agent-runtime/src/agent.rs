@@ -2907,6 +2907,7 @@ impl<'a> NativeAgent<'a> {
             // path. Keep the boundary strict, but give the provider one
             // bounded opportunity to express the same action with a safe,
             // repository-relative path instead of failing the whole session.
+
             // ── v1.4: the agent asks to split the work ────────────────────
             //
             // Handled before the action and before completion, because both
@@ -2936,13 +2937,22 @@ impl<'a> NativeAgent<'a> {
                         ..Default::default()
                     },
                 };
+                // The agent's own reasoning for splitting is recorded with the
+                // runtime's answer. A delegating turn returns before the
+                // assistant message is written further down the loop, so
+                // without this the conversation would show a decision with no
+                // account of why it was asked for.
                 store.append(
                     session_id,
                     &SessionEvent::ConversationMessageAdded {
                         message: ConversationMessage {
                             id: ActionId::new().0.to_string(),
                             role: "system".into(),
-                            content: handoff.as_context_message(),
+                            content: format!(
+                                "{}\nThe agent asked to split this work: {}",
+                                handoff.as_context_message(),
+                                turn.rationale.trim()
+                            ),
                             timestamp: Utc::now(),
                             tool_calls: Vec::new(),
                             tool_results: Vec::new(),
