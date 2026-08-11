@@ -293,3 +293,33 @@ fn the_workbench_survives_a_resize_to_sixty_columns() {
         Ok(())
     });
 }
+
+#[test]
+fn a_project_declared_command_dispatches_in_the_tui() {
+    // The reason `/v1/commands` exists. Before v1.3 a project command declared
+    // in `.purrcode/commands/` worked in the IDE and reported "unknown command"
+    // in the TUI — two clients disagreeing about the same repository. Until now
+    // the suite only proved the REFUSAL path, because the fake daemon served no
+    // command list at all, so the feature's actual purpose had no end-to-end
+    // coverage.
+    let script = DaemonScript {
+        commands: vec![json!({
+            "name": "/security-review",
+            "description": "Review the working tree for security defects",
+            "execution": {"kind": "prompt", "prompt": "Review this diff for security defects"},
+        })],
+        ..configured()
+    };
+    let mut harness = Harness::start(script).expect("start workbench");
+    with_artifacts("startup-project-command", &mut harness, |harness| {
+        harness.wait_for_text("Ready for a task")?;
+        harness.run_command("/security-review")?;
+        // The client must ASK the daemon rather than answer from its own table.
+        harness.wait_for_request("GET", "/v1/commands")?;
+        let screen = harness.wait_for_text("Review this diff for security defects")?;
+        // The whole point: a project command must not be reported as unknown,
+        // and must not be reported as unverifiable either.
+        assertions::assert_absent(&screen, &["Unknown command", "Could not check"]);
+        Ok(())
+    });
+}

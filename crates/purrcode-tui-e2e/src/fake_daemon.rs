@@ -43,6 +43,15 @@ pub struct DaemonScript {
     /// a test can prove the workbench interprets escape sequences rather than
     /// printing them.
     pub terminals: Vec<ScriptedTerminal>,
+    /// Commands `GET /v1/commands` publishes — built-ins plus whatever the
+    /// repository declares in `.purrcode/commands/`.
+    ///
+    /// Empty is a MEANINGFUL value (a daemon that knows no extension commands),
+    /// which is why the route is always served: before this existed the route
+    /// 404'd, so every TUI dynamic-command test only ever exercised the
+    /// lookup-failed path and the feature's actual purpose — a project command
+    /// working identically in the TUI and the IDE — had no end-to-end proof.
+    pub commands: Vec<Value>,
     /// Models a discovery request reports.
     pub discovered_models: Vec<String>,
     /// When set, provider save and test fail with this message.
@@ -366,6 +375,7 @@ fn router(state: DaemonState) -> Router {
         .route("/v1/terminals/{id}/output", get(terminal_output))
         .route("/v1/terminals/{id}/input", post(terminal_input))
         .route("/v1/terminals/{id}/owner", post(terminal_owner))
+        .route("/v1/commands", get(commands))
         .route("/v1/local-models", get(local_models))
         .route("/v1/local-models/recommendations", get(recommendations))
         // Present so a request never 404s into a confusing error; the tests that
@@ -1169,6 +1179,13 @@ async fn rollback_preview(
         "patch_digest": "fixture-digest",
         "requires_unattributed_effect_acknowledgement": true
     })))
+}
+
+async fn commands(State(state): State<DaemonState>, headers: HeaderMap) -> ApiResult {
+    guard!(state, headers);
+    record(&state, "GET", "/v1/commands", None);
+    let script = state.script.lock().expect("script mutex");
+    Ok(Json(Value::Array(script.commands.clone())))
 }
 
 async fn local_models(State(state): State<DaemonState>, headers: HeaderMap) -> ApiResult {
