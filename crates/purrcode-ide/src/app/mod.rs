@@ -13,16 +13,20 @@
 //! the runtime can work out for itself (PRD §10).
 
 mod bar;
+pub(crate) mod checkpoints;
 mod code;
 mod composer;
 mod dock;
 mod editor;
 mod errors;
+pub(crate) mod files;
+pub(crate) mod language;
 mod navigation;
 pub(crate) mod primitives;
 mod settings;
 mod terminals;
 mod workbench;
+pub(crate) mod workers;
 
 pub use errors::{Notice, NoticeAction, NoticeKind};
 
@@ -127,6 +131,12 @@ pub enum AgentLocation {
 pub enum AuxView {
     Agent,
     Source,
+    /// Every use of one symbol, from `textDocument/references`.
+    References,
+    /// The active document's symbols, from `textDocument/documentSymbol`.
+    Outline,
+    /// Restorable checkpoints for the selected session.
+    Checkpoints,
 }
 
 /// Keep the Agent transcript mounted in exactly one location per frame.
@@ -255,9 +265,80 @@ pub struct OpenFile {
     /// Repository-relative, for the tab label.
     pub label: String,
     pub body: Result<String, String>,
+    /// Where each line begins, as `(character offset, byte offset)`.
+    ///
+    /// Rebuilt only when the buffer changes, via [`OpenFile::set_body`]. The
+    /// editor converts between egui's flat character index and LSP's
+    /// line/column on every frame — twice, for the caret and the pointer — and
+    /// scanning the buffer from the start each time is O(file size) per frame.
+    /// With this the conversion is a binary search plus a walk of one line.
+    pub line_starts: Vec<(usize, usize)>,
     pub scroll_to_line: Option<usize>,
     /// Whether the editor buffer diverged from disk (tab "●").
     pub modified: bool,
+    /// The file's size and modification time when this buffer was last read
+    /// or written, so a change made outside the editor can be detected.
+    pub disk_stamp: Option<(u64, std::time::SystemTime)>,
+    /// Set when the file on disk moved on under an open buffer — an agent
+    /// wrote it, a rebase landed, another editor saved. The editor never
+    /// silently discards either version; it tells the user and lets them pick.
+    pub external_change: bool,
+}
+
+/// One entry in the command palette.
+#[derive(Clone, Debug)]
+pub(crate) struct PaletteCommand {
+    pub label: String,
+    pub description: String,
+    pub action: PaletteAction,
+}
+
+/// What choosing a palette entry does.
+#[derive(Clone, Debug)]
+pub(crate) enum PaletteAction {
+    QuickOpen,
+    Outline,
+    Format,
+    Rename,
+    Search,
+    Terminal,
+    Problems,
+    Settings,
+    /// Place a daemon session command in the composer, ready to send.
+    Compose(String),
+}
+
+impl OpenFile {
+    /// Replaces the buffer and rebuilds its line index.
+    ///
+    /// Every write to `body` goes through here so the index cannot drift out
+    /// of step with the text it describes — a stale index would put the caret
+    /// on the wrong line, which is worse than no index at all.
+    pub fn set_body(&mut self, text: String) {
+        self.line_starts = line_starts(&text);
+        self.body = Ok(text);
+    }
+}
+
+/// The `(character, byte)` offset at which each line of `text` begins.
+fn line_starts(text: &str) -> Vec<(usize, usize)> {
+    let mut starts = vec![(0, 0)];
+    for (character, (byte, value)) in text.char_indices().enumerate() {
+        if value == '\n' {
+            starts.push((character + 1, byte + value.len_utf8()));
+        }
+    }
+    starts
+}
+
+/// The size and modification time of a file, for change detection.
+///
+/// `None` when the file cannot be stated (deleted, or on a filesystem that
+/// does not report mtime). A missing stamp disables the comparison rather than
+/// producing a spurious "changed on disk" every frame.
+pub(crate) fn disk_stamp(path: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
 }
 
 /// A model the user could choose. `Auto` is not in this list: it is the
@@ -329,6 +410,27 @@ pub struct PurrCodeIde {
     /// Enter confirms a candidate and Esc cancels the composition, so the
     /// composer's Enter-to-send / Esc-to-clear must not fire during it.
     pub(crate) ime_composing: bool,
+    /// The caret's byte offset in the composer, for `/ @ #` completion.
+    pub(crate) composer_caret: usize,
+    /// The token the completion popup is offering suggestions for.
+    pub(crate) active_completion: Option<composer::ActiveToken>,
+    /// Which suggestion the arrow keys have landed on.
+    pub(crate) completion_index: usize,
+    /// Commands the daemon publishes, including how each one executes.
+    pub(crate) commands: Vec<model::Command>,
+    /// Project-wide symbols for `#` completion, as `(name, kind, container)`.
+    pub(crate) workspace_symbols: Vec<(String, String, Option<String>)>,
+    /// The query `workspace_symbols` answers, so a stale reply is discarded.
+    pub(crate) workspace_symbols_for: Option<String>,
+    /// Repository paths, indexed for the `@` completion and Quick Open.
+    /// Held only while a picker is open; see `refresh_path_index`.
+    pub(crate) path_index: Vec<IndexedPath>,
+    pub(crate) path_index_built: Option<Instant>,
+    /// The draft's references, resolved by the daemon.
+    pub(crate) resolved_references: Vec<model::ResolvedReference>,
+    /// The draft `resolved_references` describes, so a reply for text the
+    /// user has since edited cannot be shown as current.
+    pub(crate) references_requested_for: Option<String>,
 
     // ── IDE Shell ────────────────────────────────────────────────────────
     /// The selected Activity Bar item — drives the primary sidebar.
@@ -385,6 +487,59 @@ pub struct PurrCodeIde {
     /// has nothing to report" (show the file tree).
     pub(crate) workspace_changes_checked: bool,
 
+    // ── Agent workspace ────────────────────────────────────────────────
+    /// The worker tree for the selected session (v1.2 Pillar 4).
+    pub(crate) supervisor: model::Supervisor,
+    /// The session `supervisor` describes, so a switch refetches.
+    pub(crate) supervisor_for: Option<String>,
+
+    // ── Project memory ─────────────────────────────────────────────────
+    /// Durable project knowledge for the open folder.
+    pub(crate) memory: Vec<model::MemoryEntry>,
+    /// Which bucket the "remember something" form writes to.
+    pub(crate) memory_kind: String,
+    pub(crate) memory_content: String,
+    /// An entry being edited, as `(id, draft content)`.
+    pub(crate) editing_memory: Option<(String, String)>,
+
+    // ── Session workspace ──────────────────────────────────────────────
+    /// The sidebar's search box. Non-empty means the list is replaced by hits.
+    pub(crate) session_query: String,
+    pub(crate) session_hits: Vec<model::SessionHit>,
+    /// The query `session_hits` answers, so a reply for an abandoned query is
+    /// never shown against a newer one.
+    pub(crate) session_hits_for: Option<String>,
+    /// A rename in progress, as `(session id, draft title)`.
+    pub(crate) renaming_session: Option<(String, String)>,
+    /// A delete awaiting confirmation, as `(session id, title)`.
+    pub(crate) deleting_session: Option<(String, String)>,
+
+    // ── Checkpoints ────────────────────────────────────────────────────
+    /// Restorable points for the selected session, newest first.
+    pub(crate) checkpoints: Vec<model::Checkpoint>,
+    /// The session `checkpoints` belongs to, so a switch refetches.
+    pub(crate) checkpoints_for: Option<String>,
+    /// A restore awaiting confirmation.
+    pub(crate) pending_restore: Option<checkpoints::PendingRestore>,
+
+    // ── Language intelligence ──────────────────────────────────────────
+    /// What language servers have told this window (v1.2 Pillar 1).
+    pub(crate) language: crate::model::LanguageIntelligence,
+    /// Where the pointer is resting in the editor, for delayed hover.
+    pub(crate) hover_probe: Option<language::HoverProbe>,
+    /// A rename the user is naming, if the prompt is open.
+    pub(crate) pending_rename: Option<language::PendingRename>,
+    /// The caret's document position, kept per frame so keyboard actions
+    /// (definition, references, rename) know what the user means by "here".
+    pub(crate) caret: Option<crate::model::DocumentPosition>,
+
+    // ── Explorer file operations ───────────────────────────────────────
+    /// The create/rename/delete waiting on the user's confirmation.
+    pub(crate) file_operation: Option<files::FileOperation>,
+    pub(crate) file_operation_name: String,
+    /// Why the last attempt was refused, shown beside the name field.
+    pub(crate) file_operation_error: Option<String>,
+
     // ── Dock ───────────────────────────────────────────────────────────
     pub(crate) dock: Option<DockTab>,
 
@@ -428,6 +583,13 @@ pub struct PurrCodeIde {
     pub(crate) mcp_working_directory: String,
     pub(crate) mcp_network: bool,
     pub(crate) mcp_environment: String,
+    /// `true` when the server being added speaks HTTP rather than stdio.
+    pub(crate) mcp_http: bool,
+    pub(crate) mcp_url: String,
+    /// Comma-separated tool names that may run without a per-call prompt, and
+    /// those that may never run at all.
+    pub(crate) mcp_trusted_tools: String,
+    pub(crate) mcp_deny_tools: String,
 
     // ── Notices ────────────────────────────────────────────────────────
     pub(crate) notices: Vec<Notice>,
@@ -440,6 +602,13 @@ pub struct PurrCodeIde {
     /// the session list), not the 700 ms session cadence: `git diff --numstat`
     /// over a dirty tree is not free.
     last_workspace_changes_poll: Instant,
+    /// Diagnostics are pushed by language servers, so the window polls for
+    /// what has been published rather than requesting analysis.
+    last_diagnostic_poll: Instant,
+    /// When open buffers were last compared against the files on disk.
+    last_disk_check: Instant,
+    /// When the worker tree was last refreshed.
+    last_supervisor_poll: Instant,
     /// When the current `session_loading` began, so a stuck load falls back
     /// instead of spinning forever.
     session_loading_began: Option<Instant>,
@@ -544,6 +713,16 @@ impl PurrCodeIde {
             aux_panel: Some(AuxView::Source),
             bottom_panel: None,
             dirty: BTreeSet::new(),
+            composer_caret: 0,
+            active_completion: None,
+            completion_index: 0,
+            commands: Vec::new(),
+            workspace_symbols: Vec::new(),
+            workspace_symbols_for: None,
+            path_index: Vec::new(),
+            path_index_built: None,
+            resolved_references: Vec::new(),
+            references_requested_for: None,
             command_palette: None,
             quick_open: None,
             title_visible: false,
@@ -566,6 +745,33 @@ impl PurrCodeIde {
             workspace_changes: model::Changes::default(),
             workspace_changes_loading: false,
             workspace_changes_checked: false,
+
+            supervisor: model::Supervisor::default(),
+            supervisor_for: None,
+
+            memory: Vec::new(),
+            memory_kind: "learnings".to_owned(),
+            memory_content: String::new(),
+            editing_memory: None,
+
+            session_query: String::new(),
+            session_hits: Vec::new(),
+            session_hits_for: None,
+            renaming_session: None,
+            deleting_session: None,
+
+            checkpoints: Vec::new(),
+            checkpoints_for: None,
+            pending_restore: None,
+
+            language: crate::model::LanguageIntelligence::default(),
+            hover_probe: None,
+            pending_rename: None,
+            caret: None,
+
+            file_operation: None,
+            file_operation_name: String::new(),
+            file_operation_error: None,
 
             dock: None,
 
@@ -601,6 +807,10 @@ impl PurrCodeIde {
             mcp_working_directory: String::new(),
             mcp_network: false,
             mcp_environment: String::new(),
+            mcp_http: false,
+            mcp_url: String::new(),
+            mcp_trusted_tools: String::new(),
+            mcp_deny_tools: String::new(),
 
             notices: Vec::new(),
 
@@ -608,6 +818,9 @@ impl PurrCodeIde {
             last_list_poll: now,
             last_terminal_poll: now,
             last_workspace_changes_poll: now,
+            last_diagnostic_poll: now,
+            last_supervisor_poll: now,
+            last_disk_check: now,
             session_loading_began: None,
             current_session_load_generation: None,
             last_session_load_generation: None,
@@ -617,6 +830,10 @@ impl PurrCodeIde {
 
         app.client.send(Request::Bootstrap);
         app.client.send(Request::ListModels);
+        // The palette and the composer's `/` completion are both driven by
+        // the daemon's command contract, so fetch it once at startup rather
+        // than hard-coding a list that would drift from the daemon's.
+        app.client.send(Request::ListCommands);
         if app.stage == Stage::Workspace {
             app.refresh_workspace();
         }
@@ -681,6 +898,12 @@ impl PurrCodeIde {
             }
             SettingsPage::Codex => {
                 self.client.send(Request::CodexGet);
+            }
+            SettingsPage::Memory => {
+                let repository = self.repository_string();
+                if !repository.is_empty() {
+                    self.client.send(Request::ListMemory { repository });
+                }
             }
             SettingsPage::Authority
             | SettingsPage::Agent
@@ -802,13 +1025,40 @@ impl PurrCodeIde {
     /// the request itself (PRD §5, §7, FR-002, FR-004) — a greeting stays a
     /// greeting and never creates a worktree, a plan or a validation run.
     pub(crate) fn submit(&mut self) {
-        let text = self.composer.trim().to_owned();
+        let mut text = self.composer.trim().to_owned();
         if text.is_empty() || self.submitting {
             return;
         }
         if !self.connected {
             self.push_notice(errors::disconnected_notice());
             return;
+        }
+        // A command is executed, not said. Before this dispatch, `/undo` was
+        // sent as conversation text and the model replied "Sure, I'll undo
+        // that" while nothing was restored. The daemon now refuses commands as
+        // messages, so anything not handled here would surface as an error
+        // rather than a silent lie — but the point is to actually run it.
+        if let Some(command) = crate::model::command_in_draft(&self.commands, &text).cloned() {
+            match command.execution {
+                crate::model::CommandExecution::Prompt { ref prompt } => {
+                    // Expanded here, so what reaches the agent (and what is
+                    // recorded in the conversation) is the instruction itself
+                    // rather than the shorthand.
+                    text = match crate::model::command_argument(&text) {
+                        Some(argument) => format!("{prompt}\n\n{argument}"),
+                        None => prompt.clone(),
+                    };
+                }
+                _ => {
+                    self.run_session_command(&command, &text);
+                    self.composer.clear();
+                    self.composer_caret = 0;
+                    self.resolved_references.clear();
+                    self.references_requested_for = None;
+                    self.focus_composer = true;
+                    return;
+                }
+            }
         }
         self.submitting = true;
         self.pending_submission = Some(text.clone());
@@ -833,6 +1083,74 @@ impl PurrCodeIde {
         }
         self.composer.clear();
         self.focus_composer = true;
+    }
+
+    /// Execute a composer command.
+    ///
+    /// Every branch here either performs the operation or says why it cannot.
+    /// Nothing falls through to the message path: a command the IDE cannot
+    /// dispatch must report that, because the alternative — quietly sending it
+    /// to the model — is what made `/undo` look like it worked.
+    fn run_session_command(&mut self, command: &crate::model::Command, draft: &str) {
+        use crate::model::CommandExecution;
+        let Some(session) = self.selected.clone() else {
+            self.push_notice(errors::command_needs_session(&command.name));
+            return;
+        };
+        match &command.execution {
+            CommandExecution::Daemon { path } => {
+                // `/checkpoint` is the one deterministic command with a payload
+                // (its label), and the IDE already has a typed request for it.
+                if command.name == "/checkpoint" {
+                    let label = crate::model::command_argument(draft)
+                        .unwrap_or_else(|| "manual".to_owned());
+                    self.client
+                        .send(Request::CreateCheckpoint { session, label });
+                    return;
+                }
+                self.client.send(Request::SessionCommand {
+                    session: session.clone(),
+                    name: command.name.clone(),
+                    path: path.replace("{id}", &session),
+                });
+            }
+            CommandExecution::Client => match command.name.as_str() {
+                "/context" => {
+                    self.bottom_panel = Some(DockTab::Activity);
+                    self.aux_panel = Some(AuxView::Agent);
+                }
+                "/diff" => {
+                    self.aux_panel = Some(AuxView::Source);
+                    self.code_panel = CodePanel::Changes;
+                    self.refresh_diff();
+                }
+                // A fork needs an anchor message, so this opens the surface that
+                // shows the anchors rather than picking one for the user.
+                "/fork" | "/checkpoints" => {
+                    self.aux_panel = Some(AuxView::Checkpoints);
+                    self.client.send(Request::ListCheckpoints { session });
+                }
+                "/model" => self.open_settings_page(settings::SettingsPage::Models),
+                "/agent" => self.open_settings_page(settings::SettingsPage::Agent),
+                "/mcp" => self.open_settings_page(settings::SettingsPage::Mcp),
+                "/skills" => self.open_settings_page(settings::SettingsPage::Skills),
+                "/memory" => self.open_settings_page(settings::SettingsPage::Memory),
+                other => self.push_notice(errors::command_not_available(other)),
+            },
+            // Expanded by `submit` before it gets here.
+            CommandExecution::Prompt { .. } => {}
+            // The daemon published an execution kind this build does not
+            // implement. Reported rather than guessed at.
+            CommandExecution::Unknown => {
+                self.push_notice(errors::command_not_available(&command.name))
+            }
+        }
+    }
+
+    /// Open Settings directly on one page.
+    fn open_settings_page(&mut self, page: settings::SettingsPage) {
+        self.settings_page = page;
+        self.open_settings();
     }
 
     pub(crate) fn open_workspace(&mut self, path: PathBuf) {
@@ -909,12 +1227,13 @@ impl PurrCodeIde {
                 }
             }
             DockTab::Problems => {
-                let problems = crate::model::problems_from(&self.session.validation);
-                if problems.is_empty() {
-                    None
-                } else {
-                    Some(problems.len().to_string())
-                }
+                // The badge counts both sources the panel shows. Counting only
+                // validation would leave a file full of compile errors badged
+                // as clean while the panel below listed every one of them.
+                let (errors, others) = self.language.counts();
+                let total =
+                    crate::model::problems_from(&self.session.validation).len() + errors + others;
+                (total > 0).then(|| total.to_string())
             }
             DockTab::Terminal => {
                 if self.terminals.is_empty() {
@@ -1067,6 +1386,36 @@ impl PurrCodeIde {
                 if self.selected.as_deref() == Some(id.as_str()) {
                     self.reload_session();
                     self.refresh_diff();
+                }
+                let repository = self.repository_string();
+                self.client.send(Request::ListSessions { repository });
+            }
+            Response::CommandExecuted(id, name, value) => {
+                self.submitting = false;
+                self.pending_submission = None;
+                // The daemon reports where an undo/redo landed; that is what the
+                // user needs to see, not a generic "done".
+                let headline = match (value["position"].as_u64(), value["of"].as_u64()) {
+                    (Some(position), Some(total)) => {
+                        format!("{name} — checkpoint {position} of {total}")
+                    }
+                    _ => format!("{name} ran"),
+                };
+                let impact = match value["label"].as_str() {
+                    Some(label) if !label.is_empty() => {
+                        format!("The worktree now matches the checkpoint “{label}”.")
+                    }
+                    _ => "The session was updated.".to_owned(),
+                };
+                self.push_notice(errors::command_outcome(headline, impact));
+                if self.selected.as_deref() == Some(id.as_str()) {
+                    self.reload_session();
+                    self.refresh_diff();
+                    // The timeline moved, so a Checkpoints panel showing the old
+                    // position would be describing a state that no longer exists.
+                    self.client.send(Request::ListCheckpoints {
+                        session: id.clone(),
+                    });
                 }
                 let repository = self.repository_string();
                 self.client.send(Request::ListSessions { repository });
@@ -1241,6 +1590,187 @@ impl PurrCodeIde {
                 self.settings_state.codex = value;
             }
             Response::CodexDoctor(value) => self.settings_state.codex_doctor = value,
+            Response::LspServers(value) => {
+                self.language.servers = crate::model::objects(&value["servers"], |item| {
+                    Some((
+                        item["program"].as_str()?.to_owned(),
+                        crate::model::objects(&item["extensions"], |ext| {
+                            Some(ext.as_str()?.to_ascii_lowercase())
+                        }),
+                    ))
+                });
+                self.language.servers_checked = true;
+                self.language.last_error = None;
+                // The servers are known now, so anything already open can be
+                // handed over for analysis.
+                for path in self
+                    .open_files
+                    .iter()
+                    .map(|file| file.path.clone())
+                    .collect::<Vec<_>>()
+                {
+                    self.open_in_language_server(&path);
+                }
+            }
+            Response::LspHover(path, line, character, value) => {
+                let anchor = crate::model::DocumentPosition { line, character };
+                // Only show an answer for the position the pointer is still
+                // resting on: a reply that arrives after the pointer moved
+                // would label the wrong token.
+                let current = self
+                    .hover_probe
+                    .as_ref()
+                    .is_some_and(|probe| probe.path == path && probe.position == anchor);
+                if current {
+                    let contents = value["contents"].as_str().unwrap_or_default().trim();
+                    self.language.hover = (!contents.is_empty()).then(|| contents.to_owned());
+                }
+            }
+            Response::LspDefinition(value) => {
+                let targets = crate::model::objects(&value, crate::model::Location::parse);
+                match targets.first() {
+                    // One target is an unambiguous jump. Several means the
+                    // symbol genuinely has multiple definitions (trait impls,
+                    // overloads), so the list is shown rather than guessing.
+                    Some(target) if targets.len() == 1 => self.open_location(target),
+                    Some(_) => {
+                        self.language.references = targets;
+                        self.language.references_checked = true;
+                        self.language.references_for = Some("definitions".to_owned());
+                        self.aux_panel = Some(AuxView::References);
+                    }
+                    None => self.push_notice(errors::Notice {
+                        kind: errors::NoticeKind::Environment,
+                        headline: "No definition found".to_owned(),
+                        impact: "The language server did not resolve a definition for that symbol."
+                            .to_owned(),
+                        next_step: Some(
+                            "It may still be indexing the project — try again in a moment."
+                                .to_owned(),
+                        ),
+                        actions: vec![errors::NoticeAction::Dismiss],
+                        detail: None,
+                        clears_on_reconnect: false,
+                    }),
+                }
+            }
+            Response::LspReferences(label, value) => {
+                self.language.references =
+                    crate::model::objects(&value, crate::model::Location::parse);
+                self.language.references_checked = true;
+                self.language.references_for = Some(label);
+            }
+            Response::LspSymbols(path, value) => {
+                self.language.symbols = crate::model::objects(&value, crate::model::Symbol::parse);
+                self.language.symbols_for = Some(path);
+            }
+            Response::LspFormat(path, value, then_save) => {
+                self.apply_format_edits(&path, &value, then_save)
+            }
+            Response::LspRename(old_name, new_name, value) => {
+                self.apply_rename_edits(&old_name, &new_name, &value)
+            }
+            Response::LspDiagnostics(value) => self.language.absorb_diagnostics(&value),
+            Response::Supervisor(session, value) => {
+                if self.selected.as_deref() == Some(session.as_str()) {
+                    self.supervisor = crate::model::Supervisor::parse(&value);
+                }
+            }
+            Response::Memory(value) => {
+                self.memory = crate::model::MemoryEntry::parse_all(&value);
+            }
+            Response::McpTested(id, value) => {
+                self.settings_state.mutation_succeeded();
+                self.settings_state.mcp_tests.insert(id, value);
+            }
+            Response::SessionSearch(query, value) => {
+                if self.session_hits_for.as_deref() == Some(query.as_str()) {
+                    self.session_hits = crate::model::SessionHit::parse_all(&value);
+                }
+            }
+            Response::Checkpoints(session, value) => {
+                if self.selected.as_deref() == Some(session.as_str()) {
+                    self.checkpoints = crate::model::Checkpoint::parse_all(&value);
+                }
+            }
+            Response::CheckpointPreview(checkpoint, value) => {
+                let files = crate::model::objects(&value["changed_files"], |item| {
+                    item.as_str().map(str::to_owned)
+                });
+                // Fold the preview into both the list entry and the pending
+                // dialog, so the confirmation button unlocks with a real
+                // number behind it.
+                for entry in &mut self.checkpoints {
+                    if entry.id == checkpoint {
+                        entry.changed_files = Some(files.clone());
+                    }
+                }
+                if let Some(pending) = self.pending_restore.as_mut()
+                    && pending.checkpoint.id == checkpoint
+                {
+                    pending.checkpoint.changed_files = Some(files);
+                }
+            }
+            Response::CheckpointRestored(_) => {
+                // The restore rewrote the worktree underneath every open
+                // buffer, so re-read them now rather than leaving a stale
+                // buffer to be saved back over the restored file.
+                self.reload_after_worktree_replaced();
+                self.checkpoints_for = None;
+            }
+            Response::SessionForked(child) => {
+                if child.is_empty() {
+                    return;
+                }
+                // Select the fork: the user asked to try another approach, and
+                // leaving them in the parent means the next thing they type
+                // lands in the session they were trying to branch away from.
+                self.pending_initial_session = Some(child.clone());
+                self.select_session(&child);
+                let repository = self.repository_string();
+                self.client.send(Request::ListSessions { repository });
+            }
+            Response::LspWorkspaceSymbols(query, value) => {
+                // Only accept the answer to the query still being typed.
+                if self.workspace_symbols_for.as_deref() == Some(query.as_str()) {
+                    self.workspace_symbols = value
+                        .as_array()
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|item| {
+                                    let symbol = crate::model::Symbol::parse(&serde_json::json!({
+                                        "name": item["name"],
+                                        "kind": item["kind"],
+                                    }))?;
+                                    Some((
+                                        symbol.name.clone(),
+                                        symbol.kind_label().to_owned(),
+                                        item["container"].as_str().map(str::to_owned),
+                                    ))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                }
+            }
+            Response::Commands(value) => {
+                self.commands = crate::model::Command::parse_all(&value);
+            }
+            Response::References(text, value) => {
+                // The draft may have moved on while this was in flight; a
+                // chip row describing text the user has edited past would
+                // claim the wrong files are attached.
+                if self.composer == text {
+                    self.resolved_references = crate::model::ResolvedReference::parse_all(&value);
+                }
+            }
+            Response::LspUnavailable(error) => {
+                // Recorded, not raised: a missing language server is a normal
+                // state for a machine, and a modal per hover would be worse
+                // than no intelligence at all.
+                self.language.last_error = Some(error);
+            }
             Response::SettingsMutated => {
                 // A mutation landed; the owning page re-fetches its data.
                 self.settings_state.mutation_succeeded();
@@ -1360,6 +1890,17 @@ impl PurrCodeIde {
         {
             self.last_terminal_poll = Instant::now();
             self.poll_terminals();
+        }
+        // Language intelligence: find out what is installed once, then keep
+        // the Problems panel fed. Both are no-ops when no server exists.
+        self.refresh_path_index();
+        if self.stage == Stage::Workspace {
+            self.probe_language_servers();
+            self.poll_diagnostics();
+            self.settle_hover();
+            self.detect_external_changes();
+            self.refresh_checkpoints();
+            self.poll_supervisor();
         }
         // A running task should look running without the user touching the
         // mouse; an idle window should not burn a core.
@@ -1512,6 +2053,16 @@ impl eframe::App for PurrCodeIde {
         self.command_center(ctx);
 
         self.settings_window(ctx);
+
+        self.file_operation_dialog(ctx);
+
+        self.rename_dialog(ctx);
+
+        self.restore_dialog(ctx);
+
+        self.session_dialogs(ctx);
+
+        self.memory_dialog(ctx);
 
         self.close_confirm_modal(ctx);
     }
@@ -1854,6 +2405,9 @@ impl PurrCodeIde {
                                 "Source".to_owned()
                             }
                         }
+                        AuxView::References => "References".to_owned(),
+                        AuxView::Outline => "Outline".to_owned(),
+                        AuxView::Checkpoints => "Checkpoints".to_owned(),
                     };
                     ui.label(RichText::new(title).color(self.tokens.text_primary));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1882,6 +2436,9 @@ impl PurrCodeIde {
             .show(ui, |ui| match view {
                 AuxView::Agent => self.agent_surface(ui),
                 AuxView::Source => self.code_column(ui),
+                AuxView::References => self.references_panel(ui),
+                AuxView::Outline => self.outline_panel(ui),
+                AuxView::Checkpoints => self.checkpoints_panel(ui),
             });
     }
 
@@ -1998,63 +2555,173 @@ impl PurrCodeIde {
         if pressed(Key::S, false) && self.agent_location == AgentLocation::Aux {
             // ⌘S saves the active editor file when the source column owns the
             // centre. It is a no-op while the agent session holds the tab.
+            self.save_and_format_active_file();
+        }
+        // ⌘⇧O opens the document outline, matching the "go to symbol" idiom.
+        if pressed(Key::O, true)
+            && let Some(path) = self.active_file_path()
+        {
+            self.aux_panel = Some(AuxView::Outline);
+            self.request_symbols(&path);
+        }
+
+        // Language navigation. These are plain function keys, not ⌘ chords, so
+        // they are checked outside the `pressed` helper above.
+        let language_keys = ctx.input_mut(|input| {
+            (
+                input.consume_key(Modifiers::NONE, Key::F12),
+                input.consume_key(Modifiers::SHIFT, Key::F12),
+                input.consume_key(Modifiers::ALT.plus(Modifiers::SHIFT), Key::F),
+                // F2 is the rename idiom every editor shares.
+                input.consume_key(Modifiers::NONE, Key::F2),
+            )
+        });
+        if let Some((path, position)) = self.caret_target() {
+            match language_keys {
+                (true, ..) => self.go_to_definition(&path, position),
+                (_, true, ..) => {
+                    // Read the identifier here rather than every frame: it is
+                    // only ever needed to label this one panel.
+                    let word = self.word_at_caret(position);
+                    self.find_references(&path, position, &word);
+                }
+                (_, _, true, _) => self.format_document(&path, false),
+                (.., true) => {
+                    let word = self.word_at_caret(position);
+                    self.start_rename(&path, position, &word);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The active editor file, when one owns the centre.
+    fn active_file_path(&self) -> Option<PathBuf> {
+        self.open_files
+            .get(self.active_file)
+            .map(|file| file.path.clone())
+    }
+
+    /// The document and position a language action should act on.
+    ///
+    /// `None` when no file is focused or the caret has not been placed, so a
+    /// keypress does nothing rather than acting on a stale position from a
+    /// file the user has since closed.
+    fn caret_target(&self) -> Option<(PathBuf, crate::model::DocumentPosition)> {
+        let path = self.active_file_path()?;
+        Some((path, self.caret?))
+    }
+
+    /// ⌘S: format, then write.
+    ///
+    /// The save is deferred until the formatting edits land, so the file on
+    /// disk is the formatted text rather than the pre-format buffer followed
+    /// by a second write. When no language server covers the file, this is an
+    /// ordinary save.
+    fn save_and_format_active_file(&mut self) {
+        let Some(path) = self.active_file_path() else {
+            return;
+        };
+        if self.language.supports(&path) {
+            self.format_document(&path, true);
+        } else {
             self.save_active_file();
         }
     }
 
-    /// Command center overlay: Cmd+P quick-open and Cmd+Shift+P palette share
-    /// one search box over the file list.
+    /// Command center overlay: ⌘P opens a file, ⌘⇧P runs a command.
+    ///
+    /// These were one surface over one file list, so "Command Palette" was a
+    /// window titled after commands that only ever listed files. They are two
+    /// surfaces now, because they answer two different questions.
     fn command_center(&mut self, ctx: &egui::Context) {
-        // Snapshot the open box and its query so no borrow of self spans the
-        // closure below (which calls other self methods).
         let is_palette = self.command_palette.is_some();
-        let mut query = if let Some(q) = &self.command_palette {
-            q.clone()
-        } else if let Some(q) = &self.quick_open {
-            q.clone()
+        let mut query = if let Some(query) = &self.command_palette {
+            query.clone()
+        } else if let Some(query) = &self.quick_open {
+            query.clone()
         } else {
             return;
         };
         let mut close = false;
         let mut open: Option<PathBuf> = None;
+        let mut run: Option<PaletteCommand> = None;
+        let commands = is_palette.then(|| self.palette_commands(&query));
+
         egui::Window::new(if is_palette {
             "Command Palette"
         } else {
             "Quick Open"
         })
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 40.0))
-        .default_width(480.0)
+        .default_width(520.0)
         .resizable(false)
         .collapsible(false)
         .show(ctx, |ui| {
-            let response = ui.add(egui::TextEdit::singleline(&mut query).hint_text(
-                if is_palette {
-                    "Type a command or file…"
-                } else {
-                    "Type a file name…"
-                },
-            ));
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut query)
+                    .desired_width(f32::INFINITY)
+                    .hint_text(if is_palette {
+                        "Type a command…"
+                    } else {
+                        "Type a file name…"
+                    }),
+            );
             response.request_focus();
-            let results = self.fuzzy_files(&query);
             ui.separator();
-            for (path, _) in results.iter().take(10) {
-                if ui
-                    .selectable_label(false, path.display().to_string())
-                    .clicked()
-                {
-                    open = Some(path.clone());
+
+            if let Some(commands) = &commands {
+                if commands.is_empty() {
+                    ui.label(
+                        RichText::new("No command matches.")
+                            .small()
+                            .color(self.tokens.text_muted),
+                    );
                 }
-            }
-            if ui.input(|input| input.key_pressed(egui::Key::Enter))
-                && let Some(first) = results.first()
-            {
-                open = Some(first.0.clone());
+                for command in commands.iter().take(12) {
+                    let row = ui.selectable_label(false, &command.label);
+                    if row.on_hover_text(&command.description).clicked() {
+                        run = Some(command.clone());
+                    }
+                }
+                if ui.input(|input| input.key_pressed(egui::Key::Enter))
+                    && let Some(first) = commands.first()
+                {
+                    run = Some(first.clone());
+                }
+            } else {
+                let results = if query.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    self.matching_paths(&query.to_ascii_lowercase(), false, 12)
+                };
+                if results.is_empty() && !query.trim().is_empty() {
+                    ui.label(
+                        RichText::new("No file matches.")
+                            .small()
+                            .color(self.tokens.text_muted),
+                    );
+                }
+                for path in &results {
+                    let shown = path.strip_prefix(&self.repository).unwrap_or(path);
+                    if ui
+                        .selectable_label(false, shown.display().to_string())
+                        .clicked()
+                    {
+                        open = Some(path.clone());
+                    }
+                }
+                if ui.input(|input| input.key_pressed(egui::Key::Enter))
+                    && let Some(first) = results.first()
+                {
+                    open = Some(first.clone());
+                }
             }
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 close = true;
             }
         });
-        // Commit the snapshot back to state after the window closes.
+
         if is_palette {
             self.command_palette = Some(query);
         } else {
@@ -2062,52 +2729,269 @@ impl PurrCodeIde {
         }
         if let Some(path) = open {
             self.open_file(path);
+            close = true;
+        }
+        // Dismiss before running: a command that opens another overlay (Go to
+        // file) would otherwise have its own state cleared a line later.
+        if close || run.is_some() {
             self.command_palette = None;
             self.quick_open = None;
         }
-        if close {
-            self.command_palette = None;
-            self.quick_open = None;
+        if let Some(command) = run {
+            self.run_palette_command(&command);
         }
     }
 
-    /// Rank files by prefix/substring match against `query`.
-    fn fuzzy_files(&self, query: &str) -> Vec<(PathBuf, i64)> {
-        if query.trim().is_empty() {
-            return Vec::new();
+    /// The palette's entries: the window's own actions, then the daemon's
+    /// session commands.
+    ///
+    /// Both are real. A window action does what it says immediately; a session
+    /// command is placed in the composer, where submitting it dispatches it to
+    /// the route the daemon published for it. Commands that need a session are
+    /// not offered when none is selected, rather than being listed and then
+    /// doing nothing.
+    fn palette_commands(&self, query: &str) -> Vec<PaletteCommand> {
+        let query = query.trim().to_lowercase();
+        let mut out: Vec<PaletteCommand> = Vec::new();
+        for (label, description, action) in [
+            (
+                "Go to file…",
+                "Open a file by name",
+                PaletteAction::QuickOpen,
+            ),
+            (
+                "Go to symbol in file…",
+                "List the symbols in the active file",
+                PaletteAction::Outline,
+            ),
+            (
+                "Format document",
+                "Run the language server's formatter",
+                PaletteAction::Format,
+            ),
+            (
+                "Rename symbol",
+                "Rename every use of the symbol at the caret (F2)",
+                PaletteAction::Rename,
+            ),
+            (
+                "Find in project…",
+                "Search every file for text",
+                PaletteAction::Search,
+            ),
+            (
+                "Toggle terminal",
+                "Show or hide the terminal panel",
+                PaletteAction::Terminal,
+            ),
+            (
+                "Show problems",
+                "Diagnostics and validation failures",
+                PaletteAction::Problems,
+            ),
+            (
+                "Open settings",
+                "Providers, models, MCP, skills",
+                PaletteAction::Settings,
+            ),
+        ] {
+            if label.to_lowercase().contains(&query) {
+                out.push(PaletteCommand {
+                    label: label.to_owned(),
+                    description: description.to_owned(),
+                    action,
+                });
+            }
         }
-        let lower = query.to_ascii_lowercase();
-        let mut scored: Vec<(PathBuf, i64)> = Vec::new();
-        let mut entries = vec![self.repository.clone()];
-        while let Some(dir) = entries.pop() {
-            let Ok(read) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in read.flatten() {
-                let path = entry.path();
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                if name.starts_with('.') || name == "target" || name == "node_modules" {
-                    continue;
-                }
-                let Some(pos) = name.find(&lower) else {
-                    continue;
-                };
-                let score = -(pos as i64) - name.len() as i64;
-                if path.is_dir() {
-                    entries.push(path.clone());
-                } else {
-                    scored.push((path, score));
+        if self.selected.is_some() {
+            for command in &self.commands {
+                if command.name.to_lowercase().contains(&query) {
+                    out.push(PaletteCommand {
+                        label: command.name.clone(),
+                        description: command.description.clone(),
+                        action: PaletteAction::Compose(command.name.clone()),
+                    });
                 }
             }
         }
-        scored.sort_by_key(|(_, score)| *score);
-        scored.truncate(20);
-        scored
+        out
     }
+
+    fn run_palette_command(&mut self, command: &PaletteCommand) {
+        match &command.action {
+            // The caller closes the palette after this returns, so setting
+            // `quick_open` here hands the overlay straight to the file picker.
+            PaletteAction::QuickOpen => self.quick_open = Some(String::new()),
+            PaletteAction::Outline => {
+                self.aux_panel = Some(AuxView::Outline);
+                if let Some(path) = self.active_file_path() {
+                    self.request_symbols(&path);
+                }
+            }
+            PaletteAction::Format => {
+                if let Some(path) = self.active_file_path() {
+                    self.format_document(&path, false);
+                }
+            }
+            PaletteAction::Rename => {
+                if let Some((path, position)) = self.caret_target() {
+                    let word = self.word_at_caret(position);
+                    self.start_rename(&path, position, &word);
+                }
+            }
+            PaletteAction::Search => self.activity = ActivityBar::Search,
+            PaletteAction::Terminal => {
+                self.bottom_panel = if self.bottom_panel == Some(DockTab::Terminal) {
+                    None
+                } else {
+                    Some(DockTab::Terminal)
+                };
+            }
+            PaletteAction::Problems => self.bottom_panel = Some(DockTab::Problems),
+            PaletteAction::Settings => self.settings_open = true,
+            PaletteAction::Compose(name) => {
+                // The palette puts the command in the composer rather than
+                // firing it, so the user can add an argument and can see what
+                // they are about to run. Submitting it then dispatches it
+                // deterministically (see `run_session_command`) — the palette
+                // is a shortcut to typing, not a second execution path.
+                self.composer = format!("{name} ");
+                self.composer_caret = self.composer.len();
+                self.focus_composer = true;
+            }
+        }
+    }
+
+    /// Paths under the open folder matching a lowercase query.
+    ///
+    /// Matching is done against the repository-relative path, not the bare
+    /// filename, so `app/mod` finds `src/app/mod.rs` while `mod` alone does
+    /// not drown the list in every `mod.rs` in the tree. Results are ranked
+    /// by where the match landed and how much path surrounds it, so the
+    /// shortest, earliest match wins.
+    ///
+    /// This reads the cached index rather than the filesystem. It is called
+    /// from a draw path — once per frame while a picker is open — so walking
+    /// the tree here would be a directory crawl at the display's refresh rate.
+    pub(crate) fn matching_paths(
+        &self,
+        query: &str,
+        directories: bool,
+        limit: usize,
+    ) -> Vec<PathBuf> {
+        let mut scored: Vec<(i64, &PathBuf)> = Vec::new();
+        for entry in &self.path_index {
+            if entry.is_directory != directories {
+                continue;
+            }
+            // An empty query lists what is nearest the root rather than
+            // nothing: opening `@` with no text should show something.
+            let position = if query.is_empty() {
+                Some(0)
+            } else {
+                entry.relative.find(query)
+            };
+            let Some(position) = position else {
+                continue;
+            };
+            scored.push((position as i64 + entry.relative.len() as i64, &entry.path));
+        }
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+        scored.truncate(limit);
+        scored.into_iter().map(|(_, path)| path.clone()).collect()
+    }
+
+    /// Keeps the path index fresh while a picker needs it.
+    ///
+    /// The index exists only while something is searching paths, and is
+    /// dropped as soon as nothing is: a large repository's index is not worth
+    /// holding for a window nobody is typing into. Rebuilding is bounded by
+    /// [`PATH_INDEX_TTL`], so a file created outside PurrCode shows up in
+    /// completion within a second or two without any per-keystroke I/O.
+    pub(crate) fn refresh_path_index(&mut self) {
+        let wanted = self.active_completion.is_some()
+            || self.quick_open.is_some()
+            || self.command_palette.is_some();
+        if !wanted {
+            if !self.path_index.is_empty() {
+                self.path_index = Vec::new();
+                self.path_index_built = None;
+            }
+            return;
+        }
+        let fresh = self
+            .path_index_built
+            .is_some_and(|built| built.elapsed() < PATH_INDEX_TTL);
+        if fresh {
+            return;
+        }
+        self.path_index_built = Some(Instant::now());
+        self.path_index = index_paths(&self.repository);
+    }
+}
+
+/// One entry in the path index.
+pub(crate) struct IndexedPath {
+    /// Repository-relative, lowercased once at index time so matching never
+    /// re-allocates per query.
+    pub relative: String,
+    pub path: PathBuf,
+    pub is_directory: bool,
+}
+
+/// How long a path index is trusted before it is rebuilt.
+const PATH_INDEX_TTL: Duration = Duration::from_secs(2);
+
+/// Walks the open folder once, producing the index the pickers match against.
+///
+/// `entry.file_type()` rather than `path.is_dir()`: the directory read already
+/// returned the type on every platform PurrCode targets, so asking the
+/// filesystem again would be one extra syscall per entry for information
+/// already in hand.
+fn index_paths(repository: &std::path::Path) -> Vec<IndexedPath> {
+    if repository.as_os_str().is_empty() {
+        return Vec::new();
+    }
+    // A bounded walk, so a pathological tree cannot stall the frame that
+    // rebuilds the index.
+    const MAX_VISITED: usize = 20_000;
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::from([repository.to_path_buf()]);
+    let mut visited = 0_usize;
+    while let Some(directory) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > MAX_VISITED {
+                return out;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            // The same exclusions the file tree uses, so completion and the
+            // Explorer agree about what is in the project.
+            if name.starts_with('.') || name == "target" || name == "node_modules" {
+                continue;
+            }
+            let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            let path = entry.path();
+            if is_directory {
+                queue.push_back(path.clone());
+            }
+            let relative = path
+                .strip_prefix(repository)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_ascii_lowercase();
+            out.push(IndexedPath {
+                relative,
+                path,
+                is_directory,
+            });
+        }
+    }
+    out
 }
 
 /// Truncate a session title for a compact label, keeping the start and adding

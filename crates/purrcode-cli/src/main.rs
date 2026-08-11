@@ -23,7 +23,7 @@ use purrcode_mcp_host::{
 };
 use purrcode_model_selection::{ModelCandidate, SelectionBudget, select_coder, select_judge};
 use purrcode_ninelives::SessionStore;
-use purrcode_pawgate::{Policy, resolve_policy_path};
+use purrcode_pawgate::{Policy, resolve_policy_path, resolve_user_policy_path};
 use purrcode_provider_gateway::{
     AppConfig, JudgmentRuntimeConfig, ModelCapabilities, ModelId, ModelsConfig, PrivacyConfig,
     PrivacyMode, ProviderConfig, ProviderRouter, delete_credential, qualify_model,
@@ -32,7 +32,8 @@ use purrcode_provider_gateway::{
 use purrcode_repository_engine::{ApplicationStrategy, RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::{
     ActionId, ApprovalAuthority, Authorization, CommandAction, JudgmentDecision, ProposedAction,
-    ResearchEvent, ResearchExport, ResearchMetrics, SessionEvent, SessionId, ValidationStatus,
+    ResearchEvent, ResearchExport, ResearchMetrics, SessionEvent, SessionId, SessionStatus,
+    ValidationStatus,
 };
 use purrcode_tui::TuiConfig;
 use serde::{Deserialize, Serialize};
@@ -1069,6 +1070,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )?;
             let decision = policy.evaluate(&action, &repository);
@@ -1077,6 +1079,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: decision.clone(),
+                    turn_id: None,
                 },
             )?;
             let constraints = match decision {
@@ -1319,6 +1322,18 @@ async fn dispatch(cli: Cli) -> Result<()> {
             acknowledge_unattributed_effects,
         } => {
             let session_id = resolve_session_id(&store, session)?;
+            // The daemon refuses this while a session holds a lease. That
+            // lease is daemon memory, so this path cannot see it — but the
+            // durable status can, and rolling back a worktree an agent is
+            // still writing into destroys work and leaves the tree in a state
+            // neither the agent nor the event log describes.
+            let status = store.load(session_id)?.status;
+            if matches!(status, SessionStatus::Active | SessionStatus::Executing(_)) {
+                bail!(
+                    "session is still running ({status:?}); pause it first with `purrcode pause {}`",
+                    session_id.0
+                );
+            }
             let worktree = session_worktree_from_store(&store, session_id)?;
             let effects = RepositoryEngine::effects(&worktree).await?;
             let digest = blake3::hash(&effects.binary_patch).to_hex().to_string();
@@ -1841,6 +1856,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )?;
             store.append(
@@ -1848,6 +1864,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision,
+                    turn_id: None,
                 },
             )?;
             store.authorize(&Authorization {
@@ -3010,6 +3027,7 @@ fn run_judgment_benchmark_case(
         &SessionEvent::ActionProposed {
             action_id,
             action: action.clone(),
+            turn_id: None,
         },
     )?;
     evidence.append(
@@ -3017,6 +3035,7 @@ fn run_judgment_benchmark_case(
         &SessionEvent::JudgmentRecorded {
             action_id,
             decision: decision.clone(),
+            turn_id: None,
         },
     )?;
 
@@ -3478,24 +3497,21 @@ fn canonical_repository(repository: Option<PathBuf>) -> Result<PathBuf> {
 }
 
 fn load_policy(repository: &Path, config_path: &Path) -> Result<Policy> {
-    let path = resolve_policy_path(repository);
+    let project = resolve_policy_path(repository);
+    let user = resolve_user_policy_path();
     let organization = if config_path.exists() {
         load_app_config(config_path)?.organization_policy
     } else {
         None
     };
-    if let Some(organization) = organization {
-        Policy::load_effective(
-            path.exists().then_some(path.as_path()),
-            &organization.pack,
-            &organization.ed25519_public_key,
-        )
-        .map_err(Into::into)
-    } else if path.exists() {
-        Policy::load(&path).map_err(Into::into)
-    } else {
-        Ok(Policy::default())
-    }
+    Policy::load_effective_v3(
+        user.as_deref(),
+        project.exists().then_some(project.as_path()),
+        organization
+            .as_ref()
+            .map(|org| (org.pack.as_path(), org.ed25519_public_key.as_str())),
+    )
+    .map_err(Into::into)
 }
 
 fn default_database_path() -> Result<PathBuf> {
@@ -4206,13 +4222,20 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         TaskStatusChanged { .. } => "task_status_changed",
         EvidenceLinked { .. } => "evidence_linked",
         ContextCompacted { .. } => "context_compacted",
+        CheckpointCompacted { .. } => "checkpoint_compacted",
+        ContextAssembled { .. } => "context_assembled",
         SessionPaused { .. } => "session_paused",
         SessionResumed => "session_resumed",
         ModelSelected { .. } => "model_selected",
+        AgentBound { .. } => "agent_bound",
         SupervisorStarted { .. } => "supervisor_started",
+        WorkerStarted { .. } => "worker_started",
         WorkerFinished { .. } => "worker_finished",
         SupervisorReviewRequired { .. } => "supervisor_review_required",
         ContextIndexed { .. } => "context_indexed",
+        ScoutStarted { .. } => "scout_started",
+        ScoutCompleted { .. } => "scout_completed",
+        ScoutFailed { .. } => "scout_failed",
         ModelRequestStarted { .. } => "model_request_started",
         ModelRequestFinished { .. } => "model_request_finished",
         ActionProposed { .. } => "action_proposed",
@@ -4230,7 +4253,10 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         ActionOutputRecorded { .. } => "action_output_recorded",
         ValidationRecorded { .. } => "validation_recorded",
         CheckpointCreated { .. } => "checkpoint_created",
+        CheckpointRestored { .. } => "checkpoint_restored",
+        SessionForked { .. } => "session_forked",
         WorktreeDispositionRecorded { .. } => "worktree_disposition_recorded",
+        ExternalChangeDetected { .. } => "external_change_detected",
         SessionCancelled { .. } => "session_cancelled",
         RecoveryRequired { .. } => "recovery_required",
         SessionCompleted => "session_completed",
@@ -4257,6 +4283,10 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         TerminalActionProposed { .. } => "terminal_action_proposed",
         TerminalJudgmentRecorded { .. } => "terminal_judgment_recorded",
         CompletionRepairRecorded { .. } => "completion_repair_recorded",
+        ToolEvidenceRecorded { .. } => "tool_evidence_recorded",
+        HookTriggered { .. } => "hook_triggered",
+        ActionDeferredForHook { .. } => "action_deferred_for_hook",
+        ActionResumedAfterHook { .. } => "action_resumed_after_hook",
     }
 }
 

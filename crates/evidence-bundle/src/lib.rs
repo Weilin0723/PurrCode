@@ -137,6 +137,34 @@ fn redacted_paths_for(event_type: &str) -> &'static [&'static [&'static str]] {
     }
 }
 
+/// Which fields of a `ToolEvidenceRecorded` event to redact, read from the
+/// evidence's own `redaction_class`.
+///
+/// * `public`   — a Builtin descriptor; nothing is stripped.
+/// * `arguments` — the default for user/project/remote descriptors: the
+///   provider-authored structured payload goes, the decision trail stays.
+/// * `full`     — everything but the ids: used when a remote-authored
+///   descriptor produced structured output, where the exporter cannot reason
+///   about the payload's contents at all.
+///
+/// An unrecognised or missing class falls back to `full`. Failing closed is the
+/// only safe default for a redaction decision.
+fn tool_evidence_redactions(evidence: &serde_json::Value) -> &'static [&'static [&'static str]] {
+    let class = evidence
+        .pointer("/data/evidence/redaction_class")
+        .and_then(serde_json::Value::as_str);
+    match class {
+        Some("public") => &[],
+        Some("arguments") => &[&["data", "evidence", "structured_output"]],
+        _ => &[
+            &["data", "evidence", "structured_output"],
+            &["data", "evidence", "constraints"],
+            &["data", "evidence", "effective_filesystem_scope"],
+            &["data", "evidence", "effective_network_scope"],
+        ],
+    }
+}
+
 const REDACTED_MARKER: &str = "<redacted>";
 
 fn redact_json(value: &mut serde_json::Value, path: &[&str]) -> bool {
@@ -219,6 +247,18 @@ fn build_bundle_event(
     for path in redacted_paths_for(&event_type) {
         if redact_json(&mut evidence, path) {
             redacted_fields.push(path.join("."));
+        }
+    }
+    // Tool evidence carries its OWN redaction policy. A static per-event-type
+    // table cannot decide what is safe inside a `structured_output` payload
+    // whose shape was authored by a remote MCP server or a user-installed
+    // skill, so the descriptor's `RedactionClass` — computed at admission from
+    // the descriptor's origin — is the authority here.
+    if event_type == "tool_evidence_recorded" {
+        for path in tool_evidence_redactions(&evidence) {
+            if redact_json(&mut evidence, path) {
+                redacted_fields.push(path.join("."));
+            }
         }
     }
     if event_type == "action_proposed" {
@@ -348,13 +388,20 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::TaskStatusChanged { .. } => "task_status_changed",
         SessionEvent::EvidenceLinked { .. } => "evidence_linked",
         SessionEvent::ContextCompacted { .. } => "context_compacted",
+        SessionEvent::CheckpointCompacted { .. } => "checkpoint_compacted",
+        SessionEvent::ContextAssembled { .. } => "context_assembled",
         SessionEvent::SessionPaused { .. } => "session_paused",
         SessionEvent::SessionResumed => "session_resumed",
         SessionEvent::ModelSelected { .. } => "model_selected",
+        SessionEvent::AgentBound { .. } => "agent_bound",
         SessionEvent::SupervisorStarted { .. } => "supervisor_started",
+        SessionEvent::WorkerStarted { .. } => "worker_started",
         SessionEvent::WorkerFinished { .. } => "worker_finished",
         SessionEvent::SupervisorReviewRequired { .. } => "supervisor_review_required",
         SessionEvent::ContextIndexed { .. } => "context_indexed",
+        SessionEvent::ScoutStarted { .. } => "scout_started",
+        SessionEvent::ScoutCompleted { .. } => "scout_completed",
+        SessionEvent::ScoutFailed { .. } => "scout_failed",
         SessionEvent::ModelRequestStarted { .. } => "model_request_started",
         SessionEvent::ModelRequestFinished { .. } => "model_request_finished",
         SessionEvent::ActionProposed { .. } => "action_proposed",
@@ -372,7 +419,10 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::ActionOutputRecorded { .. } => "action_output_recorded",
         SessionEvent::ValidationRecorded { .. } => "validation_recorded",
         SessionEvent::CheckpointCreated { .. } => "checkpoint_created",
+        SessionEvent::CheckpointRestored { .. } => "checkpoint_restored",
+        SessionEvent::SessionForked { .. } => "session_forked",
         SessionEvent::WorktreeDispositionRecorded { .. } => "worktree_disposition_recorded",
+        SessionEvent::ExternalChangeDetected { .. } => "external_change_detected",
         SessionEvent::SessionCancelled { .. } => "session_cancelled",
         SessionEvent::RecoveryRequired { .. } => "recovery_required",
         SessionEvent::SessionCompleted => "session_completed",
@@ -399,6 +449,10 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SessionEvent::TerminalActionProposed { .. } => "terminal_action_proposed",
         SessionEvent::TerminalJudgmentRecorded { .. } => "terminal_judgment_recorded",
         SessionEvent::CompletionRepairRecorded { .. } => "completion_repair_recorded",
+        SessionEvent::ToolEvidenceRecorded { .. } => "tool_evidence_recorded",
+        SessionEvent::HookTriggered { .. } => "hook_triggered",
+        SessionEvent::ActionDeferredForHook { .. } => "action_deferred_for_hook",
+        SessionEvent::ActionResumedAfterHook { .. } => "action_resumed_after_hook",
     }
 }
 
@@ -425,6 +479,127 @@ mod tests {
     use purrcode_runtime_core::{CommandAction, JudgmentDecision, ProposedAction, SessionStatus};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    fn tool_evidence(
+        session_id: SessionId,
+        action_id: ActionId,
+        class: purrcode_runtime_core::RedactionClass,
+        structured: Option<serde_json::Value>,
+    ) -> SessionEvent {
+        SessionEvent::ToolEvidenceRecorded {
+            evidence: Box::new(purrcode_runtime_core::ExecutionEvidence {
+                action_id,
+                session_id,
+                turn_id: None,
+                tool_id: purrcode_runtime_core::ToolId::mcp("scanner", "scan"),
+                provider: purrcode_runtime_core::ToolProvider::Mcp,
+                descriptor_digest: "digest".into(),
+                decision: JudgmentDecision::AllowWithConstraints(
+                    purrcode_runtime_core::ActionConstraints::read_only(PathBuf::from("/repo")),
+                ),
+                approved_by: purrcode_runtime_core::ApprovalAuthority::DeterministicPolicy,
+                constraints: purrcode_runtime_core::ActionConstraints::read_only(PathBuf::from(
+                    "/repo",
+                )),
+                effective_network_scope: purrcode_runtime_core::NetworkScope::None,
+                effective_filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                initiator: purrcode_runtime_core::EvidenceInitiator::Model {
+                    turn_id: Default::default(),
+                },
+                outcome: purrcode_runtime_core::ExecutionOutcome::Succeeded {
+                    exit_code: Some(0),
+                    truncated: false,
+                    affected_paths: Vec::new(),
+                },
+                structured_output: structured,
+                redaction_class: class,
+                started_at: Utc::now(),
+                finished_at: Utc::now(),
+            }),
+        }
+    }
+
+    #[test]
+    fn tool_evidence_redaction_follows_its_own_redaction_class() {
+        use purrcode_runtime_core::RedactionClass;
+        let session_id = SessionId::new();
+        let secret = serde_json::json!({ "findings": ["an internal hostname"] });
+
+        // Public (a Builtin descriptor): exported verbatim.
+        let public = build_bundle_event(
+            1,
+            &tool_evidence(
+                session_id,
+                ActionId::new(),
+                RedactionClass::Public,
+                Some(secret.clone()),
+            ),
+            Utc::now(),
+            false,
+        )
+        .unwrap();
+        assert!(public.redacted_fields.is_empty());
+        assert_eq!(
+            public.evidence.pointer("/data/evidence/structured_output"),
+            Some(&secret)
+        );
+
+        // Arguments (the default for anything not Builtin): the payload goes,
+        // the decision trail stays.
+        let arguments = build_bundle_event(
+            2,
+            &tool_evidence(
+                session_id,
+                ActionId::new(),
+                RedactionClass::Arguments,
+                Some(secret.clone()),
+            ),
+            Utc::now(),
+            false,
+        )
+        .unwrap();
+        assert!(
+            arguments
+                .redacted_fields
+                .contains(&"data.evidence.structured_output".to_string())
+        );
+        assert_eq!(
+            arguments
+                .evidence
+                .pointer("/data/evidence/structured_output"),
+            Some(&serde_json::json!("<redacted>"))
+        );
+        assert!(
+            arguments
+                .evidence
+                .pointer("/data/evidence/constraints")
+                .is_some_and(|value| value.is_object()),
+            "the decision trail survives an `arguments` export"
+        );
+
+        // Full: everything but the ids.
+        let full = build_bundle_event(
+            3,
+            &tool_evidence(
+                session_id,
+                ActionId::new(),
+                RedactionClass::Full,
+                Some(secret),
+            ),
+            Utc::now(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            full.evidence.pointer("/data/evidence/constraints"),
+            Some(&serde_json::json!("<redacted>"))
+        );
+        assert_eq!(
+            full.evidence.pointer("/data/evidence/tool_id"),
+            Some(&serde_json::json!("mcp:scanner/scan")),
+            "ids stay so the bundle is still an audit trail"
+        );
+    }
 
     fn setup_store() -> (SessionStore, SessionId, ActionId) {
         let mut store = SessionStore::in_memory().unwrap();
@@ -468,6 +643,7 @@ mod tests {
                             "super-secret-value".into(),
                         )]),
                     }),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -478,6 +654,7 @@ mod tests {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: JudgmentDecision::Allow,
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -678,6 +855,7 @@ mod tests {
                             "super-secret-value".into(),
                         )]),
                     }),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -687,6 +865,7 @@ mod tests {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: JudgmentDecision::Allow,
+                    turn_id: None,
                 },
             )
             .unwrap();

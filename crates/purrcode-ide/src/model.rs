@@ -10,9 +10,10 @@
 //! *interpret* the label the daemon already chose.
 
 use chrono::{DateTime, Utc};
-use purrcode_runtime_core::{ProductState, ProductStateView};
+use purrcode_runtime_core::{ProductState, ProductStateView, SpanId, TurnId};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 use crate::daemon::{PanelAvailability, PanelKind, PanelResult};
 
@@ -28,15 +29,39 @@ pub struct SessionRow {
     pub relative_time: String,
     pub needs_attention: bool,
     pub group: String,
-    pub unread: bool,
+    /// Workspace metadata from `session_meta`. Archived sessions are hidden
+    /// behind a disclosure rather than deleted; pinned ones sort to the top.
+    pub archived: bool,
+    pub pinned: bool,
+    /// The session this one was forked from, so a fork is visibly a branch
+    /// rather than an unrelated session that appeared out of nowhere.
+    pub parent_id: Option<String>,
 }
 
 /// One conversation turn.
-#[derive(Clone, Debug)]
+///
+/// `turn_id` correlates this message with the `run_until_pause` iteration
+/// that produced it (PRD v1.1 §6.3), replacing the position-based "last user
+/// message" guess `work_log_anchor` used to make. `None` means the daemon
+/// genuinely did not stamp one — a user-typed message created outside
+/// `run_until_pause`, or a message recorded before turn ids existed — never a
+/// synthesized id that would coincidentally fail to match anything.
+/// `span_id`/`parent_span_id` are reserved for the nested-work-unit identity
+/// later phases add (e.g. a Scout exploration step); Phase 1 does not
+/// populate them.
+#[derive(Clone, Debug, Default)]
 pub struct Message {
+    /// The daemon's message id. This is what `POST /v1/sessions/{id}/fork`
+    /// anchors on, so forking from a message is exact rather than positional.
+    /// Empty for a message recorded before ids were persisted, which is why
+    /// the fork affordance is hidden rather than offered-and-broken.
+    pub id: String,
     pub role: String,
     pub content: String,
     pub timestamp: String,
+    pub turn_id: Option<TurnId>,
+    pub span_id: Option<SpanId>,
+    pub parent_span_id: Option<SpanId>,
 }
 
 impl Message {
@@ -46,11 +71,19 @@ impl Message {
 }
 
 /// One line of semantic progress.
-#[derive(Clone, Debug)]
+///
+/// Carries the same `turn_id`/`span_id`/`parent_span_id` triple as [`Message`]
+/// so the Work Log can be anchored to the request that produced it by exact
+/// identity rather than by scanning for the most recent user message. `None`
+/// when the item is derived from an aggregation with no single owning turn.
+#[derive(Clone, Debug, Default)]
 pub struct ActivityLine {
     pub label: String,
     pub status: String,
     pub summary: Option<String>,
+    pub turn_id: Option<TurnId>,
+    pub span_id: Option<SpanId>,
+    pub parent_span_id: Option<SpanId>,
 }
 
 impl ActivityLine {
@@ -462,6 +495,15 @@ pub struct Usage {
     pub cache_write_tokens: u64,
     /// Total wall-clock the model calls took, summed across the session.
     pub total_latency_ms: u64,
+    /// The coding-worker model's actual context window, when the daemon
+    /// resolved one. `None` means unresolved, never "assume 200K".
+    pub model_capacity_tokens: Option<u64>,
+    /// The most recent turn's actual prompt size — what the *next* request
+    /// would cost. `None` before any turn has a recorded ledger entry.
+    pub current_context_tokens: Option<u64>,
+    /// The model's context window minus the daemon's reserved-output
+    /// budget — what a turn can actually fill before compaction kicks in.
+    pub effective_capacity_tokens: Option<u64>,
 }
 
 impl Usage {
@@ -628,6 +670,67 @@ fn number(value: &Value, key: &str) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
 
+/// A string field, defaulting to empty rather than `None`.
+///
+/// Distinct from [`text`], which reports an empty string as absent. Use this
+/// where the field is displayed as-is and "" and "missing" mean the same
+/// thing to the reader.
+fn string(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Maps a JSON array through a fallible parser, dropping what does not parse.
+///
+/// Every list the daemon sends arrives as an array of objects that the UI has
+/// to narrow, and each one was spelling out the same
+/// `as_array().map(…filter_map…).unwrap_or_default()` ceremony. Dropping an
+/// unparseable element rather than defaulting it is deliberate: a row missing
+/// the id its buttons act on would render controls that fail on click.
+pub fn objects<T>(value: &Value, parse: impl Fn(&Value) -> Option<T>) -> Vec<T> {
+    value
+        .as_array()
+        .map(|items| items.iter().filter_map(parse).collect())
+        .unwrap_or_default()
+}
+
+/// A JSON array of strings.
+fn strings(value: &Value, key: &str) -> Vec<String> {
+    objects(&value[key], |item| item.as_str().map(str::to_owned))
+}
+
+/// Parse a `TurnId` the daemon stamped onto this record, when it stamped
+/// one.
+///
+/// `None` — never a freshly synthesized id — when the field is absent or
+/// unparseable: a synthesized id would coincidentally never match a real
+/// turn, but claiming that as a positive "no turn" fact rather than
+/// "unknown" invites exactly the kind of silent-mismatch bug it should
+/// prevent. `work_log_anchor` treats `None` as "no anchor" and renders the
+/// work log at the end of the transcript, the same honest fallback used for
+/// a transcript with no request in it.
+fn turn_id(value: &Value, key: &str) -> Option<TurnId> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .map(TurnId)
+}
+
+/// Parse an optional `SpanId` the daemon stamped onto this record. Absent
+/// today for the same reason `turn_id` is (see [`turn_id`]); `None` here is
+/// simply "not available", not a guess.
+fn span_id(value: &Value, key: &str) -> Option<SpanId> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .map(SpanId)
+}
+
 /// Map whatever status word the daemon uses onto a canonical state.
 ///
 /// The daemon owns the vocabulary; this only recognises it. An unknown word
@@ -712,29 +815,63 @@ pub fn parse_session_rows(raw: &[Value]) -> Vec<SessionRow> {
                     .or_else(|| text(value, "objective"))
                     .unwrap_or_else(|| "Untitled session".to_owned()),
                 state,
-                relative_time: text(value, "relative_time").unwrap_or_default(),
+                // Formatted here, not read from the response: the daemon's
+                // `SessionView` has never carried a `relative_time`, so
+                // reading one left every row's timestamp column blank. When
+                // the session is running there is nothing durable to date
+                // either, and "" is the honest answer for that.
+                relative_time: text(value, "updated_at")
+                    .or_else(|| text(value, "created_at"))
+                    .map(|stamp| relative_time(&stamp))
+                    .unwrap_or_default(),
                 group: session_group(value),
-                unread: value
-                    .get("unread")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-                    || needs_attention,
                 needs_attention,
+                archived: value
+                    .get("archived")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                pinned: value
+                    .get("pinned")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                parent_id: text(value, "parent_id"),
             }
         })
         .filter(|row| !row.id.is_empty())
         .collect()
 }
 
+/// An RFC 3339 timestamp as a short, human-readable time.
+///
+/// A timestamp that cannot be parsed is returned unchanged rather than
+/// replaced with a placeholder: showing the raw value lets a user recognise a
+/// format problem, where "unknown" hides it.
+pub fn relative_time(timestamp: &str) -> String {
+    let Ok(parsed) = DateTime::parse_from_rfc3339(timestamp) else {
+        return timestamp.to_owned();
+    };
+    let parsed = parsed.with_timezone(&Utc);
+    let now = Utc::now();
+    let elapsed = now.signed_duration_since(parsed);
+    if elapsed.num_seconds() < 60 {
+        return "just now".into();
+    }
+    if elapsed.num_minutes() < 60 {
+        return format!("{}m ago", elapsed.num_minutes());
+    }
+    if elapsed.num_hours() < 24 {
+        return format!("{}h ago", elapsed.num_hours());
+    }
+    if elapsed.num_days() < 7 {
+        return format!("{}d ago", elapsed.num_days());
+    }
+    parsed.format("%b %-d").to_string()
+}
+
 fn session_group(value: &Value) -> String {
-    let relative = text(value, "relative_time").unwrap_or_default();
-    let normalized = relative.to_ascii_lowercase();
-    if normalized.contains("today") || normalized.contains("now") || relative.contains(':') {
-        return "Today".into();
-    }
-    if normalized.contains("yesterday") {
-        return "Yesterday".into();
-    }
+    // Grouped from the timestamps the daemon actually sends. An earlier
+    // version branched on a `relative_time` field first, which the daemon has
+    // never emitted — so those branches never ran.
     for key in ["updated_at", "created_at"] {
         if let Some(timestamp) = text(value, key)
             && let Ok(parsed) = DateTime::parse_from_rfc3339(&timestamp)
@@ -750,9 +887,6 @@ fn session_group(value: &Value) -> String {
             return date.format("%b %-d").to_string();
         }
     }
-    if !relative.is_empty() {
-        return relative;
-    }
     "Earlier".into()
 }
 
@@ -762,6 +896,9 @@ fn parse_activity(raw: &[Value]) -> Vec<ActivityLine> {
             label: text(value, "label").unwrap_or_else(|| "Working".to_owned()),
             status: text(value, "status").unwrap_or_else(|| "pending".to_owned()),
             summary: text(value, "summary").or_else(|| text(value, "detail")),
+            turn_id: turn_id(value, "turn_id"),
+            span_id: span_id(value, "span_id"),
+            parent_span_id: span_id(value, "parent_span_id"),
         })
         .collect()
 }
@@ -927,6 +1064,9 @@ fn parse_usage(raw: &Value) -> Usage {
         cache_read_tokens: number(raw, "cache_read_tokens"),
         cache_write_tokens: number(raw, "cache_write_tokens"),
         total_latency_ms: number(raw, "total_latency_ms"),
+        model_capacity_tokens: raw.get("context_capacity_tokens").and_then(Value::as_u64),
+        current_context_tokens: raw.get("current_context_tokens").and_then(Value::as_u64),
+        effective_capacity_tokens: raw.get("effective_capacity_tokens").and_then(Value::as_u64),
     }
 }
 
@@ -957,6 +1097,9 @@ fn parse_controls(raw: &Value) -> Controls {
                     label: text(lane, "objective").unwrap_or_else(|| "Lane".to_owned()),
                     status: text(lane, "status").unwrap_or_else(|| "pending".to_owned()),
                     summary: text(lane, "kind"),
+                    turn_id: turn_id(lane, "turn_id"),
+                    span_id: span_id(lane, "span_id"),
+                    parent_span_id: span_id(lane, "parent_span_id"),
                 })
                 .collect()
         })
@@ -1109,9 +1252,13 @@ pub fn parse_session(id: &str, snapshot: &crate::daemon::SessionSnapshot) -> Ses
             .iter()
             .filter_map(|value| {
                 Some(Message {
+                    id: text(value, "id").unwrap_or_default(),
                     role: text(value, "role")?,
                     content: text(value, "content").unwrap_or_default(),
                     timestamp: text(value, "timestamp").unwrap_or_default(),
+                    turn_id: turn_id(value, "turn_id"),
+                    span_id: span_id(value, "span_id"),
+                    parent_span_id: span_id(value, "parent_span_id"),
                 })
             })
             .collect(),
@@ -1187,6 +1334,615 @@ pub fn panel_availability_label(availability: &PanelAvailability) -> &'static st
         PanelAvailability::Empty => "Empty",
         PanelAvailability::Unavailable => "Unavailable",
         PanelAvailability::Error => "Error",
+    }
+}
+
+// ── Agent workspace ────────────────────────────────────────────────────
+
+/// One worker under a supervisor run.
+#[derive(Clone, Debug)]
+pub struct Worker {
+    pub id: String,
+    pub status: String,
+    pub changed_paths: Vec<String>,
+    pub summary: Option<String>,
+    /// What the daemon calls this unit — "Scout", "Worker". Shown so the tree
+    /// names the kind of work rather than presenting every unit as a supervisor
+    /// worker.
+    pub role: String,
+    /// Whether the daemon can actually stop it. A Stop control is only drawn
+    /// when this is true; a stop button that cannot stop anything is the exact
+    /// affordance this panel is meant not to have.
+    pub stoppable: bool,
+}
+
+impl Worker {
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
+
+    /// A one-line result: what it did, in files.
+    pub fn outcome(&self) -> String {
+        if self.is_running() {
+            // A read-only unit reports what it is reading; a mutating one has
+            // no files yet. Both beat a bare "working…".
+            return match self.summary.as_deref() {
+                Some(summary) if !summary.is_empty() => summary.to_owned(),
+                _ => "working…".to_owned(),
+            };
+        }
+        match self.changed_paths.len() {
+            0 => self.status.clone(),
+            1 => format!("{} · 1 file changed", self.status),
+            count => format!("{} · {count} files changed", self.status),
+        }
+    }
+}
+
+/// The worker tree for one session.
+#[derive(Clone, Debug, Default)]
+pub struct Supervisor {
+    pub workers: Vec<Worker>,
+    /// Paths two workers both touched, which a human has to resolve.
+    pub conflicts: Vec<String>,
+    /// `true` once the run is finished and awaiting review.
+    pub review_required: bool,
+}
+
+impl Supervisor {
+    pub fn parse(value: &Value) -> Self {
+        Self {
+            workers: objects(&value["workers"], |item| {
+                Some(Worker {
+                    id: item["id"].as_str()?.to_owned(),
+                    status: item["status"].as_str().unwrap_or("unknown").to_owned(),
+                    changed_paths: strings(item, "changed_paths"),
+                    summary: item["summary"].as_str().map(str::to_owned),
+                    role: item["role"].as_str().unwrap_or("Worker").to_owned(),
+                    // Defaults to false: a daemon that does not say whether a
+                    // unit can be stopped must not have a Stop button inferred
+                    // for it.
+                    stoppable: item["stoppable"].as_bool().unwrap_or(false),
+                })
+            }),
+            conflicts: strings(value, "conflicts"),
+            review_required: value["review_required"].as_bool().unwrap_or(false),
+        }
+    }
+
+    pub fn running(&self) -> usize {
+        self.workers
+            .iter()
+            .filter(|worker| worker.is_running())
+            .count()
+    }
+
+    /// Whether there is anything worth showing. An empty tree means this
+    /// session never ran workers, and the surface stays out of the way.
+    pub fn is_empty(&self) -> bool {
+        self.workers.is_empty()
+    }
+}
+
+// ── Project memory ─────────────────────────────────────────────────────
+
+/// One durable thing PurrCode knows about this project.
+///
+/// Every field except the content is provenance, and that is the point: this
+/// is auditable knowledge, not a black box. A user must be able to ask "why
+/// does it believe this?" and get an answer — where it came from, when, how
+/// sure it is, and whether anything has used it since.
+#[derive(Clone, Debug)]
+pub struct MemoryEntry {
+    pub id: String,
+    /// The bucket it belongs to: build, architecture, learnings, user rules.
+    pub kind: String,
+    pub content: String,
+    /// Where the knowledge came from — a session, a document, the user.
+    pub source: String,
+    pub confidence: String,
+    pub scope: String,
+    pub created_at: String,
+    /// When something last drew on this. `None` means nothing has, which is
+    /// worth seeing: unused memory is a candidate for forgetting.
+    pub last_used_at: Option<String>,
+}
+
+impl MemoryEntry {
+    /// Parses the daemon's `{"entries": {kind: [...]}}` shape into a flat,
+    /// kind-ordered list.
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        let Some(groups) = value["entries"].as_object() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (kind, entries) in groups {
+            for entry in entries.as_array().unwrap_or(&Vec::new()) {
+                let Some(id) = entry["id"].as_str() else {
+                    continue;
+                };
+                out.push(Self {
+                    id: id.to_owned(),
+                    kind: kind.clone(),
+                    content: string(entry, "content"),
+                    source: string(entry, "source"),
+                    confidence: entry["confidence"]
+                        .as_str()
+                        .unwrap_or("unverified")
+                        .to_owned(),
+                    scope: entry["scope"].as_str().unwrap_or("repository").to_owned(),
+                    created_at: string(entry, "created_at"),
+                    last_used_at: entry["last_used_at"].as_str().map(str::to_owned),
+                });
+            }
+        }
+        out
+    }
+
+    /// The provenance line shown under every entry.
+    pub fn provenance(&self) -> String {
+        let used = match &self.last_used_at {
+            Some(when) => format!("last used {}", relative_time(when)),
+            None => "never used".to_owned(),
+        };
+        format!(
+            "{} · {} · {} · added {} · {used}",
+            self.source,
+            self.confidence,
+            self.scope,
+            relative_time(&self.created_at),
+        )
+    }
+}
+
+/// The kinds of project memory, in the order the panel lists them.
+pub const MEMORY_KINDS: &[(&str, &str)] = &[
+    ("build", "How to build, test, and run this project"),
+    ("architecture", "How the project is put together"),
+    ("learnings", "Things discovered while working on it"),
+    ("user_rules", "Standing instructions from the user"),
+];
+
+/// One hit from full-text search across session event logs.
+#[derive(Clone, Debug)]
+pub struct SessionHit {
+    pub session_id: String,
+    pub event_type: String,
+    pub snippet: String,
+    pub occurred_at: String,
+}
+
+impl SessionHit {
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        objects(value, |item| {
+            Some(Self {
+                session_id: item["session_id"].as_str()?.to_owned(),
+                event_type: string(item, "event_type"),
+                snippet: string(item, "snippet"),
+                occurred_at: string(item, "occurred_at"),
+            })
+        })
+    }
+}
+
+// ── Checkpoints ────────────────────────────────────────────────────────
+
+/// One restorable point in a session's history.
+#[derive(Clone, Debug)]
+pub struct Checkpoint {
+    pub id: String,
+    pub label: String,
+    /// The base commit the checkpoint's patch applies over.
+    pub head: String,
+    pub created_at: String,
+    /// Files the checkpoint's patch touches, from the preview route. `None`
+    /// until the preview has been fetched — which is not the same as a
+    /// checkpoint that changes nothing, so the dialog waits rather than
+    /// claiming "0 files".
+    pub changed_files: Option<Vec<String>>,
+}
+
+impl Checkpoint {
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        objects(value, |item| {
+            Some(Self {
+                id: item["id"].as_str()?.to_owned(),
+                label: string(item, "label"),
+                head: string(item, "head"),
+                created_at: string(item, "created_at"),
+                changed_files: None,
+            })
+        })
+    }
+
+    /// A short label for a row: the checkpoint's own label, or its head when
+    /// it has none.
+    pub fn display(&self) -> String {
+        if self.label.trim().is_empty() {
+            let head: String = self.head.chars().take(8).collect();
+            format!("Checkpoint {head}")
+        } else {
+            self.label.clone()
+        }
+    }
+}
+
+/// What a restore should put back.
+///
+/// The conversation and the worktree are separate stores, so restoring one
+/// without the other is a real and sometimes wanted operation — rewinding the
+/// code while keeping what was said about it, for instance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RestoreScope {
+    ConversationOnly,
+    CodeOnly,
+    Both,
+}
+
+impl RestoreScope {
+    pub const ALL: &'static [Self] = &[Self::Both, Self::CodeOnly, Self::ConversationOnly];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ConversationOnly => "Conversation only",
+            Self::CodeOnly => "Code only",
+            Self::Both => "Conversation and code",
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::ConversationOnly => {
+                "Fork the conversation at this point. The worktree is left as it is."
+            }
+            Self::CodeOnly => {
+                "Restore the worktree to this checkpoint. The conversation is left as it is."
+            }
+            Self::Both => "Restore the worktree and fork the conversation at this point.",
+        }
+    }
+
+    /// Whether this scope touches the worktree.
+    pub const fn restores_code(self) -> bool {
+        matches!(self, Self::CodeOnly | Self::Both)
+    }
+
+    /// Whether this scope forks the conversation.
+    pub const fn forks_conversation(self) -> bool {
+        matches!(self, Self::ConversationOnly | Self::Both)
+    }
+}
+
+/// One composer reference, as the daemon resolved it.
+///
+/// `resolved` is the daemon's answer, not an inference from whether a preview
+/// came back: a reference can resolve to genuinely empty content, and treating
+/// that as failure would tell the user their file was not found.
+#[derive(Clone, Debug)]
+pub struct ResolvedReference {
+    pub display: String,
+    pub resolved: bool,
+    pub preview: Option<String>,
+    /// Why it did not resolve, in the daemon's words.
+    pub diagnostics: Option<String>,
+}
+
+impl ResolvedReference {
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        objects(value, |item| {
+            Some(Self {
+                display: item["display"].as_str()?.to_owned(),
+                resolved: item["resolved"].as_bool().unwrap_or(false),
+                preview: item["preview"].as_str().map(str::to_owned),
+                diagnostics: item["diagnostics"].as_str().map(str::to_owned),
+            })
+        })
+    }
+}
+
+/// How a published command runs, as the daemon declares it.
+///
+/// The IDE must never guess this. A command whose execution it does not
+/// recognise is left alone rather than sent to the model as prose: sending
+/// `/undo` into a conversation produces an agent that agrees to undo something
+/// and a worktree that is unchanged, which is worse than doing nothing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommandExecution {
+    /// The daemon performs it at this route. Deterministic; never a model call.
+    Daemon { path: String },
+    /// This client performs it in its own UI.
+    Client,
+    /// Shorthand for an instruction; `prompt` is what the agent receives.
+    Prompt { prompt: String },
+    /// The daemon declared an execution kind this build does not know. Offered
+    /// for completion but not dispatched, because dispatching an unknown
+    /// contract is how a client invents behaviour the daemon never promised.
+    Unknown,
+}
+
+/// One command from `GET /v1/commands`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Command {
+    pub name: String,
+    pub description: String,
+    pub group: String,
+    pub execution: CommandExecution,
+}
+
+impl Command {
+    pub fn parse_all(value: &Value) -> Vec<Self> {
+        objects(value, |item| {
+            let execution = match item["execution"]["kind"].as_str() {
+                Some("daemon") => CommandExecution::Daemon {
+                    path: item["execution"]["path"].as_str()?.to_owned(),
+                },
+                Some("client") => CommandExecution::Client,
+                Some("prompt") => CommandExecution::Prompt {
+                    prompt: item["execution"]["prompt"].as_str()?.to_owned(),
+                },
+                _ => CommandExecution::Unknown,
+            };
+            Some(Self {
+                name: item["name"].as_str()?.to_owned(),
+                description: item["description"].as_str().unwrap_or_default().to_owned(),
+                group: item["group"].as_str().unwrap_or_default().to_owned(),
+                execution,
+            })
+        })
+    }
+}
+
+/// The command a draft invokes, if any.
+///
+/// A command is only a command when it leads the draft, mirroring the daemon's
+/// own rule so the two cannot disagree about what "what does /undo do?" means.
+pub fn command_in_draft<'a>(commands: &'a [Command], draft: &str) -> Option<&'a Command> {
+    let trimmed = draft.trim_start();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+    let word = trimmed.split_whitespace().next()?.to_ascii_lowercase();
+    commands.iter().find(|command| command.name == word)
+}
+
+/// Whatever follows the command word, for commands that take an argument.
+pub fn command_argument(draft: &str) -> Option<String> {
+    let trimmed = draft.trim_start();
+    let rest = trimmed.split_once(char::is_whitespace)?.1.trim();
+    (!rest.is_empty()).then(|| rest.to_owned())
+}
+
+// ── Language intelligence (LSP) ────────────────────────────────────────
+
+/// A 0-based position in a document, matching the LSP wire shape.
+///
+/// The editor thinks in 1-based line numbers because that is what a gutter
+/// shows; everything crossing the daemon boundary stays 0-based so there is
+/// exactly one place (`Location::display_line`) where the conversion happens.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DocumentPosition {
+    pub line: u64,
+    pub character: u64,
+}
+
+impl DocumentPosition {
+    pub fn parse(value: &Value) -> Self {
+        Self {
+            line: value["line"].as_u64().unwrap_or(0),
+            character: value["character"].as_u64().unwrap_or(0),
+        }
+    }
+
+    /// The line as a gutter shows it.
+    pub fn display_line(self) -> usize {
+        self.line as usize + 1
+    }
+}
+
+/// A place a language server pointed at: a definition, a reference, or a
+/// symbol's home.
+#[derive(Clone, Debug)]
+pub struct Location {
+    pub path: std::path::PathBuf,
+    pub start: DocumentPosition,
+}
+
+impl Location {
+    /// Parses one `LocationLink`. Returns `None` for an entry with no usable
+    /// target, so a malformed element drops out instead of pointing the user
+    /// at line 1 of nothing.
+    pub fn parse(value: &Value) -> Option<Self> {
+        let uri = value["target_uri"].as_str()?;
+        let path = uri.strip_prefix("file://").unwrap_or(uri);
+        if path.is_empty() {
+            return None;
+        }
+        Some(Self {
+            path: std::path::PathBuf::from(path),
+            // Prefer the selection range: it is the identifier itself, where
+            // the full target range can be an entire function body.
+            start: DocumentPosition::parse(if value["target_selection_range"].is_object() {
+                &value["target_selection_range"]["start"]
+            } else {
+                &value["target_range"]["start"]
+            }),
+        })
+    }
+
+    /// `path:line`, repository-relative when possible.
+    pub fn label(&self, repository: &std::path::Path) -> String {
+        let shown = self.path.strip_prefix(repository).unwrap_or(&self.path);
+        format!("{}:{}", shown.display(), self.start.display_line())
+    }
+}
+
+/// One symbol in the open document's outline.
+#[derive(Clone, Debug)]
+pub struct Symbol {
+    pub name: String,
+    pub kind: u64,
+    pub detail: Option<String>,
+    pub start: DocumentPosition,
+}
+
+impl Symbol {
+    pub fn parse(value: &Value) -> Option<Self> {
+        Some(Self {
+            name: value["name"].as_str()?.to_owned(),
+            kind: value["kind"].as_u64().unwrap_or(0),
+            detail: value["detail"].as_str().map(str::to_owned),
+            start: DocumentPosition::parse(&value["selection_range"]["start"]),
+        })
+    }
+
+    /// The LSP `SymbolKind` as a short word. Unknown kinds render as "symbol"
+    /// rather than as a number the user would have to look up.
+    pub const fn kind_label(&self) -> &'static str {
+        match self.kind {
+            2 => "module",
+            5 => "class",
+            6 => "method",
+            8 => "field",
+            9 => "constructor",
+            10 => "enum",
+            11 => "interface",
+            12 => "function",
+            13 => "variable",
+            14 => "constant",
+            23 => "struct",
+            26 => "type",
+            _ => "symbol",
+        }
+    }
+}
+
+/// One diagnostic a language server published for a file.
+#[derive(Clone, Debug)]
+pub struct Diagnostic {
+    pub start: DocumentPosition,
+    /// LSP severity: 1 error, 2 warning, 3 information, 4 hint. `None` when
+    /// the server omitted it.
+    pub severity: Option<u64>,
+    pub code: Option<String>,
+    pub source: Option<String>,
+    pub message: String,
+}
+
+impl Diagnostic {
+    pub fn parse(value: &Value) -> Self {
+        Self {
+            start: DocumentPosition::parse(&value["range"]["start"]),
+            severity: value["severity"].as_u64(),
+            code: value["code"].as_str().map(str::to_owned),
+            source: value["source"].as_str().map(str::to_owned),
+            message: string(value, "message"),
+        }
+    }
+
+    /// A server that omitted severity has not said the problem is minor, so an
+    /// unlabelled diagnostic sorts with errors rather than being quietly
+    /// filed as a hint.
+    pub const fn is_error(&self) -> bool {
+        matches!(self.severity, Some(1) | None)
+    }
+
+    pub const fn severity_label(&self) -> &'static str {
+        match self.severity {
+            Some(1) => "Error",
+            Some(2) => "Warning",
+            Some(3) => "Info",
+            Some(4) => "Hint",
+            _ => "Unspecified",
+        }
+    }
+}
+
+/// Everything the IDE knows from language servers right now.
+///
+/// Every field distinguishes "asked and got nothing" from "never asked".
+/// Language servers analyse asynchronously, so an empty diagnostic list moments
+/// after opening a file means the server has not spoken yet — rendering that as
+/// a clean file would be a lie the user would rely on.
+#[derive(Clone, Debug, Default)]
+pub struct LanguageIntelligence {
+    /// Language servers present on this machine, as `(program, extensions)`.
+    pub servers: Vec<(String, Vec<String>)>,
+    /// `true` once the server probe has answered at least once.
+    pub servers_checked: bool,
+    /// Hover text for the position the pointer last rested on.
+    ///
+    /// Which position that is lives in `hover_probe` on the app, which is the
+    /// single source of truth for where the pointer is; keeping a second copy
+    /// here meant four assignment sites had to be held in step by hand.
+    pub hover: Option<String>,
+    /// Results of the last "find references" request.
+    pub references: Vec<Location>,
+    pub references_for: Option<String>,
+    pub references_checked: bool,
+    /// The open document's outline.
+    pub symbols: Vec<Symbol>,
+    pub symbols_for: Option<std::path::PathBuf>,
+    /// Published diagnostics per file.
+    pub diagnostics: BTreeMap<std::path::PathBuf, Vec<Diagnostic>>,
+    /// `true` once a diagnostics poll has answered. Until then the Problems
+    /// panel says the servers are still warming up instead of "no problems".
+    pub diagnostics_checked: bool,
+    /// The last language-server failure, shown as an explanation rather than
+    /// silently producing an empty result.
+    pub last_error: Option<String>,
+}
+
+impl LanguageIntelligence {
+    /// Whether any language server covers this file's extension.
+    ///
+    /// Used to keep the UI honest: an unsupported file must not offer
+    /// "Go to definition" and then do nothing.
+    pub fn supports(&self, path: &std::path::Path) -> bool {
+        let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+            return false;
+        };
+        let extension = extension.to_ascii_lowercase();
+        self.servers
+            .iter()
+            .any(|(_, extensions)| extensions.iter().any(|candidate| candidate == &extension))
+    }
+
+    /// Diagnostics for one file, newest snapshot the daemon published.
+    pub fn for_file(&self, path: &std::path::Path) -> &[Diagnostic] {
+        self.diagnostics.get(path).map_or(&[], Vec::as_slice)
+    }
+
+    /// Total diagnostics across every file, for the status bar.
+    pub fn counts(&self) -> (usize, usize) {
+        let mut errors = 0;
+        let mut others = 0;
+        for diagnostics in self.diagnostics.values() {
+            for diagnostic in diagnostics {
+                if diagnostic.is_error() {
+                    errors += 1;
+                } else {
+                    others += 1;
+                }
+            }
+        }
+        (errors, others)
+    }
+
+    /// Replaces the whole diagnostic set from a `GET /v1/lsp/diagnostics` body.
+    pub fn absorb_diagnostics(&mut self, value: &Value) {
+        let mut next: BTreeMap<std::path::PathBuf, Vec<Diagnostic>> = BTreeMap::new();
+        for file in value["files"].as_array().unwrap_or(&Vec::new()) {
+            let Some(path) = file["path"].as_str() else {
+                continue;
+            };
+            let diagnostics = objects(&file["diagnostics"], |item| Some(Diagnostic::parse(item)));
+            // A file the server has declared clean is reported with an empty
+            // array; dropping the key entirely would be the same shape as
+            // "never analysed", which the panel must not conflate.
+            next.insert(std::path::PathBuf::from(path), diagnostics);
+        }
+        self.diagnostics = next;
+        self.diagnostics_checked = true;
     }
 }
 
@@ -1331,6 +2087,39 @@ mod tests {
     }
 
     #[test]
+    fn parse_usage_reads_the_daemon_resolved_model_capacity() {
+        let usage = parse_usage(&json!({
+            "total_tokens": 42_000,
+            "context_capacity_tokens": 32_000,
+        }));
+        assert_eq!(usage.model_capacity_tokens, Some(32_000));
+    }
+
+    #[test]
+    fn parse_usage_leaves_capacity_unknown_when_the_daemon_did_not_resolve_one() {
+        let usage = parse_usage(&json!({"total_tokens": 42_000}));
+        assert_eq!(usage.model_capacity_tokens, None);
+    }
+
+    #[test]
+    fn parse_usage_reads_the_current_turn_context_and_effective_capacity() {
+        let usage = parse_usage(&json!({
+            "total_tokens": 42_000,
+            "current_context_tokens": 12_400,
+            "effective_capacity_tokens": 23_800,
+        }));
+        assert_eq!(usage.current_context_tokens, Some(12_400));
+        assert_eq!(usage.effective_capacity_tokens, Some(23_800));
+    }
+
+    #[test]
+    fn parse_usage_leaves_current_context_and_effective_capacity_unknown_when_absent() {
+        let usage = parse_usage(&json!({"total_tokens": 42_000}));
+        assert_eq!(usage.current_context_tokens, None);
+        assert_eq!(usage.effective_capacity_tokens, None);
+    }
+
+    #[test]
     fn a_direct_plan_shows_search_off_rather_than_an_empty_control() {
         let controls = parse_controls(&json!({
             "controls": {"workflow": "direct", "budget_profile": "economy"},
@@ -1360,6 +2149,7 @@ mod tests {
                 label: (*label).to_owned(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             })
             .collect();
         let folded = condense(&raw);
@@ -1370,6 +2160,7 @@ mod tests {
                 label: "Validation failed".into(),
                 status: "failed".into(),
                 summary: None,
+                ..Default::default()
             })
             .collect();
         let folded = condense(&same);
@@ -1384,11 +2175,13 @@ mod tests {
                 label: "Testing".into(),
                 status: "failed".into(),
                 summary: Some("first".into()),
+                ..Default::default()
             },
             ActivityLine {
                 label: "Testing".into(),
                 status: "failed".into(),
                 summary: Some("latest".into()),
+                ..Default::default()
             },
         ];
         let folded = condense(&lines);
@@ -1402,21 +2195,25 @@ mod tests {
                 label: "Indexed 0 file(s), 0 symbol(s)".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
             ActivityLine {
                 label: "Read repository manifest".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
             ActivityLine {
                 label: "Indexed 0 file(s), 0 symbol(s)".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
             ActivityLine {
                 label: "Indexed 12 file(s), 34 symbol(s)".into(),
                 status: "done".into(),
                 summary: None,
+                ..Default::default()
             },
         ];
         let folded = condense(&lines);
@@ -1446,23 +2243,40 @@ mod tests {
     }
 
     #[test]
-    fn session_rows_have_reference_date_groups_and_unread_state() {
+    fn session_rows_are_dated_from_the_fields_the_daemon_actually_sends() {
+        // This test previously supplied a `relative_time` field. The daemon's
+        // `SessionView` has never had one, so the row's timestamp column was
+        // blank in the running application while the test passed — the
+        // fixture was describing a response shape that does not exist. Both
+        // the group and the displayed time now come from `updated_at`.
+        let today = Utc::now();
+        let yesterday = today - chrono::Days::new(1);
         let rows = parse_session_rows(&[
             json!({
                 "id": "today",
                 "objective": "Today task",
-                "relative_time": "10:24",
-                "unread": true
+                "updated_at": today.to_rfc3339(),
             }),
             json!({
                 "id": "yesterday",
                 "objective": "Yesterday task",
-                "relative_time": "Yesterday"
+                "updated_at": yesterday.to_rfc3339(),
             }),
         ]);
         assert_eq!(rows[0].group, "Today");
-        assert!(rows[0].unread);
         assert_eq!(rows[1].group, "Yesterday");
+        assert!(
+            !rows[0].relative_time.is_empty(),
+            "a session with a timestamp must render one"
+        );
+        assert_eq!(rows[1].relative_time, "1d ago");
+    }
+
+    #[test]
+    fn a_session_with_no_timestamp_renders_no_time_rather_than_a_guess() {
+        let rows = parse_session_rows(&[json!({"id": "s", "objective": "no dates"})]);
+        assert_eq!(rows[0].relative_time, "");
+        assert_eq!(rows[0].group, "Earlier");
     }
 
     #[test]
@@ -1733,5 +2547,158 @@ mod tests {
             "stages": [{"stage": "Build", "outcome": "failed", "detail": "it broke"}],
         }));
         assert_eq!(problems_from(&validation)[0].location, None);
+    }
+
+    #[test]
+    fn memory_entries_flatten_out_of_their_kind_groups() {
+        let parsed = MemoryEntry::parse_all(&json!({
+            "entries": {
+                "build": [{
+                    "id": "m1",
+                    "content": "cargo test --workspace",
+                    "source": "README.md",
+                    "confidence": "verified",
+                    "scope": "repository",
+                    "created_at": "2026-08-08T10:00:00Z",
+                    "last_used_at": "2026-08-08T11:00:00Z",
+                }],
+                "learnings": [{
+                    "id": "m2",
+                    "content": "Integration tests need Redis",
+                    "source": "Session \"Fix auth test\"",
+                    "confidence": "unverified",
+                    "scope": "repository",
+                    "created_at": "2026-08-07T09:00:00Z",
+                }],
+            }
+        }));
+        assert_eq!(parsed.len(), 2);
+        let build = parsed
+            .iter()
+            .find(|e| e.kind == "build")
+            .expect("build entry");
+        assert_eq!(build.content, "cargo test --workspace");
+        let learning = parsed
+            .iter()
+            .find(|e| e.kind == "learnings")
+            .expect("learning");
+        // Nothing has drawn on it yet, which is worth being able to see.
+        assert!(learning.last_used_at.is_none());
+        assert!(learning.provenance().contains("never used"));
+        assert!(build.provenance().contains("last used"));
+    }
+
+    #[test]
+    fn a_memory_entry_with_no_id_is_dropped() {
+        // Edit and forget both address an entry by id, so an entry without
+        // one would render two buttons that cannot work.
+        let parsed = MemoryEntry::parse_all(&json!({
+            "entries": {"build": [{"content": "no id"}]}
+        }));
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn every_memory_entry_carries_its_provenance() {
+        // The reason this surface exists: a fact with no visible source is a
+        // fact nobody can check or correct.
+        let parsed = MemoryEntry::parse_all(&json!({
+            "entries": {"user_rules": [{
+                "id": "m3",
+                "content": "Never modify generated files",
+                "source": "Added by you in Settings",
+                "confidence": "unverified",
+                "scope": "repository",
+                "created_at": "2026-08-08T10:00:00Z",
+            }]}
+        }));
+        let provenance = parsed[0].provenance();
+        assert!(provenance.contains("Added by you in Settings"));
+        assert!(provenance.contains("unverified"));
+        assert!(provenance.contains("repository"));
+    }
+
+    #[test]
+    fn an_unparseable_timestamp_is_shown_rather_than_hidden() {
+        // A placeholder would hide a format problem; the raw value lets
+        // somebody recognise it.
+        assert_eq!(relative_time("not a date"), "not a date");
+        assert_eq!(relative_time(""), "");
+    }
+
+    /// The composer's command routing. These are the decisions that used to be
+    /// absent: before it existed, `/undo` was sent as conversation text.
+    #[test]
+    fn a_published_command_carries_how_it_runs() {
+        let commands = Command::parse_all(&serde_json::json!([
+            {
+                "name": "/undo",
+                "description": "Restore the previous checkpoint",
+                "group": "session",
+                "execution": { "kind": "daemon", "method": "POST", "path": "/v1/sessions/{id}/undo" }
+            },
+            {
+                "name": "/memory",
+                "description": "Inspect project memory",
+                "group": "settings",
+                "execution": { "kind": "client" }
+            },
+            {
+                "name": "/review",
+                "description": "Review the changes",
+                "group": "review",
+                "execution": { "kind": "prompt", "prompt": "Review the changes." }
+            },
+            {
+                "name": "/future",
+                "description": "Something newer than this build",
+                "group": "session",
+                "execution": { "kind": "telepathy" }
+            },
+        ]));
+        assert_eq!(commands.len(), 4);
+        assert_eq!(
+            commands[0].execution,
+            CommandExecution::Daemon {
+                path: "/v1/sessions/{id}/undo".into()
+            }
+        );
+        assert_eq!(commands[1].execution, CommandExecution::Client);
+        assert_eq!(
+            commands[2].execution,
+            CommandExecution::Prompt {
+                prompt: "Review the changes.".into()
+            }
+        );
+        // An execution kind this build does not implement must not be guessed
+        // at — and specifically must not degrade into "send it as a message".
+        assert_eq!(commands[3].execution, CommandExecution::Unknown);
+    }
+
+    #[test]
+    fn a_command_is_only_a_command_when_it_leads_the_draft() {
+        let commands = Command::parse_all(&serde_json::json!([{
+            "name": "/undo",
+            "description": "",
+            "group": "session",
+            "execution": { "kind": "daemon", "method": "POST", "path": "/v1/sessions/{id}/undo" }
+        }]));
+        assert!(command_in_draft(&commands, "/undo").is_some());
+        assert!(command_in_draft(&commands, "  /undo  ").is_some());
+        assert!(command_in_draft(&commands, "/UNDO").is_some());
+        // Prose about a command, and an unrelated path, both stay messages.
+        assert!(command_in_draft(&commands, "what does /undo do?").is_none());
+        assert!(command_in_draft(&commands, "/usr/bin/env").is_none());
+        assert!(command_in_draft(&commands, "fix @src/undo.rs").is_none());
+    }
+
+    #[test]
+    fn a_command_argument_is_whatever_follows_the_command_word() {
+        assert_eq!(
+            command_argument("/checkpoint before the refactor"),
+            Some("before the refactor".to_owned())
+        );
+        assert_eq!(command_argument("/checkpoint"), None);
+        assert_eq!(command_argument("/checkpoint   "), None);
     }
 }

@@ -132,6 +132,9 @@ pub(crate) struct SettingsState {
     pub mcp_saved: Value,
     pub mcp_removed: Value,
     pub mcp_probe: Value,
+    /// The latest connection report per server id. Keyed rather than global
+    /// so testing one server does not relabel the others.
+    pub mcp_tests: BTreeMap<String, Value>,
     // ── Codex ─────────────────────────────────────────────────────────
     pub codex: Value,
     pub codex_saved: Value,
@@ -174,6 +177,7 @@ pub(crate) enum SettingsPage {
     Skills,
     Mcp,
     Codex,
+    Memory,
     Authority,
     Agent,
     Terminal,
@@ -189,6 +193,7 @@ impl SettingsPage {
         Self::Skills,
         Self::Mcp,
         Self::Codex,
+        Self::Memory,
         Self::Authority,
         Self::Agent,
         Self::Terminal,
@@ -204,6 +209,7 @@ impl SettingsPage {
             Self::Skills => "Skills",
             Self::Mcp => "MCP servers",
             Self::Codex => "Codex",
+            Self::Memory => "Project memory",
             Self::Authority => "Authority & permissions",
             Self::Agent => "Agent behavior",
             Self::Terminal => "Terminal & Git",
@@ -217,6 +223,7 @@ impl SettingsPage {
             Self::General => "WORKSPACE",
             Self::Models | Self::LocalModels => "MODELS",
             Self::Skills | Self::Mcp | Self::Codex => "EXTENSIONS",
+            Self::Memory => "WORKSPACE",
             Self::Authority | Self::Agent | Self::Terminal => "RUNTIME",
             Self::Privacy | Self::Advanced => "SYSTEM",
         }
@@ -286,6 +293,14 @@ impl SettingsPage {
                 "auth",
                 "timeout",
             ],
+            Self::Memory => &[
+                "memory",
+                "knowledge",
+                "remember",
+                "forget",
+                "build command",
+                "rules",
+            ],
             Self::Authority => &["permission", "approval", "pawgate", "authority", "mode"],
             Self::Agent => &["workflow", "budget", "search", "routing", "agent", "plan"],
             Self::Terminal => &["terminal", "git", "branch", "github", "shell"],
@@ -309,6 +324,21 @@ impl SettingsPage {
             .iter()
             .any(|keyword| keyword.to_ascii_lowercase().contains(query))
     }
+}
+
+/// Whether a section with `keywords` should be drawn for `query` on `page`.
+///
+/// A free function because the rule is pure and worth testing on its own: the
+/// bug it encodes was a silent one, visible only as an empty page.
+fn control_matches(query: &str, page: SettingsPage, keywords: &[&str]) -> bool {
+    let query = query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    keywords
+        .iter()
+        .any(|keyword| keyword.to_ascii_lowercase().contains(&query))
+        || page.matches_query(&query)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -401,6 +431,11 @@ fn derive_provider_type(base_url: &str) -> String {
         "ollama".to_owned()
     } else if url.contains("nvidia") {
         "nvidia-nim".to_owned()
+    } else if url.contains("anthropic.com") {
+        // Anthropic must NOT fall through to `openai-compatible`: the Messages
+        // API is a different wire format, so a mis-derived type produces a
+        // provider that fails on the first request rather than at setup.
+        "anthropic".to_owned()
     } else if url.contains("openai.com") || url.contains("openai.azure") {
         "openai".to_owned()
     } else {
@@ -559,11 +594,48 @@ enum CardAction {
     Unload,
 }
 
+/// What a skill row's buttons asked for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SkillAction {
+    Remove,
+    Toggle,
+}
+
+/// What a memory row's buttons asked for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MemoryAction {
+    Edit,
+    Forget,
+}
+
+/// The heading for one memory kind, in the user's words rather than the
+/// database's.
+fn kind_label(kind: &str) -> String {
+    match kind {
+        "build" => "Build".to_owned(),
+        "architecture" => "Architecture".to_owned(),
+        "learnings" => "Learnings".to_owned(),
+        "user_rules" => "Your rules".to_owned(),
+        // An unknown kind is titled from its own name rather than dropped:
+        // memory recorded by a newer daemon must still be visible and
+        // forgettable here.
+        other => {
+            let mut text = other.replace('_', " ");
+            if let Some(first) = text.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            text
+        }
+    }
+}
+
 /// What the user asked of one MCP server row.
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum McpAction {
     Probe,
     Remove,
+    /// Connect to the server directly and list its tools, with no session.
+    Test,
 }
 
 impl PurrCodeIde {
@@ -753,14 +825,15 @@ impl PurrCodeIde {
 
     /// Whether the current search query should show a control whose keywords
     /// are `keywords`. An empty query shows everything (FR-A7).
+    ///
+    /// A query that matched the *page* also shows every section on it. The two
+    /// keyword lists — the page's, which drives the nav, and each section's,
+    /// which drives this — were maintained by hand and had already drifted:
+    /// searching "keychain" listed "Models & providers" in the nav, and
+    /// opening it rendered a heading with every section suppressed. Whatever
+    /// was good enough to offer the page is good enough to draw it.
     fn control_matches(&self, keywords: &[&str]) -> bool {
-        let query = self.settings_search.trim().to_ascii_lowercase();
-        if query.is_empty() {
-            return true;
-        }
-        keywords
-            .iter()
-            .any(|keyword| keyword.to_ascii_lowercase().contains(&query))
+        control_matches(&self.settings_search, self.settings_page, keywords)
     }
 
     fn settings_content(&mut self, ui: &mut Ui, ctx: &egui::Context) {
@@ -771,6 +844,7 @@ impl PurrCodeIde {
             SettingsPage::Skills => self.settings_skills(ui),
             SettingsPage::Mcp => self.settings_mcp(ui),
             SettingsPage::Codex => self.settings_codex(ui),
+            SettingsPage::Memory => self.settings_memory(ui),
             SettingsPage::Authority => self.settings_authority(ui),
             SettingsPage::Agent => self.settings_agent(ui),
             SettingsPage::Terminal => self.settings_terminal(ui),
@@ -1776,6 +1850,7 @@ impl PurrCodeIde {
                         return;
                     }
                     let mut remove: Option<String> = None;
+                    let mut toggle: Option<(String, bool)> = None;
                     ui.push_id("installed_skills", |ui| {
                         for skill in &skills {
                             let id = text_or(skill, "skill_id", "unnamed");
@@ -1786,6 +1861,15 @@ impl PurrCodeIde {
                                 text_or(skill, "qualification_status", "unverified");
                             let uses = number(skill, "successful_uses");
                             let failures = number(skill, "failed_uses");
+                            // A skill record from a daemon that predates the
+                            // toggle has no `enabled` field. Treating the
+                            // absence as "disabled" would silently switch off
+                            // every installed skill on upgrade, so an unstated
+                            // value means enabled — which is what it was.
+                            let enabled = skill
+                                .get("enabled")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(true);
                             let meta =
                                 format!("{scope} · {publisher} · {signature} · {qualification}");
                             let asked = primitives::list_row(
@@ -1793,9 +1877,29 @@ impl PurrCodeIde {
                                 &tokens,
                                 RowSpec::new(&id).meta(&meta),
                                 |ui| {
-                                    primitives::button(ui, &tokens, Tone::Danger, "Remove")
+                                    let mut asked: Option<SkillAction> = None;
+                                    if primitives::button(ui, &tokens, Tone::Danger, "Remove")
                                         .on_hover_text("Remove this skill from the workspace")
                                         .clicked()
+                                    {
+                                        asked = Some(SkillAction::Remove);
+                                    }
+                                    if primitives::button(
+                                        ui,
+                                        &tokens,
+                                        Tone::Secondary,
+                                        if enabled { "Disable" } else { "Enable" },
+                                    )
+                                    .on_hover_text(if enabled {
+                                        "Keep it installed and inspectable, but never invoke it"
+                                    } else {
+                                        "Allow the agent to invoke this skill again"
+                                    })
+                                    .clicked()
+                                    {
+                                        asked = Some(SkillAction::Toggle);
+                                    }
+                                    asked
                                 },
                             )
                             .inner;
@@ -1804,8 +1908,22 @@ impl PurrCodeIde {
                                 tokens.text_secondary,
                                 &format!("Uses: {uses} successful · {failures} failed"),
                             );
-                            if asked {
-                                remove = Some(id.clone());
+                            if !enabled {
+                                // Disabled is a real state with a real
+                                // consequence: the agent looks elsewhere for
+                                // the capability rather than quietly losing it.
+                                row_note(
+                                    ui,
+                                    tokens.status_warning,
+                                    "Disabled — the agent cannot invoke this skill.",
+                                );
+                            }
+                            match asked {
+                                Some(SkillAction::Remove) => remove = Some(id.clone()),
+                                Some(SkillAction::Toggle) => {
+                                    toggle = Some((id.clone(), !enabled));
+                                }
+                                None => {}
                             }
                         }
                     });
@@ -1813,6 +1931,11 @@ impl PurrCodeIde {
                         self.settings_state
                             .mutation_sent(&format!("skill_remove:{id}"));
                         self.client.send(Request::RemoveSkill { id });
+                    }
+                    if let Some((id, enabled)) = toggle {
+                        self.settings_state
+                            .mutation_sent(&format!("skill_toggle:{id}"));
+                        self.client.send(Request::SkillSetEnabled { id, enabled });
                     }
                     if let Some(key) = self.settings_state.pending.clone()
                         && key.starts_with("skill_remove:")
@@ -2155,7 +2278,271 @@ impl PurrCodeIde {
         }
     }
 
+    // ── Project memory ────────────────────────────────────────────────
+
+    /// Durable project knowledge, with its provenance on the surface.
+    ///
+    /// v1.2 Pillar 6. The deliberate choice here is that PurrCode does not
+    /// secretly remember things: every entry is visible, says where it came
+    /// from and how sure it is, and can be edited or forgotten. Memory the
+    /// user cannot see is memory they cannot correct, and a wrong fact that
+    /// silently shapes every future session is worse than no memory at all.
+    fn settings_memory(&mut self, ui: &mut Ui) {
+        let tokens = self.tokens;
+        self.settings_heading(
+            ui,
+            "Project memory",
+            "What PurrCode carries between sessions about this project. Every entry shows where \
+             it came from, and you can change or remove any of it.",
+        );
+
+        if self.repository.as_os_str().is_empty() {
+            note(ui, &tokens, "Open a folder to see its project memory.");
+            return;
+        }
+
+        let entries = self.memory.clone();
+        self.settings_status(
+            ui,
+            &if entries.is_empty() {
+                "Nothing remembered for this project yet.".to_owned()
+            } else {
+                format!(
+                    "{} entr{} remembered.",
+                    entries.len(),
+                    if entries.len() == 1 { "y" } else { "ies" }
+                )
+            },
+        );
+
+        let mut forget: Option<String> = None;
+        let mut edit: Option<(String, String)> = None;
+        for (kind, description) in crate::model::MEMORY_KINDS {
+            let group: Vec<_> = entries.iter().filter(|entry| entry.kind == *kind).collect();
+            if group.is_empty() && !self.control_matches(&[kind, "memory"]) {
+                continue;
+            }
+            primitives::section(ui, &tokens, &kind_label(kind), Some(description), |ui| {
+                if group.is_empty() {
+                    empty_state(ui, &tokens, "Nothing here yet.");
+                    return;
+                }
+                ui.push_id(format!("memory_{kind}"), |ui| {
+                    for entry in &group {
+                        let asked =
+                            primitives::list_row(ui, &tokens, RowSpec::new(&entry.content), |ui| {
+                                let mut asked: Option<MemoryAction> = None;
+                                if primitives::button(ui, &tokens, Tone::Danger, "Forget")
+                                    .on_hover_text(
+                                        "Remove this permanently. It will not come back on \
+                                             its own.",
+                                    )
+                                    .clicked()
+                                {
+                                    asked = Some(MemoryAction::Forget);
+                                }
+                                if primitives::button(ui, &tokens, Tone::Secondary, "Edit")
+                                    .clicked()
+                                {
+                                    asked = Some(MemoryAction::Edit);
+                                }
+                                asked
+                            })
+                            .inner;
+                        // The provenance line is the whole argument for
+                        // this surface: a fact with no visible source is
+                        // a fact nobody can check.
+                        row_note(ui, tokens.text_muted, &entry.provenance());
+                        match asked {
+                            Some(MemoryAction::Forget) => forget = Some(entry.id.clone()),
+                            Some(MemoryAction::Edit) => {
+                                edit = Some((entry.id.clone(), entry.content.clone()));
+                            }
+                            None => {}
+                        }
+                    }
+                });
+            });
+        }
+
+        if let Some(id) = forget {
+            self.settings_state
+                .mutation_sent(&format!("memory_forget:{id}"));
+            self.client.send(Request::ForgetMemory { id });
+        }
+        if let Some((id, content)) = edit {
+            self.editing_memory = Some((id, content));
+        }
+
+        // ── Remember something ────────────────────────────────────────
+        let mut save = false;
+        primitives::section(
+            ui,
+            &tokens,
+            "Remember something",
+            Some(
+                "Added entries are attributed to you, and marked unverified until something confirms them.",
+            ),
+            |ui| {
+                primitives::field_row(ui, &tokens, "Kind", |ui| {
+                    for (kind, _) in crate::model::MEMORY_KINDS {
+                        ui.selectable_value(
+                            &mut self.memory_kind,
+                            (*kind).to_owned(),
+                            kind_label(kind),
+                        );
+                    }
+                });
+                primitives::field_row(ui, &tokens, "What to remember", |ui| {
+                    let room = ui.available_width();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.memory_content)
+                            .hint_text("Integration tests need Redis running on :6379")
+                            .desired_rows(2)
+                            .desired_width(room),
+                    );
+                });
+                ui.add_space(GAP_CONTROL);
+                let ready = !self.memory_content.trim().is_empty();
+                save = primitives::button_enabled(ui, &tokens, Tone::Primary, "Remember", ready)
+                    .clicked();
+                self.settings_inline_error(ui, "memory_save");
+            },
+        );
+        if save {
+            self.settings_state.mutation_sent("memory_save");
+            self.client.send(Request::CreateMemory {
+                repository: self.repository_string(),
+                kind: self.memory_kind.clone(),
+                content: self.memory_content.trim().to_owned(),
+                // Attribution is honest: the user typed this, so the entry
+                // says so rather than claiming a session discovered it.
+                source: "Added by you in Settings".to_owned(),
+            });
+            self.memory_content.clear();
+        }
+    }
+
+    /// The edit dialog for one memory entry.
+    pub(crate) fn memory_dialog(&mut self, ctx: &egui::Context) {
+        let Some((id, content)) = self.editing_memory.clone() else {
+            return;
+        };
+        let tokens = self.tokens;
+        let mut next = content;
+        let (choice, ()) = primitives::dialog(
+            ctx,
+            &tokens,
+            "purrcode_edit_memory",
+            "Edit memory",
+            ("Save", Tone::Primary),
+            !next.trim().is_empty(),
+            |ui| {
+                ui.label(
+                    egui::RichText::new("The entry keeps its original source and date.")
+                        .size(crate::theme::TYPE_META)
+                        .color(tokens.text_secondary),
+                );
+                ui.add_space(8.0);
+                ui.add(
+                    egui::TextEdit::multiline(&mut next)
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY),
+                );
+            },
+        );
+        match choice {
+            Some(primitives::DialogChoice::Confirm) if !next.trim().is_empty() => {
+                self.client.send(Request::UpdateMemory {
+                    id,
+                    content: next.trim().to_owned(),
+                });
+                self.editing_memory = None;
+            }
+            Some(primitives::DialogChoice::Cancel) => self.editing_memory = None,
+            _ => self.editing_memory = Some((id, next)),
+        }
+    }
+
     // ── MCP servers ───────────────────────────────────────────────────
+
+    /// What this server's tools are allowed to do without being asked.
+    ///
+    /// This is the sentence that makes PurrCode's MCP surface different from
+    /// "did the server connect". A trusted tool runs without a per-call
+    /// prompt; a denied one cannot run at all. Both are stated here, because
+    /// a user who cannot see which tools are pre-approved has not really
+    /// approved them.
+    fn mcp_trust_summary(&self, ui: &mut Ui, server: &Value) {
+        let names = |key: &str| {
+            array(server, key)
+                .into_iter()
+                .filter_map(|tool| tool.as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        let trusted = names("trusted_tools");
+        let denied = names("deny_tools");
+        // Two independent facts, stated independently — a 2x2 match over them
+        // spelled the same two sentences four times.
+        let trust = if trusted.is_empty() {
+            "Every tool asks before it runs.".to_owned()
+        } else {
+            format!("Runs without asking: {}.", trusted.join(", "))
+        };
+        let deny = if denied.is_empty() {
+            "No tool is denied.".to_owned()
+        } else {
+            format!("Denied: {}.", denied.join(", "))
+        };
+        let summary = format!("{trust} {deny}");
+        row_note(
+            ui,
+            if trusted.is_empty() {
+                self.tokens.text_muted
+            } else {
+                // Pre-approved tools are a standing grant, so the line that
+                // describes them is not muted chrome.
+                self.tokens.status_warning
+            },
+            &summary,
+        );
+    }
+
+    /// The result of the last connection test for one server.
+    fn mcp_test_report(&self, ui: &mut Ui, id: &str) {
+        let Some(report) = self.settings_state.mcp_tests.get(id) else {
+            return;
+        };
+        let connected = boolean(report, "connected");
+        let count = number(report, "tool_count");
+        let diagnostics = text_or(report, "diagnostics", "");
+        row_note(
+            ui,
+            if connected {
+                self.tokens.status_success
+            } else {
+                self.tokens.status_error
+            },
+            &if connected {
+                format!("Connected · {count} tool(s) discovered")
+            } else {
+                format!("Not reachable · {diagnostics}")
+            },
+        );
+        if !connected {
+            return;
+        }
+        // The tool names themselves, so "12 tools" can be checked rather than
+        // taken on faith — and so the user can see what they would be
+        // trusting before they trust it.
+        let names = array(report, "tools")
+            .iter()
+            .filter_map(|tool| text(tool, "name"))
+            .collect::<Vec<_>>();
+        if !names.is_empty() {
+            row_note(ui, self.tokens.text_muted, &names.join(", "));
+        }
+    }
 
     fn settings_mcp(&mut self, ui: &mut Ui) {
         let tokens = self.tokens;
@@ -2203,8 +2590,13 @@ impl PurrCodeIde {
                     }
                     let mut remove: Option<String> = None;
                     let mut probe: Option<String> = None;
+                    let mut test: Option<String> = None;
                     ui.push_id("mcp_servers", |ui| {
                         for (id, server) in map {
+                            let transport = match text_or(server, "transport", "stdio").as_str() {
+                                "http" => format!("HTTP {}", text_or(server, "url", "?")),
+                                other => other.to_owned(),
+                            };
                             let program = text_or(server, "program", "?");
                             let args = array(server, "arguments")
                                 .iter()
@@ -2243,6 +2635,16 @@ impl PurrCodeIde {
                                     {
                                         asked = Some(McpAction::Probe);
                                     }
+                                    // Unlike Probe, this needs no session: a
+                                    // server has to be checkable while it is
+                                    // being set up, which is the moment the
+                                    // configuration is most likely wrong.
+                                    if primitives::button(ui, &tokens, Tone::Secondary, "Test")
+                                        .on_hover_text("Connect now and list this server's tools")
+                                        .clicked()
+                                    {
+                                        asked = Some(McpAction::Test);
+                                    }
                                     asked
                                 },
                             )
@@ -2251,7 +2653,7 @@ impl PurrCodeIde {
                                 ui,
                                 tokens.text_secondary,
                                 &format!(
-                                    "{cwd} · network {} · timeout {timeout}s",
+                                    "{transport} · {cwd} · network {} · timeout {timeout}s",
                                     if network { "on" } else { "off" }
                                 ),
                             );
@@ -2260,9 +2662,17 @@ impl PurrCodeIde {
                                 tokens.text_muted,
                                 &format!("Environment variables: {env}"),
                             );
+                            // Trust is the point of this surface. A server
+                            // with auto-approved tools is materially different
+                            // from one where every call is asked about, so the
+                            // row says which tools those are rather than
+                            // leaving it to a config file.
+                            self.mcp_trust_summary(ui, server);
+                            self.mcp_test_report(ui, id);
                             match asked {
                                 Some(McpAction::Remove) => remove = Some(id.clone()),
                                 Some(McpAction::Probe) => probe = Some(id.clone()),
+                                Some(McpAction::Test) => test = Some(id.clone()),
                                 None => {}
                             }
                         }
@@ -2280,6 +2690,14 @@ impl PurrCodeIde {
                         self.settings_state
                             .mutation_sent(&format!("mcp_remove:{id}"));
                         self.client.send(Request::McpRemove { id });
+                    }
+                    if let Some(id) = test {
+                        self.settings_state.mutation_sent(&format!("mcp_test:{id}"));
+                        // Clear the previous report first: leaving a stale
+                        // "connected, 12 tools" on screen while a new test runs
+                        // claims the server is reachable before anyone asked.
+                        self.settings_state.mcp_tests.remove(&id);
+                        self.client.send(Request::McpTest { id });
                     }
                     if let Some(key) = self.settings_state.pending.clone()
                         && (key.starts_with("probe:") || key.starts_with("mcp_remove:"))
@@ -2325,20 +2743,39 @@ impl PurrCodeIde {
                         let room = ui.available_width();
                         ui.add(egui::TextEdit::singleline(&mut self.mcp_id).desired_width(room));
                     });
-                    primitives::field_row(ui, &tokens, "Program", |ui| {
-                        let room = ui.available_width();
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.mcp_program).desired_width(room),
-                        );
+                    primitives::field_row(ui, &tokens, "Transport", |ui| {
+                        ui.selectable_value(&mut self.mcp_http, false, "stdio");
+                        ui.selectable_value(&mut self.mcp_http, true, "HTTP");
                     });
-                    primitives::field_row(ui, &tokens, "Arguments", |ui| {
-                        let room = ui.available_width();
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.mcp_arguments)
-                                .hint_text("Comma-separated")
-                                .desired_width(room),
-                        );
-                    });
+                    // Only the fields the chosen transport actually uses are
+                    // shown. A "Program" box on an HTTP server is a question
+                    // with no right answer.
+                    if self.mcp_http {
+                        primitives::field_row(ui, &tokens, "URL", |ui| {
+                            let room = ui.available_width();
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.mcp_url)
+                                    .hint_text("https://host/mcp")
+                                    .desired_width(room),
+                            );
+                        });
+                    } else {
+                        primitives::field_row(ui, &tokens, "Program", |ui| {
+                            let room = ui.available_width();
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.mcp_program)
+                                    .desired_width(room),
+                            );
+                        });
+                        primitives::field_row(ui, &tokens, "Arguments", |ui| {
+                            let room = ui.available_width();
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.mcp_arguments)
+                                    .hint_text("Comma-separated")
+                                    .desired_width(room),
+                            );
+                        });
+                    }
                     primitives::field_row(ui, &tokens, "Working directory", |ui| {
                         let room = ui.available_width();
                         ui.add(
@@ -2357,9 +2794,35 @@ impl PurrCodeIde {
                                 .desired_width(room),
                         );
                     });
+                    // Trust is configured with the server, not after it: the
+                    // moment somebody adds a tool server is the moment to say
+                    // what it may do unattended.
+                    primitives::field_row(ui, &tokens, "Run without asking", |ui| {
+                        let room = ui.available_width();
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.mcp_trusted_tools)
+                                .hint_text(
+                                    "Comma-separated tool names — leave empty to ask every time",
+                                )
+                                .desired_width(room),
+                        );
+                    });
+                    primitives::field_row(ui, &tokens, "Never run", |ui| {
+                        let room = ui.available_width();
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.mcp_deny_tools)
+                                .hint_text("Comma-separated tool names")
+                                .desired_width(room),
+                        );
+                    });
                     ui.add_space(GAP_CONTROL);
+                    let endpoint_given = if self.mcp_http {
+                        !self.mcp_url.trim().is_empty()
+                    } else {
+                        !self.mcp_program.trim().is_empty()
+                    };
                     let ready = !self.mcp_id.trim().is_empty()
-                        && !self.mcp_program.trim().is_empty()
+                        && endpoint_given
                         && !self.mcp_working_directory.trim().is_empty();
                     save = primitives::button_enabled(
                         ui,
@@ -2374,7 +2837,11 @@ impl PurrCodeIde {
                         note(
                             ui,
                             &tokens,
-                            "A server id, a program and a working directory are required.",
+                            if self.mcp_http {
+                                "A server id, a URL and a working directory are required."
+                            } else {
+                                "A server id, a program and a working directory are required."
+                            },
                         );
                     }
                     self.settings_inline_error(ui, "mcp_save");
@@ -2387,16 +2854,21 @@ impl PurrCodeIde {
                         environment_from.insert(child.trim().to_owned(), host.trim().to_owned());
                     }
                 }
+                let tool_list = |raw: &str| {
+                    raw.split(',')
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                };
                 let server = serde_json::json!({
                     "id": self.mcp_id.trim().to_owned(),
+                    "transport": if self.mcp_http { "http" } else { "stdio" },
+                    "url": self.mcp_url.trim().to_owned(),
+                    "trusted_tools": tool_list(&self.mcp_trusted_tools),
+                    "deny_tools": tool_list(&self.mcp_deny_tools),
                     "program": self.mcp_program.trim().to_owned(),
-                    "arguments": self
-                        .mcp_arguments
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>(),
+                    "arguments": tool_list(&self.mcp_arguments),
                     "working_directory": self.mcp_working_directory.trim().to_owned(),
                     "network": self.mcp_network,
                     "environment_from": environment_from,
@@ -2958,6 +3430,36 @@ mod tests {
         assert_eq!(SettingsPage::Codex.group(), "EXTENSIONS");
         assert_eq!(SettingsPage::Authority.group(), "RUNTIME");
         assert_eq!(SettingsPage::Advanced.group(), "SYSTEM");
+    }
+
+    #[test]
+    fn a_query_that_finds_a_page_also_draws_it() {
+        // The nav and the sections used to filter on two hand-maintained
+        // keyword lists, and they drifted: "keychain" listed "Models &
+        // providers" and then rendered it with every section suppressed. A
+        // page that the search offers must have something on it.
+        for page in SettingsPage::ALL {
+            for keyword in page.keywords() {
+                assert!(
+                    control_matches(keyword, *page, &["a-keyword-no-section-uses"]),
+                    "searching {keyword:?} offers {} but would draw nothing on it",
+                    page.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_query_matching_nothing_still_hides_unrelated_controls() {
+        // The fix must not turn the search into a no-op: a query that matches
+        // neither the page nor the section still filters.
+        assert!(!control_matches(
+            "zzzz-nothing",
+            SettingsPage::Models,
+            &["provider", "role"]
+        ));
+        // An empty query still shows everything (FR-A7).
+        assert!(control_matches("", SettingsPage::Models, &["anything"]));
     }
 
     #[test]

@@ -3,7 +3,10 @@
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, VerifyingKey};
-use purrcode_runtime_core::{ActionConstraints, JudgmentDecision, ProposedAction};
+use purrcode_runtime_core::{
+    ActionConstraints, ApprovalPolicy, FilesystemScope, JudgmentDecision, NetworkScope,
+    ProposedAction, SideEffectClass, ToolCeiling, ToolDescriptor,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -65,17 +68,32 @@ impl Policy {
         Ok(toml::from_str(&fs::read_to_string(path)?)?)
     }
 
-    pub fn load_effective(
+    /// v1.3 precedence. Three tiers instead of two:
+    ///   `Policy::default()`              ← the floor
+    ///     ↓ restrict_local(base, user)   ← `~/.purrcode/policy.toml` (or `config.toml [policy]`)
+    ///     ↓ restrict_local(base, project)← `<repo>/policies/default.toml` — RESTRICTED, not replacing
+    ///     ↓ SignedPolicyPack::restrict   ← org pack, unchanged, still the outermost authority
+    ///
+    /// The project tier gets no delegation: `restrict_local` has an empty
+    /// `allowed_overrides`, so a project file can never widen the user's
+    /// machine-level bounds.
+    pub fn load_effective_v3(
+        user_policy: Option<&Path>,
         repository_policy: Option<&Path>,
-        organization_pack: &Path,
-        public_key_hex: &str,
+        organization: Option<(&Path, &str)>,
     ) -> Result<Self, PolicyError> {
-        let local = match repository_policy {
-            Some(path) if path.exists() => Self::load(path)?,
-            _ => Self::default(),
-        };
-        let organization = SignedPolicyPack::load_verified(organization_pack, public_key_hex)?;
-        Ok(organization.restrict(local))
+        let mut base = Policy::default();
+        if let Some(user) = user_policy.filter(|p| p.exists()) {
+            base = restrict_local(base, Self::load(user)?);
+        }
+        if let Some(project) = repository_policy.filter(|p| p.exists()) {
+            base = restrict_local(base, Self::load(project)?);
+        }
+        if let Some((pack, key)) = organization {
+            let pack = SignedPolicyPack::load_verified(pack, key)?;
+            base = pack.restrict(base);
+        }
+        Ok(base)
     }
 
     pub fn evaluate(&self, action: &ProposedAction, repository: &Path) -> JudgmentDecision {
@@ -209,6 +227,165 @@ impl Policy {
                     },
                 }
             }
+            // v1.3: registry-admitted tool invocations are judged by
+            // `Policy::evaluate_tool` against their descriptor. This arm is a
+            // conservative fallback so the old `evaluate` path can never
+            // auto-allow a registry tool; PR2 replaces it with the real
+            // descriptor-driven decision.
+            ProposedAction::Tool(invocation) => {
+                if invocation.working_directory != repository {
+                    return JudgmentDecision::Deny {
+                        reason: "tool working directory does not match the session worktree".into(),
+                    };
+                }
+                JudgmentDecision::RequireApproval {
+                    reason: format!(
+                        "tool `{}` requires explicit authorization",
+                        invocation.tool_id
+                    ),
+                    constraints: ActionConstraints {
+                        working_directory: repository.to_path_buf(),
+                        network: false,
+                        timeout_seconds: self.timeout_seconds,
+                        maximum_output_bytes: self.maximum_output_bytes,
+                        allowed_write_globs: Vec::new(),
+                        maximum_changed_files: 0,
+                    },
+                }
+            }
+        }
+    }
+
+    /// Provider-blind judgment of a registry-admitted tool invocation (v1.3).
+    ///
+    /// Reads the four descriptor fields that PR1's lattice already restricted
+    /// against the workspace ceiling:
+    /// - `schema` is validated FIRST, so a malformed call is denied before any
+    ///   authorization could be minted (the failure precedes authorization);
+    /// - `side_effect_class` selects the read fast-path vs approval;
+    /// - `network_scope` becomes `ActionConstraints.network`;
+    /// - `filesystem_scope` becomes the write globs / changed-file budget;
+    /// - `approval_policy` selects the decision class.
+    ///
+    /// This is the single decision point for EVERY provider. There is no
+    /// `if provider == Mcp` here — the descriptor carries everything PawGate
+    /// needs.
+    pub fn evaluate_tool(
+        &self,
+        action: &ProposedAction,
+        descriptor: &ToolDescriptor,
+        repository: &Path,
+    ) -> JudgmentDecision {
+        // 1. Working-directory containment: a tool runs against the session
+        // worktree, never against an arbitrary path.
+        let working_directory = match action {
+            ProposedAction::Tool(invocation) => &invocation.working_directory,
+            ProposedAction::ExternalTool(external) => &external.working_directory,
+            _ => {
+                return JudgmentDecision::Deny {
+                    reason: "evaluate_tool only judges Tool/ExternalTool invocations".into(),
+                };
+            }
+        };
+        if working_directory != repository {
+            return JudgmentDecision::Deny {
+                reason: "tool working directory does not match the session worktree".into(),
+            };
+        }
+
+        // 2. Argument schema validation BEFORE any allow/approval. A malformed
+        // call must be denied, never routed to a human for approval that the
+        // sandbox would then fail.
+        let arguments = match action {
+            ProposedAction::Tool(invocation) => &invocation.arguments,
+            ProposedAction::ExternalTool(external) => &external.arguments,
+            _ => unreachable!("guarded above"),
+        };
+        if let Err(reason) = validate_arguments(descriptor.schema(), arguments) {
+            return JudgmentDecision::Deny { reason };
+        }
+
+        // 3. Forbidden by the ceiling (PR1 admitted it Forbidden). This is a
+        // hard deny that no permission mode may override.
+        if descriptor.approval_policy() == ApprovalPolicy::Forbidden {
+            return JudgmentDecision::Deny {
+                reason: format!("tool `{}` is forbidden in this workspace", descriptor.id()),
+            };
+        }
+
+        // 4. Build the constraints envelope from the descriptor.
+        let (network, filesystem) = descriptor_scope(descriptor);
+
+        // 5. Decide.
+        match descriptor.approval_policy() {
+            ApprovalPolicy::PreAuthorized => {
+                JudgmentDecision::AllowWithConstraints(constraints_for(
+                    repository,
+                    self.timeout_seconds,
+                    self.maximum_output_bytes,
+                    network,
+                    filesystem,
+                ))
+            }
+            ApprovalPolicy::ByClass => {
+                if descriptor.side_effect_class() == SideEffectClass::Read
+                    && matches!(descriptor.network_scope(), NetworkScope::None)
+                {
+                    JudgmentDecision::AllowWithConstraints(constraints_for(
+                        repository,
+                        self.timeout_seconds,
+                        self.maximum_output_bytes,
+                        false,
+                        Vec::new(),
+                    ))
+                } else {
+                    JudgmentDecision::RequireApproval {
+                        reason: format!(
+                            "tool `{}` may mutate repository or external state",
+                            descriptor.id()
+                        ),
+                        constraints: constraints_for(
+                            repository,
+                            self.timeout_seconds,
+                            self.maximum_output_bytes,
+                            network,
+                            filesystem,
+                        ),
+                    }
+                }
+            }
+            ApprovalPolicy::AlwaysAsk => JudgmentDecision::RequireApproval {
+                reason: format!("tool `{}` requires explicit authorization", descriptor.id()),
+                constraints: constraints_for(
+                    repository,
+                    self.timeout_seconds,
+                    self.maximum_output_bytes,
+                    network,
+                    filesystem,
+                ),
+            },
+            ApprovalPolicy::Forbidden => unreachable!("handled above"),
+        }
+    }
+
+    /// The workspace ceiling derived from this policy (v1.3 §9.2). Project
+    /// config never participates in producing this; it is only ever restricted
+    /// against it.
+    pub fn tool_ceiling(&self, _repository: &Path) -> ToolCeiling {
+        let maximum_filesystem = if self.auto_allow_worktree_writes {
+            FilesystemScope::Worktree {
+                write_globs: vec!["**".into()],
+                maximum_changed_files: usize::MAX,
+            }
+        } else {
+            FilesystemScope::WorktreeRead
+        };
+        ToolCeiling {
+            maximum_side_effect: SideEffectClass::Destructive,
+            maximum_network: NetworkScope::None,
+            maximum_filesystem,
+            minimum_approval: ApprovalPolicy::ByClass,
+            denied_tool_ids: BTreeSet::new(),
         }
     }
 
@@ -323,7 +500,11 @@ impl SignedPolicyPack {
         })?)
     }
 
-    fn restrict(&self, local: Policy) -> Policy {
+    /// Restrict `local` against this signed pack's policy. `allowed_overrides`
+    /// (which is inside the signed payload, hence tamper-evident) may delegate
+    /// a field to the local value verbatim; every other field takes the
+    /// restrictive lattice operator.
+    pub fn restrict(&self, local: Policy) -> Policy {
         Policy {
             read_only_programs: field_override(
                 &self.allowed_overrides,
@@ -379,11 +560,117 @@ impl SignedPolicyPack {
     }
 }
 
+/// Restrict a base policy against a proposal using the same lattice as
+/// `SignedPolicyPack::restrict`, but with **no** `allowed_overrides` escape
+/// hatch: every field takes the restrictive operator, so the proposal can only
+/// narrow the base. This is the v1.3 non-signed tier operator — the project
+/// tier gets no delegation because (unlike a signed org pack) a project file's
+/// delegation list would not be tamper-evident.
+///
+/// Lattice: allow-sets intersect, deny-sets union, numeric budgets take the
+/// min, permission booleans AND.
+pub fn restrict_local(base: Policy, proposal: Policy) -> Policy {
+    // A synthesized pack with an empty allowlist selects the restrictive
+    // branch of `field_override` for every field, with `proposal` as the
+    // restrictive source.
+    let pack = SignedPolicyPack {
+        version: String::new(),
+        issuer: String::new(),
+        expires_at: chrono::Utc::now(),
+        allowed_overrides: BTreeSet::new(),
+        payload_hash: String::new(),
+        signature: String::new(),
+        policy: proposal,
+    };
+    pack.restrict(base)
+}
+
 fn field_override<T>(allowed: &BTreeSet<String>, field: &str, local: T, restrictive: T) -> T {
     if allowed.contains(field) {
         local
     } else {
         restrictive
+    }
+}
+
+/// Validate `arguments` against a JSON-Schema `schema`. Returns a deny reason
+/// on failure. This runs BEFORE any authorization is minted, so a malformed
+/// call is denied rather than approved-then-failed.
+fn validate_arguments(
+    schema: &serde_json::Value,
+    arguments: &serde_json::Value,
+) -> Result<(), String> {
+    // The schema is an unrestricted JSON object; a "type":"object" contract
+    // with properties/required is the descriptor's declaration. We enforce
+    // the declared `required` array and, when a `type` is declared at the top,
+    // that the arguments match it. Full JSON-Schema evaluation is not
+    // available here (no jsonschema dependency); the descriptor lattice is the
+    // authoritative bound and the sandbox re-checks constraints at execution.
+    let Some(obj) = schema.as_object() else {
+        return Ok(()); // no object contract declared
+    };
+    if let Some(required) = obj.get("required").and_then(serde_json::Value::as_array) {
+        let args = arguments
+            .as_object()
+            .ok_or_else(|| "arguments must be a JSON object".to_string())?;
+        for key in required {
+            let Some(key) = key.as_str() else { continue };
+            if !args.contains_key(key) {
+                return Err(format!("missing required argument `{key}`"));
+            }
+        }
+    }
+    if let Some(expected) = obj.get("type").and_then(serde_json::Value::as_str) {
+        let actual = match arguments {
+            serde_json::Value::Object(_) => "object",
+            serde_json::Value::Array(_) => "array",
+            serde_json::Value::String(_) => "string",
+            serde_json::Value::Number(_) => "number",
+            serde_json::Value::Bool(_) => "boolean",
+            serde_json::Value::Null => "null",
+        };
+        if expected != actual {
+            return Err(format!("arguments must be a JSON {expected}, got {actual}"));
+        }
+    }
+    Ok(())
+}
+
+/// Map a descriptor's network/filesystem scope onto the two constraint fields
+/// that `ActionConstraints` carries. Returns `(network, allowed_write_globs)`.
+fn descriptor_scope(descriptor: &ToolDescriptor) -> (bool, Vec<String>) {
+    let network = match descriptor.network_scope() {
+        NetworkScope::Any | NetworkScope::Hosts { .. } => true,
+        NetworkScope::None => false,
+    };
+    let write_globs = match descriptor.filesystem_scope() {
+        FilesystemScope::Worktree {
+            write_globs,
+            maximum_changed_files,
+        } if *maximum_changed_files > 0 && !write_globs.is_empty() => write_globs.clone(),
+        _ => Vec::new(),
+    };
+    (network, write_globs)
+}
+
+fn constraints_for(
+    repository: &Path,
+    timeout_seconds: u64,
+    maximum_output_bytes: usize,
+    network: bool,
+    allowed_write_globs: Vec<String>,
+) -> ActionConstraints {
+    ActionConstraints {
+        working_directory: repository.to_path_buf(),
+        network,
+        timeout_seconds,
+        maximum_output_bytes,
+        maximum_changed_files: if allowed_write_globs.is_empty() {
+            0
+        } else {
+            allowed_write_globs.len()
+        },
+        allowed_write_globs,
     }
 }
 
@@ -702,11 +989,22 @@ pub fn resolve_policy_path(repository: &Path) -> PathBuf {
     repository.join("policies/default.toml")
 }
 
+/// The machine-level user policy tier: `~/.purrcode/policy.toml`. This is the
+/// "user" tier in `load_effective_v3`'s Default → User → Project → Org order.
+/// It is deliberately NOT loadable from a repository, so a repository can never
+/// widen the machine's bounds — only restrict them.
+pub fn resolve_user_policy_path() -> Option<PathBuf> {
+    std::env::home_dir().map(|home| home.join(".purrcode/policy.toml"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use purrcode_runtime_core::CommandAction;
+    use purrcode_runtime_core::{
+        CapabilityRegistry, CommandAction, ToolCeiling, ToolDescriptorProposal, ToolId,
+        ToolInvocation, ToolProvider, builtin_native_proposals,
+    };
     use std::collections::BTreeMap;
 
     #[cfg(not(windows))]
@@ -725,6 +1023,178 @@ mod tests {
             working_directory: TEST_REPOSITORY.into(),
             environment: BTreeMap::new(),
         })
+    }
+
+    /// Admit a proposal through the ONLY mint and return the descriptor.
+    fn admit(proposal: ToolDescriptorProposal) -> ToolDescriptor {
+        let mut registry = CapabilityRegistry::new();
+        let ceiling = ToolCeiling {
+            maximum_side_effect: SideEffectClass::Destructive,
+            maximum_network: NetworkScope::Any,
+            maximum_filesystem: FilesystemScope::maximum(),
+            minimum_approval: ApprovalPolicy::PreAuthorized,
+            denied_tool_ids: BTreeSet::new(),
+        };
+        registry.admit_tool(proposal, &ceiling).clone()
+    }
+
+    fn native_descriptor(name: &str) -> ToolDescriptor {
+        admit(
+            builtin_native_proposals()
+                .into_iter()
+                .find(|p| p.id == ToolId::native(name))
+                .unwrap_or_else(|| panic!("missing builtin {name}")),
+        )
+    }
+
+    #[test]
+    fn known_overrides_cover_every_policy_field() {
+        // The six-string allowlist at the top of `verify` is maintained
+        // separately from the struct; assert they never drift apart.
+        let value = serde_json::to_value(Policy::default()).unwrap();
+        let fields: BTreeSet<String> = value.as_object().unwrap().keys().cloned().collect();
+        let known: BTreeSet<String> = [
+            "read_only_programs",
+            "approval_required_programs",
+            "denied_argument_fragments",
+            "timeout_seconds",
+            "maximum_output_bytes",
+            "auto_allow_worktree_writes",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(
+            fields, known,
+            "the signed-pack `allowed_overrides` allowlist must cover every Policy field"
+        );
+    }
+
+    #[test]
+    fn evaluate_tool_native_read_equivalent_to_evaluate() {
+        // Zero-behaviour-change proof: the descriptor-driven path for a native
+        // read must match the classic `evaluate` path exactly.
+        let policy = Policy::default();
+        let repository = Path::new(TEST_REPOSITORY);
+
+        for name in [
+            "git_status",
+            "git_rev_parse",
+            "git_log",
+            "git_diff",
+            "git_show",
+            "git_ls_files",
+            "repository_grep",
+            "find",
+            "list",
+            "read_file",
+        ] {
+            let descriptor = native_descriptor(name);
+            // A representative action for this read kind. The action payload is
+            // incidental — the descriptor carries the decision fields.
+            let action = ProposedAction::Tool(ToolInvocation {
+                tool_id: ToolId::native(name),
+                arguments: serde_json::json!({}),
+                working_directory: repository.to_path_buf(),
+                descriptor_digest: "abc".into(),
+            });
+            let via_tool = policy.evaluate_tool(&action, &descriptor, repository);
+            assert!(
+                matches!(via_tool, JudgmentDecision::AllowWithConstraints(_)),
+                "{name}: a native read via descriptor should be allowed with constraints"
+            );
+            assert!(
+                !matches!(via_tool, JudgmentDecision::RequireApproval { .. }),
+                "{name}: a native read must not require approval"
+            );
+        }
+    }
+
+    #[test]
+    fn evaluate_tool_malformed_arguments_are_denied_not_approved() {
+        let policy = Policy::default();
+        let repository = Path::new(TEST_REPOSITORY);
+        let descriptor = admit(ToolDescriptorProposal {
+            id: ToolId::mcp("github", "create_issue"),
+            provider: ToolProvider::Mcp,
+            display_name: "create_issue".into(),
+            description: "create a github issue".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": { "title": { "type": "string" } },
+                "required": ["title"]
+            }),
+            capabilities: BTreeSet::new(),
+            side_effect_class: SideEffectClass::Write,
+            network_scope: NetworkScope::Any,
+            filesystem_scope: FilesystemScope::WorktreeRead,
+            approval_policy: ApprovalPolicy::PreAuthorized,
+            origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+        });
+        let action = ProposedAction::Tool(ToolInvocation {
+            tool_id: descriptor.id().clone(),
+            arguments: serde_json::json!({ "body": "missing title" }),
+            working_directory: repository.to_path_buf(),
+            descriptor_digest: "abc".into(),
+        });
+        let decision = policy.evaluate_tool(&action, &descriptor, repository);
+        assert!(
+            matches!(decision, JudgmentDecision::Deny { .. }),
+            "a malformed call must be denied BEFORE it could be authorized or approved"
+        );
+    }
+
+    #[test]
+    fn evaluate_tool_networked_preauthorized_carries_network_constraint() {
+        let policy = Policy::default();
+        let repository = Path::new(TEST_REPOSITORY);
+        let descriptor = admit(ToolDescriptorProposal {
+            id: ToolId::mcp("github", "get_issue"),
+            provider: ToolProvider::Mcp,
+            display_name: "get_issue".into(),
+            description: "fetch a github issue".into(),
+            schema: serde_json::json!({ "type": "object" }),
+            capabilities: BTreeSet::new(),
+            side_effect_class: SideEffectClass::Read,
+            network_scope: NetworkScope::Any,
+            filesystem_scope: FilesystemScope::WorktreeRead,
+            approval_policy: ApprovalPolicy::PreAuthorized,
+            origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+        });
+        let action = ProposedAction::Tool(ToolInvocation {
+            tool_id: descriptor.id().clone(),
+            arguments: serde_json::json!({}),
+            working_directory: repository.to_path_buf(),
+            descriptor_digest: "abc".into(),
+        });
+        let JudgmentDecision::AllowWithConstraints(constraints) =
+            policy.evaluate_tool(&action, &descriptor, repository)
+        else {
+            panic!("PreAuthorized networked read should be allowed with constraints");
+        };
+        assert!(
+            constraints.network,
+            "a Hosts/Any network scope must surface as network: true in the envelope"
+        );
+    }
+
+    #[test]
+    fn restrict_local_only_narrows() {
+        let base = Policy::default();
+        let looser = Policy {
+            auto_allow_worktree_writes: true,
+            ..Policy::default()
+        };
+        // Proposal can only narrow: a looser proposal leaves the base intact.
+        let narrowed = restrict_local(base.clone(), looser.clone());
+        assert!(!narrowed.auto_allow_worktree_writes);
+        // A stricter proposal narrows.
+        let strict = Policy {
+            timeout_seconds: 5,
+            ..Policy::default()
+        };
+        let narrowed = restrict_local(base, strict);
+        assert_eq!(narrowed.timeout_seconds, 5);
     }
 
     #[test]

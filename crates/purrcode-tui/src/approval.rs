@@ -21,6 +21,7 @@ pub enum ActionKind {
     WriteFile,
     DeleteFile,
     ExternalTool,
+    Tool,
 }
 
 impl ActionKind {
@@ -31,6 +32,7 @@ impl ActionKind {
             ProposedAction::WriteFile(_) => Self::WriteFile,
             ProposedAction::DeleteFile(_) => Self::DeleteFile,
             ProposedAction::ExternalTool(_) => Self::ExternalTool,
+            ProposedAction::Tool(_) => Self::Tool,
         }
     }
 
@@ -41,6 +43,7 @@ impl ActionKind {
             Self::WriteFile => "Write a file",
             Self::DeleteFile => "Delete a file",
             Self::ExternalTool => "Call an external tool",
+            Self::Tool => "Call a registered tool",
         }
     }
 }
@@ -315,6 +318,9 @@ fn describe(action: &ProposedAction) -> String {
         ProposedAction::ExternalTool(tool) => {
             format!("{} / {}", tool.server_id, tool.tool_name)
         }
+        ProposedAction::Tool(invocation) => {
+            format!("{}", invocation.tool_id)
+        }
     }
 }
 
@@ -324,6 +330,18 @@ fn risk_of(action: &ProposedAction, constraints: &ActionConstraints) -> Vec<Acti
         ProposedAction::WriteFile(_) => risk.push(ActionRisk::Write),
         ProposedAction::DeleteFile(_) => risk.push(ActionRisk::Delete),
         ProposedAction::ExternalTool(_) => risk.push(ActionRisk::External),
+        ProposedAction::Tool(_) => {
+            // Registry tools have no descriptor on the client side yet; the
+            // risk read is derived from the constraints (network/write) which
+            // is the honest signal the daemon actually authorized.
+            if constraints.network {
+                risk.push(ActionRisk::Network);
+            }
+            if constraints.maximum_changed_files > 0 || !constraints.allowed_write_globs.is_empty()
+            {
+                risk.push(ActionRisk::Write);
+            }
+        }
         ProposedAction::Command(_) => {
             if constraints.maximum_changed_files > 0 || !constraints.allowed_write_globs.is_empty()
             {

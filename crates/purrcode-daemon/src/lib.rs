@@ -38,29 +38,35 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode, header::AUTHORIZATION};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use futures::{FutureExt, StreamExt};
 use purrcode_agent_runtime::{
     AgentAction, AgentCancellation, AgentContextIndex, AgentStreamEvent, AgentStreamObserver,
     AgentTurn, CapabilityResolution, IndexingSignals, MemoryPressure, NativeAgent, SkillResolver,
-    Tier2Policy, bounded_agent_stream_channel,
+    Tier2Policy, ToolExecutor, bounded_agent_stream_channel,
 };
 use purrcode_claw::ToolRuntime;
 use purrcode_codex_bridge::{CodexBridge, CodexBridgeConfig, CodexDoctorReport};
+use purrcode_extension_config::ExtensionSet;
+use purrcode_lsp::{LspManager, Position as LspPosition, default_server_commands, path_to_uri};
 use purrcode_mcp_host::{
     DynamicQualificationRequest, McpHost, McpServerConfig, Qualifier as SkillQualifier,
     read_skill_manifest, skill_digest,
 };
-use purrcode_ninelives::{Automation, SessionStore, StoreError};
-use purrcode_pawgate::{Policy, resolve_policy_path};
+use purrcode_ninelives::{
+    Automation, PinVerdict, ProjectMemoryEntry, SessionCheckpoint, SessionStore, StoreError,
+    ToolDescriptorPin,
+};
+use purrcode_pawgate::{Policy, resolve_policy_path, resolve_user_policy_path};
 use purrcode_provider_gateway::failover::FailoverProvider;
 use purrcode_provider_gateway::{
     AppConfig, ModelEvent, ModelId, ModelMessage, ModelProvider, ModelRequest, PrivacyMode,
     ProviderConfig, ProviderRouter, ProviderStreamEvent, env_style_reference, keychain_reference,
     qualify_model, validate_credential_reference,
 };
+use purrcode_reference_resolver::{ParsedReference, Reference, resolve_refs};
 use purrcode_repository_engine::{ChangeScope, RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::adaptation::{
     BudgetProfileKind, ModelRoutingControl, PermissionMode, SearchPolicy, SessionControls,
@@ -68,8 +74,9 @@ use purrcode_runtime_core::adaptation::{
 };
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, AuthorityMode, Authorization,
-    ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, ProposedAction,
-    SessionEvent, SessionId, SessionState, SessionStatus, ValidationStatus, WriteFileAction,
+    ConversationMessage, DeleteFileAction, ExternalToolAction, JudgmentDecision, PinnedOrigin,
+    PinnedSection, ProposedAction, SessionEvent, SessionId, SessionState, SessionStatus, TurnId,
+    ValidationStatus, WriteFileAction,
 };
 use purrcode_skill_registry::{
     ExternalSearchAuthorization, GitHubRegistryAdapter, Qualifier as RegistryQualifier,
@@ -77,8 +84,8 @@ use purrcode_skill_registry::{
 };
 use purrcode_skill_store::{SkillScope, SkillStore};
 use purrcode_supervisor_runtime::{
-    IsolatedWorker, ParallelismConfig, Supervisor, WorkerOutput, WorkerSpec, WorkerStatus,
-    WorkerWorkspace,
+    IsolatedWorker, ParallelismConfig, Supervisor, SupervisorRunState, WorkerEvent, WorkerOutput,
+    WorkerSpec, WorkerStatus, WorkerWorkspace,
 };
 use purrcode_terminal_runtime::{
     AttachTerminalAction, DetachTerminalAction, OwnershipGeneration, ResizeTerminalAction,
@@ -91,7 +98,7 @@ use purrcode_web_research::{
 };
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
@@ -99,7 +106,7 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, broadcast, watch};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, watch};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
@@ -115,6 +122,15 @@ use crate::ollama_pull::{
     PullAdapter, PullPhase, PullProgress, proposed_pull, resolve_ollama_program,
     validate_model_name as validate_pull_model_name, validate_pull_action,
 };
+
+mod commands;
+mod file_watcher;
+mod hooks;
+mod project_context;
+mod project_graph_producers;
+
+use crate::commands::{CommandExecution, builtin_commands, command_for};
+use file_watcher::run_worktree_watcher;
 
 #[derive(Clone)]
 struct AppState {
@@ -132,7 +148,34 @@ struct AppState {
     interrupting_sessions: Arc<Mutex<BTreeMap<SessionId, Uuid>>>,
     pull_jobs: Arc<Mutex<BTreeMap<ActionId, PullJob>>>,
     live_streams: Arc<Mutex<BTreeMap<SessionId, Arc<LiveStreamHub>>>>,
+    supervisor_runs: Arc<Mutex<BTreeMap<SessionId, SupervisorRunState>>>,
+    lsp: Arc<Mutex<LspManager>>,
     terminals: TerminalRuntime,
+    /// Per-repository `.purrcode/` extension cache (v1.3 §8 PR3). The cache is
+    /// mandatory, not an optimization: the file watcher and the reload route
+    /// invalidate it, and every per-turn read hits this snapshot rather than
+    /// re-reading YAML from disk.
+    extensions: Arc<RwLock<BTreeMap<PathBuf, Arc<ExtensionSet>>>>,
+    /// Per-repository capability registry cache (v1.3 PR B). Holds the admitted
+    /// tool descriptors (native + MCP + skill) for the model tool manifest and
+    /// `Tool`-action resolution. Built lazily, invalidated on extension reload
+    /// and MCP config change.
+    tool_registries: Arc<RwLock<BTreeMap<PathBuf, Arc<ToolRegistryCache>>>>,
+}
+
+/// A repository's admitted tool registry, cached per-repository. The registry
+/// is behind its own `Arc` so a turn can hand the same allocation to the agent
+/// and its executor, and so a per-agent narrowing
+/// (`CapabilityRegistry::for_agent`) is the only thing that ever copies it.
+#[derive(Default)]
+struct ToolRegistryCache {
+    registry: Arc<purrcode_runtime_core::CapabilityRegistry>,
+    /// The `outputSchema` each tool declares (MCP `outputSchema`, skill
+    /// `output_schema`). A structured result is validated against this before
+    /// it is recorded as evidence or attached as `PinnedOrigin::ToolFindings` —
+    /// a provider must not be able to put arbitrary shapes into model context
+    /// under the banner of its own declared contract.
+    output_schemas: Arc<BTreeMap<purrcode_runtime_core::ToolId, serde_json::Value>>,
 }
 
 /// Metadata retained for a session whose durable event log cannot be replayed
@@ -341,6 +384,7 @@ async fn preserve_live_partial(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: Some(model),
+                turn_id: None, // recorded outside run_until_pause
             },
         },
     )?;
@@ -402,7 +446,11 @@ pub async fn bind_and_report(
         interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
         pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
         live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+        supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+        lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
         terminals: TerminalRuntime::default(),
+        extensions: Arc::new(RwLock::new(BTreeMap::new())),
+        tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
     };
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -423,7 +471,13 @@ pub async fn bind_and_report(
         .route("/v1/workspace", get(workspace_state))
         .route("/v1/workspace/changes", get(workspace_changes))
         .route("/v1/sessions", post(start_session))
-        .route("/v1/sessions/{id}", get(session))
+        .route("/v1/sessions/search", get(search_sessions))
+        .route(
+            "/v1/sessions/{id}",
+            get(session)
+                .patch(update_session_meta)
+                .delete(delete_session),
+        )
         .route("/v1/sessions/{id}/events", get(events))
         .route(
             "/v1/sessions/{id}/messages",
@@ -438,6 +492,10 @@ pub async fn bind_and_report(
         .route("/v1/sessions/{id}/changes", get(session_changes))
         .route("/v1/sessions/{id}/github", get(session_github))
         .route("/v1/sessions/{id}/usage", get(session_usage))
+        .route(
+            "/v1/sessions/{id}/context-ledger/{turn_id}",
+            get(session_context_ledger),
+        )
         .route("/v1/sessions/{id}/spec", get(session_spec))
         .route("/v1/sessions/{id}/tasks", get(session_tasks))
         .route("/v1/sessions/{id}/evidence", get(session_evidence))
@@ -455,6 +513,18 @@ pub async fn bind_and_report(
         .route("/v1/sessions/{id}/reject", post(reject_session))
         .route("/v1/sessions/{id}/pause", post(pause_session))
         .route("/v1/sessions/{id}/checkpoint", post(checkpoint_session))
+        .route("/v1/sessions/{id}/checkpoints", get(list_checkpoints))
+        .route(
+            "/v1/sessions/{id}/checkpoints/{checkpoint_id}",
+            get(checkpoint_preview),
+        )
+        .route(
+            "/v1/sessions/{id}/checkpoints/{checkpoint_id}/restore",
+            post(restore_checkpoint),
+        )
+        .route("/v1/sessions/{id}/undo", post(undo_session))
+        .route("/v1/sessions/{id}/redo", post(redo_session))
+        .route("/v1/sessions/{id}/fork", post(fork_session))
         .route(
             "/v1/sessions/{id}/rollback",
             get(rollback_preview).post(rollback_session),
@@ -470,6 +540,11 @@ pub async fn bind_and_report(
         .route("/v1/automations/{id}/disable", post(disable_automation))
         .route("/v1/automations/{id}/run", post(run_automation))
         .route("/v1/supervisor", post(run_supervisor))
+        .route("/v1/supervisor/{session_id}", get(supervisor_status))
+        .route(
+            "/v1/supervisor/{session_id}/workers/{worker_id}/stop",
+            post(stop_supervisor_worker),
+        )
         .route("/v1/providers", get(list_providers))
         .route("/v1/providers", post(configure_provider))
         .route("/v1/providers/{name}", get(get_provider))
@@ -528,6 +603,38 @@ pub async fn bind_and_report(
             get(local_model_settings).post(update_local_model_settings),
         )
         .route("/v1/repository/inspect", post(inspect_repository))
+        .route("/v1/references/resolve", post(resolve_references))
+        .route("/v1/commands", get(list_commands))
+        .route(
+            "/v1/sessions/{id}/commands/{name}",
+            post(run_session_command),
+        )
+        .route("/v1/agents", get(list_agents))
+        .route("/v1/extensions/diagnostics", get(extension_diagnostics))
+        .route("/v1/extensions/reload", post(extension_reload))
+        .route("/v1/hooks", get(list_hooks))
+        .route(
+            "/v1/tools/{tool_id}/pin",
+            post(approve_tool_pin).delete(revoke_tool_pin),
+        )
+        .route("/v1/lsp/servers", get(list_lsp_servers))
+        .route("/v1/lsp/open", post(lsp_open))
+        .route("/v1/lsp/hover", post(lsp_hover))
+        .route("/v1/lsp/definition", post(lsp_definition))
+        .route("/v1/lsp/references", post(lsp_references))
+        .route("/v1/lsp/symbols", post(lsp_symbols))
+        .route("/v1/lsp/workspace-symbols", post(lsp_workspace_symbols))
+        .route("/v1/lsp/rename", post(lsp_rename))
+        .route("/v1/lsp/format", post(lsp_format))
+        .route(
+            "/v1/lsp/diagnostics",
+            get(lsp_all_diagnostics).post(lsp_diagnostics),
+        )
+        .route("/v1/memory", get(list_memory).post(create_memory))
+        .route(
+            "/v1/memory/{id}",
+            patch(update_memory).delete(forget_memory),
+        )
         .route("/v1/skills", get(list_skills))
         .route("/v1/skills/search", post(search_skills))
         .route("/v1/skills/download", post(download_skill))
@@ -539,6 +646,8 @@ pub async fn bind_and_report(
         )
         .route("/v1/skills/{id}", get(get_skill))
         .route("/v1/skills/{id}", delete(remove_skill))
+        .route("/v1/skills/{id}/enable", post(enable_skill))
+        .route("/v1/skills/{id}/disable", post(disable_skill))
         .route("/v1/research/fetch", post(fetch_research_page))
         .route("/v1/skills/publishers/block", post(block_skill_publisher))
         .route(
@@ -546,8 +655,22 @@ pub async fn bind_and_report(
             get(list_mcp_servers).post(upsert_mcp_server),
         )
         .route("/v1/mcp/servers/{id}", delete(remove_mcp_server))
+        .route("/v1/mcp/servers/{id}/test", post(test_mcp_server))
         .route("/v1/codex", get(get_codex_config).post(update_codex_config))
         .route("/v1/codex/doctor", post(run_codex_doctor))
+        // Authentication runs ahead of every handler and every extractor.
+        //
+        // Two things were wrong with authorizing inside each handler. Nothing
+        // made the line mandatory, so a new handler that omitted it would
+        // serve without a token. And for any handler taking `Json<T>`, axum
+        // runs the body extractor first — so an unauthenticated request with a
+        // malformed body was answered 422 by the extractor before the handler
+        // could reject it, letting a caller with no token probe which request
+        // shapes the daemon accepts. A layer answers 401 before either.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_bearer,
+        ))
         .with_state(state.clone());
     let listener = TcpListener::bind(config.bind).await?;
     let actual_bind = listener.local_addr()?;
@@ -559,10 +682,12 @@ pub async fn bind_and_report(
     };
     let future = async move {
         let scheduler = tokio::spawn(automation_scheduler(state.clone()));
+        let watcher = tokio::spawn(run_worktree_watcher(state.clone()));
         let result = axum::serve(listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await;
         scheduler.abort();
+        watcher.abort();
         result?;
         Ok(())
     };
@@ -959,7 +1084,7 @@ async fn launch_automation(
         )?;
     }
     if let Err(error) =
-        spawn_agent_operation(state.clone(), session_id, AgentOperation::Start).await
+        spawn_agent_operation(state.clone(), session_id, AgentOperation::Start, None).await
     {
         state.store.lock().await.append(
             session_id,
@@ -1007,6 +1132,22 @@ struct SupervisorWorkerView {
     worktree: Option<PathBuf>,
     changed_paths: Vec<PathBuf>,
     summary: Option<String>,
+    /// What kind of work unit this is: `supervisor_worker` or `scout`.
+    ///
+    /// The agent workspace showed only supervisor workers, so a user who asked
+    /// PurrCode to "understand this repo, then change it" saw an empty workspace
+    /// while a Scout was doing exactly the work the panel claims to show. Both
+    /// kinds are reported here; the label tells the user which is which rather
+    /// than presenting them as interchangeable.
+    kind: &'static str,
+    /// A human-facing role for the unit ("Scout", "Worker").
+    role: &'static str,
+    /// Whether the per-worker stop route can actually stop this unit.
+    ///
+    /// Only supervisor workers have a cancellation handle. Offering Stop on a
+    /// Scout would be a button that cannot work, so the client is told plainly
+    /// which units it may offer to stop.
+    stoppable: bool,
 }
 
 #[derive(Serialize)]
@@ -1133,6 +1274,9 @@ impl IsolatedWorker for JudgedSupervisorWorker {
             .await
             .map_err(|error| error.to_string())?;
         drop(local_permit);
+        if workspace.cancellation.is_cancelled() {
+            return Err(format!("worker `{}` was stopped by the user", spec.id));
+        }
         let turn: AgentTurn = serde_json::from_value(value)
             .map_err(|error| format!("invalid worker turn: {error}"))?;
         store
@@ -1180,6 +1324,14 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 path,
                 expected_digest,
             }),
+            AgentAction::Tool { tool_id, .. } => {
+                // Supervisor workers run without a tool registry; registry tools
+                // are a primary-agent surface.
+                return Err(format!(
+                    "registry tool `{}` is not executable from a supervisor worker",
+                    tool_id.as_str()
+                ));
+            }
         };
         let action_id = ActionId::new();
         store
@@ -1188,6 +1340,10 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    // Supervisor-worker actions run in their own isolated
+                    // worktree/conversation, outside `run_until_pause`'s main
+                    // turn loop (PRD v1.1 §6.3).
+                    turn_id: None,
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -1198,6 +1354,7 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                 &SessionEvent::JudgmentRecorded {
                     action_id,
                     decision: decision.clone(),
+                    turn_id: None,
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -1305,8 +1462,8 @@ async fn run_supervisor(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let policy = effective_policy(&config, &repository)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let supervisor =
-        Supervisor::new(request.limits).map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let supervisor = Supervisor::new(request.limits.clone())
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let parent = SessionId::new();
     {
         let mut store = state.store.lock().await;
@@ -1336,84 +1493,361 @@ async fn run_supervisor(
     };
     mark_models_active(&state, std::slice::from_ref(&worker.model)).await;
     drop(lifecycle_gate);
-    let task_state = state.clone();
+
+    // Run the supervisor in the background so the client is not blocked until
+    // every worker finishes. Worker lifecycle events are streamed to the
+    // parent session and the run state is retained so a client can stop an
+    // individual worker mid-flight.
+    let limits = request.limits;
+    let channel_capacity = limits.max_workers.saturating_mul(2).max(1);
     let task_repository = repository.clone();
     let lifecycle_model = worker.model.clone();
-    let report_task = tokio::spawn(async move {
-        let report = AssertUnwindSafe(supervisor.run(&task_repository, request.workers, &worker))
-            .catch_unwind()
-            .await;
-        release_active_models(&task_state, std::slice::from_ref(&lifecycle_model)).await;
-        report
-    });
-    let report = report_task
+    let run_state = SupervisorRunState::default();
+    state
+        .supervisor_runs
+        .lock()
         .await
-        .map_err(|error| ApiError::Conflict(format!("supervisor task failed: {error}")))?;
-    let report = report
-        .map_err(|panic| {
-            ApiError::Conflict(format!(
-                "supervisor task panicked: {}",
-                panic_payload_message(panic)
-            ))
-        })?
-        .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    let mut views = Vec::new();
-    let mut store = state.store.lock().await;
-    for result in &report.results {
-        let status = match &result.status {
-            WorkerStatus::Completed => "completed".into(),
-            WorkerStatus::Failed(reason) => format!("failed: {reason}"),
-            WorkerStatus::SkippedDependency(id) => format!("skipped dependency: {id}"),
-        };
-        let changed_paths = result
-            .effects
-            .as_ref()
-            .map(|effects| effects.changed_files.clone())
-            .unwrap_or_default();
-        store.append(
-            parent,
-            &SessionEvent::WorkerFinished {
-                worker_id: result.spec.id.clone(),
-                status: status.clone(),
-                changed_paths: changed_paths.clone(),
-            },
-        )?;
-        views.push(SupervisorWorkerView {
-            id: result.spec.id.clone(),
-            status,
-            worktree: result
-                .worktree
-                .as_ref()
-                .map(|worktree| worktree.path.clone()),
-            changed_paths,
-            summary: result.output.as_ref().map(|output| output.summary.clone()),
-        });
-    }
-    let conflicts = match report.merge_decision {
-        purrcode_supervisor_runtime::MergeDecision::IndependentReviewRequired => Vec::new(),
-        purrcode_supervisor_runtime::MergeDecision::ConflictsRequireResolution(conflicts) => {
-            conflicts
-                .into_iter()
-                .map(|conflict| conflict.path)
-                .collect()
+        .insert(parent, run_state.clone());
+    let (event_sender, mut event_receiver) =
+        tokio::sync::mpsc::channel::<WorkerEvent>(channel_capacity);
+    let background_state = state.clone();
+    tokio::spawn(async move {
+        let report = AssertUnwindSafe(supervisor.run_with_events(
+            &task_repository,
+            request.workers,
+            &worker,
+            &run_state,
+            &event_sender,
+        ))
+        .catch_unwind()
+        .await;
+        release_active_models(&background_state, std::slice::from_ref(&lifecycle_model)).await;
+        drop(event_sender);
+        // Append the final review-required marker once the whole run is done.
+        match report {
+            Ok(Ok(report)) => {
+                if let Ok(mut store) = SessionStore::open(&background_state.database) {
+                    let conflicts = match report.merge_decision {
+                        purrcode_supervisor_runtime::MergeDecision::IndependentReviewRequired => {
+                            Vec::new()
+                        }
+                        purrcode_supervisor_runtime::MergeDecision::ConflictsRequireResolution(
+                            conflicts,
+                        ) => conflicts
+                            .into_iter()
+                            .map(|conflict| conflict.path)
+                            .collect(),
+                    };
+                    let _ = store.append(
+                        parent,
+                        &SessionEvent::SupervisorReviewRequired {
+                            conflicts: conflicts.clone(),
+                        },
+                    );
+                }
+                let _ = background_state
+                    .supervisor_runs
+                    .lock()
+                    .await
+                    .remove(&parent);
+            }
+            Ok(Err(error)) => {
+                if let Ok(mut store) = SessionStore::open(&background_state.database) {
+                    let _ = store.append(
+                        parent,
+                        &SessionEvent::SessionFailed {
+                            reason: format!("supervisor failed: {error}"),
+                        },
+                    );
+                }
+                let _ = background_state
+                    .supervisor_runs
+                    .lock()
+                    .await
+                    .remove(&parent);
+            }
+            Err(_) => {
+                if let Ok(mut store) = SessionStore::open(&background_state.database) {
+                    let _ = store.append(
+                        parent,
+                        &SessionEvent::SessionFailed {
+                            reason: "supervisor panicked".into(),
+                        },
+                    );
+                }
+                let _ = background_state
+                    .supervisor_runs
+                    .lock()
+                    .await
+                    .remove(&parent);
+            }
         }
-    };
-    store.append(
-        parent,
-        &SessionEvent::SupervisorReviewRequired {
-            conflicts: conflicts.clone(),
-        },
-    )?;
+    });
+    // Consume worker lifecycle events and append them to the parent session.
+    let consumer_state = state.clone();
+    tokio::spawn(async move {
+        while let Some(event) = event_receiver.recv().await {
+            match event {
+                WorkerEvent::Started { worker_id, .. } => {
+                    if let Ok(mut store) = SessionStore::open(&consumer_state.database) {
+                        let _ = store.append(parent, &SessionEvent::WorkerStarted { worker_id });
+                    }
+                }
+                WorkerEvent::Finished {
+                    worker_id,
+                    status,
+                    changed_paths,
+                    summary,
+                } => {
+                    let status = match status {
+                        WorkerStatus::Completed => "completed".into(),
+                        WorkerStatus::Failed(reason) => format!("failed: {reason}"),
+                        WorkerStatus::SkippedDependency(id) => {
+                            format!("skipped dependency: {id}")
+                        }
+                    };
+                    if let Ok(mut store) = SessionStore::open(&consumer_state.database) {
+                        let _ = store.append(
+                            parent,
+                            &SessionEvent::WorkerFinished {
+                                worker_id,
+                                status,
+                                changed_paths,
+                            },
+                        );
+                    }
+                    let _ = summary;
+                }
+            }
+        }
+    });
     Ok((
         StatusCode::ACCEPTED,
         Json(SupervisorView {
             session_id: parent.0.to_string(),
-            model_requests: report.model_requests,
-            workers: views,
-            conflicts,
-            review_required: true,
+            model_requests: 0,
+            workers: Vec::new(),
+            conflicts: Vec::new(),
+            review_required: false,
         }),
     ))
+}
+
+/// Reports the live state of a background supervisor run: the worker tree from
+/// the durable event log plus whether the run is still in flight.
+async fn supervisor_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<SupervisorView>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&session_id)?;
+    let in_flight = state.supervisor_runs.lock().await.contains_key(&id);
+    let store = state.store.lock().await;
+    let session = store.load(id)?;
+    if session.event_count == 0 {
+        return Err(ApiError::NotFound);
+    }
+    // Workers are tracked from Started, not only from Finished. Reporting
+    // only the finished ones made a running worker invisible — and a worker
+    // nobody can see is a worker nobody can stop, which is the whole point of
+    // the per-worker stop route below.
+    let mut workers: Vec<SupervisorWorkerView> = Vec::new();
+    let mut conflicts = Vec::new();
+    for event in store.events(id)? {
+        match event {
+            SessionEvent::WorkerStarted { worker_id } => {
+                workers.push(SupervisorWorkerView {
+                    id: worker_id,
+                    status: "running".into(),
+                    worktree: None,
+                    changed_paths: Vec::new(),
+                    summary: None,
+                    kind: "supervisor_worker",
+                    role: "Worker",
+                    stoppable: true,
+                });
+            }
+            SessionEvent::WorkerFinished {
+                worker_id,
+                status,
+                changed_paths,
+            } => {
+                // Complete the entry the Started event opened, so a worker
+                // appears once with its final status rather than twice.
+                match workers
+                    .iter_mut()
+                    .find(|worker| worker.id == worker_id && worker.kind == "supervisor_worker")
+                {
+                    Some(worker) => {
+                        worker.status = status;
+                        worker.changed_paths = changed_paths;
+                        // Finished work cannot be stopped, and a Stop button on
+                        // it is a button that cannot do anything.
+                        worker.stoppable = false;
+                    }
+                    // A run recorded before WorkerStarted existed has only
+                    // the Finished event; keep showing it.
+                    None => workers.push(SupervisorWorkerView {
+                        id: worker_id,
+                        status,
+                        worktree: None,
+                        changed_paths,
+                        summary: None,
+                        kind: "supervisor_worker",
+                        role: "Worker",
+                        stoppable: false,
+                    }),
+                }
+            }
+            // ── Scout work units ──────────────────────────────────────
+            // The Scout is a subagent an ordinary coding turn delegates to. It
+            // belongs in the same workspace as a supervisor worker: from the
+            // user's side both are "PurrCode has something else working on
+            // this", and only one of them being visible is what made the
+            // workspace describe the Supervisor API rather than the product.
+            SessionEvent::ScoutStarted { scout_id, .. } => {
+                workers.push(SupervisorWorkerView {
+                    id: scout_id,
+                    status: "running".into(),
+                    worktree: None,
+                    changed_paths: Vec::new(),
+                    summary: Some("Reading the repository".into()),
+                    kind: "scout",
+                    role: "Scout",
+                    // A Scout has no cancellation handle of its own; it ends
+                    // with the turn that delegated to it.
+                    stoppable: false,
+                });
+            }
+            SessionEvent::ScoutCompleted {
+                scout_id,
+                evidence_count,
+                conclusions,
+                ..
+            } => {
+                let summary = if conclusions.is_empty() {
+                    format!("{evidence_count} pieces of evidence")
+                } else {
+                    conclusions.join("; ")
+                };
+                match workers
+                    .iter_mut()
+                    .find(|worker| worker.id == scout_id && worker.kind == "scout")
+                {
+                    Some(worker) => {
+                        worker.status = "completed".into();
+                        worker.summary = Some(summary);
+                    }
+                    // Sessions from before `ScoutStarted` existed have only the
+                    // completion; showing it is better than hiding the work.
+                    None => workers.push(SupervisorWorkerView {
+                        id: scout_id,
+                        status: "completed".into(),
+                        worktree: None,
+                        changed_paths: Vec::new(),
+                        summary: Some(summary),
+                        kind: "scout",
+                        role: "Scout",
+                        stoppable: false,
+                    }),
+                }
+            }
+            SessionEvent::ScoutFailed { reason, scout_id } => {
+                let entry = scout_id.as_ref().and_then(|scout_id| {
+                    workers
+                        .iter_mut()
+                        .find(|worker| &worker.id == scout_id && worker.kind == "scout")
+                });
+                match entry {
+                    Some(worker) => {
+                        worker.status = "failed".into();
+                        worker.summary = Some(reason);
+                    }
+                    // An unidentified failure still closes the most recent
+                    // running Scout: leaving it "running" forever would keep a
+                    // finished session polling and reporting live work.
+                    None => {
+                        match workers
+                            .iter_mut()
+                            .rev()
+                            .find(|worker| worker.kind == "scout" && worker.status == "running")
+                        {
+                            Some(worker) => {
+                                worker.status = "failed".into();
+                                worker.summary = Some(reason);
+                            }
+                            None => workers.push(SupervisorWorkerView {
+                                id: "scout".into(),
+                                status: "failed".into(),
+                                worktree: None,
+                                changed_paths: Vec::new(),
+                                summary: Some(reason),
+                                kind: "scout",
+                                role: "Scout",
+                                stoppable: false,
+                            }),
+                        }
+                    }
+                }
+            }
+            SessionEvent::SupervisorReviewRequired {
+                conflicts: conflicts_event,
+            } => conflicts = conflicts_event,
+            _ => {}
+        }
+    }
+    // Work that is no longer in flight cannot still be running: the process is
+    // gone, so reporting a live unit would offer a stop button that can never
+    // succeed. A Scout is bound to its turn, so it is settled once the session
+    // itself is no longer active.
+    let session_running = session.status == SessionStatus::Active;
+    for worker in &mut workers {
+        let settled = match worker.kind {
+            "scout" => !session_running,
+            _ => !in_flight,
+        };
+        if settled && worker.status == "running" {
+            worker.status = "interrupted".into();
+            worker.stoppable = false;
+        }
+    }
+    Ok(Json(SupervisorView {
+        session_id: id.0.to_string(),
+        model_requests: 0,
+        workers,
+        conflicts,
+        review_required: !in_flight,
+    }))
+}
+
+/// Stops an individual worker in a running supervisor. The worker is cancelled
+/// cooperatively; its effect is recorded as a failed (stopped) worker.
+async fn stop_supervisor_worker(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((session_id, worker_id)): AxumPath<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&session_id)?;
+    let run_state = state
+        .supervisor_runs
+        .lock()
+        .await
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::Conflict("supervisor run is not active or already finished".into())
+        })?;
+    if run_state.cancel_worker(&worker_id).await {
+        Ok(Json(serde_json::json!({
+            "session_id": id.0.to_string(),
+            "worker_id": worker_id,
+            "stopped": true,
+        })))
+    } else {
+        Err(ApiError::NotFound)
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -1466,6 +1900,10 @@ async fn sessions(
                 awaiting_plan_review: false,
                 recovery_reconciled: false,
                 objective: unavailable.objective.clone(),
+                title: None,
+                archived: false,
+                pinned: false,
+                parent_id: None,
                 repository,
                 worktree: None,
                 selected_model: None,
@@ -1498,6 +1936,14 @@ async fn sessions(
                 .unwrap_or_else(|_| repository.clone())
         });
         let timestamps = store.timestamped_events(id)?;
+        let meta = store.session_meta(id)?;
+        // A soft-deleted session is gone from the working list. Its event log
+        // is deliberately preserved for audit and recovery, but leaving it in
+        // this response would make `DELETE /v1/sessions/{id}` look like it did
+        // nothing — the row would come straight back on the next poll.
+        if meta.deleted {
+            continue;
+        }
         views.push(SessionView {
             id: id.0.to_string(),
             status: format!("{:?}", session.status),
@@ -1507,6 +1953,10 @@ async fn sessions(
             awaiting_plan_review: awaiting_plan_review(&session),
             recovery_reconciled: recovery_reconciled(&session, &events),
             objective: session.objective,
+            title: meta.title,
+            archived: meta.archived,
+            pinned: meta.pinned,
+            parent_id: meta.parent_id.map(|id| id.0.to_string()),
             repository,
             worktree: session.worktree,
             selected_model: session.selected_model,
@@ -1555,6 +2005,11 @@ struct StartSessionRequest {
     permission_mode: Option<String>,
     #[serde(default)]
     max_tokens: Option<u64>,
+    /// The named agent profile to run this session under (v1.3 PR C). The name
+    /// resolves against the repository's `.purrcode/agents/` + `~/.purrcode/agents/`;
+    /// an unknown name fails preflight before the session starts.
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 impl StartSessionRequest {
@@ -1825,6 +2280,16 @@ async fn start_session(
         return Err(ApiError::BadRequest("objective cannot be empty".into()));
     }
     reject_secret_content(&request.objective)?;
+    // A command posted as a session objective is not an objective (v1.3 §8
+    // PR6). Forwarding `/undo` here would store it as user prose and hand it
+    // to the model, which answers "Sure, I'll undo that" while nothing is
+    // undone — the same refusal the follow-up path applies.
+    if let Some(command) = command_for(&request.objective) {
+        return Err(ApiError::BadRequest(format!(
+            "`{}` is a command, not a session objective",
+            command.name
+        )));
+    }
     let repository = request
         .repository
         .canonicalize()
@@ -1863,6 +2328,21 @@ async fn start_session(
         controls.task_mode = TaskMode::Plan;
     }
     validate_supported_controls(&controls)?;
+    // v1.3 PR C: a named agent profile must resolve before the session starts,
+    // so an unknown name fails preflight rather than erroring mid-turn.
+    if let Some(agent) = request.agent.as_deref() {
+        let set = load_extension_set(&state, &repository).await;
+        if set.admitted(agent).is_none() {
+            return Err(ApiError::BadRequest(format!(
+                "unknown agent profile `{agent}`; expected one of: {}",
+                set.admitted_agents
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    }
     let direct_reply = resolve_effective_task_mode(&request, &mut controls);
     let task_mode = controls.task_mode;
     let workflow = if direct_reply {
@@ -1890,6 +2370,9 @@ async fn start_session(
     if let Some(model) = request.model.clone() {
         store.append(id, &SessionEvent::ModelSelected { model })?;
     }
+    if let Some(agent) = request.agent.clone() {
+        store.append(id, &SessionEvent::AgentBound { agent })?;
+    }
     if let Some((decision, plan)) = workflow {
         store.append(id, &SessionEvent::WorkflowPlanCreated { decision, plan })?;
     }
@@ -1904,6 +2387,11 @@ async fn start_session(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: None,
+                // P0-9: TurnId originates at daemon user-message admission so
+                // all actions, judgments, and assistant messages in the same
+                // turn share the same id. The agent reads this back rather than
+                // creating its own inside run_until_pause.
+                turn_id: Some(TurnId::new()),
             },
         },
     )?;
@@ -1919,6 +2407,7 @@ async fn start_session(
                     tool_calls: Vec::new(),
                     tool_results: Vec::new(),
                     model: None,
+                    turn_id: None, // direct reply, outside run_until_pause
                 },
             },
         )?;
@@ -1936,7 +2425,9 @@ async fn start_session(
         TaskMode::Plan | TaskMode::Review => AgentOperation::Plan,
         TaskMode::Ask | TaskMode::Build => AgentOperation::Start,
     };
-    if let Err(error) = spawn_agent_operation(state.clone(), id, operation).await {
+    if let Err(error) =
+        spawn_agent_operation(state.clone(), id, operation, request.agent.clone()).await
+    {
         let reason = error_message(&error).chars().take(512).collect();
         state
             .store
@@ -1996,6 +2487,32 @@ async fn append_message(
             "message content cannot be empty".into(),
         ));
     }
+    // A built-in command is not a message. Forwarding `/undo` here would store
+    // it as user prose and hand it to the model, which answers "Sure, I'll undo
+    // that" while nothing is undone — the failure this refusal exists to
+    // prevent. The error names the route that actually performs the operation
+    // so a client can dispatch it correctly instead of guessing.
+    if let Some(command) = command_for(&request.content) {
+        return Err(match command.execution {
+            CommandExecution::Daemon { method, path } => ApiError::BadRequest(format!(
+                "`{}` is a command, not a message: {} {}",
+                command.name,
+                method,
+                path.replace("{id}", &id.0.to_string())
+            )),
+            CommandExecution::Client => ApiError::BadRequest(format!(
+                "`{}` is handled by the client interface, not by sending it as a message",
+                command.name
+            )),
+            // A prompt command has to arrive expanded. Accepting the shorthand
+            // would send the model the literal word `/review`, which is the same
+            // class of bug as the two above.
+            CommandExecution::Prompt { .. } => ApiError::BadRequest(format!(
+                "`{}` must be expanded into its instruction text before it is sent",
+                command.name
+            )),
+        });
+    }
     reject_secret_content(&request.content)?;
     let content = request.content.trim_end_matches([' ', '\t']);
     // A session paused on an untouched plan reads a follow-up as feedback on
@@ -2033,6 +2550,9 @@ async fn append_message(
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
                 model: None,
+                // P0-9: TurnId at admission for follow-ups too — each user
+                // message starts a new turn that propagates through all events.
+                turn_id: Some(TurnId::new()),
             },
         },
     )?;
@@ -2054,6 +2574,7 @@ async fn append_message(
                     tool_calls: Vec::new(),
                     tool_results: Vec::new(),
                     model: None,
+                    turn_id: None, // direct reply, outside run_until_pause
                 },
             },
         )?;
@@ -2097,7 +2618,17 @@ async fn resume_or_restore_pause(
     ended_status: Option<SessionStatus>,
     operation: AgentOperation,
 ) -> Result<(), ApiError> {
-    let Err(error) = spawn_agent_operation(state.clone(), id, operation).await else {
+    // v1.3 PR C: a session bound to a named agent profile rebinds it on
+    // resume/continue so the profile (system prompt, allowlist, model role)
+    // stays attached without the client re-supplying the name.
+    let bound_agent = state
+        .store
+        .lock()
+        .await
+        .load(id)
+        .ok()
+        .and_then(|session| session.selected_agent);
+    let Err(error) = spawn_agent_operation(state.clone(), id, operation, bound_agent).await else {
         return Ok(());
     };
     if was_paused {
@@ -2365,13 +2896,51 @@ async fn approve_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     ensure_session_exists(&state, id).await?;
+    // A plan awaiting review is a boundary awaiting approval, even though the
+    // session state is `Paused` rather than `AwaitingApproval`. Approving it is
+    // what the IDE's "Build this plan" button does, and it does it by resuming.
+    // Without this branch, `/approve` at a plan-review boundary answered "no
+    // action is awaiting approval" while an approval card was on screen — the
+    // command was published as approving "an awaiting action or plan" and could
+    // only ever do the first.
+    {
+        let session = state.store.lock().await.load(id)?;
+        if awaiting_plan_review(&session) {
+            state
+                .store
+                .lock()
+                .await
+                .append(id, &SessionEvent::SessionResumed)?;
+            let operation = if session.worktree.is_none() {
+                AgentOperation::Start
+            } else {
+                AgentOperation::Resume
+            };
+            resume_or_restore_pause(&state, id, true, None, operation).await?;
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(AcceptedSession {
+                    id: id.0.to_string(),
+                    status: "plan approved",
+                }),
+            ));
+        }
+    }
     require_approval_boundary(&state.store.lock().await.load(id)?)?;
     wait_for_agent_lease_release(&state, id).await?;
     // The operation that produced the boundary may settle while the lease is handed off.
     // Recheck before spawning so an invalid approval can never become an asynchronous
     // agent failure that corrupts an otherwise paused or terminal session.
     require_approval_boundary(&state.store.lock().await.load(id)?)?;
-    spawn_agent_operation(state, id, AgentOperation::Approve).await?;
+    // v1.3 PR C: rebind the session's agent profile on approval.
+    let bound_agent = state
+        .store
+        .lock()
+        .await
+        .load(id)
+        .ok()
+        .and_then(|session| session.selected_agent);
+    spawn_agent_operation(state, id, AgentOperation::Approve, bound_agent).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSession {
@@ -2516,18 +3085,53 @@ async fn checkpoint_session(
     let effects = RepositoryEngine::effects(&worktree)
         .await
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    state.store.lock().await.append(
-        id,
-        &SessionEvent::CheckpointCreated {
-            label: request.label,
-            head: worktree.base_head,
-            patch_digest: blake3::hash(&effects.binary_patch).to_hex().to_string(),
-        },
-    )?;
+    persist_checkpoint(&state, id, &request.label, &worktree, &effects).await?;
     Ok(Json(AcceptedSession {
         id: id.0.to_string(),
         status: "checkpoint created",
     }))
+}
+
+/// Persists a restorable checkpoint: the patch blob goes into
+/// `session_checkpoints` (so a later "restore here" can reverse-apply it) and
+/// the `CheckpointCreated` event records the audit digest. Idempotent for the
+/// same patch — an unchanged worktree does not stack duplicate checkpoints.
+async fn persist_checkpoint(
+    state: &AppState,
+    id: SessionId,
+    label: &str,
+    worktree: &SessionWorktree,
+    effects: &purrcode_repository_engine::WorktreeEffects,
+) -> Result<(), ApiError> {
+    let patch_digest = blake3::hash(&effects.binary_patch).to_hex().to_string();
+    let mut store = state.store.lock().await;
+    let existing = store.checkpoints(id)?;
+    if existing
+        .last()
+        .is_some_and(|last| last.patch_digest == patch_digest)
+    {
+        return Ok(());
+    }
+    let checkpoint = SessionCheckpoint {
+        id: Uuid::new_v4(),
+        session_id: id,
+        sequence: store.events(id)?.len() as u64 + 1,
+        label: label.into(),
+        head: worktree.base_head.clone(),
+        patch: effects.binary_patch.clone(),
+        patch_digest: patch_digest.clone(),
+        created_at: Utc::now(),
+    };
+    store.insert_checkpoint(&checkpoint)?;
+    store.append(
+        id,
+        &SessionEvent::CheckpointCreated {
+            label: label.into(),
+            head: worktree.base_head.clone(),
+            patch_digest,
+        },
+    )?;
+    Ok(())
 }
 
 async fn rollback_preview(
@@ -2613,6 +3217,445 @@ async fn rollback_session(
     }))
 }
 
+#[derive(Serialize)]
+struct CheckpointView {
+    id: String,
+    label: String,
+    head: String,
+    patch_digest: String,
+    created_at: DateTime<Utc>,
+}
+
+/// Lists the restorable checkpoints for a session, most recent first.
+async fn list_checkpoints(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Vec<CheckpointView>>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let store = state.store.lock().await;
+    let mut views: Vec<CheckpointView> = store
+        .checkpoints(id)?
+        .into_iter()
+        .map(|checkpoint| CheckpointView {
+            id: checkpoint.id.to_string(),
+            label: checkpoint.label,
+            head: checkpoint.head,
+            patch_digest: checkpoint.patch_digest,
+            created_at: checkpoint.created_at,
+        })
+        .collect();
+    views.reverse();
+    Ok(Json(views))
+}
+
+/// Describes what would change if the worktree were restored to a checkpoint:
+/// the checkpoint patch re-applied over a rollback to base HEAD.
+async fn checkpoint_preview(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((id, checkpoint_id)): AxumPath<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let checkpoint = load_checkpoint(&state, id, &checkpoint_id).await?;
+    let changed_files = checkpoint_patch_files(&checkpoint.patch);
+    Ok(Json(serde_json::json!({
+        "checkpoint_id": checkpoint.id.to_string(),
+        "label": checkpoint.label,
+        "head": checkpoint.head,
+        "created_at": checkpoint.created_at,
+        "changed_files": changed_files,
+        "changed_file_count": changed_files.len(),
+        "warning": "Restoring discards all isolated-worktree changes made after this checkpoint. The checkpoint patch is re-applied over a rollback to base HEAD, so the restored code state is the checkpoint exactly."
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoreCheckpointRequest {
+    acknowledge_discard: bool,
+}
+
+/// Restores the isolated worktree to a checkpoint: roll back to base HEAD,
+/// then forward-apply the checkpoint patch. The event log is untouched except
+/// for the audit `CheckpointRestored` event.
+async fn restore_checkpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((id, checkpoint_id)): AxumPath<(String, String)>,
+    Json(request): Json<RestoreCheckpointRequest>,
+) -> Result<Json<AcceptedSession>, ApiError> {
+    authorize(&state, &headers)?;
+    if !request.acknowledge_discard {
+        return Err(ApiError::BadRequest(
+            "restore requires acknowledgement that changes after the checkpoint will be discarded"
+                .into(),
+        ));
+    }
+    let id = parse_session_id(&id)?;
+    require_idle(&state, id).await?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let checkpoint = load_checkpoint(&state, id, &checkpoint_id).await?;
+    RepositoryEngine::rollback_all(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    RepositoryEngine::apply_patch(&worktree, &checkpoint.patch)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    state.store.lock().await.append(
+        id,
+        &SessionEvent::CheckpointRestored {
+            checkpoint_id: checkpoint.id.to_string(),
+            head: checkpoint.head.clone(),
+            patch_digest: checkpoint.patch_digest.clone(),
+        },
+    )?;
+    Ok(Json(AcceptedSession {
+        id: id.0.to_string(),
+        status: "restored",
+    }))
+}
+
+/// Where on the checkpoint timeline the worktree currently sits.
+///
+/// Derived from the event log rather than stored, so it survives a daemon
+/// restart and cannot drift from what actually happened: whichever of
+/// `CheckpointRestored` / `CheckpointCreated` came last decides. A restore puts
+/// the worktree at that checkpoint; a creation makes the newest checkpoint the
+/// current state. Returns `None` for a session with no checkpoints at all.
+fn checkpoint_cursor(checkpoints: &[SessionCheckpoint], events: &[SessionEvent]) -> Option<usize> {
+    if checkpoints.is_empty() {
+        return None;
+    }
+    for event in events.iter().rev() {
+        match event {
+            SessionEvent::CheckpointRestored { checkpoint_id, .. } => {
+                // A restored checkpoint that is no longer in the table (a
+                // pruned history) tells us nothing; keep looking back.
+                if let Some(index) = checkpoints
+                    .iter()
+                    .position(|checkpoint| checkpoint.id.to_string() == *checkpoint_id)
+                {
+                    return Some(index);
+                }
+            }
+            SessionEvent::CheckpointCreated { .. } => return Some(checkpoints.len() - 1),
+            _ => {}
+        }
+    }
+    Some(checkpoints.len() - 1)
+}
+
+/// Which checkpoint a step lands on.
+///
+/// Split out from [`step_checkpoint`] because the `captured` case is the subtle
+/// one and deserves to be tested without a real worktree.
+///
+/// When divergent work was just captured, the new tip *is* the current state, so
+/// one step back is the position the cursor already held. Stepping relative to
+/// the new tip (`len - 2`) would walk the user *forward* through the timeline —
+/// the opposite of what they asked for.
+fn checkpoint_step_target(
+    cursor: usize,
+    direction: i64,
+    captured: bool,
+    total: usize,
+) -> Result<usize, ApiError> {
+    let target = if captured {
+        cursor as i64
+    } else {
+        cursor as i64 + direction
+    };
+    if target < 0 {
+        return Err(ApiError::Conflict(
+            "there is nothing earlier to undo to — this is the first checkpoint".into(),
+        ));
+    }
+    let target = target as usize;
+    if target >= total {
+        return Err(ApiError::Conflict(
+            "there is nothing to redo — this is the most recent checkpoint".into(),
+        ));
+    }
+    Ok(target)
+}
+
+/// One step along the checkpoint timeline: `/undo` walks back, `/redo` walks
+/// forward. Both are deterministic worktree operations that never involve a
+/// model.
+///
+/// Before stepping back, work that exists in the worktree but in no checkpoint
+/// is captured, so `/undo` is recoverable rather than destructive: the state the
+/// user was in becomes the checkpoint `/redo` returns to.
+async fn step_checkpoint(
+    state: &AppState,
+    id: SessionId,
+    direction: i64,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_idle(state, id).await?;
+    let session = state.store.lock().await.load(id)?;
+    let worktree = worktree_from_state(&session)?;
+    let effects = RepositoryEngine::effects(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+
+    let (checkpoints, events) = {
+        let store = state.store.lock().await;
+        (store.checkpoints(id)?, store.events(id)?)
+    };
+    let Some(cursor) = checkpoint_cursor(&checkpoints, &events) else {
+        return Err(ApiError::Conflict(
+            "this session has no checkpoints to move between".into(),
+        ));
+    };
+    let mut checkpoints = checkpoints;
+
+    // Work that exists in the worktree but in no checkpoint is captured before
+    // stepping back, so `/undo` is recoverable rather than destructive: the
+    // state the user is in becomes a checkpoint they can return to.
+    let mut captured_divergent_work = false;
+    if direction < 0 {
+        let live_digest = blake3::hash(&effects.binary_patch).to_hex().to_string();
+        if checkpoints[cursor].patch_digest != live_digest {
+            let checkpoint = SessionCheckpoint {
+                id: Uuid::new_v4(),
+                session_id: id,
+                sequence: events.len() as u64 + 1,
+                label: "before undo".into(),
+                head: worktree.base_head.clone(),
+                patch: effects.binary_patch.clone(),
+                patch_digest: live_digest.clone(),
+                created_at: Utc::now(),
+            };
+            let mut store = state.store.lock().await;
+            store.insert_checkpoint(&checkpoint)?;
+            store.append(
+                id,
+                &SessionEvent::CheckpointCreated {
+                    label: "before undo".into(),
+                    head: worktree.base_head.clone(),
+                    patch_digest: live_digest,
+                },
+            )?;
+            drop(store);
+            checkpoints.push(checkpoint);
+            captured_divergent_work = true;
+        }
+    }
+
+    let target = checkpoint_step_target(
+        cursor,
+        direction,
+        captured_divergent_work,
+        checkpoints.len(),
+    )?;
+    let checkpoint = checkpoints[target].clone();
+
+    RepositoryEngine::rollback_all(&worktree)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    RepositoryEngine::apply_patch(&worktree, &checkpoint.patch)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    state.store.lock().await.append(
+        id,
+        &SessionEvent::CheckpointRestored {
+            checkpoint_id: checkpoint.id.to_string(),
+            head: checkpoint.head.clone(),
+            patch_digest: checkpoint.patch_digest.clone(),
+        },
+    )?;
+    Ok(Json(serde_json::json!({
+        "id": id.0.to_string(),
+        "status": if direction < 0 { "undone" } else { "redone" },
+        "checkpoint_id": checkpoint.id.to_string(),
+        "label": checkpoint.label,
+        "position": target + 1,
+        "of": checkpoints.len(),
+        "can_undo": target > 0,
+        "can_redo": target + 1 < checkpoints.len(),
+    })))
+}
+
+/// `POST /v1/sessions/{id}/undo` — step one checkpoint back.
+async fn undo_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    step_checkpoint(&state, id, -1).await
+}
+
+/// `POST /v1/sessions/{id}/redo` — step one checkpoint forward.
+async fn redo_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    step_checkpoint(&state, id, 1).await
+}
+
+async fn load_checkpoint(
+    state: &AppState,
+    session_id: SessionId,
+    checkpoint_id: &str,
+) -> Result<SessionCheckpoint, ApiError> {
+    let checkpoint_id = Uuid::parse_str(checkpoint_id).map_err(|_| ApiError::NotFound)?;
+    let store = state.store.lock().await;
+    let checkpoint = store
+        .checkpoint(checkpoint_id)
+        .map_err(|error| match error {
+            StoreError::CheckpointNotFound(_) => ApiError::NotFound,
+            error => ApiError::Store(error),
+        })?;
+    if checkpoint.session_id != session_id {
+        return Err(ApiError::NotFound);
+    }
+    Ok(checkpoint)
+}
+
+/// Extracts the changed file paths from a git binary patch for display.
+fn checkpoint_patch_files(patch: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(patch);
+    let mut files = Vec::new();
+    for line in text.lines() {
+        let line = line.strip_prefix("+++ ").unwrap_or(line);
+        let line = line.strip_prefix("--- ").unwrap_or(line);
+        if line.starts_with("a/") || line.starts_with("b/") {
+            let path = &line[2..];
+            let path = path.split('\t').next().unwrap_or(path);
+            if path != "/dev/null" && !files.contains(&path.to_string()) {
+                files.push(path.to_string());
+            }
+        }
+    }
+    files
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForkSessionRequest {
+    /// Conversation message id that anchors the fork. The child inherits the
+    /// conversation and checkpoint state up to this message.
+    anchor_message_id: String,
+}
+
+/// Forks a session at a conversation anchor. The child inherits the parent's
+/// conversation prefix and its own isolated worktree, with the parent's
+/// code state at the anchor reproduced in it.
+async fn fork_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<ForkSessionRequest>,
+) -> Result<Json<AcceptedSession>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    require_idle(&state, id).await?;
+    let store = state.store.lock().await;
+    let parent = store.load(id)?;
+    if parent.event_count == 0 {
+        return Err(ApiError::NotFound);
+    }
+    // Resolve the anchor message to its event-log sequence so we know exactly
+    // how much of the log the child inherits. Sequences are 1-based.
+    let parent_events = store.events(id)?;
+    let anchor_sequence = parent_events
+        .iter()
+        .enumerate()
+        .find_map(|(index, event)| match event {
+            SessionEvent::ConversationMessageAdded { message }
+                if message.id == request.anchor_message_id =>
+            {
+                Some(index as u64 + 1)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| ApiError::NotFound)?;
+    let repository = parent
+        .repository
+        .clone()
+        .ok_or_else(|| ApiError::Conflict("parent session repository is missing".into()))?;
+    drop(store);
+
+    // Reproduce the parent's code state at the anchor: the checkpoint nearest
+    // to (at or before) the anchor message.
+    let checkpoint = {
+        let store = state.store.lock().await;
+        store
+            .checkpoints(id)?
+            .into_iter()
+            .rfind(|checkpoint| checkpoint.sequence <= anchor_sequence)
+    };
+    let child_id = SessionId::new();
+    let mut store = state.store.lock().await;
+    store.append(
+        child_id,
+        &SessionEvent::SessionCreated {
+            objective: parent.objective.clone().unwrap_or_default(),
+            repository: repository.clone(),
+            authority_mode: match parent.controls.permission_mode {
+                PermissionMode::Ask => AuthorityMode::Governed,
+                PermissionMode::Auto => AuthorityMode::Elevated {
+                    capabilities: Vec::new(),
+                    allowed_programs: Vec::new(),
+                },
+                PermissionMode::FullAccess => AuthorityMode::Unrestricted,
+            },
+        },
+    )?;
+    store.set_session_parent(child_id, id)?;
+    store.fork_session_events(id, child_id, anchor_sequence)?;
+    store.copy_checkpoints(id, child_id)?;
+    drop(store);
+
+    // Create a fresh isolated worktree for the child and reproduce the
+    // parent's code state at the anchor in it.
+    let child_worktree = RepositoryEngine::create_worktree(&repository, child_id)
+        .await
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    if let Some(checkpoint) = checkpoint {
+        RepositoryEngine::apply_patch(&child_worktree, &checkpoint.patch)
+            .await
+            .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    }
+    let mut store = state.store.lock().await;
+    store.append(
+        child_id,
+        &SessionEvent::WorktreeCreated {
+            path: child_worktree.path.clone(),
+            base_head: child_worktree.base_head.clone(),
+            source_was_dirty: false,
+        },
+    )?;
+    store.append(
+        child_id,
+        &SessionEvent::SessionForked {
+            parent_id: id.0.to_string(),
+            anchor_message_id: request.anchor_message_id.clone(),
+        },
+    )?;
+    let title = format!(
+        "Fork of: {}",
+        parent
+            .objective
+            .clone()
+            .unwrap_or_else(|| "untitled session".into())
+    );
+    store.set_session_title(child_id, &title)?;
+    Ok(Json(AcceptedSession {
+        id: child_id.0.to_string(),
+        status: "forked",
+    }))
+}
+
 async fn compact_session(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2621,25 +3664,41 @@ async fn compact_session(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     require_idle(&state, id).await?;
-    let session = state.store.lock().await.load(id)?;
+    let (session, events) = {
+        let store = state.store.lock().await;
+        (store.load(id)?, store.events(id)?)
+    };
+    // P1-10: Use the same token-based window as automatic compaction so
+    // manual /compact is consistent with the agent's own preflight path.
+    let conversation_messages_retained_from = purrcode_agent_runtime::compaction_window(
+        &session.conversation_messages,
+        purrcode_agent_runtime::COMPACTION_RETAINED_TOKEN_BUDGET,
+    );
     let retained_action_ids = session
         .proposed_actions
         .keys()
         .rev()
-        .take(6)
+        .take(purrcode_agent_runtime::RETAINED_ACTIONS_AFTER_COMPACTION)
         .copied()
         .collect::<Vec<_>>();
-    let archived = session
-        .proposed_actions
-        .len()
-        .saturating_sub(retained_action_ids.len());
+    // Manual /compact builds through the exact same SemanticCheckpoint
+    // constructor automatic context-pressure compaction uses (PRD v1.1
+    // §7.3) — never a hand-rolled, empty checkpoint that would silently
+    // discard accumulated_requirements/decisions/failed_attempts/etc. the
+    // moment a person triggers this endpoint instead of the agent.
+    let checkpoint = purrcode_agent_runtime::build_semantic_checkpoint(
+        &session,
+        &events,
+        &session.controls,
+        purrcode_runtime_core::TurnId::new(),
+        &retained_action_ids,
+    );
     state.store.lock().await.append(
         id,
-        &SessionEvent::ContextCompacted {
-            summary: format!(
-                "Manual compaction archived {archived} older action contexts. Objective, current plan, recent actions, approvals, validation evidence, and the complete audit log remain durable."
-            ),
-            retained_action_ids,
+        &SessionEvent::CheckpointCompacted {
+            checkpoint: Box::new(checkpoint),
+            retained_action_ids: retained_action_ids.iter().copied().collect(),
+            conversation_messages_retained_from,
         },
     )?;
     Ok(Json(AcceptedSession {
@@ -2761,6 +3820,10 @@ async fn replace_action(
         &SessionEvent::ActionProposed {
             action_id: replacement_action_id,
             action: request.action,
+            // A human-edited replacement is submitted through this endpoint
+            // outside `run_until_pause`'s loop, so there is no current
+            // TurnId to stamp it with (PRD v1.1 §6.3).
+            turn_id: None,
         },
     )?;
     store.append(
@@ -2768,6 +3831,7 @@ async fn replace_action(
         &SessionEvent::JudgmentRecorded {
             action_id: replacement_action_id,
             decision,
+            turn_id: None,
         },
     )?;
     Ok(Json(AcceptedSession {
@@ -2881,6 +3945,18 @@ async fn invoke_mcp(
         ));
     }
     let discovery = request.tool == "__discover__";
+    // Per-server tool trust policy. A deny-listed tool is a hard deny that
+    // overrides any approval; a trusted tool auto-authorizes with a
+    // DeterministicPolicy authority instead of waiting for human approval.
+    if server.denies(&request.tool) {
+        return Err(ApiError::Conflict(format!(
+            "MCP tool `{}/{}` is denied by the server trust policy",
+            request.server, request.tool
+        )));
+    }
+    // The daemon deletes the legacy trust bypass: `trusted` is now expressed
+    // INSIDE the descriptor's approval_policy, and `Policy::evaluate_tool`
+    // (PR2) is the single decision point. deny-beats-trust ordering is kept.
     let action = McpHost::translate(
         &request.server,
         &request.tool,
@@ -2889,8 +3965,73 @@ async fn invoke_mcp(
     );
     let policy = effective_policy(&config, &repository)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let decision = policy.evaluate(&action, &repository);
+    // This endpoint is a COMPATIBILITY ADAPTER over the generic tool path, not
+    // a second authorization implementation. The descriptor is built by the
+    // same `McpToolDescriptor::descriptor_proposal` the registry admission uses,
+    // so deny/trust ordering, the network scope, and — critically — the
+    // filesystem scope that must match what the sandbox enforces are decided in
+    // exactly one place. This endpoint only supplies the parts discovery would
+    // have carried (no annotations are available for a directly-named tool, so
+    // the proposal falls back to its conservative Execute/AlwaysAsk defaults).
+    let trusted = !discovery && server.trusts(&request.tool);
+    let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+    let ceiling = policy.tool_ceiling(&repository);
+    let proposal = purrcode_mcp_host::McpToolDescriptor {
+        server_id: request.server.clone(),
+        name: request.tool.clone(),
+        description: Some("MCP tool invocation".into()),
+        input_schema: serde_json::json!({ "type": "object" }),
+        annotations: None,
+        output_schema: None,
+        title: None,
+    }
+    .descriptor_proposal(server);
+    let tool_descriptor = registry.admit_tool(proposal, &ceiling).clone();
+    // ── Trust-on-first-use descriptor pinning (v1.3 §9) ─────────────────
+    // A remote MCP server authored this descriptor. The pin records the digest
+    // a human (or the trusted config) approved; if the server reports a
+    // different descriptor now, the tool is Forbidden until re-approved — the
+    // server cannot silently change what PawGate will auto-allow. Discovery
+    // probes are synthetic tool ids, not real tools, and carry no pin.
+    if !discovery {
+        let mut pin_store = SessionStore::open(&state.database)?;
+        let verdict =
+            pin_verdict_for_registry(&mut pin_store, &repository, &tool_descriptor, trusted)?;
+        if matches!(verdict, PinVerdict::Changed | PinVerdict::Revoked) {
+            return Err(ApiError::Conflict(format!(
+                "MCP tool `{}/{}` descriptor changed or was revoked since it was approved; \
+                 re-approve it at POST /v1/tools/{}/pin",
+                request.server,
+                request.tool,
+                tool_descriptor.id()
+            )));
+        }
+    }
+    // A deny-listed tool is a hard deny that overrides any approval.
+    let decision = policy.evaluate_tool(&action, &tool_descriptor, &repository);
     let action_id = if let Some(action_id) = requested_action_id {
+        action_id
+    } else if trusted {
+        // Auto-authorized trusted tool: propose and judge, then fall through
+        // to the shared execution path below (no early return to the client).
+        let action_id = ActionId::new();
+        let mut store = SessionStore::open(&state.database)?;
+        store.append(
+            id,
+            &SessionEvent::ActionProposed {
+                action_id,
+                action: action.clone(),
+                turn_id: None,
+            },
+        )?;
+        store.append(
+            id,
+            &SessionEvent::JudgmentRecorded {
+                action_id,
+                decision: decision.clone(),
+                turn_id: None,
+            },
+        )?;
         action_id
     } else {
         let action_id = ActionId::new();
@@ -2900,6 +4041,9 @@ async fn invoke_mcp(
             &SessionEvent::ActionProposed {
                 action_id,
                 action: action.clone(),
+                // Direct MCP invocations submitted through this endpoint run
+                // outside `run_until_pause`'s main turn loop (PRD v1.1 §6.3).
+                turn_id: None,
             },
         )?;
         store.append(
@@ -2907,6 +4051,7 @@ async fn invoke_mcp(
             &SessionEvent::JudgmentRecorded {
                 action_id,
                 decision: decision.clone(),
+                turn_id: None,
             },
         )?;
         return match decision {
@@ -2932,8 +4077,9 @@ async fn invoke_mcp(
             ))),
         };
     };
-    let current_constraints = match decision {
+    let current_constraints = match decision.clone() {
         JudgmentDecision::RequireApproval { constraints, .. } => constraints,
+        JudgmentDecision::AllowWithConstraints(constraints) => constraints,
         JudgmentDecision::Deny { reason } => {
             return Err(ApiError::Conflict(format!(
                 "MCP action is now denied by PawGate: {reason}"
@@ -2953,8 +4099,39 @@ async fn invoke_mcp(
         ));
     }
     let mut store = SessionStore::open(&state.database)?;
-    let (constraints, _) =
-        authorize_exact_human_action(&mut store, id, action_id, &action, "MCP invocation", false)?;
+    let constraints = if trusted {
+        authorize_deterministic_action(&mut store, id, action_id, &action, "trusted MCP tool")?
+    } else {
+        let (constraints, _) = authorize_exact_human_action(
+            &mut store,
+            id,
+            action_id,
+            &action,
+            "MCP invocation",
+            false,
+        )?;
+        constraints
+    };
+    // The human explicitly approved this exact proposed invocation, so its
+    // descriptor digest is now an approved pin (TOFU). Subsequent invocations
+    // of the same descriptor digest pass without re-approval; a changed
+    // descriptor is Forbidden until re-approved.
+    if !discovery && requested_action_id.is_some() {
+        let tool_id_str = purrcode_runtime_core::ToolId::mcp(&request.server, &request.tool)
+            .as_str()
+            .to_owned();
+        let authority =
+            serde_json::to_string(&ApprovalAuthority::Human).unwrap_or_else(|_| "null".into());
+        let mut pin_store = SessionStore::open(&state.database)?;
+        pin_store
+            .approve_pin(
+                &repository,
+                &tool_id_str,
+                tool_descriptor.descriptor_digest(),
+                &authority,
+            )
+            .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    }
     reserve_mcp_call(&mut store, id, &request.server, &request.tool)?;
     let skill_started = std::time::Instant::now();
     let skill_parent = state.database.parent().unwrap_or(Path::new("."));
@@ -3040,6 +4217,37 @@ async fn list_mcp_servers(
     let config = AppConfig::load(&state.app_config)
         .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
     Ok(Json(mcp_section(&config)?.servers))
+}
+
+/// Probes a configured MCP server (initialize + tools/list) without any
+/// session or authorization state. The Settings MCP surface calls this for
+/// "Test Connection" before trusting a server.
+async fn test_mcp_server(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let config = AppConfig::load(&state.app_config)
+        .map_err(|error| ApiError::BadRequest(format!("config load failed: {error}")))?;
+    let section = mcp_section(&config)?;
+    let server = section.servers.get(&id).ok_or(ApiError::NotFound)?;
+    match McpHost::test_connection(server).await {
+        Ok((tools, diagnostics)) => Ok(Json(serde_json::json!({
+            "connected": true,
+            "server_id": id,
+            "tools": tools,
+            "tool_count": tools.len(),
+            "diagnostics": diagnostics,
+        }))),
+        Err(error) => Ok(Json(serde_json::json!({
+            "connected": false,
+            "server_id": id,
+            "tools": [],
+            "tool_count": 0,
+            "diagnostics": error.to_string(),
+        }))),
+    }
 }
 
 async fn upsert_mcp_server(
@@ -3345,6 +4553,7 @@ async fn spawn_agent_operation(
     state: AppState,
     id: SessionId,
     operation: AgentOperation,
+    agent: Option<String>,
 ) -> Result<(), ApiError> {
     let _lifecycle_gate = state.lifecycle_gate.lock().await;
     if state.interrupting_sessions.lock().await.contains_key(&id) {
@@ -3378,6 +4587,7 @@ async fn spawn_agent_operation(
     }
     let task_state = state.clone();
     let lifecycle_models: Vec<ModelId> = budget.models.values().cloned().collect();
+    let agent_profile = agent.clone();
     let coding_model = budget
         .models
         .get("coding_worker")
@@ -3433,6 +4643,7 @@ async fn spawn_agent_operation(
             coding_model,
             observer,
             task_cancellation.clone(),
+            agent_profile.clone(),
         ))
         .catch_unwind()
         .await;
@@ -3740,6 +4951,7 @@ fn failover_for_role(
     Ok(Arc::new(FailoverProvider::new(primary, fallbacks)) as Arc<dyn ModelProvider>)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_agent_operation(
     state: &AppState,
     id: SessionId,
@@ -3748,6 +4960,7 @@ async fn run_agent_operation(
     model: ModelId,
     observer: AgentStreamObserver,
     cancellation: AgentCancellation,
+    agent: Option<String>,
 ) -> Result<(), DaemonError> {
     let mut store = SessionStore::open(&state.database)?;
     let session = store.load(id)?;
@@ -3844,43 +5057,326 @@ async fn run_agent_operation(
         .ok_or_else(|| DaemonError::AgentConfiguration("session repository is missing".into()))?;
     let policy = effective_policy(&config, &repository)
         .map_err(|error| DaemonError::AgentConfiguration(error.to_string()))?;
+    // ── Agent profile (v1.3 §8 PR4) ────────────────────────────────────
+    // Resolve the named profile from the extension cache between the workspace
+    // policy and the pinned context. The profile was already restricted
+    // against the ceiling at admission; its ceiling and system prompt bind here.
+    let profile = match &agent {
+        Some(name) => {
+            let set = load_extension_set(state, &repository).await;
+            let descriptor = set.admitted(name).cloned().ok_or_else(|| {
+                DaemonError::AgentConfiguration(format!("unknown agent profile `{name}`"))
+            })?;
+            Some(descriptor)
+        }
+        None => None,
+    };
+    // v1.3 PR C: a profile's `model_role` routes the coding model for this
+    // session. The role must name a configured `[models.roles]` entry; an
+    // unconfigured role fails loudly as a preflight error (never a silent
+    // fallback to coding_worker, which would route the wrong model under a
+    // reviewer/security profile).
+    if let Some(profile) = &profile
+        && let Some(role) = profile.model_role()
+        && role.as_str() != "coding_worker"
+    {
+        let role_model = role_models.get(role.as_str()).ok_or_else(|| {
+            DaemonError::AgentConfiguration(format!(
+                "profile `{}` names unconfigured model role `{}`",
+                profile.name(),
+                role.as_str()
+            ))
+        })?;
+        let provider = failover_for_role(&router, role_model)?;
+        role_providers.insert("coding_worker".into(), (provider, role_model.clone()));
+    }
+    // ── Pinned context for this turn ──────────────────────────────────
+    // The composer's `@file` chips and the Project Memory settings page both
+    // promise the user that content is attached to the agent. This is where
+    // that promise is kept: references are re-resolved from the text this turn
+    // is answering, project instruction files and relevant project memory are
+    // selected, and all of it is pinned into the agent's context and ledgered.
+    // Resolving here rather than trusting client-supplied content means the
+    // attached bytes are the repository's own, and the TUI and CLI get the same
+    // behaviour without shipping their own resolver.
+    let request_text = match &operation {
+        AgentOperation::Continue { message } => message.clone(),
+        AgentOperation::RevisePlan { feedback } => feedback.clone(),
+        AgentOperation::Start
+        | AgentOperation::Plan
+        | AgentOperation::Resume
+        | AgentOperation::Approve => objective.clone(),
+    };
+    // Two different roots, for two different questions.
+    //
+    // References resolve against the *session worktree* when there is one,
+    // because that is the tree the agent has been changing and the tree the
+    // user is looking at. Resolving them against the source checkout instead
+    // hands the model two versions of the same file in one prompt — the
+    // worktree state it is working in, plus a stale `@src/auth.rs` pinned from
+    // a checkout the agent never touched — and makes `@diff` report "no
+    // uncommitted changes" for a session with six modified files.
+    //
+    // Memory stays keyed on the *source repository*, because that is the
+    // project's durable identity: a per-session worktree path would scatter one
+    // project's knowledge across every session that ever ran in it.
+    let reference_root = session
+        .worktree
+        .clone()
+        .unwrap_or_else(|| repository.clone());
+    // ── The active profile's ContextPolicy (v1.3 §8 PR4) ──────────────
+    // A profile that declares `project_memory: false`, `graph_expansion: false`
+    // and `references: ["@diff"]` is describing the context it wants; until
+    // these were read, all three were config that did nothing. `auto: false`
+    // means "attach only what I named" — no repository instruction files, no
+    // memory, no graph expansion.
+    let context_policy = profile
+        .as_ref()
+        .map(|profile| profile.context().clone())
+        .unwrap_or_default();
+    let auto_context = context_policy.auto.unwrap_or(true);
+    let use_project_memory = auto_context && context_policy.project_memory.unwrap_or(true);
+    let use_graph_expansion = auto_context && context_policy.graph_expansion.unwrap_or(true);
+    let memory_entries = if use_project_memory {
+        store.memory(&repository, None).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    // `#symbol` consults the project graph before falling back to `git grep`.
+    // Graph identity is keyed on the SOURCE repository even though content is
+    // read from the worktree.
+    let symbol_lookup = project_context::SymbolLookup {
+        database: state.database.as_path(),
+        project: repository.as_path(),
+    };
+    let assembly_policy = project_context::AssemblyPolicy {
+        project_instructions: auto_context,
+        standing_references: context_policy.references.clone(),
+    };
+    let mut assembled = project_context::assemble(
+        &reference_root,
+        &request_text,
+        &memory_entries,
+        &assembly_policy,
+        Some(&symbol_lookup),
+    )
+    .await;
+    // A reference the user typed and the daemon could not attach is recorded in
+    // the conversation, not swallowed. Silence here is what let the composer
+    // show a chip for context the model never received.
+    let unattached: Vec<String> = assembled
+        .references
+        .iter()
+        .filter(|outcome| !outcome.attached)
+        .map(|outcome| match &outcome.detail {
+            Some(detail) => format!("{} — {detail}", outcome.display),
+            None => outcome.display.clone(),
+        })
+        .collect();
+    if !unattached.is_empty() {
+        store.append(
+            id,
+            &SessionEvent::ConversationMessageAdded {
+                message: ConversationMessage {
+                    id: Uuid::new_v4().to_string(),
+                    role: "system".into(),
+                    content: format!(
+                        "These references could not be attached to this turn:\n{}",
+                        unattached.join("\n")
+                    ),
+                    timestamp: Utc::now(),
+                    tool_calls: Vec::new(),
+                    tool_results: Vec::new(),
+                    model: None,
+                    turn_id: None,
+                },
+            },
+        )?;
+    }
+    // Memory is marked used only when it was actually pinned into a turn, which
+    // is what makes `last_used_at` mean "the agent used this" rather than
+    // "someone opened the settings page".
+    for used in assembled.pinned.used_memory_ids() {
+        if let Ok(memory_id) = Uuid::parse_str(&used) {
+            let _ = store.touch_memory(memory_id);
+        }
+    }
+    // v1.3 PR C: a matched installed skill injects its instructions into the
+    // pinned context as an untrusted-framed section, gated by the active
+    // profile's allowed_skills (empty = allow all). The skill's SKILL.md body
+    // is byte-bounded and labelled as project-supplied instructions. This runs
+    // before the agent is built so the injected section is part of the pinned
+    // context every turn.
+    // v1.3 closure: the CapabilityRegistry is the resolver. `resolve()` ranks
+    // every admitted provider (Project > User > Builtin, then priority, then
+    // id), the choice and the alternatives are persisted to
+    // `capability_resolutions`, and only if the registry has nothing does the
+    // legacy substring resolver run as a fallback. That is what makes
+    // "User Intent → CapabilityRegistry.resolve() → Agent/Skill/Command/Tool"
+    // a real path rather than an architecture claim.
+    let registry_cache = load_tool_registry(state, &repository).await;
+    // What THIS turn is about. A follow-up ("now run a security review on
+    // src/auth.rs") is a different intent from the session's opening objective
+    // ("implement login UI"), and resolving capabilities, skills and graph
+    // seeds against the objective made every follow-up retrieve context for
+    // work that was already finished.
+    let current_turn_intent = if request_text.trim().is_empty() {
+        objective.clone()
+    } else {
+        request_text.clone()
+    };
+    let capability = infer_capability(&current_turn_intent);
+    let registry_choice = match purrcode_runtime_core::CapabilityId::parse(&capability) {
+        Ok(capability_id) => {
+            let providers = registry_cache.registry.resolve(&capability_id).to_vec();
+            match providers.first().cloned() {
+                Some(chosen) => {
+                    let _ = store.record_capability_resolution(
+                        id,
+                        None,
+                        &capability,
+                        &chosen,
+                        &providers,
+                    );
+                    match chosen {
+                        purrcode_runtime_core::CapabilityProvider::Skill { skill_id, .. } => {
+                            Some(skill_id)
+                        }
+                        _ => None,
+                    }
+                }
+                None => None,
+            }
+        }
+        Err(_) => None,
+    };
+    let resolver = if registry_choice.is_none() {
+        DaemonSkillResolver::new(state).await
+    } else {
+        None
+    };
+    let resolved_skill = match registry_choice {
+        Some(skill_id) => Some(skill_id),
+        None => match &resolver {
+            Some(resolver) => match resolver.resolve(&capability).await {
+                CapabilityResolution::InstalledSkill { skill_id, .. } => Some(skill_id),
+                _ => None,
+            },
+            None => None,
+        },
+    };
+    {
+        if let Some(skill_id) = resolved_skill {
+            let skill_allowed = profile
+                .as_ref()
+                .map(|profile| {
+                    profile.allowed_skills().is_empty()
+                        || profile.allowed_skills().contains(&skill_id)
+                })
+                .unwrap_or(true);
+            if skill_allowed {
+                if let Some(content) = installed_skill_instructions(state, &skill_id) {
+                    assembled.pinned.sections.push(PinnedSection {
+                        origin: PinnedOrigin::ProjectInstructions,
+                        label: format!("skill:{skill_id}"),
+                        content,
+                        memory_id: None,
+                    });
+                }
+            }
+            let previous_uses = skill_usage_count(state, &skill_id).unwrap_or(0);
+            store.append(
+                id,
+                &SessionEvent::InstalledSkillMatched {
+                    skill_id: skill_id.clone(),
+                    matched_capability: capability.clone(),
+                },
+            )?;
+            if previous_uses > 0 {
+                store.append(
+                    id,
+                    &SessionEvent::InstalledSkillReused {
+                        skill_id: skill_id.clone(),
+                        previous_uses: previous_uses.min(u32::MAX as u64) as u32,
+                    },
+                )?;
+            }
+            store.append(
+                id,
+                &SessionEvent::ExternalSearchAvoided {
+                    skill_id,
+                    matched_capability: capability,
+                },
+            )?;
+        }
+    }
+    // v1.3 PR E: graph-assisted retrieval. Query the project-intelligence graph
+    // for files related to the objective's file seeds and pin their contents
+    // into the context (best-effort; an empty or absent graph contributes
+    // nothing). The `graph_expansion` profile flag gates this when the request
+    // form carries it; the restricted descriptor used here defaults to on so
+    // the producer/consumer exercise the real path.
+    if use_graph_expansion {
+        expand_graph_context(
+            state,
+            &repository,
+            session.worktree.as_deref(),
+            &current_turn_intent,
+            &mut assembled,
+        );
+    }
+    // The profile's input ceiling is a CLAMP, never a widening: `min()` against
+    // whatever the session's budget already allows.
+    let controls = match context_policy.maximum_input_tokens {
+        Some(profile_limit) => clamp_input_tokens(controls, profile_limit),
+        None => controls,
+    };
     let agent = NativeAgent::new(role_providers, policy)
         .with_controls(controls)
         .with_usage_records(existing_usage)
         .with_contextual_judge(judge_provider.as_ref(), judge_model)
         .with_stream_observer(observer)
-        .with_cancellation(cancellation);
-    let resolver = DaemonSkillResolver::new(state).await;
-    let capability = infer_capability(&objective);
-    if let CapabilityResolution::InstalledSkill { skill_id, .. } = agent
-        .resolve_capability(&capability, resolver.as_deref())
-        .await
-    {
-        let previous_uses = skill_usage_count(state, &skill_id).unwrap_or(0);
-        store.append(
-            id,
-            &SessionEvent::InstalledSkillMatched {
-                skill_id: skill_id.clone(),
-                matched_capability: capability.clone(),
-            },
-        )?;
-        if previous_uses > 0 {
-            store.append(
-                id,
-                &SessionEvent::InstalledSkillReused {
-                    skill_id: skill_id.clone(),
-                    previous_uses: previous_uses.min(u32::MAX as u64) as u32,
-                },
-            )?;
-        }
-        store.append(
-            id,
-            &SessionEvent::ExternalSearchAvoided {
-                skill_id,
-                matched_capability: capability,
-            },
-        )?;
-    }
+        .with_cancellation(cancellation)
+        .with_pinned_context(assembled.pinned);
+    let agent = match profile.clone() {
+        Some(profile) => agent.with_profile(profile),
+        None => agent,
+    };
+    // v1.3 PR B: attach the repository's capability registry and the provider
+    // dispatch executor so the model can propose registered tools
+    // (native + MCP + skill) and they execute by provider.
+    //
+    // v1.3 closure: when a named profile is active, the registry handed to the
+    // turn is the EFFECTIVE one — workspace-admitted descriptors intersected
+    // with the profile's ceiling and filtered by its ToolSelection. The agent
+    // and the executor share the SAME Arc, so the manifest the model saw, the
+    // digest PawGate authorized, the descriptor that executed and the evidence
+    // that was recorded are all derived from one set of descriptors.
+    let effective_registry = match &profile {
+        Some(profile) => Arc::new(registry_cache.registry.for_agent(profile)),
+        None => registry_cache.registry.clone(),
+    };
+    let executor = Arc::new(DaemonToolExecutor {
+        state: state.clone(),
+        registry: effective_registry.clone(),
+        output_schemas: registry_cache.output_schemas.clone(),
+    });
+    let hook_registry = effective_registry.clone();
+    let agent = agent
+        .with_tool_registry(effective_registry)
+        .with_tool_executor(executor)
+        // v1.3 PR D: attach the governed-hook dispatcher so lifecycle
+        // triggers (before_write/after_write/after_validation/
+        // after_agent_complete/before_commit) fire project-declared hooks.
+        // The hook evaluator gets the SAME effective registry the agent and the
+        // executor hold, so a hook is bounded by the active profile's ceiling
+        // rather than only by the workspace one.
+        .with_hook_evaluator(Arc::new(DaemonHookEvaluator {
+            state: state.clone(),
+            repository: repository.clone(),
+            registry: hook_registry,
+            output_schemas: registry_cache.output_schemas.clone(),
+        }));
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
@@ -3907,7 +5403,182 @@ async fn run_agent_operation(
         }
     };
     result.map_err(|error| DaemonError::Agent(error.to_string()))?;
+    // Capture a restorable checkpoint after each completed agent operation so
+    // "restore here" / "fork from here" always has a patch for the work the
+    // turn produced. Paused or incomplete work (an error above) is not
+    // checkpointed.
+    if let Ok(session) = store.load(id) {
+        if let Ok(worktree) = worktree_from_state(&session) {
+            if let Ok(effects) = RepositoryEngine::effects(&worktree).await {
+                let _ = persist_checkpoint(state, id, "turn", &worktree, &effects).await;
+            }
+        }
+    }
+    // v1.3 PR E: teach the project intelligence graph what this session
+    // actually did — modified files (from succeeded evidence, not proposals),
+    // what changed together, the symbols and imports of what changed, the
+    // validations that failed, and the memory that relates to it.
+    let graph_memory = store.memory(&repository, None).unwrap_or_default();
+    let worktree_for_graph = store.load(id).ok().and_then(|session| session.worktree);
+    let _ = crate::project_graph_producers::record_session_graph(
+        &store,
+        id,
+        &repository,
+        worktree_for_graph.as_deref(),
+        &state.database,
+        &graph_memory,
+    );
     Ok(())
+}
+
+/// Lower a session's input-token budget to the active profile's ceiling.
+///
+/// A profile may only make the budget SMALLER. Switching the profile to
+/// `Custom` with a larger number would be a project file granting itself more
+/// context than the user's own budget allows.
+fn clamp_input_tokens(
+    controls: purrcode_runtime_core::adaptation::SessionControls,
+    profile_limit: u64,
+) -> purrcode_runtime_core::adaptation::SessionControls {
+    let mut budget = controls.effective_budget();
+    let clamped = budget
+        .maximum_input_tokens
+        .map(|existing| existing.min(profile_limit))
+        .unwrap_or(profile_limit);
+    budget.maximum_input_tokens = Some(clamped);
+    purrcode_runtime_core::adaptation::SessionControls {
+        budget_profile: purrcode_runtime_core::adaptation::BudgetProfileKind::Custom,
+        custom_budget: Some(budget),
+        ..controls
+    }
+}
+
+/// v1.3 PR E: graph-assisted retrieval consumer. Extracts repository-relative
+/// file paths from the objective text, queries the project-intelligence graph
+/// for neighbours (files this project's sessions have modified together), and
+/// pins the related files' contents into the assembled context as
+/// graph-derived sections. Best-effort: a missing graph, an empty seed set, or
+/// an unreadable file contributes nothing.
+/// Attach files the project graph relates to the objective's seeds.
+///
+/// Graph IDENTITY stays project/source-repo scoped — a node key is a
+/// repository-relative path and the edges outlive any one session. Graph
+/// CONTENT does not: `worktree` is the tree the agent is actually changing, so
+/// materializing from the source repository would re-create the exact stale
+/// context class v1.2 closed for `@file` references (the agent edits
+/// `auth.rs` in its worktree, the graph pins the pre-edit bytes from the source
+/// checkout, and the model reasons about a version that no longer exists).
+/// Content is read from the worktree first and falls back to the source repo
+/// for files the worktree does not carry.
+fn expand_graph_context(
+    state: &AppState,
+    repository: &std::path::Path,
+    worktree: Option<&std::path::Path>,
+    objective: &str,
+    assembled: &mut project_context::AssembledContext,
+) {
+    let Ok(mut graph) = purrcode_project_graph::ProjectGraph::open(&state.database) else {
+        return;
+    };
+    // Seed paths: repository-relative paths mentioned in the objective.
+    let mut seeds: Vec<std::path::PathBuf> = Vec::new();
+    for token in objective.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '/' && c != '_')
+    {
+        let token = token.trim();
+        if token.is_empty() || token.starts_with('/') || token.contains("..") {
+            continue;
+        }
+        let path = std::path::PathBuf::from(token);
+        if path.extension().is_some() {
+            seeds.push(path);
+        }
+    }
+    seeds.dedup();
+    if seeds.is_empty() {
+        return;
+    }
+    // For each seed, find its graph node and its neighbours, then pin the
+    // neighbour file contents (bounded) as graph-related context.
+    let mut seen: BTreeSet<std::path::PathBuf> = BTreeSet::new();
+    for seed in seeds {
+        let seed_node = purrcode_project_graph::GraphNode {
+            id: purrcode_project_graph::NodeId(0),
+            project: repository.to_path_buf(),
+            kind: purrcode_runtime_core::GraphNodeKind::File,
+            key: seed.to_string_lossy().into_owned(),
+            label: seed.to_string_lossy().into_owned(),
+            attributes: serde_json::json!({}),
+            sensitive: false,
+            observed_at: chrono::Utc::now(),
+        };
+        // The seed must exist in the graph (upsert so a fresh seed can seed
+        // traversal, then query). The node's id is the real DB id from upsert,
+        // which `neighbours` needs to resolve edges.
+        let Ok(seed_id) = graph.upsert_node(&seed_node) else {
+            continue;
+        };
+        let seed_node = purrcode_project_graph::GraphNode {
+            id: seed_id.clone(),
+            ..seed_node
+        };
+        // Two hops: a direct neighbour, plus what that neighbour relates to.
+        // `neighbours` performs a real breadth-first traversal with per-hop
+        // confidence decay, so the reported hop count is the shortest path.
+        let Ok(neighbours) = graph.neighbours(repository, &seed_node, 2, 8) else {
+            continue;
+        };
+        for (node, edge, hops) in neighbours {
+            if node.kind != purrcode_runtime_core::GraphNodeKind::File
+                || node.id == seed_id
+                || !seen.insert(node.key.clone().into())
+            {
+                continue;
+            }
+            let Some(content) = graph_file_content(worktree, repository, &node.key) else {
+                continue;
+            };
+            assembled.pinned.sections.push(PinnedSection {
+                // Honest provenance: nobody pinned this and no repository
+                // declared it as instructions — the graph reached it.
+                origin: PinnedOrigin::GraphRelated {
+                    from_node: seed_node.key.clone(),
+                    via_edge: edge.kind,
+                    hops,
+                },
+                label: node.key.clone(),
+                content,
+                memory_id: None,
+            });
+        }
+    }
+}
+
+/// Materialize a graph node's file content for the prompt.
+///
+/// Graph IDENTITY is source-repo scoped; graph CONTENT is not. When a session
+/// has a worktree, that is the tree the agent has been editing, so it is read
+/// first and the source checkout is only the fallback for files the worktree
+/// does not carry. Reading the source repo first would hand the model the
+/// pre-edit bytes of a file the agent just changed — the same stale-context
+/// defect v1.2 closed for `@file` references, re-opened through the graph.
+fn graph_file_content(
+    worktree: Option<&std::path::Path>,
+    repository: &std::path::Path,
+    key: &str,
+) -> Option<String> {
+    worktree
+        .map(|worktree| worktree.join(key))
+        .and_then(|path| read_bounded_file(&path))
+        .or_else(|| read_bounded_file(&repository.join(key)))
+}
+
+/// Read a file bounded to 16 KiB (same cap as project instruction files).
+fn read_bounded_file(path: &std::path::Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    if meta.len() > 16 * 1024 {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
 }
 
 async fn run_background_tier2(state: &AppState, id: SessionId) {
@@ -3915,6 +5586,20 @@ async fn run_background_tier2(state: &AppState, id: SessionId) {
         Ok(session) => session,
         Err(_) => return,
     };
+    // Index the repository's own structure into the project graph.
+    //
+    // Without a repository-wide pass the graph only knows the files sessions
+    // happened to touch, so graph-first `#symbol` would fall back to `git grep`
+    // for every symbol the agent has not already edited — which is nearly all
+    // of them, and would make "the graph answers first" true only in theory.
+    // Bounded by file count and file size, and off the request path.
+    if let Some(repository) = session.repository.clone() {
+        let database = state.database.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            crate::project_graph_producers::index_repository_structure(&repository, &database)
+        })
+        .await;
+    }
     let Some(worktree) = session.worktree else {
         return;
     };
@@ -4152,8 +5837,15 @@ fn panic_payload_message(panic: Box<dyn std::any::Any + Send>) -> String {
         .unwrap_or_else(|| "non-string panic payload".into())
 }
 
-fn infer_capability(objective: &str) -> String {
-    let normalized = objective.to_ascii_lowercase();
+/// The capability id a turn is asking for, from THIS TURN's intent.
+///
+/// The parameter is deliberately named `intent`, not `objective`: passing the
+/// session's opening objective meant a follow-up ("now run a security review on
+/// src/auth.rs") kept resolving the capability of work that was already
+/// finished, and the skill/agent the registry picked was the one for the first
+/// message of the session.
+fn infer_capability(intent: &str) -> String {
+    let normalized = intent.to_ascii_lowercase();
     for capability in [
         "terraform-schema-inspection",
         "terraform",
@@ -4181,22 +5873,48 @@ fn skill_usage_count(state: &AppState, skill_id: &str) -> Option<u64> {
         .map(|skill| skill.successful_uses + skill.failed_uses)
 }
 
+/// The installed skill's SKILL.md body, byte-bounded, for injection into the
+/// pinned context. The skill lives at `{skills}/{scope}/{skill_id}/SKILL.md`;
+/// the store's `get` returns the scope, and the file is read under the same
+/// cap as project instruction files.
+fn installed_skill_instructions(state: &AppState, skill_id: &str) -> Option<String> {
+    let parent = state.database.parent().unwrap_or(Path::new("."));
+    let store = SkillStore::open(&parent.join("skills.db"), &parent.join("skills")).ok()?;
+    let record = store.get(skill_id).ok()?;
+    let root = parent
+        .join("skills")
+        .join(record.scope.to_string())
+        .join(skill_id);
+    let path = root.join("SKILL.md");
+    if !path.is_file() {
+        return None;
+    }
+    let meta = std::fs::metadata(&path).ok()?;
+    const MAX_SKILL_INSTRUCTION_BYTES: u64 = 16 * 1024;
+    if meta.len() > MAX_SKILL_INSTRUCTION_BYTES {
+        return None;
+    }
+    std::fs::read_to_string(&path).ok()
+}
+
 fn effective_policy(
     config: &AppConfig,
     repository: &Path,
 ) -> Result<Policy, purrcode_pawgate::PolicyError> {
-    let local = resolve_policy_path(repository);
-    if let Some(organization) = &config.organization_policy {
-        Policy::load_effective(
-            local.exists().then_some(local.as_path()),
-            &organization.pack,
-            &organization.ed25519_public_key,
-        )
-    } else if local.exists() {
-        Policy::load(&local)
-    } else {
-        Ok(Policy::default())
-    }
+    let project = resolve_policy_path(repository);
+    let user = resolve_user_policy_path();
+    // v1.3 three-tier precedence: Default → User → Project → Signed Org. The
+    // user tier is machine-level and cannot be widened by a repository file;
+    // the org pack remains the outermost authority. The CLI uses the same
+    // loader so `purrcode policy-check` and the daemon agree exactly.
+    Policy::load_effective_v3(
+        user.as_deref(),
+        project.exists().then_some(project.as_path()),
+        config
+            .organization_policy
+            .as_ref()
+            .map(|org| (org.pack.as_path(), org.ed25519_public_key.as_str())),
+    )
 }
 
 async fn ensure_session_exists(state: &AppState, id: SessionId) -> Result<(), ApiError> {
@@ -4228,6 +5946,7 @@ async fn session(
     }
     let timestamps = store.timestamped_events(id)?;
     let events = store.events(id)?;
+    let meta = store.session_meta(id)?;
     Ok(Json(SessionView {
         id: id.0.to_string(),
         status: format!("{:?}", session.status),
@@ -4237,13 +5956,148 @@ async fn session(
         awaiting_plan_review: awaiting_plan_review(&session),
         recovery_reconciled: recovery_reconciled(&session, &events),
         objective: session.objective,
-        repository: session.repository,
+        title: meta.title,
+        archived: meta.archived,
+        pinned: meta.pinned,
+        parent_id: meta.parent_id.map(|id| id.0.to_string()),
+        // Canonicalised to match `sessions()`. A session created through a
+        // symlinked path would otherwise be reported one way by the list and
+        // another way by this route, and a client comparing the two would
+        // conclude they are different folders.
+        repository: session
+            .repository
+            .map(|path| path.canonicalize().unwrap_or(path)),
         worktree: session.worktree,
         selected_model: session.selected_model,
         created_at: timestamps.first().map(|(timestamp, _)| *timestamp),
         updated_at: timestamps.last().map(|(timestamp, _)| *timestamp),
         unavailable_reason: None,
     }))
+}
+
+/// Full-text search over the durable session event log.
+async fn search_sessions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SearchSessionsQuery>,
+) -> Result<Json<Vec<SessionSearchHitView>>, ApiError> {
+    authorize(&state, &headers)?;
+    let store = state.store.lock().await;
+    let hits = store.search_sessions(&query.q, query.limit)?;
+    Ok(Json(
+        hits.into_iter()
+            .map(|hit| SessionSearchHitView {
+                session_id: hit.session_id.0.to_string(),
+                event_type: hit.event_type,
+                snippet: hit.snippet,
+                occurred_at: hit.occurred_at,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Deserialize)]
+struct SearchSessionsQuery {
+    q: String,
+    #[serde(default = "default_search_limit")]
+    limit: u64,
+}
+
+fn default_search_limit() -> u64 {
+    20
+}
+
+#[derive(Serialize)]
+struct SessionSearchHitView {
+    session_id: String,
+    event_type: String,
+    snippet: String,
+    occurred_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateSessionMetaRequest {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default)]
+    pinned: Option<bool>,
+}
+
+/// Rename, archive, or pin a session. Mutations are workspace metadata, not
+/// audit events, so they update `session_meta` without touching the event log.
+async fn update_session_meta(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<UpdateSessionMetaRequest>,
+) -> Result<Json<SessionView>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let mut store = state.store.lock().await;
+    let session_state = store.load(id)?;
+    if session_state.event_count == 0 {
+        return Err(ApiError::NotFound);
+    }
+    if let Some(title) = &request.title {
+        store.set_session_title(id, title)?;
+    }
+    if let Some(archived) = request.archived {
+        store.set_session_archived(id, archived)?;
+    }
+    if let Some(pinned) = request.pinned {
+        store.set_session_pinned(id, pinned)?;
+    }
+    let timestamps = store.timestamped_events(id)?;
+    let meta = store.session_meta(id)?;
+    Ok(Json(SessionView {
+        id: id.0.to_string(),
+        status: format!("{:?}", session_state.status),
+        status_code: presentation_status(&session_state),
+        event_count: session_state.event_count,
+        lease_active: state.leases.lock().await.contains_key(&id),
+        awaiting_plan_review: awaiting_plan_review(&session_state),
+        recovery_reconciled: recovery_reconciled(&session_state, &store.events(id)?),
+        objective: session_state.objective,
+        title: meta.title,
+        archived: meta.archived,
+        pinned: meta.pinned,
+        parent_id: meta.parent_id.map(|id| id.0.to_string()),
+        // Canonicalised to match `sessions()`. A session created through a
+        // symlinked path would otherwise be reported one way by the list and
+        // another way by this route, and a client comparing the two would
+        // conclude they are different folders.
+        repository: session_state
+            .repository
+            .map(|path| path.canonicalize().unwrap_or(path)),
+        worktree: session_state.worktree,
+        selected_model: session_state.selected_model,
+        created_at: timestamps.first().map(|(timestamp, _)| *timestamp),
+        updated_at: timestamps.last().map(|(timestamp, _)| *timestamp),
+        unavailable_reason: None,
+    }))
+}
+
+/// Soft-delete a session: it disappears from the working list but its event
+/// log is preserved for audit and recovery.
+async fn delete_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let mut store = state.store.lock().await;
+    let session = store.load(id)?;
+    if session.event_count == 0 {
+        return Err(ApiError::NotFound);
+    }
+    store.set_session_deleted(id, true)?;
+    Ok(Json(
+        serde_json::json!({"id": id.0.to_string(), "deleted": true}),
+    ))
 }
 
 async fn events(
@@ -4377,6 +6231,23 @@ async fn ui_status(
 // what a person reads.
 
 /// Derive the user-facing activity list from durable events.
+/// Extract the `TurnId` that [`SessionEvent`] variants carry — the identity
+/// `run_until_pause` stamps on every `ActionProposed`/`ActionOutputRecorded`/
+/// `JudgmentRecorded` it emits (PRD v1.1 §6.3). Events created outside the
+/// main loop (user messages, supervisor workers, MCP invocations) carry
+/// `turn_id: None` and project the same here.
+fn event_turn_id(
+    event: &purrcode_runtime_core::SessionEvent,
+) -> Option<purrcode_runtime_core::TurnId> {
+    use purrcode_runtime_core::SessionEvent as Event;
+    match event {
+        Event::ActionProposed { turn_id, .. }
+        | Event::ActionOutputRecorded { turn_id, .. }
+        | Event::JudgmentRecorded { turn_id, .. } => *turn_id,
+        _ => None,
+    }
+}
+
 fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<ActivityItem> {
     use purrcode_runtime_core::SessionEvent as Event;
     let mut items: Vec<ActivityItem> = Vec::new();
@@ -4408,6 +6279,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
 
     for (index, event) in events.iter().enumerate().skip(turn_start) {
         let id = index.to_string();
+        let turn = event_turn_id(event).map(|t| t.0.to_string());
         match event {
             Event::WorktreeCreated { .. } => items.push(ActivityItem {
                 id,
@@ -4416,6 +6288,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Done,
                 summary: None,
                 detail_available: false,
+                turn_id: turn.clone(),
             }),
             Event::ContextIndexed { files, symbols, .. } => items.push(ActivityItem {
                 id,
@@ -4424,6 +6297,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Done,
                 summary: None,
                 detail_available: false,
+                turn_id: turn.clone(),
             }),
             Event::CheckpointCreated { label, .. } => items.push(ActivityItem {
                 id,
@@ -4432,6 +6306,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Done,
                 summary: None,
                 detail_available: true,
+                turn_id: turn.clone(),
             }),
             Event::ModelRequestStarted { model, .. } => {
                 thinking = Some(items.len());
@@ -4442,6 +6317,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Running,
                     summary: None,
                     detail_available: false,
+                    turn_id: turn.clone(),
                 });
             }
             // Pair the request with its completion rather than adding a second
@@ -4463,6 +6339,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Blocked,
                 summary: Some(reason.chars().take(160).collect()),
                 detail_available: true,
+                turn_id: turn.clone(),
             }),
             Event::RecoveryRequired { reason } => items.push(ActivityItem {
                 id,
@@ -4471,6 +6348,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 status: ActivityStatus::Blocked,
                 summary: Some(reason.chars().take(160).collect()),
                 detail_available: true,
+                turn_id: turn.clone(),
             }),
             Event::PlanCreated { steps } | Event::PlanRevised { steps, .. } => {
                 items.push(ActivityItem {
@@ -4480,6 +6358,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Done,
                     summary: steps.first().cloned(),
                     detail_available: !steps.is_empty(),
+                    turn_id: turn.clone(),
                 })
             }
             Event::ActionProposed { action, .. } => {
@@ -4488,6 +6367,15 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                 match action {
                     ProposedAction::RepositoryRead(_) => inspected += 1,
                     ProposedAction::WriteFile(_) | ProposedAction::DeleteFile(_) => edited += 1,
+                    ProposedAction::Tool(_) => items.push(ActivityItem {
+                        id,
+                        kind: ActivityKind::Command,
+                        label: "Called a registered tool".to_owned(),
+                        status: ActivityStatus::Done,
+                        summary: None,
+                        detail_available: true,
+                        turn_id: turn.clone(),
+                    }),
                     _ => items.push(ActivityItem {
                         id,
                         kind: ActivityKind::Command,
@@ -4495,6 +6383,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                         status: ActivityStatus::Done,
                         summary: None,
                         detail_available: true,
+                        turn_id: turn.clone(),
                     }),
                 }
             }
@@ -4506,6 +6395,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Blocked,
                     summary: None,
                     detail_available: true,
+                    turn_id: turn.clone(),
                 }),
             Event::ValidationRecorded {
                 action_id,
@@ -4529,6 +6419,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     format!("{}: {detail}", validation_stage_name(evidence, action_id))
                 }),
                 detail_available: !evidence.is_empty(),
+                turn_id: turn.clone(),
             }),
             // Completion is a turn boundary, not an activity step. Repeating
             // it after every answer produced a misleading "Finished ×3" in
@@ -4544,6 +6435,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
                     status: ActivityStatus::Failed,
                     summary: Some(reason.chars().take(160).collect()),
                     detail_available: true,
+                    turn_id: turn.clone(),
                 })
             }
             Event::SessionFailed { .. } => {}
@@ -4616,6 +6508,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
             status: ActivityStatus::Done,
             summary: None,
             detail_available: true,
+            turn_id: None, // aggregated count, not a single event
         });
     }
     if edited > 0 {
@@ -4626,6 +6519,7 @@ fn activity_from_events(events: &[purrcode_runtime_core::SessionEvent]) -> Vec<A
             status: ActivityStatus::Done,
             summary: None,
             detail_available: true,
+            turn_id: None, // aggregated count, not a single event
         });
     }
     derived.extend(items);
@@ -4837,6 +6731,7 @@ async fn session_summary(
     let validation = validation_from_events(&events);
     let activity = activity_from_events(&events);
     let lease_active = state.leases.lock().await.contains_key(&id);
+    let context_capacity_tokens = coding_model_context_capacity(&state, id).await;
     Ok(Json(purrcode_ui_contracts::SessionSummary {
         id: session.id.0.to_string(),
         objective: session.objective.clone().unwrap_or_default(),
@@ -4895,11 +6790,39 @@ async fn session_summary(
             .as_ref()
             .map(|plan| format!("{:?}", plan.search_policy).to_ascii_lowercase()),
         budget_profile: Some(format!("{:?}", session.controls.budget_profile).to_ascii_lowercase()),
-        usage: Some(usage_summary_view(&session)),
+        usage: Some(usage_summary_view(&session, context_capacity_tokens)),
     }))
 }
 
-fn usage_summary_view(session: &SessionState) -> purrcode_ui_contracts::UsageSummaryView {
+/// The coding-worker model's actual context window, straight from the
+/// configured provider's capabilities (an in-memory lookup, not a network
+/// call, for every built-in provider). Best-effort: any failure to resolve
+/// config, route, or capabilities degrades to `None` rather than failing the
+/// whole summary request — this is a presentation detail, not something a
+/// session's correctness depends on.
+async fn coding_model_context_capacity(state: &AppState, id: SessionId) -> Option<u64> {
+    let config = AppConfig::load(&state.app_config).ok()?;
+    let models = configured_session_models(state, id, &config).await.ok()?;
+    let model = models.get("coding_worker")?;
+    let router = ProviderRouter::from_config(
+        &config,
+        Some(
+            state
+                .app_config
+                .with_file_name("credentials.toml")
+                .as_path(),
+        ),
+    )
+    .ok()?;
+    let provider = router.provider(model).ok()?;
+    let capabilities = provider.capabilities(model).await.ok()?;
+    capabilities.context_window.map(|window| window as u64)
+}
+
+fn usage_summary_view(
+    session: &SessionState,
+    context_capacity_tokens: Option<u64>,
+) -> purrcode_ui_contracts::UsageSummaryView {
     let ledger =
         purrcode_runtime_core::adaptation::UsageLedger::from_records(session.usage_records.clone());
     let summary = ledger.summary(
@@ -4916,6 +6839,26 @@ fn usage_summary_view(session: &SessionState) -> purrcode_ui_contracts::UsageSum
             })
             .unwrap_or_default(),
     );
+    let current_context_tokens = session
+        .recent_context_ledger
+        .back()
+        .map(|entry| entry.total_estimated_tokens);
+    // Must match NativeAgent::effective_input_capacity exactly (agent-runtime
+    // agent.rs): min(provider context window, the session's own input-token
+    // budget cap) minus the reserved-output budget. Only clamping by the raw
+    // window (as this used to) overstates capacity for any session running
+    // under a tighter custom or profile budget — the UI would show room the
+    // runtime will actually refuse to fill.
+    let effective_capacity_tokens = context_capacity_tokens.map(|capacity| {
+        let budget_limit = session
+            .controls
+            .effective_budget()
+            .maximum_input_tokens
+            .unwrap_or(capacity);
+        capacity
+            .min(budget_limit)
+            .saturating_sub(purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+    });
     purrcode_ui_contracts::UsageSummaryView {
         total_tokens: summary.total_tokens,
         input_tokens: summary.input_tokens,
@@ -4929,6 +6872,9 @@ fn usage_summary_view(session: &SessionState) -> purrcode_ui_contracts::UsageSum
         cache_read_tokens: summary.cache_read_tokens,
         cache_write_tokens: summary.cache_write_tokens,
         total_latency_ms: summary.total_latency_ms,
+        context_capacity_tokens,
+        current_context_tokens,
+        effective_capacity_tokens,
     }
 }
 
@@ -4993,6 +6939,34 @@ async fn session_usage(
     let ledger =
         purrcode_runtime_core::adaptation::UsageLedger::from_records(session.usage_records);
     Ok(Json(ledger.summary(0)))
+}
+
+fn parse_turn_id(value: &str) -> Result<purrcode_runtime_core::TurnId, ApiError> {
+    Uuid::parse_str(value)
+        .map(purrcode_runtime_core::TurnId)
+        .map_err(|_| ApiError::BadRequest("turn ID is not a UUID".into()))
+}
+
+/// Presentation endpoint for Phase 1's context ledger (PRD v1.1 §6.3): returns
+/// the durable, section-by-section token/byte accounting `build_messages()`
+/// recorded for one turn, read from the bounded in-memory
+/// `SessionState.recent_context_ledger` projection.
+async fn session_context_ledger(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((id, turn_id)): AxumPath<(String, String)>,
+) -> Result<Json<purrcode_runtime_core::ContextLedgerEntry>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let turn_id = parse_turn_id(&turn_id)?;
+    let session = state.store.lock().await.load(id)?;
+    session
+        .recent_context_ledger
+        .iter()
+        .find(|entry| entry.turn_id == turn_id)
+        .cloned()
+        .map(Json)
+        .ok_or(ApiError::NotFound)
 }
 
 async fn session_spec(
@@ -5248,7 +7222,7 @@ async fn session_artifacts(
     artifacts.push(serde_json::json!({
         "kind": "usage",
         "title": "Usage",
-        "summary": format!("{} model calls · {} tokens · {} web searches", session.usage_records.len(), usage_summary_view(&session).total_tokens, usage_summary_view(&session).search_requests),
+        "summary": format!("{} model calls · {} tokens · {} web searches", session.usage_records.len(), usage_summary_view(&session, None).total_tokens, usage_summary_view(&session, None).search_requests),
     }));
     Ok(Json(artifacts))
 }
@@ -5766,8 +7740,19 @@ async fn bootstrap(
     })))
 }
 
-async fn git_read(repository: &Path, arguments: &[&str]) -> Result<String, ApiError> {
-    let output = tokio::process::Command::new("git")
+/// Runs `git` with a scrubbed environment and prompts disabled.
+///
+/// Every git invocation in the daemon goes through here. The hardening is the
+/// point: an inherited environment lets the repository's own config reach the
+/// child, and without `GIT_TERMINAL_PROMPT=0` a command that needs credentials
+/// blocks forever on a prompt no one can see. Keeping this in one place is
+/// what stops a new call site from quietly omitting it, which had already
+/// happened twice.
+async fn git_output(
+    repository: &Path,
+    arguments: &[&str],
+) -> Result<std::process::Output, std::io::Error> {
+    tokio::process::Command::new("git")
         .args(arguments)
         .current_dir(repository)
         .env_clear()
@@ -5778,6 +7763,11 @@ async fn git_read(repository: &Path, arguments: &[&str]) -> Result<String, ApiEr
                 .map(|path| ("PATH", path)),
         )
         .output()
+        .await
+}
+
+async fn git_read(repository: &Path, arguments: &[&str]) -> Result<String, ApiError> {
+    let output = git_output(repository, arguments)
         .await
         .map_err(|error| ApiError::Conflict(format!("git operation failed: {error}")))?;
     if !output.status.success() {
@@ -6054,6 +8044,19 @@ struct EventStreamQuery {
     after: Option<usize>,
 }
 
+/// Rejects any request that does not carry the daemon's bearer token.
+///
+/// Applied as a router layer so it cannot be forgotten by a new handler and
+/// cannot be preceded by a body extractor.
+async fn require_bearer(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, ApiError> {
+    authorize(&state, request.headers())?;
+    Ok(next.run(request).await)
+}
+
 fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     let supplied = headers
         .get(AUTHORIZATION)
@@ -6139,6 +8142,14 @@ struct Health {
 struct SessionView {
     id: String,
     objective: Option<String>,
+    /// Presentation title from the session workspace; falls back to the
+    /// objective when the user has not renamed the session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    archived: bool,
+    pinned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_id: Option<String>,
     status: String,
     status_code: &'static str,
     repository: Option<PathBuf>,
@@ -6564,6 +8575,7 @@ async fn configure_provider(
             let derived = match body.provider_type.as_str() {
                 "nim" | "nvidia-nim" | "nvidia" => Some("NVIDIA_API_KEY".to_owned()),
                 "openai" => Some("OPENAI_API_KEY".to_owned()),
+                "anthropic" | "claude" => Some("ANTHROPIC_API_KEY".to_owned()),
                 _ => None,
             };
             derived
@@ -7478,7 +9490,13 @@ async fn propose_local_model_pull(
     let mut store = state.store.lock().await;
     store.append(
         session_id,
-        &SessionEvent::ActionProposed { action_id, action },
+        &SessionEvent::ActionProposed {
+            action_id,
+            action,
+            // A direct model-pull request submitted through this endpoint
+            // runs outside `run_until_pause`'s main turn loop (PRD v1.1 §6.3).
+            turn_id: None,
+        },
     )?;
     store.append(
         session_id,
@@ -7491,6 +9509,7 @@ async fn propose_local_model_pull(
                 ),
                 constraints,
             },
+            turn_id: None,
         },
     )?;
     Ok(Json(serde_json::json!({
@@ -7861,6 +9880,1901 @@ async fn inspect_repository(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ResolveReferencesRequest {
+    /// The composer text containing `@file`, `#symbol`, `@diff`, etc.
+    text: String,
+    /// The repository the draft belongs to.
+    repository: std::path::PathBuf,
+    /// The session the draft will be sent to, when there is one.
+    ///
+    /// This is what makes the chip's preview and the runtime's attachment agree.
+    /// A session with a worktree resolves against that worktree — the tree the
+    /// agent has been changing — so a preview of `@src/auth.rs` shows the same
+    /// bytes the model will receive. Without it the composer previews the source
+    /// checkout while the turn attaches the worktree, and the chip is once again
+    /// describing something other than what happens.
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ResolvedReferenceView {
+    #[serde(flatten)]
+    reference: Reference,
+    display: String,
+    /// Whether the reference could be resolved to real content.
+    resolved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diagnostics: Option<String>,
+}
+
+/// Resolves the composer references in a text against a repository. File and
+/// folder references are path-checked and bounded-read; symbols are looked up
+/// in the whisker index when one exists; `@diff` uses the worktree diff; `@git`
+/// uses `git show`. Resolution is best-effort and never follows the reference
+/// text as an instruction.
+async fn resolve_references(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ResolveReferencesRequest>,
+) -> Result<Json<Vec<ResolvedReferenceView>>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = body
+        .repository
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
+    // Same rule as `run_agent_operation`: prefer the session worktree, fall back
+    // to the source checkout. An unknown or worktree-less session falls back
+    // rather than failing — a draft is still previewable before the session has
+    // a worktree.
+    // Graph identity stays on the SOURCE repository even when content is read
+    // from a worktree, so the symbol lookup is keyed on the path the client
+    // sent, not on `root`.
+    let project = repository.clone();
+    let mut root = repository;
+    if let Some(session_id) = body.session_id.as_deref()
+        && let Ok(session_id) = parse_session_id(session_id)
+        && let Ok(session) = state.store.lock().await.load(session_id)
+        && let Some(worktree) = session.worktree
+        && let Ok(canonical) = worktree.canonicalize()
+    {
+        root = canonical;
+    }
+    let repository = root;
+    let symbols = project_context::SymbolLookup {
+        database: state.database.as_path(),
+        project: project.as_path(),
+    };
+    let parsed = resolve_refs(&body.text).unwrap_or_default();
+    let mut views = Vec::new();
+    for parsed in parsed {
+        let ParsedReference { reference, .. } = parsed;
+        let (resolved, preview, diagnostics) =
+            resolve_one_reference(&repository, &reference, Some(&symbols)).await;
+        views.push(ResolvedReferenceView {
+            display: reference.display(),
+            resolved,
+            preview,
+            diagnostics,
+            reference,
+        });
+    }
+    Ok(Json(views))
+}
+
+/// Resolves one reference for display in the composer.
+///
+/// Delegates to the same path that decides what gets attached to a turn, so a
+/// chip can never claim a reference resolves when the runtime would refuse to
+/// attach it.
+async fn resolve_one_reference(
+    repository: &std::path::Path,
+    reference: &Reference,
+    symbols: Option<&project_context::SymbolLookup<'_>>,
+) -> (bool, Option<String>, Option<String>) {
+    project_context::preview_reference(repository, reference, symbols).await
+}
+
+/// The canonical set of built-in composer commands. This is the daemon's
+/// authoritative contract for the future command registry; clients render it
+/// as the command palette.
+async fn list_commands(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    authorize(&state, &headers)?;
+    let mut commands: Vec<serde_json::Value> = Vec::new();
+    // Built-in commands first: they win name collisions over project/user
+    // commands, which are appended only when they do not shadow a builtin.
+    for command in builtin_commands() {
+        commands.push(serde_json::json!({
+            "name": command.name,
+            "description": command.description,
+            "group": command.group,
+            "execution": command.execution,
+            "source": "builtin",
+        }));
+    }
+    // Extension commands are merged only when a repository is supplied; without
+    // one the endpoint returns the built-ins (v1.2 clients that predate the
+    // repository-scoped surface keep working).
+    if !query.repository.is_empty() {
+        let repository = PathBuf::from(&query.repository)
+            .canonicalize()
+            .map_err(|_| {
+                ApiError::BadRequest("repository must be an absolute existing path".into())
+            })?;
+        let set = load_extension_set(&state, &repository).await;
+        for command in set.commands.values() {
+            let name = command.name.clone();
+            if commands.iter().any(|c| c["name"] == name) {
+                continue; // builtin wins the name
+            }
+            // v1.3 PR D: an extension command's Agent execution is published as a
+            // daemon-style route (`POST /v1/sessions/{id}/commands/<name>`) so an
+            // unmodified v1.2 IDE can dispatch it without client changes (§10).
+            let execution = match &command.execution {
+                purrcode_runtime_core::CommandExecutionSpec::Agent { .. } => {
+                    serde_json::json!({
+                        "kind": "daemon",
+                        "method": "POST",
+                        "path": format!("/v1/sessions/{{id}}/commands/{name}"),
+                    })
+                }
+                other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
+            };
+            commands.push(serde_json::json!({
+                "name": name,
+                "description": command.description,
+                "group": command.group,
+                "execution": execution,
+                "source": format!("{:?}", command.layer),
+            }));
+        }
+    }
+    Ok(Json(commands))
+}
+
+/// v1.3 PR D: execute a project/user extension command on a session. The
+/// command resolves from the repository's extension set. A `Prompt` command
+/// appends the prompt text as a user message and continues the turn; an
+/// `Agent` command runs the prompt under the named agent profile (which may
+/// differ from the session's bound agent). `Daemon` and `Client` commands are
+/// not executable here — they are dispatched by the daemon route or the client
+/// UI respectively.
+async fn run_session_command(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    AxumPath(name): AxumPath<String>,
+) -> Result<(StatusCode, Json<AcceptedSession>), ApiError> {
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let command_name = if name.starts_with('/') {
+        name
+    } else {
+        format!("/{name}")
+    };
+    let session = state.store.lock().await.load(id)?;
+    let repository = session
+        .repository
+        .clone()
+        .ok_or_else(|| ApiError::Conflict("session repository is missing".into()))?;
+    let set = load_extension_set(&state, &repository).await;
+    let command = set.commands.get(&command_name).ok_or(ApiError::NotFound)?;
+    let (prompt, agent) = match &command.execution {
+        purrcode_runtime_core::CommandExecutionSpec::Prompt { prompt } => (prompt.clone(), None),
+        purrcode_runtime_core::CommandExecutionSpec::Agent { agent, prompt } => {
+            // The named agent must resolve against the extension set.
+            if set.admitted(agent).is_none() {
+                return Err(ApiError::BadRequest(format!(
+                    "command `{command_name}` references unknown agent profile `{agent}`"
+                )));
+            }
+            (prompt.clone(), Some(agent.clone()))
+        }
+        other => {
+            return Err(ApiError::Conflict(format!(
+                "command `{command_name}` is not runnable from this endpoint: {other:?}"
+            )));
+        }
+    };
+    let ended_status = matches!(
+        session.status,
+        SessionStatus::Completed | SessionStatus::Failed | SessionStatus::Cancelled
+    );
+    // Record the command's prompt as a user message so the turn has it in
+    // conversation history, then continue the agent.
+    let mut store = state.store.lock().await;
+    if ended_status {
+        store.append(id, &SessionEvent::SessionResumed)?;
+    }
+    store.append(
+        id,
+        &SessionEvent::ConversationMessageAdded {
+            message: ConversationMessage {
+                id: Uuid::new_v4().to_string(),
+                role: "user".into(),
+                content: prompt.clone(),
+                timestamp: Utc::now(),
+                tool_calls: Vec::new(),
+                tool_results: Vec::new(),
+                model: None,
+                turn_id: Some(TurnId::new()),
+            },
+        },
+    )?;
+    drop(store);
+    let operation = AgentOperation::Continue { message: prompt };
+    let bound_agent = match agent {
+        Some(agent) => Some(agent),
+        None => state
+            .store
+            .lock()
+            .await
+            .load(id)
+            .ok()
+            .and_then(|s| s.selected_agent),
+    };
+    spawn_agent_operation(state.clone(), id, operation, bound_agent).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedSession {
+            id: id.0.to_string(),
+            status: "command accepted",
+        }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct ExtensionQuery {
+    #[serde(default)]
+    repository: String,
+}
+
+/// Load (or return the cached) extension set for a repository.
+async fn load_extension_set(state: &AppState, repository: &Path) -> Arc<ExtensionSet> {
+    if let Some(cached) = state.extensions.read().await.get(repository) {
+        return cached.clone();
+    }
+    let config = AppConfig::load(&state.app_config).ok();
+    let ceiling = match config {
+        Some(config) => effective_policy(&config, repository)
+            .map(|policy| policy.tool_ceiling(repository))
+            .unwrap_or_else(|_| Policy::default().tool_ceiling(repository)),
+        None => Policy::default().tool_ceiling(repository),
+    };
+    let user_root = std::env::home_dir().map(|home| home.join(".purrcode"));
+    let (set, _diagnostics) = ExtensionSet::load(repository, user_root.as_deref(), &ceiling);
+    let set = Arc::new(set);
+    state
+        .extensions
+        .write()
+        .await
+        .insert(repository.to_path_buf(), set.clone());
+    set
+}
+
+/// Load (or return the cached) capability registry for a repository (v1.3
+/// PR B). The registry admits the builtin native tools plus every configured
+/// MCP server's discovered tools, each restricted against the workspace
+/// ceiling. The active agent profile's `allowed_tools` filter is applied at
+/// model-surface time, not here — admission is ceiling-only so one registry
+/// serves every profile for the repository.
+///
+/// MCP discovery is cached (it is an stdio/HTTP RPC); the cache is invalidated
+/// by `POST /v1/extensions/reload` and on MCP config change, alongside the
+/// extension cache.
+async fn load_tool_registry(state: &AppState, repository: &Path) -> Arc<ToolRegistryCache> {
+    if let Some(cached) = state.tool_registries.read().await.get(repository) {
+        return cached.clone();
+    }
+    let config = AppConfig::load(&state.app_config).ok();
+    let ceiling = match config {
+        Some(config) => effective_policy(&config, repository)
+            .map(|policy| policy.tool_ceiling(repository))
+            .unwrap_or_else(|_| Policy::default().tool_ceiling(repository)),
+        None => Policy::default().tool_ceiling(repository),
+    };
+    let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+    // Builtin native tools (Builtin origin — they ARE the ceiling source).
+    for proposal in purrcode_runtime_core::native_tools::builtin_native_proposals() {
+        registry.admit_tool(proposal, &ceiling);
+    }
+    // ── Agents and commands (v1.3 §4.2) ───────────────────────────────
+    // The registry is a CapabilityRegistry, not a ToolRegistry: an agent
+    // profile and a dynamic command are capability providers too. Admitting
+    // them here is what lets `resolve("code_review")` rank an agent, a skill, a
+    // command and a tool against each other instead of only ever finding tools.
+    let extensions = load_extension_set(state, repository).await;
+    for profile in extensions.agents.values() {
+        registry.admit_agent(profile.clone(), &ceiling);
+    }
+    for command in extensions.commands.values() {
+        registry.admit_command(command.clone());
+    }
+    for hook in &extensions.hooks {
+        registry.admit_hook(hook.clone());
+    }
+    // MCP servers: discover once via the auth-free `test_connection` and admit
+    // each tool's descriptor proposal against the ceiling. A server that fails
+    // to connect contributes nothing (its tools stay absent until it is fixed
+    // or the config changes).
+    //
+    // Two authority decisions are folded in HERE, at admission, rather than in
+    // any single executor — otherwise the legacy `/mcp` endpoint and the generic
+    // model-driven tool path would be two different authorization
+    // implementations that can disagree:
+    //
+    //   1. `deny_tools` / `trusted_tools` from the server config. Deny becomes a
+    //      workspace ceiling denial (Forbidden + a Rejected diagnostic); trust
+    //      makes the tool *eligible* for PreAuthorized, still subject to the
+    //      ceiling's minimum friction.
+    //   2. Trust-on-first-use descriptor pinning. A remote server authored this
+    //      descriptor; if its digest differs from the pinned one, the tool is
+    //      admitted Forbidden until a human re-pins it. Rebuilding the registry
+    //      must never be a way to accept a changed descriptor silently.
+    if let Some(section) = AppConfig::load(&state.app_config)
+        .ok()
+        .and_then(|config| mcp_section(&config).ok())
+    {
+        let mut pin_store = SessionStore::open(&state.database).ok();
+        for server in section.servers.values() {
+            // Deny is a ceiling decision, so `restrict` produces the Forbidden
+            // descriptor and the Rejected diagnostic for free.
+            let mut server_ceiling = ceiling.clone();
+            for denied in &server.deny_tools {
+                server_ceiling.denied_tool_ids.insert(
+                    purrcode_runtime_core::ToolId::mcp(&server.id, denied)
+                        .as_str()
+                        .to_owned(),
+                );
+            }
+            match McpHost::test_connection(server).await {
+                Ok((tools, _)) => {
+                    for tool in &tools {
+                        let proposal = tool.descriptor_proposal(server);
+                        let tool_id = proposal.id.clone();
+                        let admitted = registry.admit_tool(proposal, &server_ceiling).clone();
+                        let Some(store) = pin_store.as_mut() else {
+                            continue;
+                        };
+                        match pin_verdict_for_registry(
+                            store,
+                            repository,
+                            &admitted,
+                            server.trusts(&tool.name),
+                        ) {
+                            Ok(PinVerdict::Approved) | Ok(PinVerdict::FirstUse) => {}
+                            Ok(verdict) => {
+                                // Changed or Revoked: forbid the tool for this
+                                // registry and say so in the diagnostics, so
+                                // `GET /v1/extensions/diagnostics` shows why a
+                                // configured tool vanished.
+                                registry.forbid_tool(
+                                    &tool_id,
+                                    &format!(
+                                        "MCP descriptor for `{tool_id}` is {verdict:?} since it was \
+                                         pinned; re-approve it at POST /v1/tools/{tool_id}/pin"
+                                    ),
+                                );
+                            }
+                            Err(_) => {
+                                registry.forbid_tool(
+                                    &tool_id,
+                                    &format!(
+                                        "descriptor pin for `{tool_id}` could not be read; \
+                                         the tool is withheld rather than admitted unpinned"
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    // Leave the server's tools absent; the runtime handles
+                    // a missing tool as a clear "not admitted" error. The
+                    // reason is still recorded, because "this server is
+                    // unavailable and here is why" and "you never configured
+                    // it" must not look the same in the diagnostics endpoint —
+                    // that is exactly the case where a host with no isolation
+                    // backend withholds every stdio tool.
+                    registry.record_diagnostic(purrcode_runtime_core::AdmissionDiagnostic {
+                        source_path: None,
+                        subject: format!("mcp:{}", server.id),
+                        severity: purrcode_runtime_core::DiagnosticSeverity::Rejected,
+                        message: format!(
+                            "MCP server `{}` contributed no tools: {error}",
+                            server.id
+                        ),
+                        restricted_fields: Vec::new(),
+                    });
+                }
+            }
+        }
+    }
+    // ── Skills (v1.3 §4.4) ────────────────────────────────────────────
+    // An installed skill that declares entrypoints contributes one
+    // `skill:<id>/<entrypoint>` tool per entrypoint, admitted against the same
+    // ceiling as everything else. A purely instructional skill (SKILL.md with
+    // no scripts) contributes no tool at all — it is context, not capability —
+    // but it is still registered as a capability provider so `resolve()` can
+    // find it.
+    let mut output_schemas: BTreeMap<purrcode_runtime_core::ToolId, serde_json::Value> =
+        BTreeMap::new();
+    for skill in installed_skill_descriptors(state) {
+        for (name, relative) in &skill.descriptor.entrypoints {
+            let tool_id = purrcode_runtime_core::ToolId::skill(&skill.descriptor.skill_id, name);
+            if let Some(schema) = skill.descriptor.output_schema.clone() {
+                output_schemas.insert(tool_id.clone(), schema);
+            }
+            let _ = relative;
+            registry.admit_tool(skill.tool_proposal(name), &ceiling);
+        }
+        registry.admit_skill(skill.descriptor);
+    }
+    let cache = Arc::new(ToolRegistryCache {
+        registry: Arc::new(registry),
+        output_schemas: Arc::new(output_schemas),
+    });
+    state
+        .tool_registries
+        .write()
+        .await
+        .insert(repository.to_path_buf(), cache.clone());
+    cache
+}
+
+/// An installed skill, resolved to its on-disk root and its admitted-shape
+/// descriptor. This is the producer the `CapabilityRegistry` was missing:
+/// without it the registry held native + MCP tools only, and `ToolId::skill`
+/// had no caller in production.
+struct InstalledSkillDescriptor {
+    descriptor: purrcode_runtime_core::SkillDescriptor,
+    root: PathBuf,
+}
+
+impl InstalledSkillDescriptor {
+    /// The tool proposal for one of the skill's declared entrypoints.
+    ///
+    /// A skill script is arbitrary code, so the proposal is deliberately
+    /// conservative: `Execute`, no network, and read-only filesystem unless the
+    /// skill's approved permissions say otherwise. The ceiling narrows from
+    /// there; it never widens.
+    fn tool_proposal(&self, entrypoint: &str) -> purrcode_runtime_core::ToolDescriptorProposal {
+        purrcode_runtime_core::ToolDescriptorProposal {
+            id: purrcode_runtime_core::ToolId::skill(&self.descriptor.skill_id, entrypoint),
+            provider: purrcode_runtime_core::ToolProvider::Skill,
+            display_name: format!("{}/{entrypoint}", self.descriptor.skill_id),
+            description: self.descriptor.description.clone(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "arguments": { "type": "array", "items": { "type": "string" } }
+                }
+            }),
+            capabilities: self.descriptor.capabilities.clone(),
+            side_effect_class: purrcode_runtime_core::SideEffectClass::Execute,
+            network_scope: purrcode_runtime_core::NetworkScope::None,
+            filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+            approval_policy: purrcode_runtime_core::ApprovalPolicy::AlwaysAsk,
+            origin: purrcode_runtime_core::DescriptorOrigin::User,
+        }
+    }
+}
+
+/// Every installed, enabled skill as a `SkillDescriptor` plus its root.
+fn installed_skill_descriptors(state: &AppState) -> Vec<InstalledSkillDescriptor> {
+    let parent = state.database.parent().unwrap_or(Path::new("."));
+    let library = parent.join("skills");
+    let Ok(store) = SkillStore::open(&parent.join("skills.db"), &library) else {
+        return Vec::new();
+    };
+    let Ok(records) = store.list() else {
+        return Vec::new();
+    };
+    records
+        .into_iter()
+        .filter(|record| record.enabled)
+        .filter_map(|record| {
+            let root = library
+                .join(record.scope.to_string())
+                .join(&record.skill_id);
+            let manifest = purrcode_mcp_host::load_skill(&root).ok()?;
+            let instructions = std::fs::read_to_string(&manifest.instructions).ok()?;
+            let capabilities = store
+                .capabilities_of(&record.skill_id, &record.scope)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|raw| purrcode_runtime_core::CapabilityId::parse(raw).ok())
+                .collect();
+            // Entrypoints are derived from what is ON DISK and DECLARED, never
+            // from a self-asserted boolean: an entry whose target is missing or
+            // escapes the skill root is dropped.
+            let entrypoints = manifest
+                .manifest
+                .entrypoints
+                .iter()
+                .filter_map(|(name, relative)| {
+                    let path = root.join(relative).canonicalize().ok()?;
+                    let canonical_root = root.canonicalize().ok()?;
+                    (path.starts_with(&canonical_root) && path.is_file())
+                        .then_some((name.clone(), PathBuf::from(relative)))
+                })
+                .collect::<BTreeMap<String, PathBuf>>();
+            let descriptor = purrcode_runtime_core::SkillDescriptor {
+                skill_id: record.skill_id.clone(),
+                version: record.version.clone(),
+                layer: match record.scope {
+                    purrcode_skill_store::SkillScope::Session
+                    | purrcode_skill_store::SkillScope::Repository => {
+                        purrcode_runtime_core::ExtensionLayer::Project
+                    }
+                    purrcode_skill_store::SkillScope::User => {
+                        purrcode_runtime_core::ExtensionLayer::User
+                    }
+                },
+                description: manifest.manifest.name.clone(),
+                capabilities,
+                instructions,
+                requires_context: Vec::new(),
+                allowed_tools: Default::default(),
+                output_schema: manifest
+                    .manifest
+                    .qualification
+                    .as_ref()
+                    .and_then(|q| q.expected_output_schema.clone()),
+                entrypoints,
+                validation: None,
+                content_digest: record.content_digest.clone(),
+                descriptor_digest: blake3::hash(record.content_digest.as_bytes())
+                    .to_hex()
+                    .to_string(),
+                priority: 0,
+            };
+            Some(InstalledSkillDescriptor { descriptor, root })
+        })
+        .collect()
+}
+
+/// The redaction class that travels with a piece of tool evidence.
+///
+/// `RedactionClass::for_origin` is the base policy: a Builtin descriptor's
+/// evidence is safe to export verbatim, everything else has arguments and
+/// output redacted unless the bundle is explicitly marked sensitive. Structured
+/// output from a REMOTE-authored descriptor escalates to `Full`: the payload
+/// shape was defined by the server, so the exporter cannot reason about what is
+/// safe inside it and must strip everything but the ids.
+fn redaction_class_for(
+    descriptor: &purrcode_runtime_core::ToolDescriptor,
+    has_structured_output: bool,
+) -> purrcode_runtime_core::RedactionClass {
+    let base = purrcode_runtime_core::RedactionClass::for_origin(descriptor.origin());
+    if has_structured_output
+        && descriptor.origin() == purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery
+    {
+        purrcode_runtime_core::RedactionClass::Full
+    } else {
+        base
+    }
+}
+
+/// Trust-on-first-use for a descriptor being admitted into the generic tool
+/// registry — the same check the explicit `/mcp` endpoint performs, applied at
+/// admission so EVERY consumer of the registry inherits it instead of each
+/// executor re-implementing it.
+///
+/// A first sighting is recorded. A config-trusted tool approves its own pin
+/// (the admin's `trusted_tools` entry is the authority). A digest that differs
+/// from the approved one, or a revoked pin, is returned for the caller to
+/// forbid.
+fn pin_verdict_for_registry(
+    store: &mut SessionStore,
+    repository: &Path,
+    descriptor: &purrcode_runtime_core::ToolDescriptor,
+    config_trusted: bool,
+) -> Result<PinVerdict, StoreError> {
+    let tool_id = descriptor.id().as_str().to_owned();
+    let digest = descriptor.descriptor_digest().to_owned();
+    let verdict = store.pin_verdict(repository, &tool_id, &digest)?;
+    if verdict == PinVerdict::FirstUse {
+        let pin = ToolDescriptorPin {
+            project: repository.to_path_buf(),
+            tool_id: tool_id.clone(),
+            descriptor_digest: digest.clone(),
+            provider: "mcp".into(),
+            origin: "remote_discovery".into(),
+            side_effect_class: serde_json::to_string(&descriptor.side_effect_class())
+                .unwrap_or_else(|_| "null".into()),
+            network_scope: serde_json::to_string(&descriptor.network_scope())
+                .unwrap_or_else(|_| "null".into()),
+            filesystem_scope: serde_json::to_string(&descriptor.filesystem_scope())
+                .unwrap_or_else(|_| "null".into()),
+            approval_policy: serde_json::to_string(&descriptor.approval_policy())
+                .unwrap_or_else(|_| "null".into()),
+            first_seen_at: Utc::now(),
+            approved_at: None,
+            approved_by: None,
+            revoked_at: None,
+        };
+        store.record_pin_first_seen(&pin)?;
+        if config_trusted {
+            let authority = serde_json::to_string(&ApprovalAuthority::DeterministicPolicy)
+                .unwrap_or_else(|_| "null".into());
+            store.approve_pin(repository, &tool_id, &digest, &authority)?;
+        }
+    }
+    Ok(verdict)
+}
+
+/// The daemon's provider dispatch for registry tools (v1.3 PR B). Implements
+/// the agent-runtime `ToolExecutor` seam without pulling `mcp-host`/`skill-store`
+/// into agent-runtime. Native tools never reach here (they convert back to
+/// legacy actions in `normalize_action`); `Mcp` routes to `McpHost`, `Skill`
+/// routes to the skill runtime (PR C).
+struct DaemonToolExecutor {
+    state: AppState,
+    /// The EFFECTIVE registry for this turn (`CapabilityRegistry::for_agent`
+    /// when a profile is active). The executor must read the same descriptors
+    /// the model manifest and PawGate saw, or the digest it recomputes here
+    /// would not match the one that was authorized.
+    registry: Arc<purrcode_runtime_core::CapabilityRegistry>,
+    /// Declared output schemas, keyed by tool id. See `ToolRegistryCache`.
+    output_schemas: Arc<BTreeMap<purrcode_runtime_core::ToolId, serde_json::Value>>,
+}
+
+impl DaemonToolExecutor {
+    /// Accept a provider's structured result only if it satisfies the schema the
+    /// provider declared. An undeclared schema means no structured output: a
+    /// tool cannot claim findings status for output it never contracted to
+    /// produce, and a mismatch is dropped (the raw stdout is still recorded, so
+    /// nothing is hidden — it just does not become model-facing findings).
+    fn validated_structured_output(
+        &self,
+        tool_id: &purrcode_runtime_core::ToolId,
+        candidate: Option<serde_json::Value>,
+    ) -> (Option<serde_json::Value>, Option<String>) {
+        let Some(candidate) = candidate else {
+            return (None, None);
+        };
+        let Some(schema) = self.output_schemas.get(tool_id) else {
+            return (None, None);
+        };
+        match purrcode_runtime_core::validate_against_schema(&candidate, schema) {
+            Ok(()) => (Some(candidate), None),
+            Err(violation) => (
+                None,
+                Some(format!(
+                    "structured output from `{tool_id}` does not satisfy its declared \
+                     output_schema and was not attached as findings: {violation}"
+                )),
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
+    async fn execute_tool(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        action_id: ActionId,
+        invocation: &purrcode_runtime_core::ToolInvocation,
+        constraints: &purrcode_runtime_core::ActionConstraints,
+        context: &purrcode_agent_runtime::ToolExecutionContext,
+    ) -> Result<purrcode_agent_runtime::ToolExecutionOutcome, purrcode_agent_runtime::AgentError>
+    {
+        let started_at = Utc::now();
+        let provider = invocation.tool_id.provider();
+        let tool_id = invocation.tool_id.as_str();
+        // v1.3 PR B: the turn loop authorized this invocation binding the
+        // descriptor digest (digest_v3). Consume the authorization here, BEFORE
+        // dispatch, so the at-most-once guarantee holds exactly like the legacy
+        // ToolRuntime::execute path — a replayed action_id can never execute
+        // twice, and recovery/audit sees a consumed row.
+        let Some(descriptor) = self.registry.tool(&invocation.tool_id) else {
+            return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
+                format!("tool `{tool_id}` has no admitted descriptor; cannot authorize"),
+            ));
+        };
+        let proposed = purrcode_runtime_core::ProposedAction::Tool(invocation.clone());
+        let expected_digest = proposed
+            .digest_v3(constraints, descriptor.descriptor_digest())
+            .map_err(|error| {
+                purrcode_agent_runtime::AgentError::InvalidModelTurn(error.to_string())
+            })?;
+        let consumed = store
+            .consume_authorization(action_id, &expected_digest)
+            .map_err(|error| {
+                purrcode_agent_runtime::AgentError::InvalidModelTurn(format!(
+                    "tool `{tool_id}` authorization is missing, mismatched, or already consumed: {error}"
+                ))
+            })?;
+        if consumed.constraints != *constraints {
+            return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(
+                "tool authorization constraints mismatch".into(),
+            ));
+        }
+        // From here on the invocation IS authorized, so it gets evidence
+        // whatever happens to it — including a dispatch that fails. The
+        // architecture's record is "one per authorized invocation"; returning
+        // early on an MCP transport error with no evidence meant the one class
+        // of event an operator most wants to see (an authorized external tool
+        // that tried to run and failed) was the one class that left no trace.
+        let evidence_base =
+            |outcome: purrcode_runtime_core::ExecutionOutcome,
+             structured_output: Option<serde_json::Value>| {
+                Box::new(purrcode_runtime_core::ExecutionEvidence {
+                    action_id,
+                    session_id,
+                    turn_id,
+                    tool_id: invocation.tool_id.clone(),
+                    provider,
+                    descriptor_digest: descriptor.descriptor_digest().to_owned(),
+                    decision: purrcode_runtime_core::JudgmentDecision::AllowWithConstraints(
+                        constraints.clone(),
+                    ),
+                    // The REAL authority, read back from the authorization that was
+                    // just consumed. Hard-coding `DeterministicPolicy` made every
+                    // human-approved AlwaysAsk tool claim a policy had allowed it.
+                    approved_by: consumed.approved_by.clone(),
+                    constraints: constraints.clone(),
+                    effective_network_scope: descriptor.network_scope().clone(),
+                    effective_filesystem_scope: descriptor.filesystem_scope().clone(),
+                    // WHO asked, from the caller. A hook, a person and the model are
+                    // three different answers and the executor cannot guess.
+                    initiator: context.initiator.clone(),
+                    outcome,
+                    structured_output,
+                    // The redaction class travels WITH the evidence rather than
+                    // being inferred from an event-type table downstream: the
+                    // bundle exporter must be able to decide what to strip from a
+                    // structured payload it has never seen a shape for.
+                    redaction_class: redaction_class_for(descriptor, false),
+                    started_at,
+                    finished_at: Utc::now(),
+                })
+            };
+        macro_rules! fail_dispatch {
+            ($reason:expr) => {{
+                let reason: String = $reason;
+                let evidence = evidence_base(
+                    purrcode_runtime_core::ExecutionOutcome::Failed {
+                        reason: reason.clone(),
+                        exit_code: None,
+                    },
+                    None,
+                );
+                let _ = store.record_tool_evidence(&evidence);
+                let _ = store.append(session_id, &SessionEvent::ToolEvidenceRecorded { evidence });
+                return Err(purrcode_agent_runtime::AgentError::InvalidModelTurn(reason));
+            }};
+        }
+        // MCP tools dispatch to the isolated MCP host. The authorization is
+        // already consumed above, so the raw `call_authorized` path applies.
+        let mut structured_candidate: Option<serde_json::Value> = None;
+        let (stdout, stderr, exit_code) = match provider {
+            purrcode_runtime_core::ToolProvider::Mcp => {
+                let Some((server_id, tool_name)) = invocation.tool_id.mcp_parts() else {
+                    fail_dispatch!(format!("malformed mcp tool id `{tool_id}`"));
+                };
+                let config = AppConfig::load(&self.state.app_config)
+                    .ok()
+                    .and_then(|config| mcp_section(&config).ok())
+                    .and_then(|section| section.servers.get(server_id).cloned());
+                let Some(server) = config else {
+                    fail_dispatch!(format!("mcp server `{server_id}` is not configured"));
+                };
+                // Bind the SERVER to the scope PawGate just authorized.
+                //
+                // The host derives the child's cwd, its sandbox grant, and its
+                // timeout/output caps from the server config. Dispatching with
+                // the raw config means a server configured against some other
+                // directory runs there — while the approval card, the
+                // constraints and the evidence all say "the session worktree",
+                // and `validate_effect_delta` (which only diffs the worktree)
+                // reports that nothing changed. The legacy `/mcp` endpoint
+                // refuses that mismatch outright; the generic path closes it by
+                // making the authorized scope the one that is enforced.
+                let server = McpServerConfig {
+                    working_directory: constraints.working_directory.clone(),
+                    network: server.network && constraints.network,
+                    timeout_seconds: server.timeout_seconds.min(constraints.timeout_seconds),
+                    maximum_output_bytes: server
+                        .maximum_output_bytes
+                        .min(constraints.maximum_output_bytes),
+                    ..server
+                };
+                match McpHost::call_authorized(&server, tool_name, &invocation.arguments).await {
+                    Ok(result) => {
+                        // MCP returns structured results in `structuredContent`
+                        // when the tool declared an `outputSchema`. That is the
+                        // findings payload; the pretty-printed value stays as
+                        // stdout so the raw result is still auditable.
+                        structured_candidate = result
+                            .value
+                            .get("structuredContent")
+                            .cloned()
+                            .filter(|value| !value.is_null());
+                        let stdout = serde_json::to_string_pretty(&result.value)
+                            .unwrap_or_else(|_| result.value.to_string());
+                        (stdout, result.stderr, Some(0))
+                    }
+                    Err(error) => {
+                        fail_dispatch!(format!("mcp tool `{tool_id}` failed: {error}"));
+                    }
+                }
+            }
+            purrcode_runtime_core::ToolProvider::Skill => {
+                // `skill:<skill_id>/<entrypoint>`. The entrypoint must be
+                // DECLARED in the skill's manifest and resolve inside the
+                // canonical skill root — the same containment rule dynamic
+                // qualification applies — and it runs through Claw with the
+                // exact constraints PawGate authorized above, so a skill script
+                // is bounded by the same sandbox as any other command.
+                let rest = tool_id.strip_prefix("skill:").unwrap_or_default();
+                let Some((skill_id, entrypoint)) = rest.split_once('/') else {
+                    fail_dispatch!(format!("malformed skill tool id `{tool_id}`"));
+                };
+                let Some(skill) = installed_skill_descriptors(&self.state)
+                    .into_iter()
+                    .find(|skill| skill.descriptor.skill_id == skill_id)
+                else {
+                    fail_dispatch!(format!(
+                        "skill `{skill_id}` is not installed or is disabled"
+                    ));
+                };
+                let Some(relative) = skill.descriptor.entrypoints.get(entrypoint) else {
+                    fail_dispatch!(format!(
+                        "skill `{skill_id}` declares no entrypoint `{entrypoint}`"
+                    ));
+                };
+                let canonical_root = match skill.root.canonicalize() {
+                    Ok(root) => root,
+                    Err(error) => fail_dispatch!(format!(
+                        "skill root for `{skill_id}` is unavailable: {error}"
+                    )),
+                };
+                let Some(program) = canonical_root
+                    .join(relative)
+                    .canonicalize()
+                    .ok()
+                    .filter(|path| path.starts_with(&canonical_root))
+                else {
+                    fail_dispatch!(format!(
+                        "skill entrypoint `{entrypoint}` escapes the skill root"
+                    ));
+                };
+                let arguments: Vec<String> = invocation
+                    .arguments
+                    .get("arguments")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|value| value.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let action = purrcode_runtime_core::ProposedAction::Command(
+                    purrcode_runtime_core::CommandAction {
+                        program,
+                        arguments,
+                        working_directory: constraints.working_directory.clone(),
+                        environment: BTreeMap::new(),
+                    },
+                );
+                let result = match purrcode_claw::ToolRuntime::execute_authorized(
+                    &action,
+                    constraints,
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        fail_dispatch!(format!("skill tool `{tool_id}` failed: {error}"))
+                    }
+                };
+                let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+                structured_candidate = serde_json::from_str::<serde_json::Value>(&stdout).ok();
+                (stdout, stderr, result.exit_code)
+            }
+            purrcode_runtime_core::ToolProvider::Native => {
+                // The only native tool that reaches the executor is
+                // `native:commit` (every other native tool converts back to a
+                // legacy action in normalize_action). It runs a whitelisted
+                // `git add` + `git commit` inside the session worktree.
+                if invocation.tool_id.as_str() != "native:commit" {
+                    fail_dispatch!(format!(
+                        "native tool `{tool_id}` must flow through the legacy action path"
+                    ));
+                }
+                let Some(message) = invocation
+                    .arguments
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    fail_dispatch!("native:commit requires a `message` argument".to_string());
+                };
+                let paths: Vec<String> = invocation
+                    .arguments
+                    .get("paths")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|v| v.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let worktree = &constraints.working_directory;
+                // Whitelisted commit: `git add` the declared paths (or all)
+                // then `git commit`. Paths are passed as literal arguments so
+                // a hook or the model cannot smuggle shell syntax through.
+                let add_paths = if paths.is_empty() {
+                    vec!["-A".to_string()]
+                } else {
+                    paths
+                };
+                let add_status = match tokio::process::Command::new("git")
+                    .arg("add")
+                    .args(&add_paths)
+                    .current_dir(worktree)
+                    .status()
+                    .await
+                {
+                    Ok(status) => status,
+                    Err(error) => fail_dispatch!(format!("git add failed: {error}")),
+                };
+                if !add_status.success() {
+                    fail_dispatch!("git add failed; commit aborted".to_string());
+                }
+                let commit_output = match tokio::process::Command::new("git")
+                    .arg("commit")
+                    .arg("-m")
+                    .arg(message)
+                    .current_dir(worktree)
+                    .output()
+                    .await
+                {
+                    Ok(output) => output,
+                    Err(error) => fail_dispatch!(format!("git commit failed: {error}")),
+                };
+                if !commit_output.status.success() {
+                    fail_dispatch!(format!(
+                        "git commit failed: {}",
+                        String::from_utf8_lossy(&commit_output.stderr)
+                    ));
+                }
+                let stdout = String::from_utf8_lossy(&commit_output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&commit_output.stderr).to_string();
+                (stdout, stderr, Some(0))
+            }
+        };
+        // The provider's structured result becomes findings only if it
+        // satisfies the schema the provider declared.
+        let (structured_output, schema_error) =
+            self.validated_structured_output(&invocation.tool_id, structured_candidate);
+        let stderr = match schema_error {
+            Some(message) if stderr.is_empty() => message,
+            Some(message) => format!("{stderr}\n{message}"),
+            None => stderr,
+        };
+        // Durable tool evidence (v1.3 PR B), handed BACK rather than written
+        // here. The descriptor digest is bound into the authorization digest,
+        // so this records exactly what was judged — but the outcome and the
+        // affected paths are not known yet. Writing `Succeeded { affected_paths:
+        // [] }` at this point is what made a write-capable skill's evidence say
+        // it changed nothing. The caller finalizes it after the effect delta.
+        let mut evidence = evidence_base(
+            purrcode_runtime_core::ExecutionOutcome::Failed {
+                reason: "execution did not complete".into(),
+                exit_code: None,
+            },
+            structured_output.clone(),
+        );
+        evidence.redaction_class = redaction_class_for(descriptor, structured_output.is_some());
+        Ok(purrcode_agent_runtime::ToolExecutionOutcome {
+            stdout,
+            stderr,
+            exit_code,
+            truncated: false,
+            affected_paths: Vec::new(),
+            structured_output,
+            evidence: Some(evidence),
+        })
+    }
+}
+
+/// The daemon's governed-hook lifecycle dispatcher (v1.3 §8 PR6). Implements
+/// the agent-runtime `HookEvaluator` seam: it loads the session's hook set
+/// from the repository extension cache, judges each hook's `HookAction::Tool`
+/// through `Policy::evaluate_tool` against the admitted descriptor, and
+/// executes it through the `ToolExecutor`. Returns `true` when a blocking hook
+/// aborted the turn.
+struct DaemonHookEvaluator {
+    state: AppState,
+    repository: PathBuf,
+    /// The EFFECTIVE registry for this session — `CapabilityRegistry::for_agent`
+    /// when a profile is active.
+    ///
+    /// The evaluator used to re-fetch the unnarrowed workspace registry, so a
+    /// project-declared hook could resolve and execute a tool the active
+    /// profile's ceiling forbids: a session run under a read-only reviewer
+    /// profile would still let a checked-in `after_agent_complete` hook invoke a
+    /// pre-authorized MCP tool. A hook is project-supplied, therefore untrusted,
+    /// therefore bounded by the same ceiling as anything the model proposes.
+    registry: Arc<purrcode_runtime_core::CapabilityRegistry>,
+    output_schemas: Arc<BTreeMap<purrcode_runtime_core::ToolId, serde_json::Value>>,
+}
+
+#[async_trait]
+impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
+    async fn dispatch(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        trigger: purrcode_runtime_core::HookTrigger,
+        depth: u8,
+        completed: &BTreeSet<String>,
+    ) -> Result<purrcode_agent_runtime::HookOutcome, purrcode_agent_runtime::AgentError> {
+        // Hooks act on the session worktree (the tree the agent is changing),
+        // falling back to the source repository when the session has no
+        // worktree yet. This keeps hook tools inside the same isolation model
+        // as the agent's own actions — never the source checkout mid-turn.
+        let working_directory = store
+            .load(session_id)
+            .ok()
+            .and_then(|session| session.worktree)
+            .unwrap_or_else(|| self.repository.clone());
+        let set = load_extension_set(&self.state, &self.repository).await;
+        let hooks: Vec<purrcode_runtime_core::HookDescriptor> = set
+            .hooks
+            .iter()
+            .filter(|hook| hook.trigger == trigger)
+            .cloned()
+            .collect();
+        if hooks.is_empty() {
+            return Ok(purrcode_agent_runtime::HookOutcome::Continued);
+        }
+        let config = AppConfig::load(&self.state.app_config).ok();
+        let policy = match config {
+            Some(config) => {
+                effective_policy(&config, &self.repository).unwrap_or_else(|_| Policy::default())
+            }
+            None => Policy::default(),
+        };
+        // Resolution happens ONCE, before anything is judged: a `HookAction`
+        // becomes a concrete `ToolInvocation` or it is denied with a reason.
+        // Judging one shape and executing another is what let a capability hook
+        // be recorded as "succeeded" without ever running.
+        let resolve_closure = {
+            let registry = self.registry.clone();
+            let worktree = working_directory.clone();
+            move |hook: &purrcode_runtime_core::HookDescriptor| -> crate::hooks::ResolvedHookAction {
+                let (tool_id, arguments) = match &hook.action {
+                    purrcode_runtime_core::HookAction::Tool { tool_id, arguments } => {
+                        (tool_id.clone(), arguments.clone())
+                    }
+                    // A capability hook names an INTENT; the registry resolves
+                    // it to a concrete provider. Only a Tool provider is
+                    // executable as a hook — an agent or command provider would
+                    // start a nested turn, which the hook lifecycle has no
+                    // reentrancy story for — so anything else is denied with a
+                    // reason that says which provider it resolved to.
+                    purrcode_runtime_core::HookAction::Capability { id } => {
+                        let providers = registry.resolve(id);
+                        let Some(provider) = providers.first() else {
+                            return Err(format!(
+                                "hook `{}` names capability `{id}`, which no admitted provider \
+                                 satisfies",
+                                hook.id
+                            ));
+                        };
+                        match provider {
+                            purrcode_runtime_core::CapabilityProvider::Tool { tool_id, .. } => {
+                                (tool_id.clone(), serde_json::json!({}))
+                            }
+                            other => {
+                                return Err(format!(
+                                    "hook `{}` resolved capability `{id}` to a {} provider; only \
+                                     tool providers are executable from a hook",
+                                    hook.id,
+                                    match other {
+                                        purrcode_runtime_core::CapabilityProvider::Agent {
+                                            ..
+                                        } => "agent",
+                                        purrcode_runtime_core::CapabilityProvider::Skill {
+                                            ..
+                                        } => "skill",
+                                        _ => "command",
+                                    }
+                                ));
+                            }
+                        }
+                    }
+                };
+                // A hook can only invoke a REGISTERED tool, and the invocation
+                // must carry the REGISTERED TOOL's descriptor digest — that is
+                // what the executor recomputes to consume the authorization,
+                // so the hook file's own digest would produce an authorization
+                // nothing can consume.
+                let Some(descriptor) = registry.tool(&tool_id) else {
+                    return Err(format!(
+                        "hook `{}` references unregistered tool `{tool_id}`",
+                        hook.id
+                    ));
+                };
+                Ok(purrcode_runtime_core::ToolInvocation {
+                    tool_id,
+                    arguments,
+                    working_directory: worktree.clone(),
+                    descriptor_digest: descriptor.descriptor_digest().to_owned(),
+                })
+            }
+        };
+        let evaluate_closure = {
+            let registry = self.registry.clone();
+            let worktree = working_directory.clone();
+            let policy = policy.clone();
+            move |hook: &purrcode_runtime_core::HookDescriptor,
+                  invocation: &purrcode_runtime_core::ToolInvocation| {
+                let Some(descriptor) = registry.tool(&invocation.tool_id) else {
+                    return JudgmentDecision::Deny {
+                        reason: format!(
+                            "hook `{}` references unregistered tool `{}`",
+                            hook.id, invocation.tool_id
+                        ),
+                    };
+                };
+                policy.evaluate_tool(
+                    &purrcode_runtime_core::ProposedAction::Tool(invocation.clone()),
+                    descriptor,
+                    &worktree,
+                )
+            }
+        };
+        // Judge + audit each hook synchronously (no borrow-across-await trap),
+        // then execute the PawGate-allowed hooks' tools with a fresh store borrow
+        // through the ToolExecutor.
+        let crate::hooks::HookDispatch {
+            outcomes,
+            to_execute,
+            aborted,
+            suspension,
+        } = crate::hooks::dispatch_hooks(
+            store,
+            session_id,
+            trigger,
+            &hooks,
+            depth,
+            completed,
+            &resolve_closure,
+            &evaluate_closure,
+        );
+        let executor = DaemonToolExecutor {
+            state: self.state.clone(),
+            registry: self.registry.clone(),
+            output_schemas: self.output_schemas.clone(),
+        };
+        for execution in to_execute {
+            let action_id = ActionId::new();
+            // Authorize the hook's allowed tool exactly like a model-proposed
+            // invocation: bind the registered tool's descriptor digest
+            // (digest_v3) so the executor's consume_authorization matches and
+            // at-most-once holds.
+            let proposed =
+                purrcode_runtime_core::ProposedAction::Tool(execution.invocation.clone());
+            let digest = proposed
+                .digest_v3(
+                    &execution.constraints,
+                    &execution.invocation.descriptor_digest,
+                )
+                .unwrap_or_else(|_| proposed.digest(&execution.constraints).unwrap_or_default());
+            let _ = store.authorize(&Authorization {
+                action_id,
+                session_id,
+                action_digest: digest,
+                constraints: execution.constraints.clone(),
+                authorized_at: Utc::now(),
+                approved_by: ApprovalAuthority::DeterministicPolicy,
+            });
+            // The hook is the initiator, not the model. `EvidenceInitiator::Hook`
+            // exists precisely so an audit trail can say "the security scanner
+            // ran this", and stamping it as Model made hook activity
+            // indistinguishable from something the model chose to do.
+            let context = purrcode_agent_runtime::ToolExecutionContext::hook(
+                execution.hook_id.clone(),
+                trigger,
+            );
+            let (hook_status, evidence, outcome) = match executor
+                .execute_tool(
+                    store,
+                    session_id,
+                    None,
+                    action_id,
+                    &execution.invocation,
+                    &execution.constraints,
+                    &context,
+                )
+                .await
+            {
+                Ok(result) => {
+                    let outcome = purrcode_runtime_core::ExecutionOutcome::from_execution(
+                        result.exit_code,
+                        result.truncated,
+                        result.affected_paths.clone(),
+                    );
+                    let status = if matches!(
+                        outcome,
+                        purrcode_runtime_core::ExecutionOutcome::Succeeded { .. }
+                    ) {
+                        "succeeded"
+                    } else {
+                        "failed"
+                    };
+                    (status, result.evidence, Some(outcome))
+                }
+                // A dispatch failure records its own `Failed` evidence inside
+                // the executor, where the consumed authority is in hand.
+                Err(_) => ("failed", None, None),
+            };
+            if let (Some(mut evidence), Some(outcome)) = (evidence, outcome) {
+                evidence.outcome = outcome;
+                evidence.finished_at = Utc::now();
+                let _ = store.record_tool_evidence(&evidence);
+                let _ = store.append(session_id, &SessionEvent::ToolEvidenceRecorded { evidence });
+            }
+            let _ = crate::hooks::record_completed_hook_run(
+                store,
+                session_id,
+                &execution,
+                trigger,
+                hook_status,
+            );
+        }
+        // A blocking hook that denied or failed aborts the turn. A hook waiting
+        // on approval also stops the turn, but it is a PAUSE, not a failure:
+        // the session is left in `AwaitingApproval` with a durable pending
+        // action, and approving it runs the hook exactly once (the executor
+        // consumes the authorization) and the chain resumes from there. The two
+        // are reported distinctly so the user is told which one happened.
+        if aborted || outcomes.iter().any(crate::hooks::HookRunOutcome::aborted) {
+            return Ok(purrcode_agent_runtime::HookOutcome::Aborted);
+        }
+        if let Some(suspension) = suspension {
+            return Ok(purrcode_agent_runtime::HookOutcome::Suspended(
+                purrcode_agent_runtime::HookSuspension {
+                    hook_id: suspension.hook_id,
+                    hook_action_id: suspension.hook_action_id,
+                    reason: suspension.reason,
+                    completed_hooks: suspension.completed_hooks,
+                },
+            ));
+        }
+        Ok(purrcode_agent_runtime::HookOutcome::Continued)
+    }
+}
+
+/// v1.3 §7: every parse error and every clamped field, for a repository.
+async fn extension_diagnostics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let set = load_extension_set(&state, &repository).await;
+    Ok(Json(serde_json::json!({ "diagnostics": set.diagnostics })))
+}
+
+#[derive(Deserialize)]
+struct ExtensionReloadRequest {
+    #[serde(default)]
+    repository: String,
+}
+
+/// v1.3 §7: invalidate the per-repository extension cache so the next load
+/// re-reads `.purrcode/` from disk.
+async fn extension_reload(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ExtensionReloadRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(request.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    state.extensions.write().await.remove(&repository);
+    state.tool_registries.write().await.remove(&repository);
+    Ok(Json(serde_json::json!({ "reloaded": true })))
+}
+
+/// v1.3 §7: list the admitted agent profiles for a repository, with the
+/// restricted descriptors. `?repository=` is required to scope.
+async fn list_agents(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let set = load_extension_set(&state, &repository).await;
+    let agents: Vec<serde_json::Value> = set
+        .admitted_agents
+        .values()
+        .map(|descriptor| {
+            serde_json::json!({
+                "name": descriptor.name(),
+                "description": descriptor.description(),
+                "model_role": descriptor.model_role().map(|r| r.as_str()),
+                "system_prompt": descriptor.system_prompt(),
+                "tool_selection": descriptor.tool_selection().describe(),
+                "allowed_skills": descriptor.allowed_skills().iter().collect::<Vec<_>>(),
+                "ceiling": descriptor.ceiling(),
+            })
+        })
+        .collect();
+    Ok(Json(
+        serde_json::json!({ "agents": agents, "diagnostics": set.diagnostics }),
+    ))
+}
+
+/// v1.3 §7: list the governed hooks declared for a repository.
+async fn list_hooks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let set = load_extension_set(&state, &repository).await;
+    Ok(Json(serde_json::json!({
+        "hooks": set.hooks.iter().map(|hook| serde_json::json!({
+            "id": hook.id,
+            "layer": hook.layer,
+            "trigger": hook.trigger,
+            "path_filter": hook.path_filter,
+            "blocking": hook.blocking,
+            "action": hook.action,
+        })).collect::<Vec<_>>(),
+        "diagnostics": set.diagnostics,
+    })))
+}
+
+/// v1.3 §9: approve the currently-seen remote tool descriptor for a
+/// repository, making it an approved pin. `?repository=` scopes the pin.
+async fn approve_tool_pin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+    AxumPath(tool_id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let mut store = SessionStore::open(&state.database)?;
+    // The tool must already have been seen (a first-seen pin row exists). The
+    // approval uses the digest recorded at first sighting, so a changed remote
+    // descriptor cannot be approved against a stale pin.
+    let Some(digest) = store
+        .pin_digest(&repository, &tool_id)
+        .map_err(|error| ApiError::Conflict(error.to_string()))?
+    else {
+        return Err(ApiError::NotFound);
+    };
+    let authority =
+        serde_json::to_string(&ApprovalAuthority::Human).unwrap_or_else(|_| "null".into());
+    let approved = store
+        .approve_pin(&repository, &tool_id, &digest, &authority)
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    Ok(Json(
+        serde_json::json!({ "approved": approved, "tool_id": tool_id }),
+    ))
+}
+
+/// v1.3 §9: revoke a remote tool descriptor pin, hard-forbidding the tool
+/// until it is re-approved.
+async fn revoke_tool_pin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ExtensionQuery>,
+    AxumPath(tool_id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let repository = PathBuf::from(query.repository)
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository must be an absolute existing path".into()))?;
+    let mut store = SessionStore::open(&state.database)?;
+    store
+        .revoke_pin(&repository, &tool_id)
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    Ok(Json(
+        serde_json::json!({ "revoked": true, "tool_id": tool_id }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct ListMemoryQuery {
+    #[serde(default)]
+    repository: String,
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+/// Lists durable project memory for a repository, grouped by kind. Entries
+/// carry their provenance (source, confidence, scope) so knowledge is
+/// auditable rather than a black box.
+async fn list_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ListMemoryQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    if query.repository.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "repository is required to scope project memory".into(),
+        ));
+    }
+    let repository = std::path::PathBuf::from(&query.repository);
+    let repository = repository.canonicalize().unwrap_or(repository);
+    let store = state.store.lock().await;
+    let entries = store.memory(&repository, query.kind.as_deref())?;
+    let mut grouped: BTreeMap<String, Vec<ProjectMemoryEntry>> = BTreeMap::new();
+    for entry in entries {
+        grouped.entry(entry.kind.clone()).or_default().push(entry);
+    }
+    Ok(Json(serde_json::json!({ "entries": grouped })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateMemoryRequest {
+    repository: std::path::PathBuf,
+    kind: String,
+    content: String,
+    /// Where this knowledge came from — a session title, a doc, the user.
+    source: String,
+    #[serde(default = "default_memory_scope")]
+    scope: String,
+}
+
+fn default_memory_scope() -> String {
+    "repository".into()
+}
+
+fn default_memory_confidence() -> String {
+    "unverified".into()
+}
+
+/// Creates a user-authored project memory entry. Content is secret-scanned so
+/// credentials never enter durable knowledge.
+async fn create_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateMemoryRequest>,
+) -> Result<Json<ProjectMemoryEntry>, ApiError> {
+    authorize(&state, &headers)?;
+    if request.content.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "memory content must be a non-empty string".into(),
+        ));
+    }
+    if request.kind.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "memory kind must be a non-empty string".into(),
+        ));
+    }
+    reject_secret_content(&request.content)?;
+    let repository = request
+        .repository
+        .canonicalize()
+        .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
+    let entry = ProjectMemoryEntry {
+        id: Uuid::new_v4(),
+        repository,
+        kind: request.kind,
+        content: request.content,
+        source: request.source,
+        confidence: default_memory_confidence(),
+        scope: request.scope,
+        created_at: Utc::now(),
+        last_used_at: None,
+    };
+    state.store.lock().await.insert_memory(&entry)?;
+    Ok(Json(entry))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateMemoryRequest {
+    content: String,
+}
+
+/// Edits a memory entry's content, preserving its provenance.
+async fn update_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<UpdateMemoryRequest>,
+) -> Result<Json<ProjectMemoryEntry>, ApiError> {
+    authorize(&state, &headers)?;
+    if request.content.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "memory content must be a non-empty string".into(),
+        ));
+    }
+    reject_secret_content(&request.content)?;
+    let id = Uuid::parse_str(&id).map_err(|_| ApiError::NotFound)?;
+    let mut store = state.store.lock().await;
+    store.update_memory_content(id, &request.content)?;
+    let entry = store.memory_entry(id).map_err(|error| match error {
+        StoreError::MemoryNotFound(_) => ApiError::NotFound,
+        error => ApiError::Store(error),
+    })?;
+    Ok(Json(entry))
+}
+
+/// Forgets a memory entry. Removal is explicit and does not silently recur.
+async fn forget_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let id = Uuid::parse_str(&id).map_err(|_| ApiError::NotFound)?;
+    state
+        .store
+        .lock()
+        .await
+        .forget_memory(id)
+        .map_err(|error| match error {
+            StoreError::MemoryNotFound(_) => ApiError::NotFound,
+            error => ApiError::Store(error),
+        })?;
+    Ok(Json(
+        serde_json::json!({"id": id.to_string(), "forgotten": true}),
+    ))
+}
+
+// ── Language intelligence (LSP client) ──────────────────────────────
+
+/// Reports which language servers are available on this machine and the
+/// languages they cover, so the IDE settings can show what intelligence is on.
+async fn list_lsp_servers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let available = state.lsp.lock().await.available_servers();
+    Ok(Json(serde_json::json!({ "servers": available })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LspDocumentRequest {
+    /// Absolute path of the document to reason about.
+    path: PathBuf,
+    /// The project root to start the language server in. Optional so existing
+    /// callers keep working, but supplying it matters: see [`lsp_root`].
+    #[serde(default)]
+    root: Option<PathBuf>,
+    /// Optional text content for open/format (the full current file).
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    language_id: Option<String>,
+    #[serde(default)]
+    position: Option<LspPosition>,
+    /// The replacement identifier, for `textDocument/rename`.
+    #[serde(default)]
+    new_name: Option<String>,
+    /// The search string, for `workspace/symbol`.
+    #[serde(default)]
+    query: Option<String>,
+}
+
+/// How long to wait for a language server to push diagnostics before
+/// answering. Analysis is asynchronous, so this is a courtesy window, not a
+/// guarantee that analysis finished.
+const DIAGNOSTIC_BUDGET: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// The directory a language server should be started in.
+///
+/// The document's own parent directory is the wrong answer for every
+/// project-aware server: rust-analyzer started in `crates/foo/src/app` sees no
+/// workspace, resolves no dependencies, and returns nothing useful. Worse, the
+/// manager caches one server per language, so whichever file was opened first
+/// would pin that root for the rest of the session.
+///
+/// So: honour an explicit root when the caller knows it, otherwise walk up
+/// looking for a project marker, and only fall back to the parent directory
+/// when there is no marker to be found.
+fn lsp_root(body: &LspDocumentRequest) -> Result<PathBuf, ApiError> {
+    if let Some(root) = &body.root {
+        return root
+            .canonicalize()
+            .map_err(|_| ApiError::BadRequest("project root does not exist".into()));
+    }
+    let start = body
+        .path
+        .parent()
+        .ok_or_else(|| ApiError::BadRequest("document has no parent directory".into()))?;
+    const MARKERS: &[&str] = &[
+        ".git",
+        "Cargo.toml",
+        "package.json",
+        "go.mod",
+        "pyproject.toml",
+        "tsconfig.json",
+    ];
+    let mut cursor = Some(start);
+    while let Some(directory) = cursor {
+        if MARKERS.iter().any(|marker| directory.join(marker).exists()) {
+            return Ok(directory.to_path_buf());
+        }
+        cursor = directory.parent();
+    }
+    Ok(start.to_path_buf())
+}
+
+/// Opens a document in its language server, enabling hover/definition/etc.
+async fn lsp_open(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let text = body.text.clone().unwrap_or_default();
+    let language_id = body
+        .language_id
+        .clone()
+        .unwrap_or_else(|| language_id_for(&body.path));
+    state
+        .lsp
+        .lock()
+        .await
+        .open(&body.path, &root, &language_id, &text)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(
+        serde_json::json!({ "opened": path_to_uri(&body.path) }),
+    ))
+}
+
+async fn lsp_hover(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let position = body
+        .position
+        .clone()
+        .ok_or_else(|| ApiError::BadRequest("hover requires a position".into()))?;
+    let hover = state
+        .lsp
+        .lock()
+        .await
+        .hover(&body.path, &root, position)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&hover).unwrap_or_default()))
+}
+
+async fn lsp_definition(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let position = body
+        .position
+        .clone()
+        .ok_or_else(|| ApiError::BadRequest("definition requires a position".into()))?;
+    let definitions = state
+        .lsp
+        .lock()
+        .await
+        .definition(&body.path, &root, position)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&definitions).unwrap_or_default()))
+}
+
+async fn lsp_references(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let position = body
+        .position
+        .clone()
+        .ok_or_else(|| ApiError::BadRequest("references requires a position".into()))?;
+    let references = state
+        .lsp
+        .lock()
+        .await
+        .references(&body.path, &root, position)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&references).unwrap_or_default()))
+}
+
+async fn lsp_symbols(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let symbols = state
+        .lsp
+        .lock()
+        .await
+        .symbols(&body.path, &root)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&symbols).unwrap_or_default()))
+}
+
+/// Searches the whole project for symbols matching a query — the backing
+/// contract for workspace-wide "go to symbol". `path` names any file in the
+/// project, which is how the right language server is chosen.
+async fn lsp_workspace_symbols(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let query = body.query.clone().unwrap_or_default();
+    let symbols = state
+        .lsp
+        .lock()
+        .await
+        .workspace_symbols(&body.path, &root, &query)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&symbols).unwrap_or_default()))
+}
+
+/// Renames the symbol under the cursor across the project.
+///
+/// This returns the edits; it does **not** write them. Applying them is a
+/// mutation the user reviews like any other change, so the edit set travels
+/// back through the normal review path instead of being applied behind the
+/// user's back.
+async fn lsp_rename(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let position = body
+        .position
+        .clone()
+        .ok_or_else(|| ApiError::BadRequest("rename requires a position".into()))?;
+    let new_name = body
+        .new_name
+        .clone()
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| ApiError::BadRequest("rename requires a new name".into()))?;
+    let edit = state
+        .lsp
+        .lock()
+        .await
+        .rename(&body.path, &root, position, &new_name)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&edit).unwrap_or_default()))
+}
+
+/// The diagnostics a language server has published for one document.
+///
+/// Diagnostics are pushed by the server whenever it finishes analysing, so
+/// this reports what has arrived rather than forcing a fresh analysis. The
+/// `published` flag exists so the UI can distinguish "this file is clean" from
+/// "the server has not said anything about this file yet" — rendering the
+/// second as a clean bill of health would be a lie.
+async fn lsp_diagnostics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let mut lsp = state.lsp.lock().await;
+    // Opening is idempotent and is what makes a server start analysing, so a
+    // caller that asks for diagnostics on a file it has not opened still gets
+    // an answer instead of silence.
+    if let Some(text) = body.text.clone() {
+        let language_id = body
+            .language_id
+            .clone()
+            .unwrap_or_else(|| language_id_for(&body.path));
+        let _ = lsp.open(&body.path, &root, &language_id, &text).await;
+    }
+    let diagnostics = lsp
+        .diagnostics(&body.path, &root, DIAGNOSTIC_BUDGET)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "path": body.path,
+        "published": !diagnostics.is_empty(),
+        "diagnostics": diagnostics,
+    })))
+}
+
+/// Every document any live language server has published diagnostics for.
+///
+/// This is the Problems panel's feed. It reports only what servers have
+/// already published: a project whose servers are still warming up shows
+/// fewer problems than it has, and the panel says so rather than implying the
+/// project is clean.
+async fn lsp_all_diagnostics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let files = state
+        .lsp
+        .lock()
+        .await
+        .all_diagnostics(DIAGNOSTIC_BUDGET)
+        .await;
+    let total: usize = files.iter().map(|file| file.diagnostics.len()).sum();
+    Ok(Json(serde_json::json!({
+        "files": files,
+        "total": total,
+    })))
+}
+
+async fn lsp_format(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LspDocumentRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let root = lsp_root(&body)?;
+    let edits = state
+        .lsp
+        .lock()
+        .await
+        .format(&body.path, &root)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(serde_json::to_value(&edits).unwrap_or_default()))
+}
+
+fn language_id_for(path: &Path) -> String {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("plaintext")
+        .to_owned()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AssignModelRoleRequest {
     role: String,
     model: String,
@@ -7929,7 +11843,14 @@ fn append_exact_approval_proposal(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     store.append(
         session_id,
-        &SessionEvent::ActionProposed { action_id, action },
+        &SessionEvent::ActionProposed {
+            action_id,
+            action,
+            // This helper backs several daemon-triggered proposals (e.g.
+            // GitHub merge review) that run outside `run_until_pause`'s main
+            // turn loop (PRD v1.1 §6.3).
+            turn_id: None,
+        },
     )?;
     store.append(
         session_id,
@@ -7939,6 +11860,7 @@ fn append_exact_approval_proposal(
                 reason: reason.into(),
                 constraints,
             },
+            turn_id: None,
         },
     )?;
     Ok((action_id, action_digest))
@@ -8009,6 +11931,64 @@ fn authorize_exact_human_action(
     }
     store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
     Ok((constraints, action_digest))
+}
+
+/// Authorizes a pre-approved action whose judgment was an
+/// `AllowWithConstraints` (a trusted MCP tool). The authority is
+/// `DeterministicPolicy` — the same non-human authority a read-only command
+/// gets from PawGate — never a fabricated human approval. The exact
+/// authorization is still persisted, consumed at the boundary, and audited.
+fn authorize_deterministic_action(
+    store: &mut SessionStore,
+    session_id: SessionId,
+    action_id: ActionId,
+    expected_action: &ProposedAction,
+    purpose: &str,
+) -> Result<ActionConstraints, ApiError> {
+    let session = store.load(session_id)?;
+    let persisted_action = session
+        .proposed_actions
+        .get(&action_id)
+        .ok_or(ApiError::NotFound)?;
+    if persisted_action != expected_action {
+        return Err(ApiError::Conflict(format!(
+            "{purpose} does not match the exact proposed action"
+        )));
+    }
+    let constraints = match session.judgments.get(&action_id) {
+        Some(JudgmentDecision::AllowWithConstraints(constraints)) => constraints.clone(),
+        _ => {
+            return Err(ApiError::Conflict(format!(
+                "{purpose} is not a deterministic-policy allow decision"
+            )));
+        }
+    };
+    let action_digest = persisted_action
+        .digest(&constraints)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    store
+        .authorize(&Authorization {
+            action_id,
+            session_id,
+            action_digest: action_digest.clone(),
+            constraints: constraints.clone(),
+            authorized_at: Utc::now(),
+            approved_by: ApprovalAuthority::DeterministicPolicy,
+        })
+        .map_err(|_| {
+            ApiError::Conflict(format!(
+                "{purpose} authorization is unavailable or was already approved"
+            ))
+        })?;
+    store
+        .consume_authorization(action_id, &action_digest)
+        .map_err(|_| {
+            ApiError::Conflict(format!(
+                "{purpose} authorization is unavailable or was already consumed"
+            ))
+        })?;
+    store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
+    Ok(constraints)
 }
 
 #[derive(Deserialize)]
@@ -9538,6 +13518,50 @@ async fn remove_skill(
     }
 }
 
+fn open_skill_store(state: &AppState) -> Result<SkillStore, ApiError> {
+    let db_path = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills.db");
+    let lib_root = state
+        .database
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("skills");
+    SkillStore::open(&db_path, &lib_root)
+        .map_err(|e| ApiError::BadRequest(format!("skill store open failed: {e}")))
+}
+
+/// Enables an installed skill so it can be invoked again.
+async fn enable_skill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let mut store = open_skill_store(&state)?;
+    store
+        .set_enabled(&id, true)
+        .map_err(|_| ApiError::NotFound)?;
+    Ok(Json(serde_json::json!({"id": id, "enabled": true})))
+}
+
+/// Disables an installed skill without uninstalling it. Disabled skills are
+/// inspectable but never invoked.
+async fn disable_skill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    authorize(&state, &headers)?;
+    let mut store = open_skill_store(&state)?;
+    store
+        .set_enabled(&id, false)
+        .map_err(|_| ApiError::NotFound)?;
+    Ok(Json(serde_json::json!({"id": id, "enabled": false})))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -9559,6 +13583,516 @@ mod tests {
     }
 
     #[test]
+    fn trusting_a_tool_cannot_overturn_a_pawgate_denial() {
+        // Trust is now expressed inside the descriptor's approval_policy
+        // (PreAuthorized) and evaluated by Policy::evaluate_tool. A deny-listed
+        // tool is admitted Forbidden and is a hard deny that no trust can
+        // overturn. This is the old `apply_tool_trust` bypass deleted in PR5.
+        let repository = Path::new("/repository");
+        let policy = Policy::default();
+        let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+        let ceiling = policy.tool_ceiling(repository);
+        let descriptor = registry
+            .admit_tool(
+                purrcode_runtime_core::ToolDescriptorProposal {
+                    id: purrcode_runtime_core::ToolId::mcp("server", "blocked"),
+                    provider: purrcode_runtime_core::ToolProvider::Mcp,
+                    display_name: "blocked".into(),
+                    description: "deny-listed".into(),
+                    schema: serde_json::json!({ "type": "object" }),
+                    capabilities: std::collections::BTreeSet::new(),
+                    side_effect_class: purrcode_runtime_core::SideEffectClass::Destructive,
+                    network_scope: purrcode_runtime_core::NetworkScope::None,
+                    filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                    approval_policy: purrcode_runtime_core::ApprovalPolicy::Forbidden,
+                    origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+                },
+                &ceiling,
+            )
+            .clone();
+        let action = purrcode_runtime_core::ProposedAction::ExternalTool(
+            purrcode_runtime_core::ExternalToolAction {
+                server_id: "server".into(),
+                tool_name: "blocked".into(),
+                arguments: serde_json::json!({}),
+                working_directory: repository.to_path_buf(),
+            },
+        );
+        let decision = policy.evaluate_tool(&action, &descriptor, repository);
+        assert!(
+            matches!(decision, JudgmentDecision::Deny { .. }),
+            "a Forbidden descriptor must never be allowed, even if 'trusted'"
+        );
+    }
+
+    #[test]
+    fn trust_waives_only_the_approval_prompt() {
+        // A trusted tool is admitted PreAuthorized; evaluate_tool allows it
+        // with the server's configured isolation. An untrusted tool is
+        // AlwaysAsk and requires approval.
+        let repository = Path::new("/repository");
+        let policy = Policy::default();
+        let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+        let ceiling = policy.tool_ceiling(repository);
+
+        let trusted_descriptor = registry
+            .admit_tool(
+                purrcode_runtime_core::ToolDescriptorProposal {
+                    id: purrcode_runtime_core::ToolId::mcp("server", "docs_search"),
+                    provider: purrcode_runtime_core::ToolProvider::Mcp,
+                    display_name: "docs/search".into(),
+                    description: "trusted read".into(),
+                    schema: serde_json::json!({ "type": "object" }),
+                    capabilities: std::collections::BTreeSet::new(),
+                    side_effect_class: purrcode_runtime_core::SideEffectClass::Read,
+                    network_scope: purrcode_runtime_core::NetworkScope::None,
+                    filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                    approval_policy: purrcode_runtime_core::ApprovalPolicy::PreAuthorized,
+                    origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+                },
+                &ceiling,
+            )
+            .clone();
+        let untrusted_descriptor = registry
+            .admit_tool(
+                purrcode_runtime_core::ToolDescriptorProposal {
+                    id: purrcode_runtime_core::ToolId::mcp("server", "docs_search_untrusted"),
+                    provider: purrcode_runtime_core::ToolProvider::Mcp,
+                    display_name: "docs/search".into(),
+                    description: "untrusted".into(),
+                    schema: serde_json::json!({ "type": "object" }),
+                    capabilities: std::collections::BTreeSet::new(),
+                    side_effect_class: purrcode_runtime_core::SideEffectClass::Execute,
+                    network_scope: purrcode_runtime_core::NetworkScope::None,
+                    filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+                    approval_policy: purrcode_runtime_core::ApprovalPolicy::AlwaysAsk,
+                    origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+                },
+                &ceiling,
+            )
+            .clone();
+
+        let trusted_action = purrcode_runtime_core::ProposedAction::ExternalTool(
+            purrcode_runtime_core::ExternalToolAction {
+                server_id: "server".into(),
+                tool_name: "docs_search".into(),
+                arguments: serde_json::json!({}),
+                working_directory: repository.to_path_buf(),
+            },
+        );
+        let untrusted_action = purrcode_runtime_core::ProposedAction::ExternalTool(
+            purrcode_runtime_core::ExternalToolAction {
+                server_id: "server".into(),
+                tool_name: "docs_search_untrusted".into(),
+                arguments: serde_json::json!({}),
+                working_directory: repository.to_path_buf(),
+            },
+        );
+        // Trusted: the prompt is waived, the decision is an allow.
+        assert!(matches!(
+            policy.evaluate_tool(&trusted_action, &trusted_descriptor, repository),
+            JudgmentDecision::AllowWithConstraints(_)
+        ));
+        // Untrusted: the approval requirement survives.
+        assert!(matches!(
+            policy.evaluate_tool(&untrusted_action, &untrusted_descriptor, repository),
+            JudgmentDecision::RequireApproval { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_deleted_session_leaves_the_working_list() {
+        // `DELETE /v1/sessions/{id}` is a soft delete: the event log survives
+        // for audit. The list has to honour the flag anyway, or the row comes
+        // straight back on the next poll and the delete looks broken.
+        let temporary = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&temporary.path().join("sessions.db")).unwrap();
+        let repository = temporary.path().to_path_buf();
+        let kept = SessionId::new();
+        let removed = SessionId::new();
+        for id in [kept, removed] {
+            store
+                .append(
+                    id,
+                    &SessionEvent::SessionCreated {
+                        objective: "work".into(),
+                        repository: repository.clone(),
+                        authority_mode: AuthorityMode::Governed,
+                    },
+                )
+                .unwrap();
+        }
+        store.set_session_deleted(removed, true).unwrap();
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
+            terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let listed = sessions(
+            State(state.clone()),
+            headers,
+            Query(SessionsQuery {
+                repository: Some(repository),
+            }),
+        )
+        .await
+        .expect("listing sessions must succeed");
+        let ids: Vec<&str> = listed.0.iter().map(|view| view.id.as_str()).collect();
+        assert!(ids.contains(&kept.0.to_string().as_str()));
+        assert!(
+            !ids.contains(&removed.0.to_string().as_str()),
+            "a soft-deleted session must not come back in the working list"
+        );
+        // The audit record is still there — that is the point of a soft delete.
+        assert!(!state.store.lock().await.events(removed).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_running_worker_is_visible_before_it_finishes() {
+        // The status route used to build its list from WorkerFinished alone,
+        // so a worker that was still running did not appear — and the
+        // per-worker stop control had nothing to attach to.
+        let temporary = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&temporary.path().join("sessions.db")).unwrap();
+        let session = SessionId::new();
+        store
+            .append(
+                session,
+                &SessionEvent::SessionCreated {
+                    objective: "parallel work".into(),
+                    repository: temporary.path().to_path_buf(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::WorkerStarted {
+                    worker_id: "worker-1".into(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::WorkerStarted {
+                    worker_id: "worker-2".into(),
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::WorkerFinished {
+                    worker_id: "worker-1".into(),
+                    status: "completed".into(),
+                    changed_paths: vec![PathBuf::from("src/lib.rs")],
+                },
+            )
+            .unwrap();
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
+            terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let view = supervisor_status(State(state), headers, AxumPath(session.0.to_string()))
+            .await
+            .expect("supervisor status must be readable");
+
+        // Each worker appears exactly once, whatever stage it reached.
+        assert_eq!(view.0.workers.len(), 2);
+        let finished = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "worker-1")
+            .expect("the finished worker is listed");
+        assert_eq!(finished.status, "completed");
+        assert_eq!(finished.changed_paths, vec![PathBuf::from("src/lib.rs")]);
+
+        // No run is in flight here, so the unfinished worker is reported as
+        // interrupted rather than as live work with a stop button that could
+        // never succeed.
+        let unfinished = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "worker-2")
+            .expect("the unfinished worker is still listed");
+        assert_eq!(unfinished.status, "interrupted");
+    }
+
+    /// Undo must never move the worktree forward.
+    ///
+    /// The case that matters: the user undoes once, edits a file by hand, then
+    /// undoes again. That second undo captures the hand-edit as a new tip, and a
+    /// naive `tip - 1` would land them on a checkpoint *ahead* of where they
+    /// were — an undo that redoes.
+    #[test]
+    fn undo_steps_back_from_where_the_user_is_not_from_the_new_tip() {
+        // Timeline [c0, c1, c2, c3] where c3 is the just-captured hand-edit and
+        // the user was sitting at c1.
+        assert_eq!(
+            checkpoint_step_target(1, -1, true, 4).unwrap(),
+            1,
+            "with divergent work captured, one step back is where the cursor already was"
+        );
+        // Without divergent work, undo is an ordinary step back.
+        assert_eq!(checkpoint_step_target(2, -1, false, 3).unwrap(), 1);
+        // Redo is an ordinary step forward.
+        assert_eq!(checkpoint_step_target(1, 1, false, 3).unwrap(), 2);
+
+        // Both ends refuse rather than clamping: silently restoring the oldest
+        // checkpoint when asked to go back past it would discard work while
+        // reporting success.
+        assert!(checkpoint_step_target(0, -1, false, 3).is_err());
+        assert!(checkpoint_step_target(2, 1, false, 3).is_err());
+    }
+
+    /// `/approve` must not refuse the plan sitting in front of the user.
+    ///
+    /// The command is published as approving "the awaiting action, or the plan
+    /// under review", but the route required `AwaitingApproval(action_id)` —
+    /// so at a plan-review boundary it answered "no action is awaiting
+    /// approval" while an approval card was on screen.
+    #[tokio::test]
+    async fn approve_does_not_refuse_a_plan_awaiting_review() {
+        let temporary = tempfile::tempdir().unwrap();
+        let database = temporary.path().join("sessions.db");
+        let mut store = SessionStore::open(&database).unwrap();
+        let session = SessionId::new();
+        for event in [
+            SessionEvent::SessionCreated {
+                objective: "add a parser".into(),
+                repository: temporary.path().to_path_buf(),
+                authority_mode: AuthorityMode::Governed,
+            },
+            SessionEvent::PlanCreated {
+                steps: vec!["Add the parser".into()],
+            },
+            SessionEvent::SessionPaused {
+                reason: purrcode_runtime_core::PLAN_REVIEW_PAUSE.into(),
+            },
+        ] {
+            store.append(session, &event).unwrap();
+        }
+        assert!(awaiting_plan_review(&store.load(session).unwrap()));
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database,
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
+            terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let outcome = approve_session(State(state), headers, AxumPath(session.0.to_string())).await;
+
+        // No providers are configured here, so starting the approved work still
+        // fails — but it must fail on *running* the plan, never on the claim
+        // that there is nothing to approve.
+        if let Err(ApiError::Conflict(message)) = &outcome {
+            assert!(
+                !message.contains("no action is awaiting approval"),
+                "approve refused the plan under review: {message}"
+            );
+        }
+    }
+
+    /// A Scout an ordinary coding turn delegated to is a work unit the agent
+    /// workspace shows, alongside supervisor workers.
+    ///
+    /// Before this, the workspace projected `WorkerStarted`/`WorkerFinished`
+    /// only — so it described the Supervisor API rather than the product, and a
+    /// user watching PurrCode explore their repository saw nothing at all.
+    #[tokio::test]
+    async fn a_scout_appears_in_the_agent_workspace_beside_supervisor_workers() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&temporary.path().join("sessions.db")).unwrap();
+        let session = SessionId::new();
+        let turn_id = TurnId::new();
+        store
+            .append(
+                session,
+                &SessionEvent::SessionCreated {
+                    objective: "understand this repository, then change it".into(),
+                    repository: temporary.path().to_path_buf(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::ScoutStarted {
+                    scout_id: "scout-1".into(),
+                    parent_turn_id: turn_id,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::ScoutCompleted {
+                    scout_id: "scout-1".into(),
+                    parent_turn_id: turn_id,
+                    evidence_count: 4,
+                    conclusions: vec!["auth lives in src/auth.rs".into()],
+                    confidence: "High".into(),
+                },
+            )
+            .unwrap();
+        // A second Scout that is still running, to prove a live unit is visible.
+        store
+            .append(
+                session,
+                &SessionEvent::ScoutStarted {
+                    scout_id: "scout-2".into(),
+                    parent_turn_id: turn_id,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::WorkerStarted {
+                    worker_id: "worker-1".into(),
+                },
+            )
+            .unwrap();
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
+            terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let view = supervisor_status(State(state), headers, AxumPath(session.0.to_string()))
+            .await
+            .expect("the workspace must be readable for an ordinary session");
+
+        assert_eq!(
+            view.0.workers.len(),
+            3,
+            "both Scouts and the supervisor worker are work units"
+        );
+        let scout = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "scout-1")
+            .expect("the completed Scout is listed");
+        assert_eq!(scout.kind, "scout");
+        assert_eq!(scout.role, "Scout");
+        assert_eq!(scout.status, "completed");
+        assert_eq!(
+            scout.summary.as_deref(),
+            Some("auth lives in src/auth.rs"),
+            "a Scout reports what it concluded, not just that it ran"
+        );
+        // A Scout has no cancellation handle, so the client must never be told
+        // it can stop one: that would be a button guaranteed to fail.
+        assert!(!scout.stoppable);
+
+        // The session is still Active, so the running Scout stays running.
+        let running_scout = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "scout-2")
+            .expect("the running Scout is listed");
+        assert_eq!(running_scout.status, "running");
+        assert!(!running_scout.stoppable);
+
+        // The supervisor worker keeps its own semantics: no run is in flight, so
+        // it is interrupted rather than presented as live.
+        let worker = view
+            .0
+            .workers
+            .iter()
+            .find(|worker| worker.id == "worker-1")
+            .expect("the supervisor worker is listed");
+        assert_eq!(worker.kind, "supervisor_worker");
+        assert_eq!(worker.status, "interrupted");
+        assert!(!worker.stoppable);
+    }
+
+    #[test]
     fn omitted_session_controls_resolve_to_ask_and_governed() {
         let request = StartSessionRequest {
             objective: "Explain this repository".into(),
@@ -9574,6 +14108,7 @@ mod tests {
             task_mode: None,
             permission_mode: None,
             max_tokens: None,
+            agent: None,
         };
         let controls = request.controls().unwrap();
         assert_eq!(controls.task_mode, TaskMode::Ask);
@@ -9601,6 +14136,7 @@ mod tests {
             task_mode: Some("auto".into()),
             permission_mode: None,
             max_tokens: None,
+            agent: None,
         };
 
         let greeting = request("hello");
@@ -9662,8 +14198,272 @@ mod tests {
         assert!(reserve_mcp_call(&mut store, session_id, "test", "tool").is_err());
         let state = store.load(session_id).unwrap();
         assert_eq!(state.usage_records.len(), 2);
-        assert_eq!(usage_summary_view(&state).search_requests, 1);
-        assert_eq!(usage_summary_view(&state).mcp_calls, 1);
+        assert_eq!(usage_summary_view(&state, None).search_requests, 1);
+        assert_eq!(usage_summary_view(&state, None).mcp_calls, 1);
+    }
+
+    #[test]
+    fn usage_summary_view_carries_the_resolved_model_capacity_through_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&directory.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "check capacity plumbing".into(),
+                    repository: directory.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        let state = store.load(session_id).unwrap();
+
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).context_capacity_tokens,
+            Some(32_000)
+        );
+        assert_eq!(
+            usage_summary_view(&state, None).context_capacity_tokens,
+            None
+        );
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).effective_capacity_tokens,
+            Some(32_000 - purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+        );
+        assert_eq!(
+            usage_summary_view(&state, None).effective_capacity_tokens,
+            None
+        );
+        // The session never ran a turn, so recent_context_ledger stays empty.
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).current_context_tokens,
+            None
+        );
+    }
+
+    #[test]
+    fn effective_capacity_tokens_is_clamped_by_the_sessions_own_budget_not_just_the_raw_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&directory.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "check budget-clamped capacity".into(),
+                    repository: directory.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        // A custom budget tighter than the provider's window: the effective
+        // capacity the UI reports must match what
+        // NativeAgent::effective_input_capacity would actually enforce —
+        // min(window, budget) - RESERVED_OUTPUT_TOKENS — not the raw window
+        // alone, which would overstate how much room a turn actually has.
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionControlsUpdated {
+                    controls: purrcode_runtime_core::adaptation::SessionControls {
+                        budget_profile: BudgetProfileKind::Custom,
+                        custom_budget: Some(purrcode_runtime_core::adaptation::BudgetConstraints {
+                            maximum_input_tokens: Some(20_000),
+                            ..Default::default()
+                        }),
+                        ..purrcode_runtime_core::adaptation::SessionControls::default()
+                    },
+                },
+            )
+            .unwrap();
+        let state = store.load(session_id).unwrap();
+
+        // window (32K) > budget (20K): the budget wins.
+        assert_eq!(
+            usage_summary_view(&state, Some(32_000)).effective_capacity_tokens,
+            Some(20_000 - purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+        );
+        // window (16K) < budget (20K): the window wins.
+        assert_eq!(
+            usage_summary_view(&state, Some(16_000)).effective_capacity_tokens,
+            Some(16_000 - purrcode_runtime_core::RESERVED_OUTPUT_TOKENS)
+        );
+        // No resolved window at all: still unknown, budget notwithstanding.
+        assert_eq!(
+            usage_summary_view(&state, None).effective_capacity_tokens,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_compact_preserves_semantic_memory_while_truncating_conversation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::open(&temporary.path().join("sessions.db")).unwrap();
+        let session_id = SessionId::new();
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    objective: "build a parser".into(),
+                    repository: temporary.path().into(),
+                    authority_mode: AuthorityMode::Governed,
+                },
+            )
+            .unwrap();
+        // Semantic memory an earlier automatic compaction already
+        // accumulated — manual /compact must merge into this through the
+        // same builder + merge_checkpoint path, never replace it with the
+        // daemon's old hand-rolled empty SemanticCheckpoint.
+        store
+            .append(
+                session_id,
+                &SessionEvent::CheckpointCompacted {
+                    checkpoint: Box::new(purrcode_runtime_core::SemanticCheckpoint {
+                        checkpoint_id: purrcode_runtime_core::CheckpointId::new(),
+                        turn_id: TurnId::new(),
+                        superseded_checkpoint_id: None,
+                        objective: "build a parser".into(),
+                        accepted_requirements: vec!["planned: support nested expressions".into()],
+                        user_constraints: vec!["task_mode=build".into()],
+                        decisions: vec![],
+                        files_inspected: vec![PathBuf::from("src/parser.rs")],
+                        files_modified: vec![],
+                        important_symbols: vec!["parser.rs".into()],
+                        validated_facts: vec!["parser compiles".into()],
+                        failed_attempts: vec![purrcode_runtime_core::FailedAttempt {
+                            action_id: ActionId::new(),
+                            action_summary: "tried a hand-written parser".into(),
+                            reason: "too many edge cases".into(),
+                            judgment: None,
+                        }],
+                        test_results: vec![],
+                        unresolved_questions: vec![],
+                        current_hypothesis: Some("regex covers 90% of cases".into()),
+                        next_actions: vec!["task[1]: wire the parser into the CLI".into()],
+                        pinned_context: vec![],
+                    }),
+                    retained_action_ids: std::collections::BTreeSet::new(),
+                    conversation_messages_retained_from: 0,
+                },
+            )
+            .unwrap();
+        // Long enough to exceed COMPACTION_RETAINED_TOKEN_BUDGET (8192
+        // tokens ≈ 32768 chars) so manual /compact actually truncates the
+        // window instead of a no-op "keep everything" pass.
+        for i in 0..40 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            store
+                .append(
+                    session_id,
+                    &SessionEvent::ConversationMessageAdded {
+                        message: ConversationMessage {
+                            id: format!("msg-{i}"),
+                            role: role.into(),
+                            content: "x".repeat(2000),
+                            timestamp: Utc::now(),
+                            tool_calls: vec![],
+                            tool_results: vec![],
+                            model: None,
+                            turn_id: None,
+                        },
+                    },
+                )
+                .unwrap();
+        }
+        let messages_before = store.load(session_id).unwrap().conversation_messages.len();
+        assert_eq!(messages_before, 40);
+
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            unavailable_sessions: Arc::new(BTreeMap::new()),
+            bearer_token: Arc::from("test-token"),
+            database: temporary.path().join("sessions.db"),
+            app_config: temporary.path().join("config.toml"),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
+            lifecycle_gate: Arc::new(Mutex::new(())),
+            active_models: Arc::new(Mutex::new(BTreeMap::new())),
+            local_inference_slots: Arc::new(Semaphore::new(1)),
+            local_inference_limit: 1,
+            interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
+            live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
+            terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let _ = compact_session(
+            State(state.clone()),
+            headers,
+            AxumPath(session_id.0.to_string()),
+        )
+        .await
+        .expect("manual compact must succeed against an idle session");
+
+        let after = state.store.lock().await.load(session_id).unwrap();
+        assert!(
+            after.conversation_messages.len() < messages_before,
+            "manual /compact must truncate the conversation window, not just record a checkpoint"
+        );
+        let checkpoint = after
+            .checkpoint
+            .as_ref()
+            .expect("manual /compact must record a checkpoint");
+        assert!(
+            checkpoint
+                .accepted_requirements
+                .iter()
+                .any(|r| r.contains("nested expressions")),
+            "manual /compact must not wipe accepted_requirements accumulated before it: {:?}",
+            checkpoint.accepted_requirements
+        );
+        assert!(
+            checkpoint
+                .failed_attempts
+                .iter()
+                .any(|f| f.action_summary.contains("hand-written parser")),
+            "manual /compact must not wipe failed_attempts accumulated before it: {:?}",
+            checkpoint.failed_attempts
+        );
+        assert!(
+            checkpoint
+                .important_symbols
+                .iter()
+                .any(|s| s == "parser.rs"),
+            "manual /compact must not wipe important_symbols accumulated before it: {:?}",
+            checkpoint.important_symbols
+        );
+        assert!(
+            checkpoint
+                .validated_facts
+                .iter()
+                .any(|f| f == "parser compiles"),
+            "manual /compact must not wipe validated_facts accumulated before it: {:?}",
+            checkpoint.validated_facts
+        );
+        // The exact bug this test guards against: the daemon used to build
+        // `SemanticCheckpoint { user_constraints: vec![], .. }` unconditionally.
+        assert!(
+            !checkpoint.user_constraints.is_empty(),
+            "manual /compact must populate user_constraints from the session's own controls, \
+             never construct an empty SemanticCheckpoint"
+        );
+        // This session has no task_graph/plan_steps, so the freshly-built
+        // checkpoint's own next_actions is empty — merge_checkpoint's
+        // current-state fallback rule must carry the previous checkpoint's
+        // next_actions forward rather than silently dropping it.
+        assert_eq!(
+            checkpoint.next_actions,
+            vec!["task[1]: wire the parser into the CLI".to_string()],
+            "manual /compact must fall back to the previous checkpoint's next_actions when its \
+             own snapshot has none"
+        );
     }
 
     #[test]
@@ -9827,6 +14627,7 @@ mod tests {
             action: ProposedAction::RepositoryRead(
                 purrcode_runtime_core::RepositoryReadAction::GitStatus,
             ),
+            turn_id: None,
         };
         let events = vec![read(), read(), read()];
         let activity = activity_from_events(&events);
@@ -10008,6 +14809,7 @@ mod tests {
                     content: "pub fn parse() {}\n".into(),
                     expected_digest: None,
                 }),
+                turn_id: None,
             },
             SessionEvent::SessionPaused {
                 reason: "validation could not run".into(),
@@ -10202,6 +15004,7 @@ mod tests {
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
             model: None,
+            turn_id: None,
         };
         let activity = activity_from_events(&[
             SessionEvent::ConversationMessageAdded {
@@ -10253,6 +15056,7 @@ mod tests {
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
             model: None,
+            turn_id: None,
         };
         let activity = activity_from_events(&[
             SessionEvent::ConversationMessageAdded {
@@ -10800,7 +15604,11 @@ default = "ollama/small"
             interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let session_id = SessionId::new();
         let original_generation = Uuid::new_v4();
@@ -10898,7 +15706,11 @@ default = "ollama/small"
             interrupting_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             pull_jobs: Arc::new(Mutex::new(BTreeMap::new())),
             live_streams: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor_runs: Arc::new(Mutex::new(BTreeMap::new())),
+            lsp: Arc::new(Mutex::new(LspManager::new(default_server_commands()))),
             terminals: TerminalRuntime::default(),
+            extensions: Arc::new(RwLock::new(BTreeMap::new())),
+            tool_registries: Arc::new(RwLock::new(BTreeMap::new())),
         };
         let session_id = SessionId::new();
         let generation = Uuid::new_v4();
@@ -10964,6 +15776,15 @@ default = "ollama/small"
         let source = temporary.path().join("source");
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("SKILL.md"), "# Terraform inspector").unwrap();
+        // Capabilities are DECLARED, not inferred from the skill's name: the
+        // store indexes `model_capabilities` at install, so a skill answers for
+        // `terraform` because it says it does.
+        std::fs::write(
+            source.join("manifest.toml"),
+            "name = \"terraform-inspector\"\nversion = \"1.0.0\"\n\
+             model_capabilities = [\"terraform\"]\n",
+        )
+        .unwrap();
         let digest = skill_digest(&source).unwrap();
         let mut store = SkillStore::open(&skills_database, &library).unwrap();
         store
@@ -11194,6 +16015,96 @@ default = "ollama/small"
     }
 
     #[tokio::test]
+    async fn supervisor_starts_in_background_and_streams_worker_status() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repo");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        std::fs::write(repository.join("README.md"), "fixture").unwrap();
+        git(&repository, &["add", "README.md"]);
+        git(
+            &repository,
+            &[
+                "-c",
+                "user.name=PurrCode Tests",
+                "-c",
+                "user.email=tests@purrcode.local",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        );
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(
+            &app_config,
+            "schema_version = 1\n[models.roles]\ncoder = \"local/test\"\n[models]\ndefault = \"local/test\"\n[providers.local]\ntype = \"ollama\"\nbase_url = \"http://127.0.0.1:9/\"\n",
+        )
+        .unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: app_config.clone(),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        // Starting a supervisor must return immediately with the session id
+        // (it runs in the background), not block until every worker finishes.
+        let started = client
+            .post(format!("{base}/v1/supervisor"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "inspect the repo",
+                "repository": repository,
+                "workers": [{"id": "scout", "objective": "explore auth", "dependencies": []}],
+                "limits": {"max_workers": 1, "max_model_requests": 1, "max_worktrees": 1, "require_isolation": true}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(started.status(), StatusCode::ACCEPTED);
+        let started_body: serde_json::Value = started.json().await.unwrap();
+        let supervisor_session = started_body["session_id"].as_str().unwrap().to_string();
+        assert!(!supervisor_session.is_empty());
+
+        // The supervisor session appears in the session list as a background run.
+        let listed: serde_json::Value = client
+            .get(format!("{base}/v1/sessions"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            listed
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|session| { session["id"] == supervisor_session })
+        );
+
+        // The status endpoint reports the supervisor session.
+        let status = client
+            .get(format!("{base}/v1/supervisor/{supervisor_session}"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+        handle.abort();
+    }
+
+    #[tokio::test]
     async fn loopback_api_requires_bearer_token() {
         let temporary = tempfile::tempdir().unwrap();
         let token_file = temporary.path().join("daemon.token");
@@ -11235,6 +16146,131 @@ default = "ollama/small"
                 .as_array()
                 .is_some_and(|values| values.iter().any(|value| value == capability))
         }));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn every_route_refuses_an_unauthenticated_request() {
+        // Authorization is one hand-copied line at the top of each of ~133
+        // handlers, and nothing makes it mandatory: a new handler that omits
+        // it compiles, wires up, and serves without a token. The existing
+        // bearer-token test only ever exercised `/v1/health`, so it proved
+        // the mechanism worked without proving it was applied.
+        //
+        // This walks a route from every method and family instead. It is not
+        // a substitute for the line being unforgettable, but it is what turns
+        // "somebody forgot" from a silent hole into a failing test.
+        let temporary = tempfile::tempdir().unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file,
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let client = reqwest::Client::new();
+        let session = SessionId::new().0.to_string();
+
+        let gets = [
+            "/v1/health".to_owned(),
+            "/v1/ui/status?repository=/tmp".to_owned(),
+            "/v1/sessions".to_owned(),
+            "/v1/sessions/search?q=x".to_owned(),
+            "/v1/workspace?repository=/tmp".to_owned(),
+            "/v1/terminals".to_owned(),
+            "/v1/providers".to_owned(),
+            "/v1/models".to_owned(),
+            "/v1/bootstrap".to_owned(),
+            "/v1/commands".to_owned(),
+            "/v1/skills".to_owned(),
+            "/v1/mcp/servers".to_owned(),
+            "/v1/memory?repository=/tmp".to_owned(),
+            "/v1/automations".to_owned(),
+            "/v1/codex".to_owned(),
+            "/v1/local-models".to_owned(),
+            "/v1/lsp/servers".to_owned(),
+            "/v1/lsp/diagnostics".to_owned(),
+            "/v1/github/status".to_owned(),
+            format!("/v1/sessions/{session}/events"),
+            format!("/v1/sessions/{session}/conversation"),
+            format!("/v1/sessions/{session}/checkpoints"),
+            format!("/v1/supervisor/{session}"),
+        ];
+        for path in &gets {
+            let status = client
+                .get(format!("{base}{path}"))
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "GET {path} served an unauthenticated request"
+            );
+        }
+
+        let posts = [
+            "/v1/sessions".to_owned(),
+            "/v1/references/resolve".to_owned(),
+            "/v1/lsp/hover".to_owned(),
+            "/v1/lsp/definition".to_owned(),
+            "/v1/lsp/format".to_owned(),
+            "/v1/memory".to_owned(),
+            "/v1/mcp/servers".to_owned(),
+            "/v1/providers".to_owned(),
+            "/v1/supervisor".to_owned(),
+            "/v1/repository/inspect".to_owned(),
+            format!("/v1/sessions/{session}/checkpoint"),
+            format!("/v1/sessions/{session}/fork"),
+            format!("/v1/sessions/{session}/cancel"),
+            format!("/v1/sessions/{session}/compact"),
+        ];
+        for path in &posts {
+            let status = client
+                .post(format!("{base}{path}"))
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "POST {path} served an unauthenticated request"
+            );
+        }
+
+        let status = client
+            .patch(format!("{base}/v1/sessions/{session}"))
+            .json(&serde_json::json!({"pinned": true}))
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "PATCH served unauthenticated"
+        );
+
+        let status = client
+            .delete(format!("{base}/v1/sessions/{session}"))
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "DELETE served unauthenticated"
+        );
+
         handle.abort();
     }
 
@@ -12796,6 +17832,14 @@ allow_same_model = true
         std::fs::create_dir(&repository).unwrap();
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("SKILL.md"), "# Terraform inspector").unwrap();
+        // The skill DECLARES the capability it answers for; the store's
+        // capability index is what `find_by_capability` reads.
+        std::fs::write(
+            source.join("manifest.toml"),
+            "name = \"terraform-inspector\"\nversion = \"1.0.0\"\n\
+             model_capabilities = [\"terraform\"]\n",
+        )
+        .unwrap();
         let session_id = SessionId::new();
         SessionStore::open(&database)
             .unwrap()
@@ -13093,6 +18137,68 @@ judge = "openai/judge-model"
     }
 
     #[tokio::test]
+    async fn mcp_trust_policy_round_trips_transport_and_tool_allow_deny() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app_config = temporary.path().join("config.toml");
+        std::fs::write(&app_config, "schema_version = 1\n").unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: app_config.clone(),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", report.bind);
+
+        // HTTP transport + trust/deny lists persist and round-trip.
+        let added = client
+            .post(format!("{base}/v1/mcp/servers"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "id": "github",
+                "transport": "http",
+                "url": "https://example.invalid/mcp",
+                "program": "",
+                "working_directory": temporary.path(),
+                "network": true,
+                "timeout_seconds": 30,
+                "maximum_output_bytes": 1048576,
+                "memory_limit_bytes": 536870912,
+                "trusted_tools": ["github_search", "github_issue"],
+                "deny_tools": ["github_delete_repo"],
+                "environment_from": {}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(added.status(), StatusCode::OK);
+
+        let listed: serde_json::Value = client
+            .get(format!("{base}/v1/mcp/servers"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let github = &listed["github"];
+        assert_eq!(github["transport"], "http");
+        assert_eq!(github["url"], "https://example.invalid/mcp");
+        assert_eq!(github["trusted_tools"][0], "github_search");
+        assert_eq!(github["trusted_tools"][1], "github_issue");
+        assert_eq!(github["deny_tools"][0], "github_delete_repo");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
     async fn codex_get_returns_defaults_post_persists_and_doctor_names_the_binary_path() {
         let temporary = tempfile::tempdir().unwrap();
         let app_config = temporary.path().join("config.toml");
@@ -13185,6 +18291,415 @@ judge = "openai/judge-model"
             .unwrap();
         assert_eq!(unsafe_config.status(), StatusCode::BAD_REQUEST);
 
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn composer_references_resolve_files_symbols_and_diff() {
+        let temporary = tempfile::tempdir().unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        std::fs::write(repository.join("auth.rs"), "pub struct AuthMiddleware;\n").unwrap();
+        git(&repository, &["add", "auth.rs"]);
+        git(
+            &repository,
+            &[
+                "-c",
+                "user.name=PurrCode Tests",
+                "-c",
+                "user.email=tests@purrcode.local",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        );
+        // Dirty the worktree so @diff resolves.
+        std::fs::write(
+            repository.join("auth.rs"),
+            "pub struct AuthMiddleware;\n// changed\n",
+        )
+        .unwrap();
+
+        let response = client
+            .post(format!("{base}/v1/references/resolve"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "text": "@auth.rs #AuthMiddleware @diff",
+                "repository": repository,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = response.json().await.unwrap();
+        let refs = body.as_array().unwrap();
+        assert_eq!(refs.len(), 3);
+        let file = refs.iter().find(|r| r["kind"] == "file").unwrap();
+        assert_eq!(file["resolved"], true);
+        assert!(file["preview"].as_str().unwrap().contains("AuthMiddleware"));
+        let symbol = refs.iter().find(|r| r["kind"] == "symbol").unwrap();
+        assert_eq!(symbol["resolved"], true);
+        let diff = refs.iter().find(|r| r["kind"] == "diff").unwrap();
+        assert_eq!(diff["resolved"], true);
+
+        // Commands palette is daemon-authoritative.
+        let commands = client
+            .get(format!("{base}/v1/commands"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(commands.status(), StatusCode::OK);
+        let commands: serde_json::Value = commands.json().await.unwrap();
+        let commands = commands.as_array().unwrap();
+        let undo = commands
+            .iter()
+            .find(|command| command["name"] == "/undo")
+            .expect("/undo is published");
+        assert_eq!(undo["group"], "session");
+        // The registry must say *how* a command runs, not only that it exists.
+        // A client told only the name is the client that sent `/undo` to a
+        // language model.
+        assert_eq!(undo["execution"]["kind"], "daemon");
+        assert_eq!(undo["execution"]["method"], "POST");
+        assert_eq!(undo["execution"]["path"], "/v1/sessions/{id}/undo");
+        assert!(
+            commands
+                .iter()
+                .all(|command| command["execution"]["kind"].is_string()),
+            "every published command declares its execution kind"
+        );
+        handle.abort();
+    }
+
+    /// The four commands that must never be interpreted by a model, refused at
+    /// the message boundary.
+    ///
+    /// This is the regression test for the v1.2 defect where `/undo` was stored
+    /// as user prose and answered with "Sure, I'll undo that" while the worktree
+    /// was untouched. The refusal has to happen in the daemon, not only in one
+    /// client, or the TUI and CLI keep the bug.
+    #[tokio::test]
+    async fn built_in_commands_are_refused_as_conversation_messages() {
+        let temporary = tempfile::tempdir().unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+        let session = client
+            .post(format!("{base}/v1/sessions"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "objective": "hello",
+                "repository": repository,
+                "task_mode": "ask",
+                "execution_style": "autonomous",
+                "permission_mode": "auto",
+                "plan_only": false,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(session.status(), StatusCode::ACCEPTED);
+        let session: serde_json::Value = session.json().await.unwrap();
+        let session_id = session["id"].as_str().unwrap().to_owned();
+
+        for command in ["/undo", "/redo", "/compact", "/checkpoint"] {
+            let response = client
+                .post(format!("{base}/v1/sessions/{session_id}/messages"))
+                .bearer_auth(token.trim())
+                .json(&serde_json::json!({ "content": command }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "{command} must never be accepted as a message"
+            );
+            let body = response.text().await.unwrap();
+            assert!(
+                body.contains(command),
+                "the refusal must name the command, got: {body}"
+            );
+            assert!(
+                body.contains("/v1/sessions/"),
+                "the refusal must name the route that performs it, got: {body}"
+            );
+        }
+
+        // A sentence that merely mentions a command is still an ordinary
+        // message: quoting `/undo` must remain possible.
+        let prose = client
+            .post(format!("{base}/v1/sessions/{session_id}/messages"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({ "content": "what does /undo do?" }))
+            .send()
+            .await
+            .unwrap();
+        // Asserted on the reason, not the status: this test configures no
+        // providers, so an accepted message still fails later in the pipeline.
+        // What matters is that it was never rejected *as a command*.
+        let prose_body = prose.text().await.unwrap();
+        assert!(
+            !prose_body.contains("is a command"),
+            "prose about a command must not be treated as an invocation: {prose_body}"
+        );
+
+        handle.abort();
+    }
+
+    /// The checkpoint cursor is what makes `/undo` and `/redo` land on the
+    /// right state. It is derived from the event log rather than stored, so
+    /// these cases are the whole contract.
+    #[test]
+    fn graph_context_reads_the_session_worktree_before_the_source_repository() {
+        // The v1.2 stale-context class, re-entered through the graph: the agent
+        // edits auth.rs in its worktree, the graph relates it to the objective,
+        // and pinning the SOURCE checkout's bytes would show the model a
+        // version that no longer exists.
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repo");
+        let worktree = temporary.path().join("worktree");
+        std::fs::create_dir_all(repository.join("src")).unwrap();
+        std::fs::create_dir_all(worktree.join("src")).unwrap();
+        std::fs::write(repository.join("src/auth.rs"), "fn auth() { old() }").unwrap();
+        std::fs::write(worktree.join("src/auth.rs"), "fn auth() { new() }").unwrap();
+        // A file the worktree does not carry at all.
+        std::fs::write(repository.join("src/only_source.rs"), "fn only() {}").unwrap();
+
+        assert_eq!(
+            graph_file_content(Some(&worktree), &repository, "src/auth.rs").as_deref(),
+            Some("fn auth() { new() }"),
+            "the agent's in-flight version wins"
+        );
+        assert_eq!(
+            graph_file_content(Some(&worktree), &repository, "src/only_source.rs").as_deref(),
+            Some("fn only() {}"),
+            "the source repository is still the fallback"
+        );
+        // With no worktree (a session that has not created one), the source
+        // repository is the only tree there is.
+        assert_eq!(
+            graph_file_content(None, &repository, "src/auth.rs").as_deref(),
+            Some("fn auth() { old() }")
+        );
+        assert!(graph_file_content(Some(&worktree), &repository, "src/absent.rs").is_none());
+    }
+
+    #[test]
+    fn the_checkpoint_cursor_follows_the_most_recent_timeline_event() {
+        fn checkpoint(label: &str) -> SessionCheckpoint {
+            SessionCheckpoint {
+                id: Uuid::new_v4(),
+                session_id: SessionId::new(),
+                sequence: 0,
+                label: label.into(),
+                head: "head".into(),
+                patch: Vec::new(),
+                patch_digest: format!("digest-{label}"),
+                created_at: Utc::now(),
+            }
+        }
+        fn restored(checkpoint: &SessionCheckpoint) -> SessionEvent {
+            SessionEvent::CheckpointRestored {
+                checkpoint_id: checkpoint.id.to_string(),
+                head: checkpoint.head.clone(),
+                patch_digest: checkpoint.patch_digest.clone(),
+            }
+        }
+        fn created(label: &str) -> SessionEvent {
+            SessionEvent::CheckpointCreated {
+                label: label.into(),
+                head: "head".into(),
+                patch_digest: format!("digest-{label}"),
+            }
+        }
+
+        // No checkpoints: there is nowhere to step, and the caller must be told
+        // rather than defaulted to index 0.
+        assert_eq!(checkpoint_cursor(&[], &[]), None);
+
+        let checkpoints = vec![checkpoint("a"), checkpoint("b"), checkpoint("c")];
+
+        // Nothing restored: the newest checkpoint is the current state, so undo
+        // steps back to `b`.
+        assert_eq!(checkpoint_cursor(&checkpoints, &[]), Some(2));
+
+        // After restoring `a`, the worktree is at `a` — redo must step to `b`,
+        // not off the end of the list.
+        assert_eq!(
+            checkpoint_cursor(&checkpoints, &[restored(&checkpoints[0])]),
+            Some(0)
+        );
+
+        // A checkpoint created *after* a restore makes the new tip current.
+        // Getting this wrong would make undo jump back past work that was just
+        // captured.
+        assert_eq!(
+            checkpoint_cursor(&checkpoints, &[restored(&checkpoints[0]), created("c")]),
+            Some(2)
+        );
+
+        // The last restore wins over earlier ones.
+        assert_eq!(
+            checkpoint_cursor(
+                &checkpoints,
+                &[restored(&checkpoints[2]), restored(&checkpoints[1])]
+            ),
+            Some(1)
+        );
+
+        // A restore naming a checkpoint that is no longer in the table is
+        // skipped rather than collapsing the cursor to the tip: the next older
+        // timeline event still describes where the worktree is.
+        let pruned = checkpoint("gone");
+        assert_eq!(
+            checkpoint_cursor(
+                &checkpoints,
+                &[restored(&checkpoints[1]), restored(&pruned)]
+            ),
+            Some(1)
+        );
+
+        // Unrelated events never move the cursor.
+        assert_eq!(
+            checkpoint_cursor(
+                &checkpoints,
+                &[restored(&checkpoints[1]), SessionEvent::SessionResumed]
+            ),
+            Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn project_memory_is_scoped_secret_scanned_and_forgettable() {
+        let temporary = tempfile::tempdir().unwrap();
+        let token_file = temporary.path().join("daemon.token");
+        let (report, server) = bind_and_report(DaemonConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            allow_public_bind: false,
+            database: temporary.path().join("sessions.db"),
+            token_file: token_file.clone(),
+            app_config: temporary.path().join("config.toml"),
+        })
+        .await
+        .unwrap();
+        let handle = tokio::spawn(server);
+        let base = format!("http://{}", report.bind);
+        let token = std::fs::read_to_string(token_file).unwrap();
+        let client = reqwest::Client::new();
+
+        let repository = temporary.path().join("repository");
+        std::fs::create_dir(&repository).unwrap();
+        git(&repository, &["init", "--quiet"]);
+
+        // Create a memory entry.
+        let created = client
+            .post(format!("{base}/v1/memory"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "repository": repository,
+                "kind": "build",
+                "content": "Integration tests require Redis",
+                "source": "Session \"Fix auth test\"",
+                "scope": "repository",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::OK);
+        let created: serde_json::Value = created.json().await.unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        assert_eq!(created["confidence"], "unverified");
+
+        // List scoped to the repository.
+        let listed = client
+            .get(format!(
+                "{base}/v1/memory?repository={}",
+                repository.display()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed: serde_json::Value = listed.json().await.unwrap();
+        assert!(listed["entries"]["build"].as_array().unwrap().len() == 1);
+
+        // Secret content is rejected.
+        let secret = client
+            .post(format!("{base}/v1/memory"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({
+                "repository": repository,
+                "kind": "build",
+                "content": "sk-1234secret",
+                "source": "test",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(secret.status(), StatusCode::BAD_REQUEST);
+
+        // Edit, then forget.
+        let edited = client
+            .patch(format!("{base}/v1/memory/{id}"))
+            .bearer_auth(token.trim())
+            .json(&serde_json::json!({ "content": "Integration tests require a Redis-compatible store" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(edited.status(), StatusCode::OK);
+        let forgotten = client
+            .delete(format!("{base}/v1/memory/{id}"))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(forgotten.status(), StatusCode::OK);
+        let listed = client
+            .get(format!(
+                "{base}/v1/memory?repository={}",
+                repository.display()
+            ))
+            .bearer_auth(token.trim())
+            .send()
+            .await
+            .unwrap();
+        let listed: serde_json::Value = listed.json().await.unwrap();
+        assert!(listed["entries"].as_object().unwrap().is_empty());
         handle.abort();
     }
 }

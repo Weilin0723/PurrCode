@@ -336,6 +336,11 @@ pub(crate) fn parse_chat_event(data: &str) -> Result<Option<ModelEvent>, Provide
     Ok(parse_chat_events(data)?.into_iter().next())
 }
 
+#[cfg(test)]
+pub(crate) fn parse_anthropic_event(data: &str) -> Result<Option<ModelEvent>, ProviderError> {
+    Ok(parse_anthropic_events(data)?.into_iter().next())
+}
+
 fn parse_openai_stream_frame(
     data: &[u8],
     api_mode: ProviderApiMode,
@@ -354,6 +359,7 @@ fn parse_openai_stream_frame(
     match api_mode {
         ProviderApiMode::Responses => parse_response_events(data),
         ProviderApiMode::OpenaiCompatible => parse_chat_events(data),
+        ProviderApiMode::AnthropicMessages => parse_anthropic_events(data),
         ProviderApiMode::OllamaNative => Err(ProviderError::Diagnostic(stream_diagnostic(
             "Ollama native mode cannot parse server-sent events",
             Some(data.as_bytes()),
@@ -361,6 +367,129 @@ fn parse_openai_stream_frame(
             api_mode,
         ))),
     }
+}
+
+/// Decode one Anthropic Messages API SSE frame.
+///
+/// The event sequence for a turn is `message_start` → (`content_block_start` →
+/// `content_block_delta`* → `content_block_stop`)* → `message_delta` →
+/// `message_stop`. Two details this has to get right:
+///
+/// * **Usage is split across two events.** `message_start` carries
+///   `input_tokens`; `message_delta` carries the final `output_tokens`. Only
+///   `message_delta` is emitted as a `Usage` event, using the input count
+///   carried on the same frame — the API repeats it there, so no cross-frame
+///   state is needed.
+/// * **`[DONE]` is never sent.** Unlike OpenAI's stream, the terminator is a
+///   typed `message_stop` event, so `Finished` is emitted from that.
+fn parse_anthropic_events(data: &str) -> Result<Vec<ModelEvent>, ProviderError> {
+    let api_mode = ProviderApiMode::AnthropicMessages;
+    let value = parse_stream_json(data, api_mode)?;
+    let mut events = Vec::new();
+    match value["type"].as_str().unwrap_or_default() {
+        "message_start" => {
+            if let Some(id) = value["message"]["id"].as_str() {
+                events.push(ModelEvent::ResponseStarted {
+                    response_id: id.into(),
+                });
+            }
+        }
+        // Only `text_delta` is the answer. `thinking_delta` is deliberately NOT
+        // surfaced as text — it is the model's reasoning, and folding it in
+        // would corrupt a structured result. `signature_delta` and
+        // `input_json_delta` are likewise not answer text.
+        "content_block_delta" if value["delta"]["type"] == "text_delta" => {
+            if let Some(text) = value["delta"]["text"].as_str()
+                && !text.is_empty()
+            {
+                events.push(ModelEvent::TextDelta(text.into()));
+            }
+        }
+        "content_block_start" => {
+            // A tool_use block's arguments stream as `input_json_delta` frames;
+            // the complete call is only knowable at `content_block_stop`. The
+            // non-streaming path reads tool calls from the assembled response,
+            // so the stream reports the start and lets the caller reconcile.
+            if value["content_block"]["type"] == "tool_use"
+                && let (Some(id), Some(name)) = (
+                    value["content_block"]["id"].as_str(),
+                    value["content_block"]["name"].as_str(),
+                )
+            {
+                events.push(ModelEvent::ToolCall {
+                    call_id: id.into(),
+                    name: name.into(),
+                    arguments: "{}".into(),
+                });
+            }
+        }
+        "message_delta" => {
+            if let (Some(input), Some(output)) = (
+                value["usage"]["input_tokens"].as_u64(),
+                value["usage"]["output_tokens"].as_u64(),
+            ) {
+                events.push(ModelEvent::Usage {
+                    input_tokens: input,
+                    output_tokens: output,
+                });
+            }
+        }
+        "message_stop" => events.push(ModelEvent::Finished),
+        // An error mid-stream arrives as a typed frame with HTTP 200 already
+        // sent, so it must be surfaced as a failure rather than ignored.
+        "error" => {
+            return Err(ProviderError::Diagnostic(http_diagnostic(
+                400,
+                data.as_bytes(),
+                false,
+                api_mode,
+            )));
+        }
+        _ => {}
+    }
+    Ok(events)
+}
+
+/// Extract the assistant's answer from a non-streaming Messages API response.
+///
+/// The response body is `{"content": [ {...block}, ... ]}` — an array of typed
+/// blocks, not a single string. `thinking` blocks precede `text` blocks on
+/// thinking-enabled models, so this selects the first `text` block rather than
+/// indexing `content[0]`, which would return reasoning (or, with the default
+/// `display: "omitted"`, an empty string).
+pub(crate) fn extract_anthropic_output(
+    response: Value,
+    api_mode: ProviderApiMode,
+) -> Result<Value, ProviderError> {
+    let encoded = bounded_value_excerpt(&response);
+    // A safety-classifier decline is HTTP 200 with `stop_reason: "refusal"` and
+    // empty or partial content. Reporting "no text block" there would blame the
+    // schema for what is actually a policy outcome.
+    if response["stop_reason"] == "refusal" {
+        let category = response
+            .pointer("/stop_details/category")
+            .and_then(Value::as_str)
+            .unwrap_or("unspecified");
+        return Err(ProviderError::Diagnostic(http_diagnostic(
+            400,
+            format!("model declined the request (refusal category: {category})").as_bytes(),
+            false,
+            api_mode,
+        )));
+    }
+    let text = response["content"]
+        .as_array()
+        .and_then(|blocks| blocks.iter().find(|block| block["type"] == "text"))
+        .and_then(|block| block["text"].as_str())
+        .ok_or_else(|| {
+            ProviderError::Diagnostic(schema_diagnostic(
+                "Anthropic response contained no text content block",
+                Some(&encoded),
+                false,
+                api_mode,
+            ))
+        })?;
+    parse_structured_content(text, api_mode)
 }
 
 fn parse_response_events(data: &str) -> Result<Vec<ModelEvent>, ProviderError> {

@@ -18,6 +18,14 @@ pub enum ProviderApiMode {
     Responses,
     OpenaiCompatible,
     OllamaNative,
+    /// Anthropic's Messages API (`POST /v1/messages`). A genuinely different
+    /// wire format from OpenAI's, not a compatibility layer: the system prompt
+    /// is a top-level field rather than a message role, responses are an array
+    /// of typed content blocks rather than `choices[].message.content`, auth is
+    /// `x-api-key` rather than `Authorization: Bearer`, and the SSE frames are
+    /// `content_block_delta` rather than `choices[].delta`. Pointing an
+    /// OpenAI-compatible provider at `api.anthropic.com` does not work.
+    AnthropicMessages,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -437,6 +445,21 @@ fn mode_mismatch_text(text: &str, api_mode: ProviderApiMode) -> bool {
                 "\"done_reason\"",
                 "\"prompt_eval_count\"",
                 "\"eval_count\"",
+            ],
+        ),
+        // The most common Anthropic misconfiguration by far is pointing an
+        // `openai-compatible` provider at `api.anthropic.com` (or the reverse).
+        // These markers name the shapes that can only come from the OTHER wire
+        // format, so the diagnostic says "wrong API mode" instead of a generic
+        // schema error.
+        ProviderApiMode::AnthropicMessages => contains_any(
+            text,
+            &[
+                "\"choices\"",
+                "\"object\":\"chat.completion",
+                "\"output_text\"",
+                "/v1/chat/completions",
+                "\"prompt_eval_count\"",
             ],
         ),
     }

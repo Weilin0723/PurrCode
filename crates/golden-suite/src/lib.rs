@@ -390,6 +390,7 @@ fn action_repository(action: &ProposedAction) -> &Path {
     match action {
         ProposedAction::Command(command) => &command.working_directory,
         ProposedAction::ExternalTool(external) => &external.working_directory,
+        ProposedAction::Tool(invocation) => &invocation.working_directory,
         ProposedAction::RepositoryRead(_)
         | ProposedAction::WriteFile(_)
         | ProposedAction::DeleteFile(_) => Path::new("/repo"),

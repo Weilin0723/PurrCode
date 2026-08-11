@@ -21,9 +21,11 @@ reqwest.workspace = true
 purrcode-agent-runtime = { path = "../agent-runtime" }
 purrcode-codex-bridge = { path = "../codex-bridge" }
 purrcode-pawgate = { path = "../pawgate-runtime" }
+purrcode-extension-config = { path = "../extension-config" }
 purrcode-mcp-host = { path = "../mcp-host" }
 purrcode-provider-gateway = { path = "../provider-gateway" }
 purrcode-provider-import = { path = "../provider-import" }
+purrcode-project-graph = { path = "../project-graph" }
 purrcode-repository-engine = { path = "../repository-engine" }
 purrcode-runtime-core = { path = "../runtime-core" }
 purrcode-ninelives = { path = "../ninelives-recovery" }
@@ -32,6 +34,8 @@ purrcode-claw = { path = "../claw-sandbox" }
 purrcode-skill-store = { path = "../skill-store" }
 purrcode-skill-registry = { path = "../skill-registry" }
 purrcode-web-research = { path = "../web-research" }
+purrcode-reference-resolver = { path = "../reference-resolver" }
+purrcode-lsp = { path = "../lsp-client" }
 purrcode-ui-contracts = { path = "../ui-contracts" }
 purrcode-terminal-runtime = { path = "../terminal-runtime" }
 purrcode-environment-runtime = { path = "../environment-runtime" }
@@ -46,6 +50,7 @@ tracing.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 zip.workspace = true
+notify.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true

@@ -540,6 +540,31 @@ impl PurrCodeIde {
                                     .color(self.tokens.text_muted),
                             );
                         }
+                        // Which language servers are actually running. A
+                        // machine with none says so here rather than leaving
+                        // the user to wonder why nothing resolves.
+                        ui.separator();
+                        let summary = crate::app::language::status_summary(&self.language);
+                        let colour =
+                            if self.language.servers_checked && self.language.servers.is_empty() {
+                                self.tokens.status_warning
+                            } else {
+                                self.tokens.text_muted
+                            };
+                        crate::icons::inline(ui, Glyph::Sparkle, 10.0, colour);
+                        ui.label(
+                            RichText::new(summary)
+                                .size(theme::TYPE_META)
+                                .color(colour),
+                        )
+                        .on_hover_text(match &self.language.last_error {
+                            Some(error) => format!("Last language-server error: {error}"),
+                            None => {
+                                "Language intelligence comes from the language servers installed \
+                                 on this machine."
+                                    .to_owned()
+                            }
+                        });
                     }
                 }
             }

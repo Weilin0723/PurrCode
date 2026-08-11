@@ -2,19 +2,44 @@
 
 pub mod adaptation;
 pub mod authority;
+pub mod capability;
+pub mod evidence;
+pub mod extension;
+pub mod graph;
+pub mod native_tools;
 pub mod product_state;
+pub mod schema_validation;
 pub mod terminal;
+pub mod tool;
 pub mod work;
 
 pub use authority::{
     AuthenticationChannel, AuthorityMode, GrantCapability, GrantId, HumanAuthorityGrant,
     HumanIdentity,
 };
+pub use capability::{
+    AdmissionDiagnostic, CapabilityId, CapabilityProvider, CapabilityRegistry, DiagnosticSeverity,
+    ExtensionLayer,
+};
+pub use evidence::{EvidenceInitiator, ExecutionEvidence, ExecutionOutcome, RedactionClass};
+pub use extension::{
+    AgentDescriptor, AgentProfile, CommandDescriptor, CommandExecutionSpec, ContextPolicy,
+    ContextRequirement, HookAction, HookDescriptor, HookTrigger, ModelRoleName, PermissionRequest,
+    SkillDescriptor, SkillPolicy, SkillValidation, ToolPattern, ToolPolicy, ToolSelection,
+    is_safe_default,
+};
+pub use graph::{GraphEdgeKind, GraphNodeKind};
+pub use native_tools::builtin_native_proposals;
 pub use product_state::{InputDisposition, ProductState, ProductStateView, StateColor};
+pub use schema_validation::{SchemaViolation, validate as validate_against_schema};
 pub use terminal::{
     OwnershipGeneration, OwnershipTransition, ResizeTerminalAction, SendTerminalInputAction,
     StartTerminalAction, StopProcessAction, TerminalAction, TerminalDimensions, TerminalId,
     TerminalInput, TerminalOwner, TerminalSessionRecord, TerminalStatus, TranscriptPolicy,
+};
+pub use tool::{
+    ApprovalPolicy, DescriptorOrigin, FilesystemScope, NetworkScope, SideEffectClass, ToolCeiling,
+    ToolDescriptor, ToolDescriptorProposal, ToolId, ToolInvocation, ToolProvider,
 };
 pub use work::{
     AcceptanceCriterion, CriterionId, DesignDecision, DesignDecisionId, EvidenceCoverage,
@@ -25,7 +50,7 @@ pub use work::{
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use uuid::Uuid;
@@ -61,6 +86,73 @@ impl ActionId {
 }
 
 impl Default for ActionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Identifies one `run_until_pause`/`run_planner` iteration (PRD v1.1 §6.2).
+///
+/// A turn may propose several actions (grep, read, judgment, output) that all
+/// belong to the same model round-trip. Correlating them by `TurnId` is what
+/// lets the IDE Work Log and the context ledger (`ContextLedgerEntry`) show
+/// real provenance instead of `work_log_anchor`'s positional guess.
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct TurnId(pub Uuid);
+
+impl TurnId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for TurnId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Identifies one bounded unit of work nested inside a turn (reserved for
+/// later phases — e.g. one Scout exploration step in Phase 5). Not yet
+/// produced by Phase 1, but defined alongside `TurnId`/`ToolCallId` now so
+/// later phases do not need another `runtime-core` migration.
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct SpanId(pub Uuid);
+
+impl SpanId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for SpanId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Identifies one tool invocation inside a turn (reserved for Phase 3's
+/// action-set loop, where a single turn may carry several read-only
+/// `ActionId`s and a UI needs to correlate each with its own call).
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct ToolCallId(pub Uuid);
+
+impl ToolCallId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for ToolCallId {
     fn default() -> Self {
         Self::new()
     }
@@ -498,12 +590,25 @@ pub enum ProposedAction {
     RepositoryRead(RepositoryReadAction),
     WriteFile(WriteFileAction),
     DeleteFile(DeleteFileAction),
-    ExternalTool(ExternalToolAction),
+    ExternalTool(ExternalToolAction), // deprecated; kept for log replay (§10)
+    Tool(ToolInvocation),             // NEW v1.3
 }
 
 impl ProposedAction {
     pub fn digest(&self, constraints: &ActionConstraints) -> Result<String, DomainError> {
         let canonical = serde_json::to_vec(&(self, constraints))?;
+        Ok(blake3::hash(&canonical).to_hex().to_string())
+    }
+
+    /// v1.3: the descriptor digest is hashed alongside the action and the
+    /// constraints. A descriptor mutated between authorize() and
+    /// consume_authorization() no longer matches, so the capability is void.
+    pub fn digest_v3(
+        &self,
+        constraints: &ActionConstraints,
+        descriptor_digest: &str,
+    ) -> Result<String, DomainError> {
+        let canonical = serde_json::to_vec(&(self, constraints, descriptor_digest))?;
         Ok(blake3::hash(&canonical).to_hex().to_string())
     }
 }
@@ -684,7 +789,375 @@ pub enum ApprovalAuthority {
     SignedPolicy { policy_id: String },
 }
 
-/// How a pause that is waiting on a plan review ends (PRD §11).
+// ── Context ledger types (PRD v1.1 §6.2, Phase 1) ──────────────────
+
+/// What kind of context a [`ContextLedgerSection`] carries.
+///
+/// `ToolEvidence` and `Reserve` are not yet produced by `build_messages()` —
+/// they are defined now so Phase 3 (batched tool-read evidence kept out of
+/// the main transcript) and any future headroom accounting can reuse this
+/// enum instead of growing a second one.
+#[derive(
+    Clone, Copy, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextClass {
+    Instructions,
+    ConversationTail,
+    /// Plan, recent actions/results, and validation/repair routing — the
+    /// per-turn task-state block `build_messages()` assembles into the final
+    /// user message.
+    TaskState,
+    /// `whisker-context-engine` retrieval hits.
+    RetrievedContext,
+    /// Phase 2's `SemanticCheckpoint` (today: the flat `context_summary`
+    /// string it replaces).
+    CompactedCheckpoint,
+    ToolEvidence,
+    Reserve,
+    /// Context a person or the project pinned for this turn, rather than
+    /// something retrieval chose: resolved composer references (`@file`,
+    /// `#symbol`), project instruction files, and selected project memory.
+    /// Classed separately from `RetrievedContext` because the two answer
+    /// different questions — "why did the index surface this?" versus "who
+    /// asked for this to be here?" — and a context inspector that merges them
+    /// cannot tell a user which of their references actually landed.
+    PinnedContext,
+}
+
+/// Why one [`ContextLedgerSection`] was included in a turn's prompt.
+///
+/// `RetrievedByScout` is intentionally absent here: Phase 5 introduces
+/// `ScoutId`, which does not exist in this codebase yet, so that variant is
+/// added alongside `ScoutId` rather than referencing a type Phase 1 cannot
+/// define correctly.
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "reason", content = "detail", rename_all = "snake_case")]
+pub enum WhyIncluded {
+    /// Assembled unconditionally on every turn (developer instructions,
+    /// conversation tail, plan/recent-actions/validation, the compacted
+    /// checkpoint slot).
+    AlwaysPresent,
+    MatchedQuery {
+        term: String,
+    },
+    RecentEdit,
+    Pinned,
+    /// A graph-derived hit: the node was reached by traversing a durable
+    /// project-graph edge, not by matching the query lexically.
+    RelatedByGraph {
+        via_edge: GraphEdgeKind,
+        from_node: String,
+        hops: u8,
+    },
+}
+
+/// Token/byte accounting for one logical slice of an assembled prompt.
+///
+/// `estimated_tokens` uses the same `chars().count().div_ceil(4)` heuristic
+/// `ProviderRouter`'s default `count_tokens` uses
+/// (`crates/provider-gateway/src/lib.rs`), so a ledger's `total_estimated_tokens`
+/// is structurally comparable to — not a second, drifting estimate of — the
+/// aggregate estimate `prepare_model_request` computes over the same text.
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct ContextLedgerSection {
+    pub class: ContextClass,
+    /// Human-readable identity for the section, e.g.
+    /// `"conversation_messages[0..7]"` or `"retrieved_context"`.
+    pub label: String,
+    pub estimated_tokens: u64,
+    pub byte_len: usize,
+    pub why_included: WhyIncluded,
+}
+
+/// One turn's full context-assembly accounting, durably recorded via
+/// [`SessionEvent::ContextAssembled`].
+///
+/// How the token count was computed is tracked in [`TokenEstimator`].
+///
+/// The enum distinguishes provider-counted (authoritative) from the char/4 heuristic.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum TokenEstimator {
+    /// Provider's native tokenizer — the authoritative count.
+    ProviderCounted,
+    /// chars().count().div_ceil(4) fallback — structurally matches the default
+    /// ProviderRouter::count_tokens but may diverge from real tokenizers.
+    #[default]
+    CharDiv4,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ContextLedgerEntry {
+    pub turn_id: TurnId,
+    pub session_id: SessionId,
+    pub sections: Vec<ContextLedgerSection>,
+    pub total_estimated_tokens: u64,
+    #[serde(default)]
+    pub estimator: TokenEstimator,
+    pub recorded_at: DateTime<Utc>,
+}
+
+/// Where one [`PinnedSection`]'s content came from.
+///
+/// The origin is carried into the ledger's section label so a user reading the
+/// context inspector can tell "I typed `@src/auth.rs` and it was attached"
+/// apart from "the project's AGENTS.md was attached" — both are pinned, but
+/// only one of them is something the user asked for in this turn.
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PinnedOrigin {
+    /// A composer reference the user typed (`@file`, `@folder:`, `@diff`,
+    /// `@git:`, `#symbol`), resolved against the repository.
+    ComposerReference,
+    /// A project instruction file in the repository root (AGENTS.md,
+    /// CLAUDE.md, .purrcode.md).
+    ProjectInstructions,
+    /// A durable project-memory entry selected for this turn.
+    ProjectMemory,
+    /// Structured findings returned by a registered tool (skill validation,
+    /// MCP tool result, hook output). Attached as data, not re-parsed prose —
+    /// acceptance-test step 12.
+    ToolFindings {
+        tool_id: ToolId,
+        action_id: ActionId,
+    },
+    /// A file reached by traversing the project-intelligence graph, NOT by a
+    /// lexical match and NOT a project instruction file. Carrying the seed,
+    /// edge kind and hop count here is what lets the context ledger report
+    /// `WhyIncluded::RelatedByGraph` truthfully — pinning graph hits as
+    /// `ProjectInstructions` told the user (and the model) that a repository
+    /// had declared this file as standing guidance, which it had not.
+    GraphRelated {
+        from_node: String,
+        via_edge: GraphEdgeKind,
+        hops: u8,
+    },
+}
+
+impl PinnedOrigin {
+    /// The prefix used to build a ledger section label, so labels group by
+    /// origin when the inspector sorts them.
+    pub const fn label_prefix(&self) -> &'static str {
+        match self {
+            Self::ComposerReference => "reference",
+            Self::ProjectInstructions => "project_instructions",
+            Self::ProjectMemory => "project_memory",
+            Self::ToolFindings { .. } => "tool_findings",
+            Self::GraphRelated { .. } => "graph_related",
+        }
+    }
+
+    /// How the section is introduced to the model. Composer references are the
+    /// user's own words made concrete; instructions and memory are the
+    /// project's standing knowledge, and labelling them as such is what stops
+    /// the model from reading a remembered build command as a fresh request.
+    pub const fn heading(&self) -> &'static str {
+        match self {
+            Self::ComposerReference => "ATTACHED REFERENCES (the user pinned these to this turn)",
+            Self::ProjectInstructions => "PROJECT INSTRUCTIONS (from the repository)",
+            Self::ProjectMemory => "PROJECT MEMORY (durable, auditable project knowledge)",
+            Self::ToolFindings { .. } => "TOOL FINDINGS (structured output from a registered tool)",
+            Self::GraphRelated { .. } => {
+                "RELATED FILES (reached through the project graph, not requested by anyone)"
+            }
+        }
+    }
+}
+
+/// One piece of context pinned to a turn by a person or by the project.
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct PinnedSection {
+    pub origin: PinnedOrigin,
+    /// What the user or project calls this: `@src/auth.rs`, `AGENTS.md`,
+    /// `architecture`.
+    pub label: String,
+    /// The bounded content itself. Callers truncate before constructing this;
+    /// the runtime does not silently shrink it, because a section that claims
+    /// to be a file and is half a file is the same lie as a chip that claims
+    /// to be attached and is not.
+    pub content: String,
+    /// A memory entry's id, so the daemon can record that it was actually used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_id: Option<String>,
+}
+
+/// The context a turn had pinned to it, in the order it is presented.
+///
+/// This is the channel that makes `@file` and project memory real: a section
+/// here is assembled into the model request and accounted for in the turn's
+/// [`ContextLedgerEntry`] with [`WhyIncluded::Pinned`]. Anything that shows a
+/// user an "attached" affordance must put content through here, or the
+/// affordance is describing something that did not happen.
+#[derive(Clone, Debug, Default, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct PinnedContext {
+    pub sections: Vec<PinnedSection>,
+}
+
+impl PinnedContext {
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty()
+    }
+
+    /// Append sections after the caller's own, preserving their order.
+    ///
+    /// Used to fold projections — tool findings recovered from the evidence log
+    /// — into the caller-supplied pinned set. Deliberately does NOT sort:
+    /// the caller's order is meaningful (a user's composer references come
+    /// before standing project memory), and `render_parts` emits a heading
+    /// whenever the origin changes, so appending groups the new sections
+    /// without disturbing what was already there.
+    pub fn with_sections(mut self, sections: Vec<PinnedSection>) -> Self {
+        self.sections.extend(sections);
+        self
+    }
+
+    /// The pinned block split into one `(ledger_label, text)` pair per pinned
+    /// section, grouped by origin with each group's heading emitted once (on
+    /// the first section of the group, so every byte belongs to exactly one
+    /// pair).
+    ///
+    /// This is the single source of truth for both the prompt text and the
+    /// ledger: concatenating every `text` yields exactly [`Self::render`], so
+    /// the per-section token accounting can never drift from what the model
+    /// actually saw — the invariant the context ledger is built on.
+    pub fn render_parts(&self) -> Vec<(String, String)> {
+        let mut parts = Vec::with_capacity(self.sections.len());
+        let mut current: Option<&PinnedOrigin> = None;
+        for section in &self.sections {
+            let mut text = String::new();
+            if current != Some(&section.origin) {
+                text.push_str(&format!("## {}\n", section.origin.heading()));
+                current = Some(&section.origin);
+            }
+            text.push_str(&format!("### {}\n{}\n\n", section.label, section.content));
+            parts.push((
+                format!("{}/{}", section.origin.label_prefix(), section.label),
+                text,
+            ));
+        }
+        parts
+    }
+
+    /// The whole pinned block as it appears in the prompt. Empty when nothing
+    /// is pinned, so the turn carries no empty heading for the model to
+    /// interpret.
+    pub fn render(&self) -> String {
+        self.render_parts()
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect()
+    }
+
+    /// The ids of the memory entries pinned into this turn, for recording that
+    /// they were actually used rather than merely stored.
+    pub fn used_memory_ids(&self) -> Vec<String> {
+        self.sections
+            .iter()
+            .filter(|section| section.origin == PinnedOrigin::ProjectMemory)
+            .filter_map(|section| section.memory_id.clone())
+            .collect()
+    }
+}
+
+/// How many of the most recent [`ContextLedgerEntry`] values `SessionState`
+/// keeps in memory for the inspector endpoint.
+///
+/// This is inspector data, not model-facing context — it is bounded
+/// independently of Phase 2's compaction, and every entry remains durably
+/// replayable from the NineLives event log regardless of this cap.
+pub const MAX_RECENT_CONTEXT_LEDGER_ENTRIES: usize = 64;
+
+/// Tokens NativeAgent reserves for model output when computing how much of
+/// the context window a turn's prompt may fill (see
+/// NativeAgent::effective_input_capacity in agent-runtime). Shared here so
+/// the daemon's presentation layer can compute the same "effective capacity"
+/// number it shows the user without duplicating the literal.
+pub const RESERVED_OUTPUT_TOKENS: u64 = 8192;
+
+// ── Semantic checkpoint types (PRD v1.1 §7.2, Phase 2) ──────────────────
+
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct CheckpointId(pub Uuid);
+
+impl CheckpointId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for CheckpointId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A structured, additive snapshot of the agent's state at compaction.
+///
+/// Unlike v1.0's flat `context_summary: Option<String>` (overwritten on every
+/// compaction), this is chained via `superseded_checkpoint_id` and merged
+/// additively by the reducer — `failed_attempts` never fall out of the prompt.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticCheckpoint {
+    pub checkpoint_id: CheckpointId,
+    pub turn_id: TurnId,
+    pub superseded_checkpoint_id: Option<CheckpointId>,
+    pub objective: String,
+    pub accepted_requirements: Vec<String>,
+    pub user_constraints: Vec<String>,
+    pub decisions: Vec<CheckpointDecision>,
+    pub files_inspected: Vec<PathBuf>,
+    pub files_modified: Vec<PathBuf>,
+    pub important_symbols: Vec<String>,
+    pub validated_facts: Vec<String>,
+    /// Must survive every subsequent compaction — the single most important
+    /// behavioral change in this phase (§7.5).
+    pub failed_attempts: Vec<FailedAttempt>,
+    pub test_results: Vec<TestResultSummary>,
+    pub unresolved_questions: Vec<String>,
+    pub current_hypothesis: Option<String>,
+    pub next_actions: Vec<String>,
+    pub pinned_context: Vec<PinnedContextRef>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FailedAttempt {
+    pub action_id: ActionId,
+    pub action_summary: String,
+    pub reason: String,
+    pub judgment: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointDecision {
+    pub summary: String,
+    pub action_id: Option<ActionId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TestResultSummary {
+    pub label: String,
+    pub passed: u32,
+    pub failed: u32,
+    pub skipped: u32,
+}
+
+/// A reference to context the user pinned in the IDE composer (Phase 5).
+///
+/// Defined here alongside `SemanticCheckpoint` so the checkpoint can carry
+/// pinned-context references before Phase 5's full UI ships; the IDE's chip
+/// rendering reads the same `ContextClass`/`WhyIncluded` enum Phase 1 defined.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PinnedContextRef {
+    pub label: String,
+    pub class: ContextClass,
+    pub why_included: WhyIncluded,
+    pub estimated_tokens: u64,
+}
+
+// ── Session lifecycle / pause constants ────────────────────────────────
 ///
 /// A client has to tell this pause apart from a pause in the middle of the
 /// work: one is asking to be read and will take feedback, the other is
@@ -779,6 +1252,24 @@ pub enum SessionEvent {
         summary: String,
         retained_action_ids: Vec<ActionId>,
     },
+    /// One turn's context-assembly accounting (PRD v1.1 §6.2, Phase 1).
+    /// Purely additive observability: appended to the bounded
+    /// `SessionState.recent_context_ledger`, never consulted by PawGate or
+    /// Claw, and replays through the identical `append`/`reduce_event` path
+    /// as every other `SessionEvent`.
+    ContextAssembled {
+        entry: ContextLedgerEntry,
+    },
+    /// A semantic checkpoint replacing the flat `context_summary: Option<String>`
+    /// (PRD v1.1 §7.2, Phase 2). The reducer merges fields additively across
+    /// the `superseded_checkpoint_id` chain — `failed_attempts` are unioned,
+    /// never dropped — and truncates `conversation_messages` to the window
+    /// starting at `conversation_messages_retained_from`.
+    CheckpointCompacted {
+        checkpoint: Box<SemanticCheckpoint>,
+        retained_action_ids: BTreeSet<ActionId>,
+        conversation_messages_retained_from: usize,
+    },
     SessionPaused {
         reason: String,
     },
@@ -786,8 +1277,19 @@ pub enum SessionEvent {
     ModelSelected {
         model: String,
     },
+    /// The named agent profile this session runs under (v1.3 PR C). Recorded
+    /// durably on session creation so resume/continue/approve rebind the same
+    /// profile without the client re-supplying it. The name resolves against
+    /// the repository's extension set; an unknown name is rejected before the
+    /// session starts.
+    AgentBound {
+        agent: String,
+    },
     SupervisorStarted {
         workers: usize,
+    },
+    WorkerStarted {
+        worker_id: String,
     },
     WorkerFinished {
         worker_id: String,
@@ -802,6 +1304,36 @@ pub enum SessionEvent {
         symbols: usize,
         sensitive_files: usize,
     },
+    /// A read-only Scout subagent began exploring the repository.
+    ///
+    /// Recorded so a running Scout is visible while it runs. Without a Started
+    /// event, the only trace of a subagent is the record of it having finished,
+    /// which means the agent workspace can show work only after it is too late
+    /// to watch — the same gap `WorkerStarted` was added to close for
+    /// supervisor workers.
+    ScoutStarted {
+        scout_id: String,
+        parent_turn_id: TurnId,
+    },
+    /// A read-only Scout subagent completed its repository exploration and
+    /// returned structured evidence (PRD v1.1 §Phase 5, P0-7).
+    ScoutCompleted {
+        scout_id: String,
+        parent_turn_id: TurnId,
+        evidence_count: u32,
+        conclusions: Vec<String>,
+        confidence: String,
+    },
+    /// A Scout subagent failed — its findings are not available but the main
+    /// agent loop continues without them.
+    ScoutFailed {
+        reason: String,
+        /// Which Scout failed, so the workspace can close the entry its
+        /// `ScoutStarted` opened rather than leaving it running forever.
+        /// Defaulted for logs written before Scouts were identified here.
+        #[serde(default)]
+        scout_id: Option<String>,
+    },
     ModelRequestStarted {
         role: String,
         provider: String,
@@ -815,6 +1347,12 @@ pub enum SessionEvent {
     ActionProposed {
         action_id: ActionId,
         action: ProposedAction,
+        /// The turn that produced this action (PRD v1.1 §6.3). `None` for
+        /// events recorded before Phase 1 shipped, or for action proposals
+        /// that do not originate from `run_until_pause`'s main loop (e.g.
+        /// validation-repair specialists, MCP tool invocations).
+        #[serde(default)]
+        turn_id: Option<TurnId>,
     },
     ActionSuperseded {
         previous_action_id: ActionId,
@@ -824,6 +1362,9 @@ pub enum SessionEvent {
     JudgmentRecorded {
         action_id: ActionId,
         decision: JudgmentDecision,
+        /// The turn that produced the judged action; see `ActionProposed`.
+        #[serde(default)]
+        turn_id: Option<TurnId>,
     },
     ContextualJudgmentRecorded {
         action_id: ActionId,
@@ -867,6 +1408,9 @@ pub enum SessionEvent {
         stdout: String,
         stderr: String,
         truncated: bool,
+        /// The turn that produced the executed action; see `ActionProposed`.
+        #[serde(default)]
+        turn_id: Option<TurnId>,
     },
     ValidationRecorded {
         action_id: ActionId,
@@ -878,9 +1422,29 @@ pub enum SessionEvent {
         head: String,
         patch_digest: String,
     },
+    /// A restorable checkpoint was reverse-applied to the isolated worktree.
+    /// Audit-only, mirroring `CheckpointCreated`.
+    CheckpointRestored {
+        checkpoint_id: String,
+        head: String,
+        patch_digest: String,
+    },
+    /// A session was forked from a parent at a conversation anchor. Audit-only;
+    /// the child session's `SessionCreated` carries the `parent_id`.
+    SessionForked {
+        parent_id: String,
+        anchor_message_id: String,
+    },
     WorktreeDispositionRecorded {
         strategy: String,
         detail: String,
+    },
+    /// An external process (not the agent) changed files in the session
+    /// worktree while the session was not executing. This is how the backend
+    /// surfaces "someone edited a file outside PurrCode" so clients can stop
+    /// polling and refresh on change. Audit-only.
+    ExternalChangeDetected {
+        changed_files: Vec<PathBuf>,
     },
     SessionCancelled {
         reason: String,
@@ -999,6 +1563,42 @@ pub enum SessionEvent {
         attempt: u8,
         reason: String,
     },
+    // ── v1.3 extension-platform events (appended at the end so logs written
+    //    by v1.2 still deserialize) ───────────────────────────────────────
+    /// One authorized tool invocation, recorded as durable evidence. The
+    /// canonical projection of [`crate::ExecutionEvidence`] into the event log.
+    ToolEvidenceRecorded {
+        evidence: Box<ExecutionEvidence>,
+    },
+    /// A governed hook fired (or was denied before it could). Recorded BEFORE
+    /// the action is proposed, so a triggered-but-denied hook is
+    /// distinguishable from one that never fired.
+    HookTriggered {
+        hook_id: String,
+        trigger: HookTrigger,
+        action_id: Option<ActionId>,
+    },
+    /// A lifecycle hook needs human approval, so the action that triggered it
+    /// is parked rather than executed or failed.
+    ///
+    /// This is what makes a hook suspension resumable instead of terminal. The
+    /// session moves to `AwaitingApproval(hook_action_id)`; when that approval
+    /// lands, `action_id` is the work that was waiting on it and
+    /// `completed_hooks` is the part of the chain that must not fire a second
+    /// time (approving a hook must not re-ask for the same approval).
+    ActionDeferredForHook {
+        action_id: ActionId,
+        hook_action_id: ActionId,
+        trigger: HookTrigger,
+        completed_hooks: Vec<String>,
+    },
+    /// A deferred action resumed after its hook approval was granted. Paired
+    /// with `ActionDeferredForHook` so the audit trail shows the pause and the
+    /// continuation, and so a replayed approval cannot resume it twice.
+    ActionResumedAfterHook {
+        action_id: ActionId,
+        hook_action_id: ActionId,
+    },
 }
 
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
@@ -1038,7 +1638,14 @@ pub struct SessionState {
     pub plan_revision: u64,
     pub plan_steps: Vec<String>,
     pub context_summary: Option<String>,
+    /// The most recent checkpoint from compaction (PRD v1.1 §7.3, Phase 2).
+    /// Replaces the flat `context_summary` string that was overwritten on every
+    /// compaction; this chains additive merges so `failed_attempts` survive.
+    pub checkpoint: Option<SemanticCheckpoint>,
     pub selected_model: Option<String>,
+    /// The named agent profile bound to this session (v1.3 PR C). Mirrors
+    /// `selected_model`: durable binding metadata, not replay state.
+    pub selected_agent: Option<String>,
     pub controls: adaptation::SessionControls,
     pub complexity_decision: Option<adaptation::ComplexityDecision>,
     pub workflow_plan: Option<adaptation::WorkflowPlan>,
@@ -1052,6 +1659,11 @@ pub struct SessionState {
     pub contextual_judgments: BTreeMap<ActionId, ContextualJudgment>,
     pub proposed_terminal_actions: BTreeMap<ActionId, TerminalAction>,
     pub terminal_judgments: BTreeMap<ActionId, JudgmentDecision>,
+    /// The most recent [`ContextLedgerEntry`] values, newest at the back,
+    /// bounded by [`MAX_RECENT_CONTEXT_LEDGER_ENTRIES`] (PRD v1.1 §6.3).
+    /// Inspector data only — every entry is also durably replayable from the
+    /// full NineLives event log regardless of this in-memory cap.
+    pub recent_context_ledger: VecDeque<ContextLedgerEntry>,
 }
 
 impl SessionState {
@@ -1067,7 +1679,9 @@ impl SessionState {
             plan_revision: 0,
             plan_steps: Vec::new(),
             context_summary: None,
+            checkpoint: None,
             selected_model: None,
+            selected_agent: None,
             controls: adaptation::SessionControls::default(),
             complexity_decision: None,
             workflow_plan: None,
@@ -1081,6 +1695,7 @@ impl SessionState {
             contextual_judgments: BTreeMap::new(),
             proposed_terminal_actions: BTreeMap::new(),
             terminal_judgments: BTreeMap::new(),
+            recent_context_ledger: VecDeque::new(),
         }
     }
 
@@ -1269,6 +1884,7 @@ impl SessionState {
             SessionEvent::JudgmentRecorded {
                 action_id,
                 decision,
+                ..
             } => {
                 if !self.proposed_actions.contains_key(action_id) {
                     return Err(DomainError::InvalidStateTransition {
@@ -1379,7 +1995,9 @@ impl SessionState {
                 self.worktree = Some(path.clone());
                 self.base_head = Some(base_head.clone());
             }
-            SessionEvent::ActionProposed { action_id, action } => {
+            SessionEvent::ActionProposed {
+                action_id, action, ..
+            } => {
                 self.proposed_actions.insert(*action_id, action.clone());
             }
             SessionEvent::TerminalActionProposed { action_id, action } => {
@@ -1433,6 +2051,39 @@ impl SessionState {
                 self.contextual_judgments
                     .retain(|id, _| retained.contains(id));
             }
+            SessionEvent::CheckpointCompacted {
+                checkpoint,
+                retained_action_ids,
+                conversation_messages_retained_from,
+            } => {
+                // Chain: merge additively over the superseded checkpoint so
+                // failed_attempts, files_inspected, and decisions accumulate
+                // across every compaction instead of being dropped (PRD v1.1 §7.3).
+                let merged = if let Some(ref prev) = self.checkpoint {
+                    Self::merge_checkpoint(prev, checkpoint)
+                } else {
+                    checkpoint.as_ref().clone()
+                };
+                self.checkpoint = Some(merged);
+                let retained: BTreeSet<_> = retained_action_ids.iter().copied().collect();
+                self.proposed_actions.retain(|id, _| retained.contains(id));
+                self.judgments.retain(|id, _| retained.contains(id));
+                self.contextual_judgments
+                    .retain(|id, _| retained.contains(id));
+                // conversation_messages now bounded — the oldest messages before
+                // the retained window are dropped (PRD v1.1 §7.3, §7.5).
+                if *conversation_messages_retained_from < self.conversation_messages.len() {
+                    self.conversation_messages = self
+                        .conversation_messages
+                        .split_off(*conversation_messages_retained_from);
+                }
+            }
+            SessionEvent::ContextAssembled { entry } => {
+                self.recent_context_ledger.push_back(entry.clone());
+                while self.recent_context_ledger.len() > MAX_RECENT_CONTEXT_LEDGER_ENTRIES {
+                    self.recent_context_ledger.pop_front();
+                }
+            }
             SessionEvent::SessionPaused { .. } => {
                 self.status = SessionStatus::Paused;
             }
@@ -1440,12 +2091,14 @@ impl SessionState {
                 self.status = SessionStatus::Active;
             }
             SessionEvent::ModelSelected { model } => self.selected_model = Some(model.clone()),
+            SessionEvent::AgentBound { agent } => self.selected_agent = Some(agent.clone()),
             SessionEvent::ConversationMessageAdded { message } => {
                 self.conversation_messages.push(message.clone());
             }
             SessionEvent::JudgmentRecorded {
                 action_id,
                 decision,
+                ..
             } => {
                 self.judgments.insert(*action_id, decision.clone());
                 if matches!(decision, JudgmentDecision::RequireApproval { .. }) {
@@ -1500,6 +2153,91 @@ impl SessionState {
             SessionEvent::CompletionRepairRecorded { .. } => {}
             _ => {}
         }
+    }
+
+    // ── SemanticCheckpoint merge (PRD v1.1 §7.3) ──────────────────
+
+    /// Merge a new checkpoint over the previous one, unioning additive fields.
+    /// Called from the `CheckpointCompacted` reducer arm — not test-only.
+    pub fn merge_checkpoint(
+        previous: &SemanticCheckpoint,
+        latest: &SemanticCheckpoint,
+    ) -> SemanticCheckpoint {
+        use std::collections::BTreeSet;
+        let mut merged = latest.clone();
+        merged.superseded_checkpoint_id = Some(previous.checkpoint_id);
+        let mut files_inspected: BTreeSet<PathBuf> =
+            previous.files_inspected.iter().cloned().collect();
+        files_inspected.extend(latest.files_inspected.iter().cloned());
+        merged.files_inspected = files_inspected.into_iter().collect();
+
+        let mut files_modified: BTreeSet<PathBuf> =
+            previous.files_modified.iter().cloned().collect();
+        files_modified.extend(latest.files_modified.iter().cloned());
+        merged.files_modified = files_modified.into_iter().collect();
+
+        let mut decisions = previous.decisions.clone();
+        decisions.extend(latest.decisions.iter().cloned());
+        merged.decisions = decisions;
+
+        let mut failed_attempts = previous.failed_attempts.clone();
+        failed_attempts.extend(latest.failed_attempts.iter().cloned());
+        merged.failed_attempts = failed_attempts;
+
+        let mut validated_facts: BTreeSet<String> =
+            previous.validated_facts.iter().cloned().collect();
+        validated_facts.extend(latest.validated_facts.iter().cloned());
+        merged.validated_facts = validated_facts.into_iter().collect();
+
+        let mut test_results = previous.test_results.clone();
+        test_results.extend(latest.test_results.iter().cloned());
+        merged.test_results = test_results;
+
+        let mut pinned_context = previous.pinned_context.clone();
+        pinned_context.extend(latest.pinned_context.iter().cloned());
+        merged.pinned_context = pinned_context;
+
+        // Accumulated memory, same as files_inspected/validated_facts above:
+        // a requirement once accepted, or a symbol once seen as significant,
+        // stays remembered across compactions rather than being forgotten
+        // the moment a later checkpoint's snapshot of "what's inspected right
+        // now" doesn't happen to include it.
+        let mut accepted_requirements: BTreeSet<String> =
+            previous.accepted_requirements.iter().cloned().collect();
+        accepted_requirements.extend(latest.accepted_requirements.iter().cloned());
+        merged.accepted_requirements = accepted_requirements.into_iter().collect();
+
+        let mut important_symbols: BTreeSet<String> =
+            previous.important_symbols.iter().cloned().collect();
+        important_symbols.extend(latest.important_symbols.iter().cloned());
+        merged.important_symbols = important_symbols.into_iter().collect();
+
+        if merged.objective.is_empty() {
+            merged.objective = previous.objective.clone();
+        }
+        if merged.current_hypothesis.is_none() {
+            merged.current_hypothesis = previous.current_hypothesis.clone();
+        }
+        // user_constraints/next_actions describe *current* state (the
+        // session's live controls, the plan's still-open work) rather than
+        // accumulated history, so unioning them the way files/facts are
+        // unioned above would let stale entries (a task_mode that's since
+        // changed, a next_action already completed) linger forever next to
+        // the correct current one. Only fall back to `previous` when
+        // `latest` has nothing to say — the same rule already applied to
+        // `objective`/`current_hypothesis` above — never merge the two sets.
+        if merged.user_constraints.is_empty() {
+            merged.user_constraints = previous.user_constraints.clone();
+        }
+        if merged.next_actions.is_empty() {
+            merged.next_actions = previous.next_actions.clone();
+        }
+        let mut unresolved: BTreeSet<String> =
+            previous.unresolved_questions.iter().cloned().collect();
+        unresolved.extend(latest.unresolved_questions.iter().cloned());
+        merged.unresolved_questions = unresolved.into_iter().collect();
+
+        merged
     }
 
     /// Deprecated wrapper around [`Self::reduce_event`].
@@ -1669,6 +2407,11 @@ pub struct ConversationMessage {
     pub tool_results: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The turn that produced this message (PRD v1.1 §6.3). `None` for
+    /// user-typed messages (created outside `run_until_pause`) and for
+    /// messages recorded before Phase 1 shipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<TurnId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -1988,6 +2731,7 @@ mod tests {
                         content: "value".into(),
                         expected_digest: None,
                     }),
+                    turn_id: None,
                 })
                 .unwrap();
         }
@@ -2029,6 +2773,30 @@ mod tests {
             original,
             changed.digest(&ActionConstraints::read_only(root)).unwrap()
         );
+    }
+
+    #[test]
+    fn digest_v3_binds_the_descriptor_digest() {
+        // §4.1: a descriptor mutated between authorize() and
+        // consume_authorization() must void the capability.
+        let root = PathBuf::from("/repo");
+        let action = ProposedAction::Tool(ToolInvocation {
+            tool_id: ToolId::native("read_file"),
+            arguments: serde_json::json!({}),
+            working_directory: root.clone(),
+            descriptor_digest: "abc".into(),
+        });
+        let constraints = ActionConstraints::read_only(root.clone());
+
+        let d1 = action.digest_v3(&constraints, "descriptor-v1").unwrap();
+        let d2 = action.digest_v3(&constraints, "descriptor-v2").unwrap();
+        assert_ne!(
+            d1, d2,
+            "descriptor refresh invalidates outstanding capabilities"
+        );
+
+        let same = action.digest_v3(&constraints, "descriptor-v1").unwrap();
+        assert_eq!(d1, same, "deterministic for identical inputs");
     }
 
     #[test]
@@ -2078,6 +2846,60 @@ mod tests {
     }
 
     #[test]
+    fn v1_2_session_event_log_still_deserializes_with_new_variants_present() {
+        // §10 backward compatibility: appending variants must not change the
+        // serde shape of the pre-existing variants, so a v1.2-written log
+        // (which carries exactly these shapes) still loads. Because the derive
+        // attributes on the old variants are untouched, round-tripping a typed
+        // old-shaped event through the CURRENT serde is a faithful proof: the
+        // bytes produced here are byte-identical to what v1.2 wrote.
+        let legacy = SessionEvent::ActionProposed {
+            action_id: ActionId::new(),
+            action: ProposedAction::RepositoryRead(RepositoryReadAction::ReadFile {
+                path: PathBuf::from("src/lib.rs"),
+                max_bytes: DEFAULT_READ_FILE_MAX_BYTES,
+            }),
+            turn_id: None,
+        };
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        let parsed: SessionEvent =
+            serde_json::from_slice(&bytes).expect("v1.2 log must still load");
+        assert_eq!(parsed, legacy);
+
+        // And the new variants round-trip through the same serde framing.
+        let event = SessionEvent::ToolEvidenceRecorded {
+            evidence: Box::new(ExecutionEvidence {
+                action_id: ActionId::new(),
+                session_id: SessionId::new(),
+                turn_id: None,
+                tool_id: ToolId::native("read_file"),
+                provider: ToolProvider::Native,
+                descriptor_digest: "abc".into(),
+                decision: JudgmentDecision::AllowWithConstraints(ActionConstraints::read_only(
+                    PathBuf::from("/repo"),
+                )),
+                approved_by: ApprovalAuthority::DeterministicPolicy,
+                constraints: ActionConstraints::read_only(PathBuf::from("/repo")),
+                effective_network_scope: NetworkScope::None,
+                effective_filesystem_scope: FilesystemScope::WorktreeRead,
+                initiator: EvidenceInitiator::Human,
+                outcome: ExecutionOutcome::Succeeded {
+                    exit_code: Some(0),
+                    truncated: false,
+                    affected_paths: Vec::new(),
+                },
+                structured_output: None,
+                redaction_class: RedactionClass::Public,
+                started_at: chrono::Utc::now(),
+                finished_at: chrono::Utc::now(),
+            }),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
     fn reducer_accepts_typed_read_proposal_and_executes_through_active() {
         let mut state = SessionState::empty(SessionId::new());
         state
@@ -2099,6 +2921,7 @@ mod tests {
             .reduce_event(&SessionEvent::ActionProposed {
                 action_id,
                 action: ProposedAction::RepositoryRead(RepositoryReadAction::GitStatus),
+                turn_id: None,
             })
             .unwrap();
         assert!(state.proposed_actions.contains_key(&action_id));
@@ -2141,6 +2964,7 @@ mod tests {
             .reduce_event(&SessionEvent::ActionProposed {
                 action_id: proposed,
                 action: ProposedAction::RepositoryRead(RepositoryReadAction::GitStatus),
+                turn_id: None,
             })
             .unwrap();
         state
@@ -2150,6 +2974,7 @@ mod tests {
                     reason: "user review".into(),
                     constraints: ActionConstraints::read_only(PathBuf::from("/repo")),
                 },
+                turn_id: None,
             })
             .unwrap();
         assert_eq!(state.status, SessionStatus::AwaitingApproval(proposed));
@@ -2220,6 +3045,7 @@ mod tests {
             .reduce_event(&SessionEvent::ActionProposed {
                 action_id,
                 action: ProposedAction::RepositoryRead(RepositoryReadAction::GitStatus),
+                turn_id: None,
             })
             .unwrap();
         state
@@ -2229,6 +3055,7 @@ mod tests {
                     reason: "human review".into(),
                     constraints: ActionConstraints::read_only(PathBuf::from("/repo")),
                 },
+                turn_id: None,
             })
             .unwrap();
         assert_eq!(state.status, SessionStatus::AwaitingApproval(action_id));
@@ -2275,6 +3102,32 @@ mod tests {
     }
 
     #[test]
+    fn agent_bound_reduces_into_selected_agent() {
+        let id = SessionId::new();
+        let mut state = SessionState::empty(id);
+        state
+            .reduce_event(&SessionEvent::SessionCreated {
+                objective: "review".into(),
+                repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::AgentBound {
+                agent: "security-reviewer".into(),
+            })
+            .unwrap();
+        assert_eq!(state.selected_agent.as_deref(), Some("security-reviewer"));
+        // Rebinding replaces the previous binding.
+        state
+            .reduce_event(&SessionEvent::AgentBound {
+                agent: "architect".into(),
+            })
+            .unwrap();
+        assert_eq!(state.selected_agent.as_deref(), Some("architect"));
+    }
+
+    #[test]
     fn reconstruct_state_from_events_matches_sequential_reduce() {
         let id = SessionId::new();
         let events = vec![
@@ -2286,6 +3139,7 @@ mod tests {
             SessionEvent::ActionProposed {
                 action_id: ActionId::new(),
                 action: ProposedAction::RepositoryRead(RepositoryReadAction::GitStatus),
+                turn_id: None,
             },
             SessionEvent::SessionCompleted,
         ];
@@ -2405,6 +3259,7 @@ mod tests {
                     content: "content".into(),
                     expected_digest: None,
                 }),
+                turn_id: None,
             })
             .unwrap();
         let decision = JudgmentDecision::RequireApproval {
@@ -2415,6 +3270,7 @@ mod tests {
             .reduce_event(&SessionEvent::JudgmentRecorded {
                 action_id,
                 decision: decision.clone(),
+                turn_id: None,
             })
             .unwrap();
         assert!(state.judgments.contains_key(&action_id));
@@ -2447,5 +3303,183 @@ mod tests {
             })
             .unwrap();
         assert_eq!(state.status, SessionStatus::Active);
+    }
+}
+
+#[cfg(test)]
+mod session_state_tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_merge_unions_failed_attempts_for_persistence_across_compactions() {
+        let previous = SemanticCheckpoint {
+            checkpoint_id: CheckpointId::new(),
+            turn_id: TurnId::new(),
+            superseded_checkpoint_id: None,
+            objective: "fix the parser".into(),
+            accepted_requirements: vec![],
+            user_constraints: vec![],
+            decisions: vec![CheckpointDecision {
+                summary: "used regex parser".into(),
+                action_id: None,
+            }],
+            files_inspected: vec![PathBuf::from("src/parser.rs")],
+            files_modified: vec![],
+            important_symbols: vec![],
+            validated_facts: vec!["parser compiles".into()],
+            failed_attempts: vec![FailedAttempt {
+                action_id: ActionId::new(),
+                action_summary: "tried a hand-written parser".into(),
+                reason: "too many edge cases".into(),
+                judgment: Some("AllowWithConstraints".into()),
+            }],
+            test_results: vec![],
+            unresolved_questions: vec![],
+            current_hypothesis: Some("regex covers 90%".into()),
+            next_actions: vec![],
+            pinned_context: vec![],
+        };
+        let latest = SemanticCheckpoint {
+            checkpoint_id: CheckpointId::new(),
+            turn_id: TurnId::new(),
+            superseded_checkpoint_id: None,
+            objective: String::new(),
+            accepted_requirements: vec![],
+            user_constraints: vec![],
+            decisions: vec![CheckpointDecision {
+                summary: "switched to pest".into(),
+                action_id: None,
+            }],
+            files_inspected: vec![PathBuf::from("src/parser.rs"), PathBuf::from("Cargo.toml")],
+            files_modified: vec![],
+            important_symbols: vec![],
+            validated_facts: vec!["pest integration works".into()],
+            failed_attempts: vec![FailedAttempt {
+                action_id: ActionId::new(),
+                action_summary: "tried nom combinator".into(),
+                reason: "compile times too high".into(),
+                judgment: Some("AllowWithConstraints".into()),
+            }],
+            test_results: vec![],
+            unresolved_questions: vec![],
+            current_hypothesis: None,
+            next_actions: vec![],
+            pinned_context: vec![],
+        };
+        let merged = SessionState::merge_checkpoint(&previous, &latest);
+        // Union
+        assert_eq!(
+            merged.failed_attempts.len(),
+            2,
+            "failed_attempts must union across the chain"
+        );
+        assert!(
+            merged
+                .failed_attempts
+                .iter()
+                .any(|f| f.action_summary.contains("hand-written"))
+        );
+        assert!(
+            merged
+                .failed_attempts
+                .iter()
+                .any(|f| f.action_summary.contains("nom"))
+        );
+        assert_eq!(
+            merged.files_inspected.len(),
+            2,
+            "files_inspected must deduplicate"
+        );
+        assert_eq!(merged.decisions.len(), 2);
+        assert_eq!(merged.validated_facts.len(), 2);
+        // Carry-forward
+        assert_eq!(merged.objective, "fix the parser");
+        assert_eq!(
+            merged.current_hypothesis.as_deref(),
+            Some("regex covers 90%")
+        );
+        // Chain identity
+        assert_eq!(
+            merged.superseded_checkpoint_id,
+            Some(previous.checkpoint_id)
+        );
+    }
+
+    #[test]
+    fn checkpoint_merge_unions_accumulated_memory_and_carries_forward_current_state() {
+        let previous = SemanticCheckpoint {
+            checkpoint_id: CheckpointId::new(),
+            turn_id: TurnId::new(),
+            superseded_checkpoint_id: None,
+            objective: "fix the parser".into(),
+            accepted_requirements: vec!["planned: use a real parser combinator".into()],
+            user_constraints: vec!["task_mode=build".into()],
+            decisions: vec![],
+            files_inspected: vec![],
+            files_modified: vec![],
+            important_symbols: vec!["parser.rs".into()],
+            validated_facts: vec![],
+            failed_attempts: vec![],
+            test_results: vec![],
+            unresolved_questions: vec![],
+            current_hypothesis: None,
+            next_actions: vec!["task[1]: wire the new parser into the CLI".into()],
+            pinned_context: vec![],
+        };
+        let latest = SemanticCheckpoint {
+            checkpoint_id: CheckpointId::new(),
+            turn_id: TurnId::new(),
+            superseded_checkpoint_id: None,
+            objective: "fix the parser".into(),
+            accepted_requirements: vec!["planned: add a regression test".into()],
+            // Manual /compact building through the same path as automatic
+            // compaction always populates this from current controls, but
+            // the merge rule itself must not assume that — it should carry
+            // `previous` forward whenever `latest` genuinely has nothing.
+            user_constraints: vec![],
+            decisions: vec![],
+            files_inspected: vec![],
+            files_modified: vec![],
+            important_symbols: vec!["cli.rs".into()],
+            validated_facts: vec![],
+            failed_attempts: vec![],
+            test_results: vec![],
+            unresolved_questions: vec![],
+            current_hypothesis: None,
+            // The first next_action is done; the checkpoint now reports a
+            // different one. This must NOT accumulate with `previous`'s —
+            // next_actions describes what's still open right now, not a
+            // log of everything ever queued.
+            next_actions: vec!["task[2]: add docs".into()],
+            pinned_context: vec![],
+        };
+        let merged = SessionState::merge_checkpoint(&previous, &latest);
+
+        // Accumulated memory: union, same rule as failed_attempts/files_inspected.
+        assert_eq!(merged.accepted_requirements.len(), 2);
+        assert!(
+            merged
+                .accepted_requirements
+                .iter()
+                .any(|r| r.contains("parser combinator"))
+        );
+        assert!(
+            merged
+                .accepted_requirements
+                .iter()
+                .any(|r| r.contains("regression test"))
+        );
+        assert_eq!(merged.important_symbols.len(), 2);
+        assert!(merged.important_symbols.iter().any(|s| s == "parser.rs"));
+        assert!(merged.important_symbols.iter().any(|s| s == "cli.rs"));
+
+        // Current state: latest wins outright when non-empty — no union,
+        // no stale entries left sitting next to the fresh one.
+        assert_eq!(merged.next_actions, vec!["task[2]: add docs".to_string()]);
+
+        // Current state: falls back to previous only because latest was
+        // empty here — this is what a hand-rolled empty manual-compact
+        // checkpoint used to wipe permanently before the unified builder.
+        assert_eq!(merged.user_constraints, vec!["task_mode=build".to_string()]);
     }
 }

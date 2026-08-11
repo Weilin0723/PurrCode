@@ -778,6 +778,39 @@ impl RepositoryEngine {
         }
         Ok(())
     }
+
+    /// Forward-applies a checkpoint patch (a diff against the worktree base
+    /// HEAD) to the isolated worktree. Used after a rollback to reproduce a
+    /// checkpoint's code state exactly. A conflict aborts without touching
+    /// anything.
+    pub async fn apply_patch(
+        worktree: &SessionWorktree,
+        patch: &[u8],
+    ) -> Result<(), RepositoryError> {
+        ensure_session_path(
+            &worktree.source_repository,
+            worktree.session_id,
+            &worktree.path,
+        )?;
+        if patch.is_empty() {
+            return Ok(());
+        }
+        git_with_input(
+            &worktree.path,
+            &["apply", "--check", "--binary", "--whitespace=nowarn", "-"],
+            patch,
+            &[0],
+        )
+        .await?;
+        git_with_input(
+            &worktree.path,
+            &["apply", "--binary", "--whitespace=nowarn", "-"],
+            patch,
+            &[0],
+        )
+        .await?;
+        Ok(())
+    }
 }
 
 fn atomic_write(destination: &Path, content: &[u8]) -> Result<(), RepositoryError> {
@@ -901,17 +934,36 @@ async fn ensure_purrcode_excluded(repository: &Path) -> Result<(), RepositoryErr
         repository.join(exclude)
     };
     let current = std::fs::read_to_string(&exclude).unwrap_or_default();
-    if current.lines().any(|line| line.trim() == ".purrcode/") {
-        return Ok(());
+    let mut lines: Vec<&str> = current.lines().collect();
+    // v1.3: only the runtime scratch under `.purrcode/worktrees/` is excluded,
+    // so `.purrcode/agents/`, `.purrcode/commands/`, `.purrcode/hooks/` and
+    // `.purrcode/settings.yaml` can be committed as project configuration. If a
+    // previous PurrCode run wrote the blanket `.purrcode/` line, replace it.
+    lines.retain(|line| line.trim() != ".purrcode/");
+    let has_narrow = lines
+        .iter()
+        .any(|line| line.trim() == ".purrcode/worktrees/");
+    if !has_narrow {
+        lines.push(".purrcode/worktrees/");
+    }
+    let mut updated = String::new();
+    let mut first = true;
+    for line in lines {
+        if !first {
+            updated.push('\n');
+        }
+        updated.push_str(line);
+        first = false;
+    }
+    if !updated.is_empty() {
+        updated.push('\n');
     }
     let mut file = OpenOptions::new()
         .create(true)
-        .append(true)
+        .truncate(true)
+        .write(true)
         .open(&exclude)?;
-    if !current.is_empty() && !current.ends_with('\n') {
-        writeln!(file)?;
-    }
-    writeln!(file, ".purrcode/")?;
+    file.write_all(updated.as_bytes())?;
     file.sync_all()?;
     Ok(())
 }
@@ -1323,6 +1375,26 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
+        // Pin line endings for every fixture repository.
+        //
+        // Git for Windows ships `core.autocrlf=true`, so a checkout rewrites LF
+        // to CRLF and a test that round-trips content through a patch reads back
+        // `base\r\ncheckpointed\r\n` for bytes it wrote as `base\ncheckpointed\n`.
+        // The assertions are about patch fidelity, not about the platform's
+        // newline convention, so the fixture removes the variable rather than
+        // each assertion normalizing after the fact. This must live in the
+        // repository's own config, not this helper's environment: the code under
+        // test shells out to git itself and would not inherit it.
+        if arguments.first() == Some(&"init") {
+            for (key, value) in [("core.autocrlf", "false"), ("core.eol", "lf")] {
+                let status = StdCommand::new("git")
+                    .args(["config", key, value])
+                    .current_dir(repository)
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+            }
+        }
     }
 
     #[tokio::test]
@@ -1785,5 +1857,56 @@ mod tests {
                 .changed_files
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_reproduces_a_checkpoint_state_after_rollback() {
+        // A checkpoint is a diff against the worktree base. Restoring means
+        // rollback to base HEAD, then forward-applying the patch.
+        let temporary = tempfile::tempdir().unwrap();
+        git(temporary.path(), &["init", "-q"]);
+        std::fs::write(temporary.path().join("a.txt"), "base\n").unwrap();
+        git(temporary.path(), &["add", "."]);
+        git(temporary.path(), &["commit", "-q", "-m", "base"]);
+        let worktree = RepositoryEngine::create_worktree(temporary.path(), SessionId::new())
+            .await
+            .unwrap();
+
+        // Simulate the agent making a change, then capturing a checkpoint.
+        std::fs::write(worktree.path.join("a.txt"), "base\ncheckpointed\n").unwrap();
+        let checkpoint_patch = RepositoryEngine::effects(&worktree)
+            .await
+            .unwrap()
+            .binary_patch;
+        assert!(!checkpoint_patch.is_empty());
+
+        // The agent keeps working past the checkpoint.
+        std::fs::write(
+            worktree.path.join("a.txt"),
+            "base\ncheckpointed\nmore work\n",
+        )
+        .unwrap();
+        std::fs::write(worktree.path.join("later.txt"), "later\n").unwrap();
+
+        // Restore to the checkpoint: rollback, then apply the checkpoint patch.
+        RepositoryEngine::rollback_all(&worktree).await.unwrap();
+        RepositoryEngine::apply_patch(&worktree, &checkpoint_patch)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(worktree.path.join("a.txt")).unwrap(),
+            "base\ncheckpointed\n"
+        );
+        assert!(!worktree.path.join("later.txt").exists());
+        // The restored state is exactly the checkpoint digest.
+        let digest = blake3::hash(
+            &RepositoryEngine::effects(&worktree)
+                .await
+                .unwrap()
+                .binary_patch,
+        )
+        .to_hex()
+        .to_string();
+        assert_eq!(digest, blake3::hash(&checkpoint_patch).to_hex().to_string());
     }
 }

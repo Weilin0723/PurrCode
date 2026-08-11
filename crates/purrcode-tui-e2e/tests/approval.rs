@@ -439,7 +439,15 @@ fn the_approval_surface_is_complete_at_sixty_columns() {
     let mut harness = attached(script, HarnessOptions::size(60, 24));
     with_artifacts("approval-sixty-columns", &mut harness, |harness| {
         resume_to_approval(harness)?;
-        let screen = harness.wait_for_text("Approval required")?;
+        // Wait for the WHOLE panel, not its title.
+        //
+        // `wait_for_text` returns the frame that first matched, and this panel
+        // arrives over several PTY reads: "Approval required" is on screen while
+        // Operation/Reason/Risk are still being written and the digest rows have
+        // not been drawn at all. Asserting the later rows against the frame that
+        // matched the title is a race — it passed on one CI runner and failed on
+        // another at the same commit.
+        let screen = harness.wait_for_all(&["Approval required", "src/lib.rs", "Digest"])?;
         assertions::assert_no_overflow(&screen);
         assertions::assert_visible(&screen, &["src/lib.rs", "Digest"]);
         assertions::assert_readable(&screen, "A Approve exact action");

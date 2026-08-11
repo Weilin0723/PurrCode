@@ -364,6 +364,11 @@ pub struct ActivityItem {
     /// True when expanding this entry would show something more — the command,
     /// the affected files, the test output, the authorization decision.
     pub detail_available: bool,
+    /// The turn that produced this activity item (PRD v1.1 §6.3). `None` when
+    /// the activity is derived from an aggregation (e.g. "Inspected 12 file(s)")
+    /// rather than from a single event with a known turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
 }
 
 /// Truthful validation outcome (PRD §21.3).
@@ -554,6 +559,22 @@ pub struct UsageSummaryView {
     /// before any model call has reported a latency.
     #[serde(default)]
     pub total_latency_ms: u64,
+    /// The coding-worker model's actual context window, when the configured
+    /// provider reports one. `None` when unresolved (provider capabilities
+    /// unreachable or unknown) — a client must not substitute a made-up
+    /// number here without saying so.
+    #[serde(default)]
+    pub context_capacity_tokens: Option<u64>,
+    /// The most recent turn's actual prompt size — what the *next* request
+    /// would cost, not the session's running total. `None` before any turn
+    /// has recorded a context-ledger entry.
+    #[serde(default)]
+    pub current_context_tokens: Option<u64>,
+    /// `context_capacity_tokens` minus the tokens the runtime reserves for
+    /// model output — what a turn can actually fill before compaction. `None`
+    /// under the same conditions as `context_capacity_tokens`.
+    #[serde(default)]
+    pub effective_capacity_tokens: Option<u64>,
 }
 
 #[cfg(test)]
@@ -692,6 +713,7 @@ mod tests {
             status: ActivityStatus::Running,
             summary: None,
             detail_available: true,
+            turn_id: None,
         };
         let encoded = serde_json::to_string(&item).unwrap();
         assert!(encoded.contains("\"kind\":\"validation\""));

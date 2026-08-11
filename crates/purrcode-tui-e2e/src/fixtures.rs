@@ -171,13 +171,89 @@ pub fn purrcode_binary() -> Result<PathBuf> {
         })
     });
     match candidate {
-        Some(path) if path.is_file() => Ok(path),
+        Some(path) if path.is_file() => {
+            ensure_binary_is_current(&path)?;
+            Ok(path)
+        }
         Some(path) => bail!(
             "the purrcode binary is missing at {}; run `cargo build -p purrcode-cli` or set PURRCODE_BIN",
             path.display()
         ),
         None => bail!("could not locate the workspace target directory"),
     }
+}
+
+/// Refuse to run the suite against a binary older than the code it is meant to
+/// be testing.
+///
+/// `target/<profile>/purrcode` belongs to `purrcode-cli`, a DIFFERENT crate, so
+/// `cargo test -p purrcode-tui-e2e` does not rebuild it. Locally that produced
+/// silent false results: the whole suite passed against a day-old binary that
+/// predated the feature under test, which is strictly worse than failing —
+/// every conclusion drawn from those runs was worthless, and the divergence
+/// only showed up on CI, where `cargo test --workspace` builds the binary first.
+///
+/// mtime is the right signal here despite being coarse: the failure mode is
+/// "someone edited the source and did not rebuild", which always moves a source
+/// file's mtime past the binary's. A false alarm costs one `cargo build`; a
+/// false pass costs a debugging session chasing a defect that is not there.
+fn ensure_binary_is_current(binary: &Path) -> Result<()> {
+    let Ok(built) = binary.metadata().and_then(|meta| meta.modified()) else {
+        return Ok(());
+    };
+    // Scoped to what the BINARY is built from. This crate's own sources are not
+    // part of it, so editing the harness must not report the binary as stale.
+    let harness = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let Some(crates) = harness.parent().map(Path::to_path_buf) else {
+        return Ok(());
+    };
+    if let Some(newer) = newest_source_after(&crates, harness, built) {
+        bail!(
+            "the purrcode binary at {} is older than {}.\n\
+             `cargo test -p purrcode-tui-e2e` does NOT rebuild it — it belongs to purrcode-cli.\n\
+             Run `cargo build -p purrcode-cli` (or `cargo test --workspace`, as CI does) first;\n\
+             otherwise this suite tests a stale binary and its results mean nothing.",
+            binary.display(),
+            newer.display()
+        );
+    }
+    Ok(())
+}
+
+/// The first `.rs` file under `root` modified after `built`, if any.
+fn newest_source_after(
+    root: &Path,
+    skip: &Path,
+    built: std::time::SystemTime,
+) -> Option<std::path::PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                // `target/` holds build output, not sources, and this crate is
+                // not compiled into the binary.
+                if path.file_name().is_some_and(|name| name == "target") || path == skip {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .is_ok_and(|modified| modified > built)
+            {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 fn git(repository: &Path, arguments: &[&str]) -> Result<()> {

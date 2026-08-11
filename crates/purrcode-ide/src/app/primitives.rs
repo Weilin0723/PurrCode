@@ -741,6 +741,70 @@ pub(crate) fn segmented<T: Clone + PartialEq>(
     changed
 }
 
+// ── Dialogs ────────────────────────────────────────────────────────────
+
+/// The standard width for a confirmation dialog.
+///
+/// One number rather than each caller's own guess: five dialogs written
+/// independently had picked five widths between 340 and 420, which reads as
+/// five different components rather than one application.
+pub(crate) const DIALOG_WIDTH: f32 = 400.0;
+
+/// What the user did with a dialog.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DialogChoice {
+    Confirm,
+    Cancel,
+}
+
+/// The title, body, and action row every confirmation dialog shares.
+///
+/// `body` draws the middle; everything around it — the heading, the spacing,
+/// the Cancel/confirm pair and their tones — is fixed here so the dialogs stay
+/// one component. Returns `None` while the dialog is still open.
+///
+/// The confirm button is drawn even when `enabled` is false rather than being
+/// hidden, so a user who cannot yet proceed can see what they are working
+/// toward and why it is unavailable.
+pub(crate) fn dialog<R>(
+    ctx: &egui::Context,
+    tokens: &Tokens,
+    id: &str,
+    title: &str,
+    confirm: (&str, Tone),
+    enabled: bool,
+    body: impl FnOnce(&mut Ui) -> R,
+) -> (Option<DialogChoice>, R) {
+    let mut choice = None;
+    let inner = egui::Modal::new(egui::Id::new(id))
+        .show(ctx, |ui| {
+            ui.set_width(DIALOG_WIDTH);
+            ui.label(
+                RichText::new(title)
+                    .size(theme::TYPE_TITLE)
+                    .color(tokens.text_primary),
+            );
+            ui.add_space(8.0);
+            let produced = body(ui);
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if button(ui, tokens, Tone::Quiet, "Cancel").clicked() {
+                    choice = Some(DialogChoice::Cancel);
+                }
+                if button_enabled(ui, tokens, confirm.1, confirm.0, enabled).clicked() {
+                    choice = Some(DialogChoice::Confirm);
+                }
+            });
+            produced
+        })
+        .inner;
+    // Escape cancels, which is what every dialog the user has ever met does.
+    if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+        choice = Some(DialogChoice::Cancel);
+    }
+    (choice, inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

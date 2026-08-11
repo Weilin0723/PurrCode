@@ -48,6 +48,9 @@ impl PurrCodeIde {
     // ── File tree (default artifact when nothing is open) ─────────────
 
     fn code_file_tree(&mut self, ui: &mut Ui) {
+        let repository = self.repository.clone();
+        let mut new_file = false;
+        let mut new_folder = false;
         ui.horizontal(|ui| {
             self.section_heading(ui, "Files");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -57,10 +60,27 @@ impl PurrCodeIde {
                         .small()
                         .color(self.tokens.text_muted),
                 );
+                if !repository.as_os_str().is_empty() {
+                    new_folder |= self
+                        .icon_action(ui, crate::icons::Glyph::FolderOpen, "New folder")
+                        .clicked();
+                    new_file |= self
+                        .icon_action(ui, crate::icons::Glyph::Plus, "New file")
+                        .clicked();
+                }
             });
         });
+        if new_file {
+            self.begin_file_operation(super::files::FileOperation::NewFile {
+                parent: repository.clone(),
+            });
+        }
+        if new_folder {
+            self.begin_file_operation(super::files::FileOperation::NewFolder {
+                parent: repository.clone(),
+            });
+        }
 
-        let repository = self.repository.clone();
         if repository.as_os_str().is_empty() {
             ui.label(
                 RichText::new("No folder opened")
@@ -158,6 +178,13 @@ impl PurrCodeIde {
                 } else {
                     self.expanded.insert(path.clone());
                 }
+            }
+            let mut chosen = None;
+            response.context_menu(|ui| {
+                chosen = super::files::tree_context_menu(ui, path, true);
+            });
+            if let Some(operation) = chosen {
+                self.begin_file_operation(operation);
             }
             if expanded {
                 self.render_tree_level(ui, path, repository, depth + 1, changed);
@@ -262,6 +289,13 @@ impl PurrCodeIde {
                 } else {
                     self.open_file(path.clone());
                 }
+            }
+            let mut chosen = None;
+            response.context_menu(|ui| {
+                chosen = super::files::tree_context_menu(ui, path, false);
+            });
+            if let Some(operation) = chosen {
+                self.begin_file_operation(operation);
             }
         }
     }

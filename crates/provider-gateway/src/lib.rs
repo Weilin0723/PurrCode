@@ -38,14 +38,26 @@ use uuid::Uuid;
 use diagnostics::transport_diagnostic;
 use http_transport::{
     bounded_http_failure, encode_bounded_request, encode_bounded_structured_value,
-    ensure_content_type, extract_chat_output, extract_ollama_output, extract_output_json,
-    ollama_native_stream, ollama_provider_stream, openai_event_stream, openai_provider_stream,
-    parse_json_body, read_bounded_body,
+    ensure_content_type, extract_anthropic_output, extract_chat_output, extract_ollama_output,
+    extract_output_json, ollama_native_stream, ollama_provider_stream, openai_event_stream,
+    openai_provider_stream, parse_json_body, read_bounded_body,
 };
 #[cfg(test)]
 use http_transport::{parse_chat_event, parse_response_event};
 
 const KEYCHAIN_PREFIX: &str = "keychain:";
+
+/// `max_tokens` is a REQUIRED field on the Anthropic Messages API — unlike
+/// chat-completions, there is no server-side default and omitting it is a 400.
+/// When a caller does not bound the response, this bound is used: large enough
+/// for a full answer, small enough to stay under the SDK/HTTP timeout that
+/// larger values invite on the non-streaming path.
+const DEFAULT_ANTHROPIC_MAX_TOKENS: u64 = 16_000;
+
+/// The Messages API version header. Anthropic requires it on every request;
+/// it is a wire-format version, not a model version, and does not change when
+/// models do.
+const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Default file name for the credential store, always resolved relative to the
 /// same directory as `config.toml`.
@@ -923,6 +935,9 @@ impl AppConfig {
             ProviderConfig::NvidiaNim { api_key_env, .. } => {
                 *api_key_env = reference;
             }
+            ProviderConfig::Anthropic { api_key_env, .. } => {
+                *api_key_env = reference;
+            }
             ProviderConfig::AzureOpenai { credential, .. } => {
                 *credential = AzureCredential::KeychainKey {
                     name: reference
@@ -951,6 +966,10 @@ impl AppConfig {
                 ..
             }
             | ProviderConfig::Ollama {
+                capabilities: models,
+                ..
+            }
+            | ProviderConfig::Anthropic {
                 capabilities: models,
                 ..
             }
@@ -1081,6 +1100,22 @@ pub enum ProviderConfig {
         #[serde(default)]
         capabilities: BTreeMap<String, ModelCapabilities>,
     },
+    /// Anthropic's own API (`https://api.anthropic.com/v1/`). A first-class
+    /// variant, not an OpenAI-compatible endpoint: the Messages API is a
+    /// different wire format (see [`ProviderApiMode::AnthropicMessages`]), so
+    /// configuring Anthropic as `openai-compatible` cannot work.
+    ///
+    /// Authentication is `x-api-key`, never `Authorization: Bearer` — the key
+    /// still resolves through the same credential store as every other
+    /// provider, so raw keys never live in config.
+    Anthropic {
+        #[serde(default = "anthropic_base_url")]
+        base_url: Url,
+        #[serde(default = "anthropic_key_env")]
+        api_key_env: String,
+        #[serde(default)]
+        capabilities: BTreeMap<String, ModelCapabilities>,
+    },
     Ollama {
         #[serde(default = "ollama_base_url")]
         base_url: Url,
@@ -1134,6 +1169,7 @@ impl ProviderConfig {
                 base_url, local, ..
             } => (base_url, *local),
             Self::Ollama { base_url, .. } => (base_url, true),
+            Self::Anthropic { base_url, .. } => (base_url, false),
             Self::NvidiaNim { base_url, .. } => (base_url, false),
             Self::EnterpriseGateway { base_url, .. } => (base_url, false),
             Self::AzureOpenai { endpoint, .. } => (endpoint, false),
@@ -1156,6 +1192,7 @@ impl ProviderConfig {
             Self::Openai { .. } => false,
             Self::OpenaiCompatible { local, .. } => *local,
             Self::Ollama { .. } => true,
+            Self::Anthropic { .. } => false,
             Self::NvidiaNim { .. } => false,
             Self::EnterpriseGateway { .. } => false,
             Self::AzureOpenai { .. } => false,
@@ -1167,6 +1204,7 @@ impl ProviderConfig {
             Self::Openai { capabilities, .. }
             | Self::OpenaiCompatible { capabilities, .. }
             | Self::Ollama { capabilities, .. }
+            | Self::Anthropic { capabilities, .. }
             | Self::NvidiaNim { capabilities, .. }
             | Self::EnterpriseGateway { capabilities, .. }
             | Self::AzureOpenai { capabilities, .. } => capabilities,
@@ -1181,6 +1219,7 @@ impl ProviderConfig {
             Self::Openai { capabilities, .. }
             | Self::OpenaiCompatible { capabilities, .. }
             | Self::Ollama { capabilities, .. }
+            | Self::Anthropic { capabilities, .. }
             | Self::NvidiaNim { capabilities, .. }
             | Self::EnterpriseGateway { capabilities, .. }
             | Self::AzureOpenai { capabilities, .. } => capabilities,
@@ -1214,6 +1253,12 @@ fn normalize_ollama_base_url(mut url: Url) -> Url {
 }
 fn openai_key_env() -> String {
     "OPENAI_API_KEY".into()
+}
+fn anthropic_base_url() -> Url {
+    Url::parse("https://api.anthropic.com/v1/").expect("static Anthropic URL is valid")
+}
+fn anthropic_key_env() -> String {
+    "ANTHROPIC_API_KEY".into()
 }
 /// Ensures the NVIDIA NIM base URL has a trailing slash and a `/v1/` path
 /// prefix so callers that join relative paths (e.g. `chat/completions`) work
@@ -1469,6 +1514,34 @@ impl HttpProvider {
                 None,
                 capabilities,
                 ProviderApiMode::OpenaiCompatible,
+                None,
+                None,
+            ),
+            ProviderConfig::Anthropic {
+                base_url,
+                api_key_env,
+                capabilities,
+            } => (
+                base_url,
+                // NOT threaded through `api_key_env` (which becomes an
+                // `Authorization: Bearer` header). Anthropic authenticates with
+                // `x-api-key`, so the key is resolved through `header_env` —
+                // the same credential-store path, a different header. Sending a
+                // Bearer token instead produces a 401 that reads like a bad
+                // key rather than a wrong scheme.
+                None,
+                None,
+                false,
+                BTreeMap::from([(
+                    "anthropic-version".to_string(),
+                    ANTHROPIC_VERSION.to_string(),
+                )]),
+                BTreeMap::from([("x-api-key".to_string(), api_key_env)]),
+                None,
+                None,
+                None,
+                capabilities,
+                ProviderApiMode::AnthropicMessages,
                 None,
                 None,
             ),
@@ -1870,6 +1943,76 @@ impl HttpProvider {
                 }
                 body
             }
+            ProviderApiMode::AnthropicMessages => {
+                // The Messages API differs from chat-completions in three ways
+                // that matter here:
+                //
+                // 1. `system` is a TOP-LEVEL field. A `{"role": "system"}`
+                //    entry in `messages` is rejected on most models, so system
+                //    turns are lifted out and concatenated.
+                // 2. `max_tokens` is REQUIRED — there is no server-side
+                //    default. Omitting it is a 400, so a caller that did not
+                //    set one gets a sane bound rather than a failed request.
+                // 3. `temperature` / `top_p` / `top_k` are REJECTED on current
+                //    models (Opus 5, Opus 4.7/4.8, Fable 5) and rejected for
+                //    non-default values on Sonnet 5. They are therefore never
+                //    sent — behaviour is steered by prompt and `effort`.
+                let (system, turns): (Vec<&ModelMessage>, Vec<&ModelMessage>) = request
+                    .messages
+                    .iter()
+                    .partition(|message| message.role == "system");
+                let turns: Vec<Value> = turns
+                    .iter()
+                    .map(|message| {
+                        json!({
+                            // Anthropic accepts only `user` and `assistant`
+                            // turns; anything else is mapped to `user` so an
+                            // unexpected role cannot 400 the whole request.
+                            "role": if message.role == "assistant" { "assistant" } else { "user" },
+                            "content": message.content,
+                        })
+                    })
+                    .collect();
+                let mut body = json!({
+                    "model": request.model.model,
+                    "messages": turns,
+                    "max_tokens": request
+                        .max_output_tokens
+                        .unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
+                    "stream": stream,
+                });
+                if !system.is_empty() {
+                    body["system"] = json!(
+                        system
+                            .iter()
+                            .map(|message| message.content.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
+                    );
+                }
+                if !request.tools.is_empty() {
+                    body["tools"] = json!(request.tools);
+                }
+                // `effort` lives inside `output_config`, not at the top level,
+                // and is the supported replacement for the removed
+                // `thinking.budget_tokens`.
+                if let Some(effort) = &request.reasoning_effort {
+                    body["output_config"] = json!({ "effort": effort });
+                }
+                if let Some(schema) = schema {
+                    let schema = serde_json::to_value(schema)
+                        .expect("JSON Schema serialization is infallible");
+                    let format = json!({
+                        "type": "json_schema",
+                        "schema": schema,
+                    });
+                    match body.get_mut("output_config") {
+                        Some(config) => config["format"] = format,
+                        None => body["output_config"] = json!({ "format": format }),
+                    }
+                }
+                body
+            }
             ProviderApiMode::OllamaNative => {
                 let mut body = json!({
                     "model": request.model.model,
@@ -1930,6 +2073,7 @@ impl ModelProvider for HttpProvider {
         let endpoint = match self.api_mode {
             ProviderApiMode::Responses => "responses",
             ProviderApiMode::OpenaiCompatible => "chat/completions",
+            ProviderApiMode::AnthropicMessages => "messages",
             ProviderApiMode::OllamaNative => "api/chat",
         };
         let response = self
@@ -1960,7 +2104,9 @@ impl ModelProvider for HttpProvider {
                 )?;
                 Ok(ollama_native_stream(response, self.api_mode))
             }
-            ProviderApiMode::Responses | ProviderApiMode::OpenaiCompatible => {
+            ProviderApiMode::Responses
+            | ProviderApiMode::OpenaiCompatible
+            | ProviderApiMode::AnthropicMessages => {
                 ensure_content_type(
                     &response,
                     &["text/event-stream"],
@@ -1983,6 +2129,7 @@ impl ModelProvider for HttpProvider {
         let endpoint = match self.api_mode {
             ProviderApiMode::Responses => "responses",
             ProviderApiMode::OpenaiCompatible => "chat/completions",
+            ProviderApiMode::AnthropicMessages => "messages",
             ProviderApiMode::OllamaNative => "api/chat",
         };
         let response = self
@@ -2010,6 +2157,7 @@ impl ModelProvider for HttpProvider {
         match self.api_mode {
             ProviderApiMode::Responses => extract_output_json(value, self.api_mode),
             ProviderApiMode::OpenaiCompatible => extract_chat_output(value, self.api_mode),
+            ProviderApiMode::AnthropicMessages => extract_anthropic_output(value, self.api_mode),
             ProviderApiMode::OllamaNative => extract_ollama_output(value, self.api_mode),
         }
     }
@@ -2024,6 +2172,7 @@ impl ModelProvider for HttpProvider {
         let endpoint = match self.api_mode {
             ProviderApiMode::Responses => "responses",
             ProviderApiMode::OpenaiCompatible => "chat/completions",
+            ProviderApiMode::AnthropicMessages => "messages",
             ProviderApiMode::OllamaNative => "api/chat",
         };
         let response = self
@@ -2053,7 +2202,9 @@ impl ModelProvider for HttpProvider {
                 )?;
                 Ok(ollama_provider_stream(response, self.api_mode))
             }
-            ProviderApiMode::Responses | ProviderApiMode::OpenaiCompatible => {
+            ProviderApiMode::Responses
+            | ProviderApiMode::OpenaiCompatible
+            | ProviderApiMode::AnthropicMessages => {
                 ensure_content_type(
                     &response,
                     &["text/event-stream"],
@@ -2081,7 +2232,13 @@ impl ModelProvider for HttpProvider {
     async fn health_check(&self) -> Result<ProviderHealth, ProviderError> {
         let endpoint = match self.api_mode {
             ProviderApiMode::OllamaNative => "api/version",
-            ProviderApiMode::Responses | ProviderApiMode::OpenaiCompatible => "models",
+            // Anthropic has no unauthenticated health route; `GET /v1/models`
+            // is the cheapest authenticated liveness probe and returns 401
+            // rather than 404 when the key is wrong, which is the more useful
+            // signal for a health check.
+            ProviderApiMode::Responses
+            | ProviderApiMode::OpenaiCompatible
+            | ProviderApiMode::AnthropicMessages => "models",
         };
         let response = self
             .send_with_retry(reqwest::Method::GET, self.endpoint(endpoint)?, None, None)
@@ -2781,6 +2938,188 @@ router = "ollama/old:1b"
         }
     }
 
+    fn anthropic_provider() -> HttpProvider {
+        HttpProvider::from_config(
+            "anthropic".into(),
+            ProviderConfig::Anthropic {
+                base_url: anthropic_base_url(),
+                api_key_env: "ANTHROPIC_API_KEY".into(),
+                capabilities: BTreeMap::new(),
+            },
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn anthropic_provider_uses_the_messages_wire_format() {
+        let provider = anthropic_provider();
+        assert_eq!(provider.api_mode, ProviderApiMode::AnthropicMessages);
+        assert_eq!(
+            provider.endpoint("messages").unwrap().as_str(),
+            "https://api.anthropic.com/v1/messages"
+        );
+        // Auth is `x-api-key`, NOT `Authorization: Bearer`. The key still
+        // resolves through the credential store, so no raw secret is in config.
+        assert_eq!(
+            provider.header_env.get("x-api-key").map(String::as_str),
+            Some("ANTHROPIC_API_KEY")
+        );
+        assert!(
+            provider.api_key_env.is_none(),
+            "a Bearer credential would be rejected by the Messages API"
+        );
+        assert_eq!(
+            provider.headers.get("anthropic-version").unwrap(),
+            "2023-06-01"
+        );
+    }
+
+    #[test]
+    fn anthropic_body_lifts_system_out_of_messages_and_always_bounds_max_tokens() {
+        let provider = anthropic_provider();
+        let request = ModelRequest {
+            model: ModelId {
+                provider: "anthropic".into(),
+                model: "claude-opus-5".into(),
+            },
+            messages: vec![
+                ModelMessage {
+                    role: "system".into(),
+                    content: "You are precise.".into(),
+                },
+                ModelMessage {
+                    role: "user".into(),
+                    content: "Hello".into(),
+                },
+                ModelMessage {
+                    role: "assistant".into(),
+                    content: "Hi".into(),
+                },
+            ],
+            tools: Vec::new(),
+            // Deliberately unset: `max_tokens` is REQUIRED by the Messages API,
+            // so the body must still carry one or the request 400s.
+            max_output_tokens: None,
+            reasoning_effort: Some("high".into()),
+        };
+        let body = provider.response_body(&request, false, None);
+
+        assert_eq!(body["system"], "You are precise.");
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2, "the system turn is not a message");
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(body["max_tokens"], DEFAULT_ANTHROPIC_MAX_TOKENS);
+        // `effort` is nested under output_config, not top-level.
+        assert_eq!(body["output_config"]["effort"], "high");
+        // Sampling parameters are rejected outright on current Claude models,
+        // so they must never appear.
+        for rejected in ["temperature", "top_p", "top_k"] {
+            assert!(
+                body.get(rejected).is_none(),
+                "`{rejected}` is a 400 on current Claude models"
+            );
+        }
+    }
+
+    #[test]
+    fn anthropic_stream_events_decode_text_usage_and_completion() {
+        use crate::http_transport::parse_anthropic_event;
+
+        assert_eq!(
+            parse_anthropic_event(
+                r#"{"type":"message_start","message":{"id":"msg_01","usage":{"input_tokens":11}}}"#
+            )
+            .unwrap(),
+            Some(ModelEvent::ResponseStarted {
+                response_id: "msg_01".into()
+            })
+        );
+        assert_eq!(
+            parse_anthropic_event(
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}"#
+            )
+            .unwrap(),
+            Some(ModelEvent::TextDelta("hello".into()))
+        );
+        // Reasoning must not be folded into the answer text.
+        assert_eq!(
+            parse_anthropic_event(
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}"#
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            parse_anthropic_event(
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":11,"output_tokens":7}}"#
+            )
+            .unwrap(),
+            Some(ModelEvent::Usage {
+                input_tokens: 11,
+                output_tokens: 7
+            })
+        );
+        // The terminator is a typed event — Anthropic never sends `[DONE]`.
+        assert_eq!(
+            parse_anthropic_event(r#"{"type":"message_stop"}"#).unwrap(),
+            Some(ModelEvent::Finished)
+        );
+    }
+
+    #[test]
+    fn anthropic_response_reads_the_text_block_past_any_thinking_block() {
+        // `content[0]` is the reasoning block on thinking-enabled models, and
+        // with the default `display: "omitted"` its text is empty — indexing
+        // position 0 would return nothing.
+        let response = serde_json::json!({
+            "id": "msg_01",
+            "content": [
+                { "type": "thinking", "thinking": "" },
+                { "type": "text", "text": "{\"answer\":42}" }
+            ],
+            "stop_reason": "end_turn"
+        });
+        let value = extract_anthropic_output(response, ProviderApiMode::AnthropicMessages).unwrap();
+        assert_eq!(value["answer"], 42);
+    }
+
+    #[test]
+    fn anthropic_refusal_is_reported_as_a_decline_not_a_schema_error() {
+        // A safety-classifier decline is HTTP 200 with an empty content array.
+        // Blaming the schema would send the operator hunting for a parsing bug.
+        let response = serde_json::json!({
+            "id": "msg_01",
+            "content": [],
+            "stop_reason": "refusal",
+            "stop_details": { "type": "refusal", "category": "cyber" }
+        });
+        let error =
+            extract_anthropic_output(response, ProviderApiMode::AnthropicMessages).unwrap_err();
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("declined") && rendered.contains("cyber"),
+            "the refusal category must reach the operator, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn pointing_an_openai_provider_at_anthropic_is_diagnosed_as_a_mode_mismatch() {
+        // The single most common Anthropic misconfiguration. The diagnostic
+        // must name the wrong API mode rather than a generic schema failure.
+        let diagnostic = diagnostics::schema_diagnostic(
+            "unexpected body",
+            Some(br#"{"choices":[{"message":{"content":"hi"}}]}"#),
+            false,
+            ProviderApiMode::AnthropicMessages,
+        );
+        assert_eq!(
+            diagnostic.category,
+            diagnostics::ProviderErrorCategory::ApiModeMismatch
+        );
+    }
+
     fn ollama_provider(base_url: Url) -> HttpProvider {
         HttpProvider::from_config(
             "ollama".into(),
@@ -2831,6 +3170,83 @@ router = "ollama/old:1b"
             request
         });
         (Url::parse(&format!("http://{address}/")).unwrap(), server)
+    }
+
+    #[tokio::test]
+    async fn anthropic_end_to_end_sends_the_key_header_and_reads_a_content_block() {
+        // Proves the whole path: a Messages-API server sees `x-api-key` +
+        // `anthropic-version` (never `Authorization`), a `/v1/messages` POST
+        // with `system` lifted out of `messages`, and the reply's typed content
+        // block is what comes back to the caller.
+        let (base_url, server) = fake_http_server(
+            "200 OK",
+            "application/json",
+            serde_json::to_vec(&serde_json::json!({
+                "id": "msg_01",
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "{\"answer\":\"yes\"}" }],
+                "stop_reason": "end_turn",
+                "usage": { "input_tokens": 9, "output_tokens": 4 }
+            }))
+            .unwrap(),
+        )
+        .await;
+        // SAFETY: single-threaded test scope; the key is read during this call.
+        unsafe { std::env::set_var("PURRCODE_TEST_ANTHROPIC_KEY", "sk-ant-test") };
+        let provider = HttpProvider::from_config(
+            "anthropic".into(),
+            ProviderConfig::Anthropic {
+                base_url,
+                api_key_env: "PURRCODE_TEST_ANTHROPIC_KEY".into(),
+                capabilities: BTreeMap::new(),
+            },
+            None,
+        )
+        .unwrap();
+
+        let mut request = test_request("anthropic");
+        request.messages.insert(
+            0,
+            ModelMessage {
+                role: "system".into(),
+                content: "Be exact.".into(),
+            },
+        );
+        let value = provider
+            .structured(request, schemars::schema_for!(QualificationAnswer))
+            .await
+            .unwrap();
+        assert_eq!(value["answer"], "yes");
+
+        let raw = server.await.unwrap();
+        let rendered = String::from_utf8_lossy(&raw);
+        assert!(
+            rendered.starts_with("POST /messages HTTP/1.1\r\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered
+                .to_ascii_lowercase()
+                .contains("x-api-key: sk-ant-test")
+        );
+        assert!(rendered.contains("anthropic-version: 2023-06-01"));
+        assert!(
+            !rendered.to_ascii_lowercase().contains("authorization:"),
+            "a Bearer header would be rejected by the Messages API"
+        );
+        let body = request_body(&raw);
+        assert_eq!(body["system"], "Be exact.");
+        assert!(body["max_tokens"].is_number());
+        assert!(
+            body["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|message| message["role"] != "system"),
+            "the system turn must not remain in `messages`"
+        );
+        unsafe { std::env::remove_var("PURRCODE_TEST_ANTHROPIC_KEY") };
     }
 
     async fn read_http_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {

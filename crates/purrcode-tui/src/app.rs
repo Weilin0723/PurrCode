@@ -1277,7 +1277,15 @@ impl App {
             .await
         {
             Ok(value) => {
-                let patch = value["patch"].as_str().unwrap_or_default();
+                // The daemon names this `content`. Reading `patch` meant the
+                // review screen always received an empty diff, listed the
+                // changed files with no hunks under them, and never showed
+                // the "no effects recorded" warning either — because a file
+                // list with no patch is not an empty review.
+                let patch = value["content"]
+                    .as_str()
+                    .or_else(|| value["patch"].as_str())
+                    .unwrap_or_default();
                 let porcelain = value["status"].as_str().unwrap_or_default();
                 self.conversation.set_recorded_effects(porcelain);
                 let review = crate::review::ReviewState::from_daemon(patch, porcelain);
@@ -1604,6 +1612,7 @@ impl App {
             crate::provider_setup::ProviderType::Ollama => "ollama",
             crate::provider_setup::ProviderType::LmStudio => "lm-studio",
             crate::provider_setup::ProviderType::Openai => "openai",
+            crate::provider_setup::ProviderType::Anthropic => "anthropic",
             crate::provider_setup::ProviderType::OpenaiCompatible
             | crate::provider_setup::ProviderType::NvidiaNim => "nvidia-nim",
             crate::provider_setup::ProviderType::EnterpriseGateway => {

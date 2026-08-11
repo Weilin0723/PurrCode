@@ -9,6 +9,7 @@
 //! [`Response`]s; a slow or dead daemon costs frames, not responsiveness.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -106,6 +107,20 @@ pub enum Request {
         session: String,
         action: &'static str,
         body: Value,
+    },
+    /// Run a deterministic composer command at the route the daemon itself
+    /// published for it (`CommandExecution::Daemon`).
+    ///
+    /// The path comes from `GET /v1/commands` rather than being hardcoded here,
+    /// so the IDE cannot dispatch `/undo` to a route the daemon does not serve —
+    /// and cannot quietly fall back to sending it as a chat message, which is
+    /// the defect this request exists to remove.
+    SessionCommand {
+        session: String,
+        /// The command name, for the outcome notice.
+        name: String,
+        /// Already resolved: `{id}` substituted with the session id.
+        path: String,
     },
     SetModel {
         session: String,
@@ -326,6 +341,187 @@ pub enum Request {
     },
     /// `POST /v1/codex/doctor` — run `CodexBridge::doctor`.
     CodexDoctor,
+    // ── Language intelligence ────────────────────────────────────────
+    //
+    // These are reads, so they stay on the query lane rather than the serial
+    // control lane: a hover must never queue behind a running agent turn.
+    /// `GET /v1/lsp/servers` — which language servers this machine has.
+    LspServers,
+    /// `POST /v1/lsp/open` — hand a document to its server so it starts
+    /// analysing. Sent on open and after a save.
+    LspOpen {
+        path: PathBuf,
+        root: PathBuf,
+        text: String,
+    },
+    /// `POST /v1/lsp/hover` — the type/doc text at a position.
+    LspHover {
+        path: PathBuf,
+        root: PathBuf,
+        line: u64,
+        character: u64,
+    },
+    /// `POST /v1/lsp/definition` — where the symbol at a position is defined.
+    LspDefinition {
+        path: PathBuf,
+        root: PathBuf,
+        line: u64,
+        character: u64,
+    },
+    /// `POST /v1/lsp/references` — every use of the symbol at a position.
+    LspReferences {
+        path: PathBuf,
+        root: PathBuf,
+        line: u64,
+        character: u64,
+        /// The identifier the user asked about, echoed back so the results
+        /// panel can name what it is listing.
+        label: String,
+    },
+    /// `POST /v1/lsp/symbols` — the document outline.
+    LspSymbols {
+        path: PathBuf,
+        root: PathBuf,
+    },
+    /// `POST /v1/lsp/format` — whole-document formatting edits.
+    LspFormat {
+        path: PathBuf,
+        root: PathBuf,
+        /// `true` when the format was triggered by a save, so the editor
+        /// writes the formatted text back to disk once the edits land.
+        then_save: bool,
+    },
+    /// `POST /v1/lsp/rename` — the workspace edit that renames the symbol at a
+    /// position.
+    ///
+    /// A rename is a write, not a read, so unlike the other language requests
+    /// it takes the serial control lane: two renames applied concurrently would
+    /// each compute their edits against a tree the other is changing.
+    LspRename {
+        path: PathBuf,
+        root: PathBuf,
+        line: u64,
+        character: u64,
+        new_name: String,
+        /// The identifier being replaced, echoed back so the confirmation can
+        /// name it.
+        old_name: String,
+    },
+    /// `GET /v1/lsp/diagnostics` — everything the servers have published.
+    LspDiagnostics,
+    /// `POST /v1/lsp/workspace-symbols` — project-wide symbol search, which
+    /// backs `#symbol` completion in the composer.
+    LspWorkspaceSymbols {
+        /// Any file in the project, used to pick the language server.
+        path: PathBuf,
+        root: PathBuf,
+        query: String,
+    },
+    // ── Composer ─────────────────────────────────────────────────────
+    /// `GET /v1/commands` — the command palette's contract.
+    ListCommands,
+    /// `POST /v1/references/resolve` — turn the composer's `@`/`#` tokens into
+    /// resolved references with previews, so the user can see exactly what the
+    /// agent will be given before sending.
+    ResolveReferences {
+        repository: String,
+        text: String,
+        /// The session the draft will be sent to, when one is selected.
+        ///
+        /// The daemon resolves a session's references against its worktree, so
+        /// the preview has to name the session or it previews a different tree
+        /// than the one the turn will attach from.
+        session: Option<String>,
+    },
+    // ── Checkpoints and fork ─────────────────────────────────────────
+    /// `GET /v1/sessions/{id}/checkpoints` — restorable points, newest first.
+    ListCheckpoints {
+        session: String,
+    },
+    /// `GET /v1/sessions/{id}/checkpoints/{checkpoint}/preview` — what a
+    /// restore would change, fetched before the confirmation is shown so the
+    /// dialog states a real number rather than asking for blind consent.
+    CheckpointPreview {
+        session: String,
+        checkpoint: String,
+    },
+    /// `POST /v1/sessions/{id}/checkpoints/{checkpoint}/restore`.
+    RestoreCheckpoint {
+        session: String,
+        checkpoint: String,
+    },
+    /// `POST /v1/sessions/{id}/checkpoint` — capture one now.
+    CreateCheckpoint {
+        session: String,
+        label: String,
+    },
+    /// `POST /v1/sessions/{id}/fork` — branch the conversation at a message.
+    ForkSession {
+        session: String,
+        anchor_message_id: String,
+    },
+    // ── Session workspace ────────────────────────────────────────────
+    /// `PATCH /v1/sessions/{id}` — rename, archive, or pin. This is workspace
+    /// metadata, not audit state, so it does not touch the event log.
+    UpdateSessionMeta {
+        session: String,
+        title: Option<String>,
+        archived: Option<bool>,
+        pinned: Option<bool>,
+    },
+    /// `DELETE /v1/sessions/{id}` — soft-delete. The event log is preserved
+    /// for audit; only the working list forgets it.
+    DeleteSession {
+        session: String,
+    },
+    /// `GET /v1/sessions/search?q=` — full-text search across session events.
+    SearchSessions {
+        query: String,
+    },
+    // ── Extensibility ────────────────────────────────────────────────
+    /// `POST /v1/mcp/servers/{id}/test` — connect and list tools. Unlike the
+    /// session-scoped probe this needs no session, so a server can be checked
+    /// while it is being configured.
+    McpTest {
+        id: String,
+    },
+    /// `POST /v1/skills/{id}/enable` or `.../disable`.
+    SkillSetEnabled {
+        id: String,
+        enabled: bool,
+    },
+    // ── Project memory ───────────────────────────────────────────────
+    /// `GET /v1/memory?repository=` — durable project knowledge, by kind.
+    ListMemory {
+        repository: String,
+    },
+    /// `POST /v1/memory` — record something worth remembering.
+    CreateMemory {
+        repository: String,
+        kind: String,
+        content: String,
+        source: String,
+    },
+    /// `PATCH /v1/memory/{id}` — edit the content, keeping the provenance.
+    UpdateMemory {
+        id: String,
+        content: String,
+    },
+    /// `DELETE /v1/memory/{id}` — forget it. Explicit, and it stays forgotten.
+    ForgetMemory {
+        id: String,
+    },
+    // ── Agent workspace ──────────────────────────────────────────────
+    /// `GET /v1/supervisor/{session}` — the worker tree for a session.
+    SupervisorStatus {
+        session: String,
+    },
+    /// `POST /v1/supervisor/{session}/workers/{id}/stop` — stop one worker
+    /// without cancelling the whole run.
+    StopWorker {
+        session: String,
+        worker: String,
+    },
 }
 
 /// A panel in the session presentation snapshot.
@@ -575,6 +771,11 @@ pub enum Response {
     SessionStarted(String),
     /// A mutation completed and the named session should be reloaded.
     Mutated(String),
+    /// A deterministic command ran: `(session, command name, daemon response)`.
+    /// The response body is carried so the UI can report what actually
+    /// happened — which checkpoint an undo landed on — rather than a generic
+    /// success.
+    CommandExecuted(String, String, Value),
     Diff(String, String),
     Hunks(String, Value),
     Models(Vec<Value>),
@@ -651,6 +852,61 @@ pub enum Response {
     CodexSaved(Value),
     /// `POST /v1/codex/doctor` — a `CodexDoctorReport`.
     CodexDoctor(Value),
+    // ── Language intelligence ────────────────────────────────────────
+    /// `GET /v1/lsp/servers` — the servers available on this machine.
+    LspServers(Value),
+    /// `POST /v1/lsp/hover`, correlated with the document and position that
+    /// asked. The UI drops a reply whose anchor the pointer has already left
+    /// rather than showing one token's type against another.
+    LspHover(PathBuf, u64, u64, Value),
+    /// `POST /v1/lsp/definition` — the target locations.
+    LspDefinition(Value),
+    /// `POST /v1/lsp/references` — the symbol that was asked about, and its uses.
+    LspReferences(String, Value),
+    /// `POST /v1/lsp/symbols` — the outline of one document.
+    LspSymbols(PathBuf, Value),
+    /// `POST /v1/lsp/format` — the edits, the document, and whether the editor
+    /// should save once they are applied.
+    LspFormat(PathBuf, Value, bool),
+    /// A rename's workspace edit: `(old name, new name, changes by file)`.
+    LspRename(String, String, Value),
+    /// `GET /v1/lsp/diagnostics` — every published diagnostic.
+    LspDiagnostics(Value),
+    /// A language-server request failed. Separate from the generic failure
+    /// path so a missing rust-analyzer explains itself in the editor instead
+    /// of raising a modal notice on every keystroke.
+    LspUnavailable(String),
+    /// `POST /v1/lsp/workspace-symbols` — the query that was asked, and its
+    /// matches. The query is echoed so a reply for a prefix the user has
+    /// already typed past is discarded rather than shown as current.
+    LspWorkspaceSymbols(String, Value),
+    // ── Composer ─────────────────────────────────────────────────────
+    /// `GET /v1/commands` — the available commands.
+    Commands(Value),
+    /// `POST /v1/references/resolve` — the text that was resolved, and the
+    /// resolved references. The text is echoed so a stale reply cannot label
+    /// a draft the user has since edited.
+    References(String, Value),
+    // ── Checkpoints and fork ─────────────────────────────────────────
+    /// `GET /v1/sessions/{id}/checkpoints`.
+    Checkpoints(String, Value),
+    /// `GET .../checkpoints/{checkpoint}/preview` — the checkpoint it
+    /// describes, and what restoring it would change.
+    CheckpointPreview(String, Value),
+    /// A restore completed; the session should be reloaded.
+    CheckpointRestored(String),
+    /// A fork completed, carrying the new child session's id so the window
+    /// can select it.
+    SessionForked(String),
+    /// `GET /v1/sessions/search` — the query and its hits, echoed together so
+    /// results for an abandoned query cannot be shown against a newer one.
+    SessionSearch(String, Value),
+    /// `POST /v1/mcp/servers/{id}/test` — the server and its connection report.
+    McpTested(String, Value),
+    /// `GET /v1/memory` — project knowledge grouped by kind.
+    Memory(Value),
+    /// `GET /v1/supervisor/{session}` — the session and its worker tree.
+    Supervisor(String, Value),
     /// A settings mutation landed; the UI refetches the affected page.
     SettingsMutated,
     /// Connectivity changed. `false` means every view should say so rather than
@@ -849,9 +1105,18 @@ impl Request {
             Self::SessionAction { action, .. } => {
                 matches!(*action, "cancel" | "approve" | "reject")
             }
+            // `/approve`, `/reject` and `/pause` are the user taking control of
+            // a running agent. Queueing them behind that agent's own traffic is
+            // what makes a stop button feel broken.
+            Self::SessionCommand { path, .. } => {
+                path.ends_with("/approve") || path.ends_with("/reject") || path.ends_with("/pause")
+            }
             Self::SendTerminalInput { .. }
             | Self::StopTerminal { .. }
-            | Self::SetTerminalOwner { .. } => true,
+            | Self::SetTerminalOwner { .. }
+            // Stopping a worker is an interrupt: it must not queue behind
+            // the work it is trying to stop.
+            | Self::StopWorker { .. } => true,
             _ => false,
         }
     }
@@ -895,6 +1160,27 @@ impl Request {
                     | Self::McpProbe { .. }
                     | Self::CodexPut { .. }
                     | Self::CodexDoctor
+                    // Restoring, checkpointing and forking mutate durable
+                    // session state, so they take the serial control lane —
+                    // two restores racing would leave the worktree in a state
+                    // neither of them describes.
+                    | Self::RestoreCheckpoint { .. }
+                    | Self::CreateCheckpoint { .. }
+                    | Self::ForkSession { .. }
+                    // A command that walks the checkpoint timeline mutates the
+                    // worktree, so it shares the serial lane with restore.
+                    | Self::SessionCommand { .. }
+                    | Self::UpdateSessionMeta { .. }
+                    | Self::DeleteSession { .. }
+                    | Self::McpTest { .. }
+                    | Self::SkillSetEnabled { .. }
+                    // A rename writes across the tree, so it takes the serial
+                    // lane rather than the read lane the other LSP requests use.
+                    | Self::LspRename { .. }
+                    | Self::CreateMemory { .. }
+                    | Self::UpdateMemory { .. }
+                    | Self::ForgetMemory { .. }
+                    | Self::StopWorker { .. }
             )
     }
 }
@@ -1203,6 +1489,23 @@ impl Worker {
                 Ok(_) => self.reply(Response::Mutated(session)),
                 Err(error) => self.reply_failure(error),
             },
+            Request::SessionCommand {
+                session,
+                name,
+                path,
+            } => {
+                // An empty object, not `null`: the pause and reject routes take
+                // a request struct whose fields all default, and serde refuses
+                // to build a struct from `null`. Posting `null` made `/pause`
+                // and `/reject` fail with a deserialization error — a command
+                // that looks dispatched and does nothing, which is the exact
+                // failure this whole path exists to remove. Routes that take no
+                // body ignore this.
+                match self.post::<Value>(&path, &serde_json::json!({})) {
+                    Ok(value) => self.reply(Response::CommandExecuted(session, name, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
             Request::SetModel { session, model } => {
                 let body = serde_json::json!({ "model": model });
                 match self.post::<Value>(&format!("/v1/sessions/{session}/model"), &body) {
@@ -1662,6 +1965,314 @@ impl Worker {
                     Err(error) => self.reply_failure(error),
                 }
             }
+            // Language-server reads report their own failure rather than the
+            // generic one: a machine with no rust-analyzer is a normal, quiet
+            // state, and routing it through `reply_failure` would raise a
+            // transport notice every time the pointer crossed a token.
+            Request::LspServers => match self.get::<Value>("/v1/lsp/servers") {
+                Ok(value) => self.reply(Response::LspServers(value)),
+                Err(error) => self.reply(Response::LspUnavailable(error)),
+            },
+            Request::LspOpen { path, root, text } => {
+                let body = serde_json::json!({"path": path, "root": root, "text": text});
+                match self.post::<Value>("/v1/lsp/open", &body) {
+                    Ok(_) => {}
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspHover {
+                path,
+                root,
+                line,
+                character,
+            } => {
+                let body = serde_json::json!({
+                    "path": path, "root": root,
+                    "position": {"line": line, "character": character},
+                });
+                match self.post::<Value>("/v1/lsp/hover", &body) {
+                    Ok(value) => self.reply(Response::LspHover(path, line, character, value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspDefinition {
+                path,
+                root,
+                line,
+                character,
+            } => {
+                let body = serde_json::json!({
+                    "path": path, "root": root,
+                    "position": {"line": line, "character": character},
+                });
+                match self.post::<Value>("/v1/lsp/definition", &body) {
+                    Ok(value) => self.reply(Response::LspDefinition(value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspReferences {
+                path,
+                root,
+                line,
+                character,
+                label,
+            } => {
+                let body = serde_json::json!({
+                    "path": path, "root": root,
+                    "position": {"line": line, "character": character},
+                });
+                match self.post::<Value>("/v1/lsp/references", &body) {
+                    Ok(value) => self.reply(Response::LspReferences(label, value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspSymbols { path, root } => {
+                let body = serde_json::json!({"path": path, "root": root});
+                match self.post::<Value>("/v1/lsp/symbols", &body) {
+                    Ok(value) => self.reply(Response::LspSymbols(path, value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspFormat {
+                path,
+                root,
+                then_save,
+            } => {
+                let body = serde_json::json!({"path": path, "root": root});
+                match self.post::<Value>("/v1/lsp/format", &body) {
+                    Ok(value) => self.reply(Response::LspFormat(path, value, then_save)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspRename {
+                path,
+                root,
+                line,
+                character,
+                new_name,
+                old_name,
+            } => {
+                let body = serde_json::json!({
+                    "path": path,
+                    "root": root,
+                    "position": { "line": line, "character": character },
+                    "new_name": new_name,
+                });
+                match self.post::<Value>("/v1/lsp/rename", &body) {
+                    Ok(value) => self.reply(Response::LspRename(old_name, new_name, value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::LspDiagnostics => match self.get::<Value>("/v1/lsp/diagnostics") {
+                Ok(value) => self.reply(Response::LspDiagnostics(value)),
+                Err(error) => self.reply(Response::LspUnavailable(error)),
+            },
+            Request::LspWorkspaceSymbols { path, root, query } => {
+                let body = serde_json::json!({"path": path, "root": root, "query": query});
+                match self.post::<Value>("/v1/lsp/workspace-symbols", &body) {
+                    Ok(value) => self.reply(Response::LspWorkspaceSymbols(query, value)),
+                    Err(error) => self.reply(Response::LspUnavailable(error)),
+                }
+            }
+            Request::ListCheckpoints { session } => {
+                let path = format!("/v1/sessions/{}/checkpoints", urlencode(&session));
+                match self.get::<Value>(&path) {
+                    Ok(value) => self.reply(Response::Checkpoints(session, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::CheckpointPreview {
+                session,
+                checkpoint,
+            } => {
+                let path = format!(
+                    "/v1/sessions/{}/checkpoints/{}/preview",
+                    urlencode(&session),
+                    urlencode(&checkpoint)
+                );
+                match self.get::<Value>(&path) {
+                    Ok(value) => self.reply(Response::CheckpointPreview(checkpoint, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::RestoreCheckpoint {
+                session,
+                checkpoint,
+            } => {
+                let path = format!(
+                    "/v1/sessions/{}/checkpoints/{}/restore",
+                    urlencode(&session),
+                    urlencode(&checkpoint)
+                );
+                // The daemon refuses a restore that does not acknowledge the
+                // discard. The UI states it plainly in the dialog, so sending
+                // the acknowledgement here is a record of that, not a bypass.
+                let body = serde_json::json!({"acknowledge_discard": true});
+                match self.post::<Value>(&path, &body) {
+                    Ok(_) => {
+                        self.reply(Response::CheckpointRestored(session.clone()));
+                        self.reply(Response::Mutated(session));
+                    }
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::CreateCheckpoint { session, label } => {
+                let path = format!("/v1/sessions/{}/checkpoint", urlencode(&session));
+                match self.post::<Value>(&path, &serde_json::json!({"label": label})) {
+                    Ok(_) => {
+                        self.reply(Response::Mutated(session.clone()));
+                        self.handle(Request::ListCheckpoints { session });
+                    }
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::ForkSession {
+                session,
+                anchor_message_id,
+            } => {
+                let path = format!("/v1/sessions/{}/fork", urlencode(&session));
+                let body = serde_json::json!({"anchor_message_id": anchor_message_id});
+                match self.post::<Value>(&path, &body) {
+                    Ok(value) => {
+                        let child = value["id"].as_str().unwrap_or_default().to_owned();
+                        self.reply(Response::SessionForked(child));
+                    }
+                    Err(error) => self.reply_submission_failure(error),
+                }
+            }
+            Request::UpdateSessionMeta {
+                session,
+                title,
+                archived,
+                pinned,
+            } => {
+                // Only the named fields travel: sending `null` for the others
+                // would be a request to clear them.
+                let mut body = serde_json::Map::new();
+                if let Some(title) = title {
+                    body.insert("title".into(), Value::String(title));
+                }
+                if let Some(archived) = archived {
+                    body.insert("archived".into(), Value::Bool(archived));
+                }
+                if let Some(pinned) = pinned {
+                    body.insert("pinned".into(), Value::Bool(pinned));
+                }
+                let path = format!("/v1/sessions/{}", urlencode(&session));
+                match self.patch::<Value>(&path, &Value::Object(body)) {
+                    Ok(_) => self.reply(Response::Mutated(session)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::DeleteSession { session } => {
+                let path = format!("/v1/sessions/{}", urlencode(&session));
+                match self.delete::<Value>(&path) {
+                    Ok(_) => self.reply(Response::Mutated(session)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::SearchSessions { query } => {
+                let path = format!("/v1/sessions/search?q={}", urlencode(&query));
+                match self.get::<Value>(&path) {
+                    Ok(value) => self.reply(Response::SessionSearch(query, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::SupervisorStatus { session } => {
+                let path = format!("/v1/supervisor/{}", urlencode(&session));
+                // A session that never ran a supervisor has no worker tree.
+                // That is the normal case, not a failure worth a notice.
+                if let Ok(value) = self.get::<Value>(&path) {
+                    self.reply(Response::Supervisor(session, value));
+                }
+            }
+            Request::StopWorker { session, worker } => {
+                let path = format!(
+                    "/v1/supervisor/{}/workers/{}/stop",
+                    urlencode(&session),
+                    urlencode(&worker)
+                );
+                match self.post::<Value>(&path, &serde_json::json!({})) {
+                    Ok(_) => self.reply(Response::Mutated(session)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::ListMemory { repository } => {
+                let path = format!("/v1/memory?repository={}", urlencode(&repository));
+                match self.get::<Value>(&path) {
+                    Ok(value) => self.reply(Response::Memory(value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::CreateMemory {
+                repository,
+                kind,
+                content,
+                source,
+            } => {
+                let body = serde_json::json!({
+                    "repository": repository,
+                    "kind": kind,
+                    "content": content,
+                    "source": source,
+                });
+                match self.post::<Value>("/v1/memory", &body) {
+                    Ok(_) => {
+                        self.reply(Response::SettingsMutated);
+                        self.handle(Request::ListMemory { repository });
+                    }
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::UpdateMemory { id, content } => {
+                let path = format!("/v1/memory/{}", urlencode(&id));
+                match self.patch::<Value>(&path, &serde_json::json!({"content": content})) {
+                    Ok(_) => self.reply(Response::SettingsMutated),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::ForgetMemory { id } => {
+                let path = format!("/v1/memory/{}", urlencode(&id));
+                match self.delete::<Value>(&path) {
+                    Ok(_) => self.reply(Response::SettingsMutated),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::McpTest { id } => {
+                let path = format!("/v1/mcp/servers/{}/test", urlencode(&id));
+                match self.post::<Value>(&path, &serde_json::json!({})) {
+                    Ok(value) => self.reply(Response::McpTested(id, value)),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::SkillSetEnabled { id, enabled } => {
+                let action = if enabled { "enable" } else { "disable" };
+                let path = format!("/v1/skills/{}/{action}", urlencode(&id));
+                match self.post::<Value>(&path, &serde_json::json!({})) {
+                    Ok(_) => self.reply(Response::SettingsMutated),
+                    Err(error) => self.reply_failure(error),
+                }
+            }
+            Request::ListCommands => match self.get::<Value>("/v1/commands") {
+                Ok(value) => self.reply(Response::Commands(value)),
+                Err(error) => self.reply_failure(error),
+            },
+            Request::ResolveReferences {
+                repository,
+                text,
+                session,
+            } => {
+                let body = serde_json::json!({
+                    "repository": repository,
+                    "text": text,
+                    "session_id": session,
+                });
+                // A reference that cannot be resolved is not a transport
+                // failure worth a notice: the chip row shows it unresolved.
+                if let Ok(value) = self.post::<Value>("/v1/references/resolve", &body) {
+                    self.reply(Response::References(text, value));
+                }
+            }
             Request::CodexGet => match self.get::<Value>("/v1/codex") {
                 Ok(value) => self.reply(Response::Codex(value)),
                 Err(error) => self.reply_failure(error),
@@ -1744,6 +2355,21 @@ impl Worker {
             .map_err(|error| describe(&error))?;
         let response = client
             .post(&url)
+            .bearer_auth(&self.connection.token)
+            .json(body)
+            .send()
+            .map_err(|error| describe(&error))?;
+        decode(response, path)
+    }
+
+    /// A partial update. Distinct from `post` because the daemon's metadata
+    /// route treats an absent field as "leave it alone" and a present one as
+    /// "set it to this", which only a PATCH body can express.
+    fn patch<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T, String> {
+        let url = format!("{}{path}", self.connection.base_url);
+        let response = self
+            .http
+            .patch(&url)
             .bearer_auth(&self.connection.token)
             .json(body)
             .send()

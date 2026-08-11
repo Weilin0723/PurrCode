@@ -29,6 +29,9 @@ pub struct SkillRecord {
     pub successful_uses: u64,
     pub failed_uses: u64,
     pub pinned: bool,
+    /// A user can disable a skill without uninstalling it. Disabled skills are
+    /// installed and inspectable but never invoked.
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -145,14 +148,42 @@ impl SkillStore {
                 successful_uses INTEGER NOT NULL DEFAULT 0,
                 failed_uses INTEGER NOT NULL DEFAULT 0,
                 pinned INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (skill_id, scope)
             );
             CREATE TABLE IF NOT EXISTS blocked_publishers (
                 publisher TEXT PRIMARY KEY,
                 blocked_at TEXT NOT NULL,
                 reason TEXT NOT NULL
-            );",
+            );
+            -- The capability INDEX. `find_by_capability` used to substring-match
+            -- the skill id, source type and publisher, so a skill called
+            -- `git-review` answered a query for `review` while a skill that
+            -- genuinely declares the `review` capability but is named
+            -- `acme-tools` did not. Capabilities are declared data now, keyed by
+            -- the same (skill_id, scope) identity as the record itself.
+            CREATE TABLE IF NOT EXISTS skill_capabilities (
+                skill_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                capability TEXT NOT NULL,
+                PRIMARY KEY (skill_id, scope, capability)
+            );
+            CREATE INDEX IF NOT EXISTS skill_capabilities_by_capability
+                ON skill_capabilities (capability);",
         )?;
+        // Older databases lack the enabled column; add it, defaulting to
+        // enabled so existing installs stay invocable.
+        let has_enabled = self
+            .conn
+            .prepare("PRAGMA table_info(skill_store)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "enabled");
+        if !has_enabled {
+            self.conn.execute_batch(
+                "ALTER TABLE skill_store ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;",
+            )?;
+        }
         let scope_is_key = self
             .conn
             .prepare("PRAGMA table_info(skill_store)")?
@@ -172,8 +203,15 @@ impl SkillStore {
                     installed_at TEXT NOT NULL, approved_permissions TEXT NOT NULL DEFAULT '{}',
                     qualification_status TEXT NOT NULL DEFAULT 'unverified', last_used_at TEXT,
                     successful_uses INTEGER NOT NULL DEFAULT 0, failed_uses INTEGER NOT NULL DEFAULT 0,
-                    pinned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (skill_id, scope));
-                 INSERT INTO skill_store SELECT * FROM skill_store_v1;
+                    pinned INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (skill_id, scope));
+                 INSERT INTO skill_store (skill_id, version, scope, source_type, source_location,
+                    publisher, content_digest, signature_status, installed_at, approved_permissions,
+                    qualification_status, last_used_at, successful_uses, failed_uses, pinned, enabled)
+                 SELECT skill_id, version, scope, source_type, source_location,
+                    publisher, content_digest, signature_status, installed_at, approved_permissions,
+                    qualification_status, last_used_at, successful_uses, failed_uses, pinned, 1
+                 FROM skill_store_v1;
                  DROP TABLE skill_store_v1;
                  COMMIT;",
             )?;
@@ -251,8 +289,8 @@ impl SkillStore {
             "INSERT INTO skill_store
                 (skill_id, version, scope, source_type, source_location, publisher,
                  content_digest, signature_status, installed_at, approved_permissions,
-                 qualification_status, successful_uses, failed_uses, pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'unavailable', ?8, ?9, 'unverified', 0, 0, 0)",
+                 qualification_status, successful_uses, failed_uses, pinned, enabled)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'unavailable', ?8, ?9, 'unverified', 0, 0, 0, 1)",
             params![
                 skill_id,
                 version,
@@ -273,6 +311,11 @@ impl SkillStore {
             )?;
             return Err(error.into());
         }
+        // Index the capabilities the package DECLARES, keyed by the same
+        // (skill_id, scope) identity as the record. Best-effort: a package with
+        // no readable manifest simply contributes its own id as a capability, so
+        // an exact-id lookup still resolves.
+        self.index_capabilities(skill_id, &scope, &declared_capabilities(&dest, skill_id))?;
 
         Ok(SkillRecord {
             skill_id: skill_id.to_string(),
@@ -290,6 +333,7 @@ impl SkillStore {
             successful_uses: 0,
             failed_uses: 0,
             pinned: false,
+            enabled: true,
         })
     }
 
@@ -344,8 +388,12 @@ impl SkillStore {
         }
 
         self.conn.execute(
-            "DELETE FROM skill_store WHERE skill_id = ?1",
-            params![skill_id],
+            "DELETE FROM skill_store WHERE skill_id = ?1 AND scope = ?2",
+            params![skill_id, record.scope.to_string()],
+        )?;
+        self.conn.execute(
+            "DELETE FROM skill_capabilities WHERE skill_id = ?1 AND scope = ?2",
+            params![skill_id, record.scope.to_string()],
         )?;
 
         Ok(record)
@@ -355,7 +403,7 @@ impl SkillStore {
         let mut stmt = self.conn.prepare(
             "SELECT skill_id, version, scope, source_type, source_location, publisher,
                     content_digest, signature_status, installed_at, approved_permissions,
-                    qualification_status, last_used_at, successful_uses, failed_uses, pinned
+                    qualification_status, last_used_at, successful_uses, failed_uses, pinned, enabled
              FROM skill_store
              ORDER BY installed_at DESC",
         )?;
@@ -395,6 +443,7 @@ impl SkillStore {
                 successful_uses: row.get::<_, i64>(12)? as u64,
                 failed_uses: row.get::<_, i64>(13)? as u64,
                 pinned: row.get::<_, i64>(14)? != 0,
+                enabled: row.get::<_, i64>(15)? != 0,
             })
         })?;
 
@@ -409,7 +458,7 @@ impl SkillStore {
         let mut stmt = self.conn.prepare(
             "SELECT skill_id, version, scope, source_type, source_location, publisher,
                     content_digest, signature_status, installed_at, approved_permissions,
-                    qualification_status, last_used_at, successful_uses, failed_uses, pinned
+                    qualification_status, last_used_at, successful_uses, failed_uses, pinned, enabled
              FROM skill_store WHERE skill_id = ?1
              ORDER BY CASE scope WHEN 'session' THEN 0 WHEN 'repository' THEN 1 ELSE 2 END
              LIMIT 1",
@@ -450,6 +499,7 @@ impl SkillStore {
                 successful_uses: row.get::<_, i64>(12)? as u64,
                 failed_uses: row.get::<_, i64>(13)? as u64,
                 pinned: row.get::<_, i64>(14)? != 0,
+                enabled: row.get::<_, i64>(15)? != 0,
             })
         })
         .map_err(|e| match e {
@@ -458,6 +508,55 @@ impl SkillStore {
         })
     }
 
+    /// Replace the declared-capability index for one (skill_id, scope) pair.
+    pub fn index_capabilities(
+        &mut self,
+        skill_id: &str,
+        scope: &SkillScope,
+        capabilities: &[String],
+    ) -> Result<(), StoreError> {
+        let scope_str = scope.to_string();
+        self.conn.execute(
+            "DELETE FROM skill_capabilities WHERE skill_id = ?1 AND scope = ?2",
+            params![skill_id, scope_str],
+        )?;
+        for capability in capabilities {
+            let normalized = capability.trim().to_lowercase();
+            if normalized.is_empty() {
+                continue;
+            }
+            self.conn.execute(
+                "INSERT OR IGNORE INTO skill_capabilities (skill_id, scope, capability)
+                 VALUES (?1, ?2, ?3)",
+                params![skill_id, scope_str, normalized],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The capabilities a skill declares, as indexed at install.
+    pub fn capabilities_of(
+        &self,
+        skill_id: &str,
+        scope: &SkillScope,
+    ) -> Result<Vec<String>, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT capability FROM skill_capabilities
+             WHERE skill_id = ?1 AND scope = ?2 ORDER BY capability",
+        )?;
+        let rows = statement.query_map(params![skill_id, scope.to_string()], |row| row.get(0))?;
+        let mut capabilities = Vec::new();
+        for row in rows {
+            capabilities.push(row?);
+        }
+        Ok(capabilities)
+    }
+
+    /// Skills that DECLARE this capability, ranked scope-first.
+    ///
+    /// This is an index lookup, not a substring scan over ids/publishers: a
+    /// skill answers for `review` because it declared `review`, not because its
+    /// name happens to contain those six characters.
     pub fn find_by_capability(&self, capability: &str) -> Result<Vec<SkillRecord>, StoreError> {
         let trimmed = capability.trim().to_lowercase();
         if trimmed.is_empty() {
@@ -465,16 +564,22 @@ impl SkillStore {
                 "capability cannot be empty".into(),
             ));
         }
-        let all = self.list()?;
-        let mut matches = all
+        let mut statement = self
+            .conn
+            .prepare("SELECT skill_id, scope FROM skill_capabilities WHERE capability = ?1")?;
+        let declared: Vec<(String, String)> = statement
+            .query_map(params![trimmed], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        let mut matches: Vec<SkillRecord> = self
+            .list()?
             .into_iter()
-            .filter(|s| {
-                let id = s.skill_id.to_lowercase();
-                let src = s.source_type.to_lowercase();
-                let publisher = s.publisher.as_deref().unwrap_or_default().to_lowercase();
-                id.contains(&trimmed) || src.contains(&trimmed) || publisher.contains(&trimmed)
+            .filter(|record| {
+                declared
+                    .iter()
+                    .any(|(id, scope)| id == &record.skill_id && scope == &record.scope.to_string())
             })
-            .collect::<Vec<_>>();
+            .collect();
         matches.sort_by_key(|record| {
             (
                 scope_priority(&record.scope),
@@ -484,6 +589,30 @@ impl SkillStore {
             )
         });
         Ok(matches)
+    }
+
+    /// The scope whose record answers for `skill_id` — the same session >
+    /// repository > user precedence `get` and `is_enabled` use.
+    ///
+    /// Every mutation below resolves through this. Keying an update on
+    /// `skill_id` alone wrote through to EVERY scope's row, so disabling the
+    /// session-scoped copy of a skill also disabled the user's, and usage
+    /// counters were double-incremented across scopes.
+    pub fn effective_scope(&self, skill_id: &str) -> Result<SkillScope, StoreError> {
+        let scope: String = self
+            .conn
+            .query_row(
+                "SELECT scope FROM skill_store WHERE skill_id = ?1
+                 ORDER BY CASE scope WHEN 'session' THEN 0 WHEN 'repository' THEN 1 ELSE 2 END
+                 LIMIT 1",
+                params![skill_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound(skill_id.to_string()),
+                other => StoreError::Sqlite(other),
+            })?;
+        SkillScope::from_str_name(&scope).ok_or_else(|| StoreError::InvalidScope(scope))
     }
 
     /// Resolve installed capabilities before a caller is allowed to consider registry/web search.
@@ -497,7 +626,12 @@ impl SkillStore {
         let matches = self.find_by_capability(capability)?;
         let (qualified_matches, non_invocable_matches): (Vec<_>, Vec<_>) = matches
             .into_iter()
-            .partition(|record| qualification_is_invocable(&record.qualification_status));
+            // A disabled skill is installed but never invoked, so it must not
+            // count as an invocable match (and must not suppress external
+            // search either).
+            .partition(|record| {
+                record.enabled && qualification_is_invocable(&record.qualification_status)
+            });
         let external_search_avoided = !qualified_matches.is_empty();
         Ok(InstalledCapabilityResolution {
             capability: capability.trim().to_owned(),
@@ -508,18 +642,20 @@ impl SkillStore {
     }
 
     pub fn record_use(&mut self, skill_id: &str, success: bool) -> Result<(), StoreError> {
+        let scope = self.effective_scope(skill_id)?;
         let now = Utc::now().to_rfc3339();
-        if success {
-            self.conn.execute(
-                "UPDATE skill_store SET last_used_at = ?1, successful_uses = successful_uses + 1 WHERE skill_id = ?2",
-                params![now, skill_id],
-            )?;
+        let column = if success {
+            "successful_uses"
         } else {
-            self.conn.execute(
-                "UPDATE skill_store SET last_used_at = ?1, failed_uses = failed_uses + 1 WHERE skill_id = ?2",
-                params![now, skill_id],
-            )?;
-        }
+            "failed_uses"
+        };
+        self.conn.execute(
+            &format!(
+                "UPDATE skill_store SET last_used_at = ?1, {column} = {column} + 1
+                 WHERE skill_id = ?2 AND scope = ?3"
+            ),
+            params![now, skill_id, scope.to_string()],
+        )?;
         Ok(())
     }
 
@@ -528,6 +664,7 @@ impl SkillStore {
         skill_id: &str,
         status: &QualificationStatus,
     ) -> Result<(), StoreError> {
+        let scope = self.effective_scope(skill_id)?;
         let status_str = match status {
             QualificationStatus::Qualified => "qualified",
             QualificationStatus::QualifiedWithConstraints => "qualified_with_constraints",
@@ -538,8 +675,8 @@ impl SkillStore {
             QualificationStatus::Incompatible => "incompatible",
         };
         self.conn.execute(
-            "UPDATE skill_store SET qualification_status = ?1 WHERE skill_id = ?2",
-            params![status_str, skill_id],
+            "UPDATE skill_store SET qualification_status = ?1 WHERE skill_id = ?2 AND scope = ?3",
+            params![status_str, skill_id, scope.to_string()],
         )?;
         Ok(())
     }
@@ -558,11 +695,46 @@ impl SkillStore {
     }
 
     pub fn pin(&mut self, skill_id: &str, pinned: bool) -> Result<(), StoreError> {
+        let scope = self.effective_scope(skill_id)?;
         self.conn.execute(
-            "UPDATE skill_store SET pinned = ?1 WHERE skill_id = ?2",
-            params![pinned as i64, skill_id],
+            "UPDATE skill_store SET pinned = ?1 WHERE skill_id = ?2 AND scope = ?3",
+            params![pinned as i64, skill_id, scope.to_string()],
         )?;
         Ok(())
+    }
+
+    /// Enables or disables an installed skill without uninstalling it. A
+    /// disabled skill is inspectable but never invoked. Only the record that
+    /// actually answers for this id (see [`Self::effective_scope`]) changes.
+    pub fn set_enabled(&mut self, skill_id: &str, enabled: bool) -> Result<(), StoreError> {
+        let scope = self.effective_scope(skill_id)?;
+        let changed = self.conn.execute(
+            "UPDATE skill_store SET enabled = ?1 WHERE skill_id = ?2 AND scope = ?3",
+            params![enabled as i64, skill_id, scope.to_string()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(skill_id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Whether an installed skill is enabled. Skills missing from the store
+    /// fail closed (not found, not silently enabled).
+    pub fn is_enabled(&self, skill_id: &str) -> Result<bool, StoreError> {
+        let enabled: i64 = self
+            .conn
+            .query_row(
+                "SELECT enabled FROM skill_store WHERE skill_id = ?1
+                 ORDER BY CASE scope WHEN 'session' THEN 0 WHEN 'repository' THEN 1 ELSE 2 END
+                 LIMIT 1",
+                params![skill_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound(skill_id.to_string()),
+                other => StoreError::Sqlite(other),
+            })?;
+        Ok(enabled != 0)
     }
 
     pub fn path_for(&self, skill_id: &str, scope: &SkillScope) -> PathBuf {
@@ -651,6 +823,30 @@ fn qualification_is_invocable(status: &QualificationStatus) -> bool {
         status,
         QualificationStatus::Qualified | QualificationStatus::QualifiedWithConstraints
     )
+}
+
+/// The capabilities a skill package DECLARES, read from its `manifest.toml`.
+///
+/// `model_capabilities` is the declared list. The skill's own id is always
+/// included so an exact-id lookup keeps resolving, and a package with no
+/// readable manifest degrades to exactly that — never to a substring match over
+/// unrelated metadata.
+fn declared_capabilities(root: &Path, skill_id: &str) -> Vec<String> {
+    #[derive(Deserialize)]
+    struct Declared {
+        #[serde(default)]
+        model_capabilities: Vec<String>,
+        #[serde(default)]
+        capabilities: Vec<String>,
+    }
+    let mut capabilities = vec![skill_id.to_lowercase()];
+    if let Ok(text) = std::fs::read_to_string(root.join("manifest.toml"))
+        && let Ok(declared) = toml::from_str::<Declared>(&text)
+    {
+        capabilities.extend(declared.model_capabilities);
+        capabilities.extend(declared.capabilities);
+    }
+    capabilities
 }
 
 fn scope_priority(scope: &SkillScope) -> u8 {
@@ -885,16 +1081,30 @@ mod tests {
         );
     }
 
+    /// A skill package whose manifest declares `capabilities`.
+    fn package(root: &Path, name: &str, capabilities: &[&str]) -> String {
+        std::fs::create_dir_all(root).unwrap();
+        std::fs::write(root.join("SKILL.md"), format!("# {name}")).unwrap();
+        let declared = capabilities
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        std::fs::write(
+            root.join("manifest.toml"),
+            format!("name = \"{name}\"\nversion = \"1.0\"\nmodel_capabilities = [{declared}]\n"),
+        )
+        .unwrap();
+        skill_content_digest(root).unwrap()
+    }
+
     #[test]
-    fn find_by_capability_matches() {
+    fn find_by_capability_uses_declared_capabilities_not_substrings() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = SkillStore::open(&dir.path().join("db"), &dir.path().join("lib")).unwrap();
 
-        let sd = dir.path().join("s1");
-        std::fs::create_dir_all(&sd).unwrap();
-        std::fs::write(sd.join("SKILL.md"), "").unwrap();
-        let digest = skill_content_digest(&sd).unwrap();
-
+        let inspector = dir.path().join("s1");
+        let inspector_digest = package(&inspector, "terraform-inspector", &["infrastructure"]);
         store
             .install(
                 "terraform-inspector",
@@ -903,29 +1113,94 @@ mod tests {
                 "registry",
                 None,
                 Some("example"),
-                &digest,
+                &inspector_digest,
                 &json!({}),
-                &sd,
+                &inspector,
             )
             .unwrap();
 
+        // Named for terraform, but declares nothing about it.
+        let decoy = dir.path().join("s2");
+        let decoy_digest = package(&decoy, "terraform-notes", &["documentation"]);
         store
             .install(
-                "k8s-debug",
+                "terraform-notes",
                 "1.0",
                 SkillScope::User,
                 "github",
                 None,
                 None,
-                &digest,
+                &decoy_digest,
                 &json!({}),
-                &sd,
+                &decoy,
             )
             .unwrap();
 
-        let results = store.find_by_capability("terraform").unwrap();
+        // A DECLARED capability resolves...
+        let results = store.find_by_capability("infrastructure").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].skill_id, "terraform-inspector");
+
+        // ...and a substring of an id no longer does. This was the defect: both
+        // skills used to answer for "terraform" because their names contain it.
+        assert!(
+            store.find_by_capability("terraform").unwrap().is_empty(),
+            "a name substring is not a capability declaration"
+        );
+
+        // The exact skill id still resolves, so id-addressed lookups keep working.
+        let by_id = store.find_by_capability("terraform-inspector").unwrap();
+        assert_eq!(by_id.len(), 1);
+    }
+
+    #[test]
+    fn mutations_target_only_the_effective_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SkillStore::open(&dir.path().join("db"), &dir.path().join("lib")).unwrap();
+        let source = dir.path().join("src");
+        let digest = package(&source, "reviewer", &["review"]);
+        for scope in [SkillScope::User, SkillScope::Session] {
+            store
+                .install(
+                    "reviewer",
+                    "1.0",
+                    scope,
+                    "local",
+                    None,
+                    None,
+                    &digest,
+                    &json!({}),
+                    &source,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            store.effective_scope("reviewer").unwrap(),
+            SkillScope::Session
+        );
+
+        store.set_enabled("reviewer", false).unwrap();
+        store.record_use("reviewer", true).unwrap();
+
+        let records = store.list().unwrap();
+        let session = records
+            .iter()
+            .find(|r| r.scope == SkillScope::Session)
+            .unwrap();
+        let user = records
+            .iter()
+            .find(|r| r.scope == SkillScope::User)
+            .unwrap();
+        assert!(!session.enabled, "the effective record changed");
+        assert!(
+            user.enabled,
+            "a lower-precedence scope must NOT be disabled as a side effect"
+        );
+        assert_eq!(session.successful_uses, 1);
+        assert_eq!(
+            user.successful_uses, 0,
+            "usage must not be double-counted across scopes"
+        );
     }
 
     #[test]
@@ -933,9 +1208,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = SkillStore::open(&dir.path().join("db"), &dir.path().join("lib")).unwrap();
         let source = dir.path().join("source");
-        std::fs::create_dir(&source).unwrap();
-        std::fs::write(source.join("SKILL.md"), "# Pull request reader").unwrap();
-        let digest = skill_content_digest(&source).unwrap();
+        let digest = package(&source, "github-pr-reader", &["github-pr"]);
         store
             .install(
                 "github-pr-reader",
@@ -963,6 +1236,53 @@ mod tests {
         assert!(qualified.non_invocable_matches.is_empty());
         assert!(qualified.external_search_avoided);
         assert!(!qualified.requires_external_search());
+    }
+
+    #[test]
+    fn disabled_skills_are_inspectable_but_never_invocable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SkillStore::open(&dir.path().join("db"), &dir.path().join("lib")).unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "# git review").unwrap();
+        let digest = skill_content_digest(&source).unwrap();
+
+        store
+            .install(
+                "git-review",
+                "1.0.0",
+                SkillScope::Repository,
+                "local",
+                None,
+                Some("trusted"),
+                &digest,
+                &json!({"read": ["**/*"]}),
+                &source,
+            )
+            .unwrap();
+        store
+            .update_qualification("git-review", &QualificationStatus::Qualified)
+            .unwrap();
+
+        // Fresh installs are enabled and invocable.
+        assert!(store.is_enabled("git-review").unwrap());
+        let enabled = store.resolve_installed_capability("git-review").unwrap();
+        assert_eq!(enabled.qualified_matches.len(), 1);
+        assert!(enabled.external_search_avoided);
+
+        // Disabling removes it from invocable matches and re-enables external
+        // search, but the record stays listed.
+        store.set_enabled("git-review", false).unwrap();
+        assert!(!store.is_enabled("git-review").unwrap());
+        let disabled = store.resolve_installed_capability("git-review").unwrap();
+        assert!(disabled.qualified_matches.is_empty());
+        assert_eq!(disabled.non_invocable_matches.len(), 1);
+        assert!(disabled.requires_external_search());
+        assert_eq!(store.list().unwrap().len(), 1);
+
+        store.set_enabled("git-review", true).unwrap();
+        assert!(store.is_enabled("git-review").unwrap());
+        assert!(store.set_enabled("missing-skill", true).is_err());
     }
 
     #[test]

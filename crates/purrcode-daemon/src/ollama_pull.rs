@@ -619,6 +619,7 @@ mod tests {
                 &SessionEvent::ActionProposed {
                     action_id,
                     action: action.clone(),
+                    turn_id: None,
                 },
             )
             .unwrap();
@@ -631,6 +632,7 @@ mod tests {
                         reason: "test".into(),
                         constraints: constraints.clone(),
                     },
+                    turn_id: None,
                 },
             )
             .unwrap();
