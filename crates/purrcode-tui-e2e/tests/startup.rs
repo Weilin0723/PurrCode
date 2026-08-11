@@ -260,8 +260,17 @@ fn an_unknown_command_is_refused_without_side_effects() {
     with_artifacts("startup-unknown-command", &mut harness, |harness| {
         harness.wait_for_text("Ready for a task")?;
         harness.run_command("/definitelynotacommand")?;
-        let screen = harness.wait_for_text("Unknown command")?;
-        assertions::assert_visible(&screen, &["/help"]);
+        // Wait for the LAST thing the notice renders, not the first.
+        //
+        // `wait_for_text` returns the frame that first satisfied it, and the
+        // refusal notice does not become complete in one frame — v1.3 makes an
+        // unknown command consult the daemon's `/v1/commands` before refusing,
+        // so "Unknown command" can be on screen a frame or more before the
+        // "/help" hint is. Asserting the hint against the frame that matched
+        // the first string is a race that only loses under CI timing.
+        harness.wait_for_text("Unknown command")?;
+        let screen = harness.wait_for_text("/help")?;
+        assertions::assert_visible(&screen, &["Unknown command", "/help"]);
         assert!(
             !harness.daemon().saw("POST", "/v1/sessions"),
             "an unknown command must not create a session:\n{}",

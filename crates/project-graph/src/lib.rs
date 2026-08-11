@@ -107,7 +107,7 @@ impl ProjectGraph {
     /// rejected because they re-open the traversal containment the rest of the
     /// system enforces.
     pub fn upsert_node(&mut self, node: &GraphNode) -> Result<NodeId, GraphError> {
-        if Path::new(&node.key).is_absolute() {
+        if !is_repository_relative_key(&node.key) {
             return Err(GraphError::NonRelativeKey(node.key.clone()));
         }
         self.conn.execute(
@@ -336,6 +336,29 @@ impl ProjectGraph {
     }
 }
 
+/// Whether `key` is a usable repository-relative graph key on EVERY platform.
+///
+/// `Path::is_absolute` is platform-dependent, and containment must not be. On
+/// Windows `/etc/passwd` is NOT absolute — it has no drive prefix — so a check
+/// that relies on `is_absolute` alone admits a POSIX absolute path as a graph
+/// key on Windows, and admits `C:\Windows\...` on POSIX. Both directions are
+/// rejected here, along with `..` traversal, so the same key is accepted or
+/// refused identically wherever the daemon runs.
+pub fn is_repository_relative_key(key: &str) -> bool {
+    if key.is_empty() || Path::new(key).is_absolute() {
+        return false;
+    }
+    if key.starts_with('/') || key.starts_with('\\') {
+        return false;
+    }
+    // A drive-relative or drive-absolute Windows path (`C:foo`, `C:\foo`).
+    let bytes = key.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    !key.split(['/', '\\']).any(|component| component == "..")
+}
+
 /// Where the graph says a symbol is defined.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolDefinition {
@@ -455,9 +478,29 @@ mod tests {
         // The tables come from migrations/0005 (registered in ninelives); a
         // bare connection here can't create them, so the insert must fail at
         // the key check BEFORE any SQL touches a missing table.
-        let bad = node(Path::new("/repo"), GraphNodeKind::File, "/etc/passwd");
-        let err = graph.upsert_node(&bad).unwrap_err();
-        assert!(matches!(err, GraphError::NonRelativeKey(_)));
+        //
+        // Every shape is rejected on every platform. `Path::is_absolute` alone
+        // could not do this: on Windows `/etc/passwd` has no drive prefix and
+        // is not "absolute", and on POSIX `C:\\Windows` is not either — so
+        // containment would have depended on which OS the daemon ran.
+        for key in [
+            "/etc/passwd",
+            "\\\\etc\\\\passwd",
+            "C:\\\\Windows\\\\System32",
+            "C:relative",
+            "../../etc/passwd",
+            "src/../../../etc/passwd",
+            "src\\\\..\\\\..\\\\etc",
+            "",
+        ] {
+            let bad = node(Path::new("/repo"), GraphNodeKind::File, key);
+            let err = graph
+                .upsert_node(&bad)
+                .expect_err(&format!("`{key}` must not be a graph key"));
+            assert!(matches!(err, GraphError::NonRelativeKey(_)), "{key}");
+        }
+        assert!(is_repository_relative_key("src/auth.rs"));
+        assert!(is_repository_relative_key("src/auth.rs#AuthMiddleware"));
     }
 
     /// The 0005 schema, so traversal can be tested without ninelives.

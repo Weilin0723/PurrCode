@@ -293,12 +293,13 @@ fn failed_validations(events: &[SessionEvent]) -> Vec<(String, String)> {
 }
 
 /// A path that may be used as a graph key: relative, non-empty, no traversal.
+///
+/// Delegates to the graph's own platform-independent check. Using
+/// `Path::is_absolute` here was wrong on Windows, where `/etc/passwd` is not
+/// "absolute" (no drive prefix) and would have been accepted as a key.
 fn is_repository_relative(path: &Path) -> bool {
-    !path.as_os_str().is_empty()
-        && !path.is_absolute()
-        && !path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
+    path.to_str()
+        .is_some_and(purrcode_project_graph::is_repository_relative_key)
 }
 
 fn read_source(worktree: Option<&Path>, repository: &Path, path: &Path) -> Option<String> {

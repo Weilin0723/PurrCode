@@ -2317,13 +2317,25 @@ mod tests {
                 approved_by: ApprovalAuthority::Human,
             })
             .unwrap();
-        let result = McpHost::call(&mut store, action_id, &action, &constraints, &server)
-            .await
-            .unwrap();
-        assert_eq!(
-            result.value["content"][0]["text"],
-            serde_json::Value::String("ok".into())
-        );
+        // The authorization is consumed BEFORE the server is spawned, so the
+        // exactly-once claim is testable on every host. Only the successful
+        // payload needs an isolation backend — and on a host without one the
+        // call MUST fail closed rather than run the server unconfined.
+        let first = McpHost::call(&mut store, action_id, &action, &constraints, &server).await;
+        if stdio_isolation_available() {
+            let result = first.expect("a confinable server runs");
+            assert_eq!(
+                result.value["content"][0]["text"],
+                serde_json::Value::String("ok".into())
+            );
+        } else {
+            assert!(
+                matches!(first, Err(HostError::IsolationUnavailable { .. })),
+                "an unconfinable stdio server must fail closed, got {first:?}"
+            );
+        }
+        // Either way the capability is spent. A spawn that failed must not
+        // leave a replayable authorization behind.
         assert!(matches!(
             McpHost::call(&mut store, action_id, &action, &constraints, &server).await,
             Err(HostError::Store(StoreError::AuthorizationUnavailable))

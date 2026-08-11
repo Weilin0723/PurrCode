@@ -1375,6 +1375,26 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
+        // Pin line endings for every fixture repository.
+        //
+        // Git for Windows ships `core.autocrlf=true`, so a checkout rewrites LF
+        // to CRLF and a test that round-trips content through a patch reads back
+        // `base\r\ncheckpointed\r\n` for bytes it wrote as `base\ncheckpointed\n`.
+        // The assertions are about patch fidelity, not about the platform's
+        // newline convention, so the fixture removes the variable rather than
+        // each assertion normalizing after the fact. This must live in the
+        // repository's own config, not this helper's environment: the code under
+        // test shells out to git itself and would not inherit it.
+        if arguments.first() == Some(&"init") {
+            for (key, value) in [("core.autocrlf", "false"), ("core.eol", "lf")] {
+                let status = StdCommand::new("git")
+                    .args(["config", key, value])
+                    .current_dir(repository)
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+            }
+        }
     }
 
     #[tokio::test]
