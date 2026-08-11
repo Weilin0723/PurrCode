@@ -2318,3 +2318,103 @@ async fn an_after_write_hook_awaiting_approval_still_records_what_the_write_did(
         "no SessionFailed anywhere in the lifecycle"
     );
 }
+
+/// A registry holding one `AlwaysAsk`, write-class MCP tool.
+fn registry_with_always_ask_tool() -> Arc<purrcode_runtime_core::CapabilityRegistry> {
+    let mut registry = purrcode_runtime_core::CapabilityRegistry::new();
+    let ceiling = purrcode_runtime_core::ToolCeiling {
+        maximum_side_effect: purrcode_runtime_core::SideEffectClass::Destructive,
+        maximum_network: purrcode_runtime_core::NetworkScope::Any,
+        maximum_filesystem: purrcode_runtime_core::FilesystemScope::maximum(),
+        minimum_approval: purrcode_runtime_core::ApprovalPolicy::PreAuthorized,
+        denied_tool_ids: std::collections::BTreeSet::new(),
+    };
+    registry.admit_tool(
+        purrcode_runtime_core::ToolDescriptorProposal {
+            id: purrcode_runtime_core::ToolId::mcp("github", "create_issue"),
+            provider: purrcode_runtime_core::ToolProvider::Mcp,
+            display_name: "create_issue".into(),
+            description: "opens an issue on the remote".into(),
+            schema: serde_json::json!({ "type": "object" }),
+            capabilities: std::collections::BTreeSet::new(),
+            side_effect_class: purrcode_runtime_core::SideEffectClass::Write,
+            network_scope: purrcode_runtime_core::NetworkScope::None,
+            filesystem_scope: purrcode_runtime_core::FilesystemScope::WorktreeRead,
+            approval_policy: purrcode_runtime_core::ApprovalPolicy::AlwaysAsk,
+            origin: purrcode_runtime_core::DescriptorOrigin::RemoteDiscovery,
+        },
+        &ceiling,
+    );
+    Arc::new(registry)
+}
+
+#[tokio::test]
+async fn auto_permission_mode_still_asks_before_an_always_ask_registry_tool() {
+    // The guard in `apply_permission_mode` was dead code at runtime: the one
+    // production call site passed `None` for the descriptor, so the unit test
+    // that passes `Some(..)` stayed green while the DEFAULT `Auto` mode
+    // auto-approved every MCP tool, every skill script and `native:commit`.
+    // This drives the real turn loop, which is the only thing that could have
+    // caught a caller passing `None`.
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![serde_json::json!({
+            "plan": ["file the issue"],
+            "rationale": "the objective asks for an issue",
+            "action": {
+                "type": "tool",
+                "tool_id": "mcp:github/create_issue",
+                "arguments": { "title": "bug" }
+            },
+            "complete": false
+        })])),
+    };
+    let runs = Arc::new(Mutex::new(0usize));
+    let agent = NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(SessionControls {
+            task_mode: TaskMode::Build,
+            permission_mode: purrcode_runtime_core::adaptation::PermissionMode::Auto,
+            ..SessionControls::default()
+        })
+        .with_tool_registry(registry_with_always_ask_tool())
+        .with_tool_executor(Arc::new(CountingExecutor { runs: runs.clone() }));
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(&mut store, repository.path(), "open an issue for the bug")
+        .await
+        .unwrap();
+    let AgentOutcome::AwaitingApproval {
+        session_id,
+        action_id,
+        ..
+    } = outcome
+    else {
+        panic!("Auto mode auto-approved an AlwaysAsk registry tool: {outcome:?}");
+    };
+    assert_eq!(
+        *runs.lock().unwrap(),
+        0,
+        "the tool must not have run before a human approved it"
+    );
+    let judgment = store
+        .events(session_id)
+        .unwrap()
+        .into_iter()
+        .rev()
+        .find_map(|event| match event {
+            SessionEvent::JudgmentRecorded {
+                action_id: judged,
+                decision,
+                ..
+            } if judged == action_id => Some(decision),
+            _ => None,
+        })
+        .expect("the tool was judged");
+    assert!(
+        matches!(
+            judgment,
+            purrcode_runtime_core::JudgmentDecision::RequireApproval { .. }
+        ),
+        "the durable judgment must record that a human is required, got {judgment:?}"
+    );
+}

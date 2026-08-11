@@ -3490,11 +3490,25 @@ impl<'a> NativeAgent<'a> {
             // Both still write a durable authorization record below, so the
             // action remains auditable (AGENTS.md). Ask leaves PawGate's
             // decision untouched.
+            // The descriptor MUST be passed. `apply_permission_mode`'s whole
+            // reason for taking one is that an `AlwaysAsk` (or non-read)
+            // registered tool is never auto-approved — and passing `None` here
+            // made that guard dead code at runtime while the unit test that
+            // passes `Some(..)` kept it green. Under the DEFAULT `Auto` mode
+            // that silently auto-approved every MCP tool, every skill script
+            // and `native:commit`/`native:delete_file`, with the evidence row
+            // then claiming a policy had allowed it.
+            let descriptor = match (&proposed, self.tool_registry.as_deref()) {
+                (ProposedAction::Tool(invocation), Some(registry)) => {
+                    registry.tool(&invocation.tool_id)
+                }
+                _ => None,
+            };
             let decision = apply_permission_mode(
                 self.controls.permission_mode,
                 decision,
                 &session_worktree.path,
-                None,
+                descriptor,
             );
             match decision {
                 JudgmentDecision::AllowWithConstraints(constraints) => {

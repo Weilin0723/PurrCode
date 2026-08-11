@@ -5361,15 +5361,21 @@ async fn run_agent_operation(
         registry: effective_registry.clone(),
         output_schemas: registry_cache.output_schemas.clone(),
     });
+    let hook_registry = effective_registry.clone();
     let agent = agent
         .with_tool_registry(effective_registry)
         .with_tool_executor(executor)
         // v1.3 PR D: attach the governed-hook dispatcher so lifecycle
         // triggers (before_write/after_write/after_validation/
         // after_agent_complete/before_commit) fire project-declared hooks.
+        // The hook evaluator gets the SAME effective registry the agent and the
+        // executor hold, so a hook is bounded by the active profile's ceiling
+        // rather than only by the workspace one.
         .with_hook_evaluator(Arc::new(DaemonHookEvaluator {
             state: state.clone(),
             repository: repository.clone(),
+            registry: hook_registry,
+            output_schemas: registry_cache.output_schemas.clone(),
         }));
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
@@ -10664,6 +10670,26 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
                 let Some(server) = config else {
                     fail_dispatch!(format!("mcp server `{server_id}` is not configured"));
                 };
+                // Bind the SERVER to the scope PawGate just authorized.
+                //
+                // The host derives the child's cwd, its sandbox grant, and its
+                // timeout/output caps from the server config. Dispatching with
+                // the raw config means a server configured against some other
+                // directory runs there — while the approval card, the
+                // constraints and the evidence all say "the session worktree",
+                // and `validate_effect_delta` (which only diffs the worktree)
+                // reports that nothing changed. The legacy `/mcp` endpoint
+                // refuses that mismatch outright; the generic path closes it by
+                // making the authorized scope the one that is enforced.
+                let server = McpServerConfig {
+                    working_directory: constraints.working_directory.clone(),
+                    network: server.network && constraints.network,
+                    timeout_seconds: server.timeout_seconds.min(constraints.timeout_seconds),
+                    maximum_output_bytes: server
+                        .maximum_output_bytes
+                        .min(constraints.maximum_output_bytes),
+                    ..server
+                };
                 match McpHost::call_authorized(&server, tool_name, &invocation.arguments).await {
                     Ok(result) => {
                         // MCP returns structured results in `structuredContent`
@@ -10875,6 +10901,17 @@ impl purrcode_agent_runtime::ToolExecutor for DaemonToolExecutor {
 struct DaemonHookEvaluator {
     state: AppState,
     repository: PathBuf,
+    /// The EFFECTIVE registry for this session — `CapabilityRegistry::for_agent`
+    /// when a profile is active.
+    ///
+    /// The evaluator used to re-fetch the unnarrowed workspace registry, so a
+    /// project-declared hook could resolve and execute a tool the active
+    /// profile's ceiling forbids: a session run under a read-only reviewer
+    /// profile would still let a checked-in `after_agent_complete` hook invoke a
+    /// pre-authorized MCP tool. A hook is project-supplied, therefore untrusted,
+    /// therefore bounded by the same ceiling as anything the model proposes.
+    registry: Arc<purrcode_runtime_core::CapabilityRegistry>,
+    output_schemas: Arc<BTreeMap<purrcode_runtime_core::ToolId, serde_json::Value>>,
 }
 
 #[async_trait]
@@ -10913,13 +10950,12 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
             }
             None => Policy::default(),
         };
-        let registry_cache = load_tool_registry(&self.state, &self.repository).await;
         // Resolution happens ONCE, before anything is judged: a `HookAction`
         // becomes a concrete `ToolInvocation` or it is denied with a reason.
         // Judging one shape and executing another is what let a capability hook
         // be recorded as "succeeded" without ever running.
         let resolve_closure = {
-            let registry = registry_cache.registry.clone();
+            let registry = self.registry.clone();
             let worktree = working_directory.clone();
             move |hook: &purrcode_runtime_core::HookDescriptor| -> crate::hooks::ResolvedHookAction {
                 let (tool_id, arguments) = match &hook.action {
@@ -10984,7 +11020,7 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
             }
         };
         let evaluate_closure = {
-            let registry = registry_cache.registry.clone();
+            let registry = self.registry.clone();
             let worktree = working_directory.clone();
             let policy = policy.clone();
             move |hook: &purrcode_runtime_core::HookDescriptor,
@@ -11024,8 +11060,8 @@ impl purrcode_agent_runtime::HookEvaluator for DaemonHookEvaluator {
         );
         let executor = DaemonToolExecutor {
             state: self.state.clone(),
-            registry: registry_cache.registry.clone(),
-            output_schemas: registry_cache.output_schemas.clone(),
+            registry: self.registry.clone(),
+            output_schemas: self.output_schemas.clone(),
         };
         for execution in to_execute {
             let action_id = ActionId::new();
