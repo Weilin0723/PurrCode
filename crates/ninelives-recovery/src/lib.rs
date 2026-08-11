@@ -14,6 +14,7 @@ const MIGRATION_2: &str = include_str!("../../../migrations/0002_automations.sql
 const MIGRATION_3: &str = include_str!("../../../migrations/0003_session_workspace.sql");
 const MIGRATION_4: &str = include_str!("../../../migrations/0004_extension_platform.sql");
 const MIGRATION_5: &str = include_str!("../../../migrations/0005_project_graph.sql");
+const MIGRATION_6: &str = include_str!("../../../migrations/0006_delegation.sql");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Automation {
@@ -168,6 +169,7 @@ impl SessionStore {
         transaction.execute_batch(MIGRATION_3)?;
         transaction.execute_batch(MIGRATION_4)?;
         transaction.execute_batch(MIGRATION_5)?;
+        transaction.execute_batch(MIGRATION_6)?;
         transaction.commit()?;
         Ok(())
     }
@@ -213,8 +215,80 @@ impl SessionStore {
              VALUES (?1, ?2, ?3)",
             params![session_id.0.to_string(), event_name(event), payload],
         )?;
+        // The v1.4 delegation projection is written in the SAME transaction as
+        // the event, not afterwards. A projection that can lag the log by one
+        // crash is a projection that can report a worktree as reaped while the
+        // log still says its patch is unresolved.
+        project_delegation_event(&transaction, session_id, event)?;
         transaction.commit()?;
         Ok(sequence)
+    }
+
+    /// Worker worktrees that must not be deleted, across every session.
+    ///
+    /// Called on daemon startup: a worktree whose worker never finished holds
+    /// an unresolved patch (v1.4 §PR3). Anything not in this set and not in use
+    /// is safe to reap; anything in it is reconciled instead.
+    pub fn retained_worker_worktrees(&self) -> Result<Vec<(SessionId, PathBuf)>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT w.session_id, w.worker_worktree
+             FROM delegation_workers w
+             JOIN delegations d ON d.delegation_id = w.delegation_id
+             WHERE w.worker_worktree IS NOT NULL
+               AND d.integration_state NOT IN ('applied','rejected')
+             ORDER BY w.assigned_at",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let session: String = row.get(0)?;
+            let path: String = row.get(1)?;
+            Ok((session, path))
+        })?;
+        let mut retained = Vec::new();
+        for row in rows {
+            let (session, path) = row?;
+            retained.push((SessionId(Uuid::parse_str(&session)?), PathBuf::from(path)));
+        }
+        Ok(retained)
+    }
+
+    /// One row per delegation for the agent workspace, without replaying the
+    /// session's whole event log.
+    pub fn delegation_summaries(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<DelegationSummaryRow>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT d.delegation_id, d.objective, d.capability, d.status,
+                    d.integration_state, d.access, d.repair_cycles,
+                    w.agent_profile, w.model_role, w.worker_worktree,
+                    r.summary, r.changed_paths
+             FROM delegations d
+             LEFT JOIN delegation_workers w ON w.delegation_id = d.delegation_id
+             LEFT JOIN delegation_results r ON r.delegation_id = d.delegation_id
+             WHERE d.session_id = ?1
+             ORDER BY d.created_at",
+        )?;
+        let rows = statement.query_map([session_id.0.to_string()], |row| {
+            Ok(DelegationSummaryRow {
+                delegation_id: row.get(0)?,
+                objective: row.get(1)?,
+                capability: row.get(2)?,
+                status: row.get(3)?,
+                integration_state: row.get(4)?,
+                access: row.get(5)?,
+                repair_cycles: row.get(6)?,
+                agent_profile: row.get(7)?,
+                model_role: row.get(8)?,
+                worker_worktree: row.get(9)?,
+                result_summary: row.get(10)?,
+                changed_paths: row.get(11)?,
+            })
+        })?;
+        let mut summaries = Vec::new();
+        for row in rows {
+            summaries.push(row?);
+        }
+        Ok(summaries)
     }
 
     /// Persists the judgment event and exact authorization in one durable transaction.
@@ -1388,6 +1462,341 @@ fn checkpoint_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionCheck
     })
 }
 
+/// One delegation, flattened for the agent workspace (v1.4 §PR11).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct DelegationSummaryRow {
+    pub delegation_id: String,
+    pub objective: String,
+    pub capability: String,
+    pub status: String,
+    pub integration_state: String,
+    pub access: String,
+    pub repair_cycles: i64,
+    pub agent_profile: Option<String>,
+    pub model_role: Option<String>,
+    pub worker_worktree: Option<String>,
+    pub result_summary: Option<String>,
+    /// JSON array of repository-relative paths, as stored.
+    pub changed_paths: Option<String>,
+}
+
+/// Project one v1.4 delegation event into the queryable tables (migration
+/// 0006).
+///
+/// Every arm is derivable from the event log, so a projection that is lost or
+/// corrupted can be rebuilt by replay — but it is written transactionally with
+/// the event precisely so that never has to happen in practice. Events that are
+/// not part of the delegation lifecycle fall through and touch nothing.
+fn project_delegation_event(
+    transaction: &rusqlite::Transaction<'_>,
+    session_id: SessionId,
+    event: &SessionEvent,
+) -> Result<(), StoreError> {
+    use purrcode_runtime_core::delegation::WorkspaceAccess;
+
+    let session = session_id.0.to_string();
+    let now = Utc::now();
+    match event {
+        SessionEvent::DelegationCreated { delegation } => {
+            transaction.execute(
+                "INSERT OR REPLACE INTO delegations(
+                    delegation_id, session_id, parent_turn_id, objective, capability,
+                    expected_output, access, effective_ceiling, allowed_paths, budget,
+                    dependencies, depth, digest, status, integration_state,
+                    repair_cycles, blocked_by, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                           'not_proposed', 0, NULL, ?15, ?16)",
+                params![
+                    delegation.id().to_string(),
+                    session,
+                    delegation.parent_turn_id().0.to_string(),
+                    delegation.objective(),
+                    delegation.capability().as_str(),
+                    format!("{:?}", delegation.expected_output()).to_lowercase(),
+                    match delegation.access() {
+                        WorkspaceAccess::ReadOnly => "read_only",
+                        WorkspaceAccess::Writable => "writable",
+                    },
+                    serde_json::to_string(delegation.effective_ceiling())?,
+                    serde_json::to_string(delegation.allowed_paths())?,
+                    serde_json::to_string(delegation.budget())?,
+                    serde_json::to_string(delegation.dependencies())?,
+                    delegation.depth(),
+                    delegation.digest(),
+                    serde_json::to_value(delegation.status())?
+                        .as_str()
+                        .unwrap_or("planned")
+                        .to_owned(),
+                    delegation.created_at(),
+                    now,
+                ],
+            )?;
+        }
+        SessionEvent::DelegationRoutingRecorded {
+            delegation_id,
+            decision,
+        } => {
+            transaction.execute(
+                "INSERT OR REPLACE INTO delegation_routing(
+                    delegation_id, session_id, capability, chosen_profile, profile_digest,
+                    model_role, alternatives, reason, resolved_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    delegation_id.to_string(),
+                    session,
+                    decision.capability,
+                    decision.chosen_profile,
+                    decision.profile_digest,
+                    decision.model_role.as_ref().map(|role| role.to_string()),
+                    serde_json::to_string(&decision.alternatives)?,
+                    decision.reason,
+                    now,
+                ],
+            )?;
+        }
+        SessionEvent::DelegationReady { delegation_id } => {
+            set_delegation_status(transaction, *delegation_id, "ready", now)?;
+        }
+        SessionEvent::DelegationBlocked {
+            delegation_id,
+            blocking_dependency,
+        } => {
+            set_delegation_status(transaction, *delegation_id, "blocked", now)?;
+            transaction.execute(
+                "UPDATE delegations SET blocked_by = ?2 WHERE delegation_id = ?1",
+                params![delegation_id.to_string(), blocking_dependency.to_string()],
+            )?;
+        }
+        SessionEvent::DelegationWorkerAssigned { assignment } => {
+            transaction.execute(
+                "INSERT OR REPLACE INTO delegation_workers(
+                    worker_id, delegation_id, session_id, agent_profile, profile_digest,
+                    model_role, parent_worktree, worker_worktree, base_commit,
+                    base_snapshot_digest, assigned_at, started_at, finished_at, paused_reason
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, NULL, NULL)",
+                params![
+                    assignment.worker_id.to_string(),
+                    assignment.delegation_id.to_string(),
+                    session,
+                    assignment.agent_profile,
+                    assignment.profile_digest,
+                    assignment.model_role.as_ref().map(|role| role.to_string()),
+                    assignment.workspace.parent_worktree.to_string_lossy(),
+                    assignment
+                        .workspace
+                        .worker_worktree
+                        .as_ref()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                    assignment.workspace.base_commit,
+                    assignment.workspace.base_snapshot_digest,
+                    assignment.assigned_at,
+                ],
+            )?;
+        }
+        SessionEvent::DelegationWorkerStarted {
+            delegation_id,
+            worker_id,
+        } => {
+            set_delegation_status(transaction, *delegation_id, "running", now)?;
+            transaction.execute(
+                "UPDATE delegation_workers SET started_at = ?2, paused_reason = NULL
+                 WHERE worker_id = ?1",
+                params![worker_id.to_string(), now],
+            )?;
+        }
+        SessionEvent::DelegationWorkerPaused {
+            worker_id, reason, ..
+        } => {
+            transaction.execute(
+                "UPDATE delegation_workers SET paused_reason = ?2 WHERE worker_id = ?1",
+                params![worker_id.to_string(), reason],
+            )?;
+        }
+        SessionEvent::DelegationWorkerCompleted {
+            delegation_id,
+            worker_id,
+        } => {
+            set_delegation_status(transaction, *delegation_id, "completed", now)?;
+            finish_worker(transaction, worker_id, now)?;
+        }
+        SessionEvent::DelegationWorkerFailed {
+            delegation_id,
+            worker_id,
+            ..
+        } => {
+            set_delegation_status(transaction, *delegation_id, "failed", now)?;
+            finish_worker(transaction, worker_id, now)?;
+        }
+        SessionEvent::DelegationWorkerCancelled {
+            delegation_id,
+            worker_id,
+            ..
+        } => {
+            set_delegation_status(transaction, *delegation_id, "cancelled", now)?;
+            finish_worker(transaction, worker_id, now)?;
+        }
+        SessionEvent::DelegationCancelled { delegation_id, .. } => {
+            set_delegation_status(transaction, *delegation_id, "cancelled", now)?;
+        }
+        SessionEvent::DelegationCompleted { delegation_id } => {
+            set_delegation_status(transaction, *delegation_id, "completed", now)?;
+        }
+        SessionEvent::DelegationResultRecorded { result } => {
+            transaction.execute(
+                "INSERT OR REPLACE INTO delegation_results(
+                    delegation_id, worker_id, session_id, status, summary, changed_paths,
+                    patch_digest, findings, validations, unresolved, evidence_ids, usage,
+                    completed_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    result.delegation_id.to_string(),
+                    result.worker_id.to_string(),
+                    session,
+                    result.status.label(),
+                    result.summary,
+                    serde_json::to_string(&result.changed_paths)?,
+                    result.patch_digest,
+                    serde_json::to_string(&result.findings)?,
+                    serde_json::to_string(&result.validations)?,
+                    serde_json::to_string(&result.unresolved)?,
+                    serde_json::to_string(&result.evidence_ids)?,
+                    serde_json::to_string(&result.usage)?,
+                    result.completed_at,
+                ],
+            )?;
+        }
+        SessionEvent::DelegationRepairRequested {
+            delegation_id,
+            cycle,
+            ..
+        } => {
+            transaction.execute(
+                "UPDATE delegations SET repair_cycles = ?2, updated_at = ?3
+                 WHERE delegation_id = ?1",
+                params![delegation_id.to_string(), cycle, now],
+            )?;
+        }
+        SessionEvent::IntegrationProposed { proposal } => {
+            let state = if proposal.conflicts.is_empty() {
+                "proposed"
+            } else {
+                "conflicted"
+            };
+            transaction.execute(
+                "INSERT OR REPLACE INTO integration_proposals(
+                    delegation_id, session_id, worker_id, patch_digest, amended_patch_digest,
+                    base_snapshot_digest, changed_paths, conflicts, validation_summary,
+                    evidence_ids, state, decided_by, decided_at, proposed_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, NULL, ?12)",
+                params![
+                    proposal.delegation_id.to_string(),
+                    session,
+                    proposal.worker_id.to_string(),
+                    proposal.patch_digest,
+                    proposal.amended_patch_digest,
+                    proposal.base_snapshot_digest,
+                    serde_json::to_string(&proposal.changed_paths)?,
+                    serde_json::to_string(&proposal.conflicts)?,
+                    serde_json::to_string(&proposal.validation_summary)?,
+                    serde_json::to_string(&proposal.evidence_ids)?,
+                    state,
+                    now,
+                ],
+            )?;
+            set_integration_state(transaction, proposal.delegation_id, state, now)?;
+        }
+        SessionEvent::IntegrationConflictDetected {
+            delegation_id,
+            conflicts,
+        } => {
+            transaction.execute(
+                "UPDATE integration_proposals SET conflicts = ?2, state = 'conflicted'
+                 WHERE delegation_id = ?1",
+                params![delegation_id.to_string(), serde_json::to_string(conflicts)?],
+            )?;
+            set_integration_state(transaction, *delegation_id, "conflicted", now)?;
+        }
+        SessionEvent::IntegrationApproved {
+            delegation_id,
+            authority,
+            ..
+        } => {
+            transaction.execute(
+                "UPDATE integration_proposals
+                 SET state = 'approved', decided_by = ?2, decided_at = ?3
+                 WHERE delegation_id = ?1",
+                params![
+                    delegation_id.to_string(),
+                    serde_json::to_string(authority)?,
+                    now
+                ],
+            )?;
+            set_integration_state(transaction, *delegation_id, "approved", now)?;
+        }
+        SessionEvent::IntegrationRejected {
+            delegation_id,
+            reason,
+        } => {
+            transaction.execute(
+                "UPDATE integration_proposals
+                 SET state = 'rejected', decided_by = ?2, decided_at = ?3
+                 WHERE delegation_id = ?1",
+                params![delegation_id.to_string(), reason, now],
+            )?;
+            set_integration_state(transaction, *delegation_id, "rejected", now)?;
+        }
+        SessionEvent::IntegrationApplied { delegation_id, .. } => {
+            transaction.execute(
+                "UPDATE integration_proposals SET state = 'applied' WHERE delegation_id = ?1",
+                params![delegation_id.to_string()],
+            )?;
+            set_integration_state(transaction, *delegation_id, "applied", now)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn set_delegation_status(
+    transaction: &rusqlite::Transaction<'_>,
+    delegation_id: purrcode_runtime_core::delegation::DelegationId,
+    status: &str,
+    now: DateTime<Utc>,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "UPDATE delegations SET status = ?2, updated_at = ?3 WHERE delegation_id = ?1",
+        params![delegation_id.to_string(), status, now],
+    )?;
+    Ok(())
+}
+
+fn set_integration_state(
+    transaction: &rusqlite::Transaction<'_>,
+    delegation_id: purrcode_runtime_core::delegation::DelegationId,
+    state: &str,
+    now: DateTime<Utc>,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "UPDATE delegations SET integration_state = ?2, updated_at = ?3
+         WHERE delegation_id = ?1",
+        params![delegation_id.to_string(), state, now],
+    )?;
+    Ok(())
+}
+
+fn finish_worker(
+    transaction: &rusqlite::Transaction<'_>,
+    worker_id: &purrcode_runtime_core::delegation::WorkerId,
+    now: DateTime<Utc>,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "UPDATE delegation_workers SET finished_at = ?2, paused_reason = NULL
+         WHERE worker_id = ?1",
+        params![worker_id.to_string(), now],
+    )?;
+    Ok(())
+}
+
 fn event_name(event: &SessionEvent) -> &'static str {
     match event {
         SessionEvent::SessionCreated { .. } => "session_created",
@@ -1442,6 +1851,30 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::HookTriggered { .. } => "hook_triggered",
         SessionEvent::ActionDeferredForHook { .. } => "action_deferred_for_hook",
         SessionEvent::ActionResumedAfterHook { .. } => "action_resumed_after_hook",
+        // v1.4. Named explicitly rather than falling into the catch-all below:
+        // `event_type` is what the FTS index and every "what happened?" query
+        // read, and labelling an integration approval "research_event" would
+        // make the audit trail wrong in exactly the place it matters most.
+        SessionEvent::DelegationPlanned { .. } => "delegation_planned",
+        SessionEvent::DelegationCreated { .. } => "delegation_created",
+        SessionEvent::DelegationRoutingRecorded { .. } => "delegation_routing_recorded",
+        SessionEvent::DelegationReady { .. } => "delegation_ready",
+        SessionEvent::DelegationBlocked { .. } => "delegation_blocked",
+        SessionEvent::DelegationWorkerAssigned { .. } => "delegation_worker_assigned",
+        SessionEvent::DelegationWorkerStarted { .. } => "delegation_worker_started",
+        SessionEvent::DelegationWorkerPaused { .. } => "delegation_worker_paused",
+        SessionEvent::DelegationWorkerCompleted { .. } => "delegation_worker_completed",
+        SessionEvent::DelegationWorkerFailed { .. } => "delegation_worker_failed",
+        SessionEvent::DelegationWorkerCancelled { .. } => "delegation_worker_cancelled",
+        SessionEvent::DelegationResultRecorded { .. } => "delegation_result_recorded",
+        SessionEvent::DelegationRepairRequested { .. } => "delegation_repair_requested",
+        SessionEvent::IntegrationProposed { .. } => "integration_proposed",
+        SessionEvent::IntegrationConflictDetected { .. } => "integration_conflict_detected",
+        SessionEvent::IntegrationApproved { .. } => "integration_approved",
+        SessionEvent::IntegrationRejected { .. } => "integration_rejected",
+        SessionEvent::IntegrationApplied { .. } => "integration_applied",
+        SessionEvent::DelegationCompleted { .. } => "delegation_completed",
+        SessionEvent::DelegationCancelled { .. } => "delegation_cancelled",
         _ => "research_event",
     }
 }
@@ -1704,7 +2137,8 @@ mod tests {
             .create_automation("run repository health check", repository.path(), 60)
             .unwrap();
         assert!(automation.enabled);
-        assert_eq!(store.schema_version().unwrap(), 5);
+        // Bumped by migration 0006 (v1.4 delegation projection).
+        assert_eq!(store.schema_version().unwrap(), 6);
         assert!(store.due_automations(Utc::now()).unwrap().is_empty());
         store
             .connection

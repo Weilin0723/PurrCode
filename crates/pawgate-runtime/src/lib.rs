@@ -389,6 +389,89 @@ impl Policy {
         }
     }
 
+    /// Judge one action proposed by a **delegated worker** (v1.4 §5.3, §9
+    /// "Scope Escape").
+    ///
+    /// The delegation's scope is applied *before* the ordinary policy, and the
+    /// resulting constraints are intersected with it afterwards. Both halves
+    /// matter: the pre-check is what turns "worker delegated `src/auth/**`
+    /// writes `src/payments/billing.rs`" into a PawGate deny rather than a
+    /// deny discovered later at result validation, and the post-intersection is
+    /// what stops a policy that would have allowed a wider write from widening
+    /// what the delegation authorized.
+    ///
+    /// This lives on `Policy` rather than beside the delegation runtime on
+    /// purpose. PawGate is the authority for "may this action run"; a second
+    /// gate elsewhere would be a second answer to the same question, and the
+    /// two would eventually disagree.
+    pub fn evaluate_delegated(
+        &self,
+        action: &ProposedAction,
+        worktree: &Path,
+        delegation: &purrcode_runtime_core::delegation::Delegation,
+    ) -> JudgmentDecision {
+        use purrcode_runtime_core::delegation::WorkspaceAccess;
+
+        // 1. A read-only worker may not mutate anything, whatever the policy
+        //    would have said.
+        let mutated = mutated_path(action);
+        if let Some(path) = mutated {
+            if delegation.access() == WorkspaceAccess::ReadOnly {
+                return JudgmentDecision::Deny {
+                    reason: format!(
+                        "delegation {} is read-only; it cannot modify `{}`",
+                        delegation.id().short(),
+                        path.display()
+                    ),
+                };
+            }
+            // 2. The delegated path scope. An empty allowlist permits nothing.
+            if !delegation.permits_path(path) {
+                return JudgmentDecision::Deny {
+                    reason: format!(
+                        "`{}` is outside the paths delegated to {} ({})",
+                        path.display(),
+                        delegation.id().short(),
+                        delegation
+                            .allowed_paths()
+                            .iter()
+                            .map(|pattern| pattern.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                };
+            }
+        }
+
+        // 3. A worker whose effective ceiling forbids this class of effect is
+        //    denied before the policy is asked.
+        let ceiling = delegation.effective_ceiling();
+        if side_effect_of(action) > ceiling.maximum_side_effect {
+            return JudgmentDecision::Deny {
+                reason: format!(
+                    "delegation {} may not perform a {:?} action",
+                    delegation.id().short(),
+                    side_effect_of(action)
+                ),
+            };
+        }
+
+        // 4. Ordinary policy, then narrow whatever it granted.
+        match self.evaluate(action, worktree) {
+            JudgmentDecision::AllowWithConstraints(constraints) => {
+                JudgmentDecision::AllowWithConstraints(narrow_constraints(constraints, delegation))
+            }
+            JudgmentDecision::RequireApproval {
+                reason,
+                constraints,
+            } => JudgmentDecision::RequireApproval {
+                reason,
+                constraints: narrow_constraints(constraints, delegation),
+            },
+            deny => deny,
+        }
+    }
+
     fn evaluate_file_mutation(
         &self,
         repository: &Path,
@@ -431,6 +514,66 @@ impl Policy {
                 constraints,
             }
         }
+    }
+}
+
+/// The repository-relative path an action would modify, if any.
+fn mutated_path(action: &ProposedAction) -> Option<&Path> {
+    match action {
+        ProposedAction::WriteFile(write) => Some(&write.path),
+        ProposedAction::DeleteFile(delete) => Some(&delete.path),
+        // A command's effects are not enumerable from its arguments, so its
+        // scope is bounded by the constraints it runs under, not by a path
+        // check here.
+        _ => None,
+    }
+}
+
+/// The side-effect class an action belongs to, for the delegation ceiling
+/// check. Deliberately pessimistic: anything that spawns a process or reaches
+/// an external tool counts as `Execute` even when it might turn out to be
+/// harmless.
+fn side_effect_of(action: &ProposedAction) -> SideEffectClass {
+    match action {
+        ProposedAction::RepositoryRead(_) => SideEffectClass::Read,
+        ProposedAction::WriteFile(_) => SideEffectClass::Write,
+        ProposedAction::DeleteFile(_) => SideEffectClass::Destructive,
+        ProposedAction::Command(_) | ProposedAction::ExternalTool(_) | ProposedAction::Tool(_) => {
+            SideEffectClass::Execute
+        }
+    }
+}
+
+/// Intersect granted constraints with what the delegation authorized.
+///
+/// Write globs are replaced by the delegation's own patterns when the policy
+/// granted something wider, and the changed-file budget takes the minimum. This
+/// can only narrow: there is no branch that adds a glob the delegation did not
+/// already carry.
+fn narrow_constraints(
+    constraints: ActionConstraints,
+    delegation: &purrcode_runtime_core::delegation::Delegation,
+) -> ActionConstraints {
+    let delegated: Vec<String> = delegation
+        .allowed_paths()
+        .iter()
+        .map(|pattern| pattern.as_str().to_owned())
+        .collect();
+    let allowed_write_globs: Vec<String> = constraints
+        .allowed_write_globs
+        .into_iter()
+        .filter(|granted| {
+            delegated
+                .iter()
+                .any(|permitted| purrcode_runtime_core::tool::glob_covers(permitted, granted))
+        })
+        .collect();
+    ActionConstraints {
+        maximum_changed_files: constraints
+            .maximum_changed_files
+            .min(delegation.budget().maximum_changed_files),
+        allowed_write_globs,
+        ..constraints
     }
 }
 
@@ -1457,6 +1600,179 @@ mod tests {
         });
         assert!(matches!(
             Policy::default().evaluate(&action, Path::new("")),
+            JudgmentDecision::Deny { .. }
+        ));
+    }
+
+    // ── v1.4 delegated judgment (§5.3, §9 "Scope Escape") ────────────────
+
+    fn delegated_worktree() -> PathBuf {
+        PathBuf::from(TEST_REPOSITORY)
+            .join(".purrcode")
+            .join("worktrees")
+            .join("worker-a")
+    }
+
+    fn delegation(
+        paths: &[&str],
+        expected: purrcode_runtime_core::delegation::ExpectedOutput,
+    ) -> purrcode_runtime_core::delegation::Delegation {
+        use purrcode_runtime_core::delegation::{
+            AuthorityInputs, DelegationBudget, DelegationRequest, PathPattern,
+        };
+        let ceiling = ToolCeiling {
+            maximum_side_effect: SideEffectClass::Destructive,
+            maximum_network: NetworkScope::None,
+            maximum_filesystem: FilesystemScope::maximum(),
+            minimum_approval: ApprovalPolicy::ByClass,
+            denied_tool_ids: BTreeSet::new(),
+        };
+        let remaining = DelegationBudget::modest();
+        DelegationRequest {
+            parent_session_id: purrcode_runtime_core::SessionId::new(),
+            parent_turn_id: purrcode_runtime_core::TurnId::new(),
+            objective: "implement token exchange".into(),
+            capability: purrcode_runtime_core::CapabilityId::parse("implement_backend").unwrap(),
+            acceptance_criteria: Vec::new(),
+            context_refs: Vec::new(),
+            allowed_paths: paths
+                .iter()
+                .map(|p| PathPattern::parse(p).unwrap())
+                .collect(),
+            expected_output: expected,
+            dependencies: Vec::new(),
+            budget: DelegationBudget::modest(),
+        }
+        .admit(AuthorityInputs {
+            workspace: &ceiling,
+            parent: &ceiling,
+            profile: &ceiling,
+            parent_remaining_budget: &remaining,
+            depth: 1,
+        })
+        .unwrap()
+    }
+
+    fn write(path: &str) -> ProposedAction {
+        ProposedAction::WriteFile(purrcode_runtime_core::WriteFileAction {
+            path: PathBuf::from(path),
+            content: "contents".into(),
+            expected_digest: None,
+        })
+    }
+
+    #[test]
+    fn a_worker_writing_outside_its_delegated_paths_is_denied_by_pawgate() {
+        // §9 "Scope Escape": delegated `src/auth/**`, tried
+        // `src/payments/billing.rs`. Expected: PawGate deny.
+        let policy = Policy {
+            auto_allow_worktree_writes: true,
+            ..Policy::default()
+        };
+        let delegation = delegation(
+            &["src/auth/**"],
+            purrcode_runtime_core::delegation::ExpectedOutput::Patch,
+        );
+        let decision = policy.evaluate_delegated(
+            &write("src/payments/billing.rs"),
+            &delegated_worktree(),
+            &delegation,
+        );
+        match decision {
+            JudgmentDecision::Deny { reason } => {
+                assert!(reason.contains("outside the paths delegated"), "{reason}");
+                assert!(reason.contains("src/auth/**"), "{reason}");
+            }
+            other => panic!("expected a deny, got {other:?}"),
+        }
+
+        // …and the in-scope write is still allowed.
+        assert!(matches!(
+            policy.evaluate_delegated(
+                &write("src/auth/token.rs"),
+                &delegated_worktree(),
+                &delegation
+            ),
+            JudgmentDecision::AllowWithConstraints(_)
+        ));
+    }
+
+    #[test]
+    fn a_read_only_worker_cannot_write_even_where_policy_would_allow_it() {
+        let policy = Policy {
+            auto_allow_worktree_writes: true,
+            ..Policy::default()
+        };
+        let review = delegation(
+            &["src/auth/**"],
+            purrcode_runtime_core::delegation::ExpectedOutput::Review,
+        );
+        match policy.evaluate_delegated(&write("src/auth/token.rs"), &delegated_worktree(), &review)
+        {
+            JudgmentDecision::Deny { reason } => assert!(reason.contains("read-only"), "{reason}"),
+            other => panic!("expected a deny, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn granted_constraints_are_narrowed_to_the_delegated_scope() {
+        let policy = Policy {
+            auto_allow_worktree_writes: true,
+            ..Policy::default()
+        };
+        let delegation = delegation(
+            &["src/auth/**"],
+            purrcode_runtime_core::delegation::ExpectedOutput::Patch,
+        );
+        match policy.evaluate_delegated(
+            &write("src/auth/token.rs"),
+            &delegated_worktree(),
+            &delegation,
+        ) {
+            JudgmentDecision::AllowWithConstraints(constraints) => {
+                assert_eq!(constraints.allowed_write_globs, ["src/auth/token.rs"]);
+                assert!(
+                    constraints.maximum_changed_files <= delegation.budget().maximum_changed_files
+                );
+            }
+            other => panic!("expected an allow, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_delegated_command_still_goes_through_the_ordinary_policy() {
+        // A worker does not get a private command allowlist: `git status` is
+        // read-only for everyone, and an unlisted program is denied for
+        // everyone.
+        let policy = Policy::default();
+        let delegation = delegation(
+            &["src/auth/**"],
+            purrcode_runtime_core::delegation::ExpectedOutput::Patch,
+        );
+        let repository = PathBuf::from(TEST_REPOSITORY);
+        assert!(matches!(
+            policy.evaluate_delegated(&action(&["status"]), &repository, &delegation),
+            JudgmentDecision::AllowWithConstraints(_)
+        ));
+        assert!(matches!(
+            policy.evaluate_delegated(&command("curl", &["https://x"]), &repository, &delegation),
+            JudgmentDecision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn a_delegation_with_no_paths_can_write_nothing() {
+        let policy = Policy {
+            auto_allow_worktree_writes: true,
+            ..Policy::default()
+        };
+        // A review delegation carries no write authority at all.
+        let review = delegation(
+            &[],
+            purrcode_runtime_core::delegation::ExpectedOutput::Review,
+        );
+        assert!(matches!(
+            policy.evaluate_delegated(&write("anything.rs"), &delegated_worktree(), &review),
             JudgmentDecision::Deny { .. }
         ));
     }
