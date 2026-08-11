@@ -648,17 +648,13 @@ pub async fn finish_worker(
         .filter(|conflict| conflict.delegations.contains(&delegation.id()))
         .collect();
 
-    // `require_evidence` is false here, and the reason matters. A worker's own
-    // validations are not yet produced by the daemon's worker loop, so
-    // requiring them would auto-reject every proposal before a human ever saw
-    // it — a gate that blocks the product rather than protecting it. What
-    // replaces it is honest visibility plus a real gate downstream: the review
-    // shows an empty validation list, no patch can be applied without an
-    // explicit human accept, and the parent's own validation runs afterwards
-    // through `POST /v1/sessions/{id}/delegations/validate`, which routes a
-    // failure back to the responsible worker. The parameter stays so a caller
-    // that *does* have per-worker evidence can demand it.
-    let decision = evaluate_proposal(&proposal, &mine, false);
+    // Writers must show evidence; readers have nothing to show. A writer now
+    // runs the project's static check in its own worktree before proposing, so
+    // this gate refuses exactly what it should: a patch nobody — not even the
+    // worker that wrote it — has demonstrated compiles. The expensive proof
+    // that the *integrated* whole passes stays with the parent, after
+    // integration, where the repair loop is attached.
+    let decision = evaluate_proposal(&proposal, &mine, delegation.access().is_writable());
     let mut proposal = proposal;
     proposal.conflicts.extend(mine.iter().cloned());
     store.append(
@@ -1030,6 +1026,95 @@ pub async fn execute_worker_action(
         )
         .map_err(|error| error.to_string())?;
     Ok(result)
+}
+
+/// Prove a writer's change at least builds, inside its own worktree (§PR7).
+///
+/// Only the fast static stage runs here, and the choice is a cost decision as
+/// much as a correctness one: N workers each running a full test suite is how a
+/// collaborative run costs several times a single-agent one. What this buys is
+/// the thing worth buying — a worker cannot propose a patch that does not
+/// compile — while the expensive proof that the *integrated* whole passes stays
+/// where it belongs, in the parent's validation after integration.
+///
+/// A project with no detectable validation yields a `NotDetected` record rather
+/// than an empty list: "we could not check" and "we did not try" must not look
+/// the same to a reviewer.
+pub async fn validate_worker_worktree(
+    store: &mut SessionStore,
+    worker_session: SessionId,
+    worktree: &std::path::Path,
+) -> Vec<purrcode_runtime_core::delegation::ValidationEvidence> {
+    use purrcode_validation_runtime::{
+        EvidenceStatus, ValidationDetector, ValidationRunner, ValidationStage,
+    };
+
+    let Ok(detected) = ValidationDetector::detect(worktree) else {
+        return vec![purrcode_runtime_core::delegation::ValidationEvidence {
+            name: "static check".into(),
+            status: purrcode_runtime_core::ValidationStatus::Unavailable,
+            detail: "the worker's worktree could not be inspected for validation".into(),
+            evidence_id: None,
+        }];
+    };
+    let fast: Vec<_> = detected
+        .commands
+        .iter()
+        .filter(|command| command.stage == ValidationStage::SyntaxStatic)
+        .cloned()
+        .collect();
+    if fast.is_empty() {
+        return vec![purrcode_runtime_core::delegation::ValidationEvidence {
+            name: "static check".into(),
+            status: purrcode_runtime_core::ValidationStatus::NotDetected,
+            detail: "no static check was detected for this project".into(),
+            evidence_id: None,
+        }];
+    }
+    let plan = purrcode_validation_runtime::ValidationPlan {
+        commands: fast,
+        undetected_stages: Vec::new(),
+        required_stages: Default::default(),
+        accepted_unavailable_stages: Default::default(),
+    };
+    match ValidationRunner::run(store, worker_session, worktree, &plan).await {
+        Ok(report) => report
+            .evidence
+            .into_iter()
+            .map(
+                |evidence| purrcode_runtime_core::delegation::ValidationEvidence {
+                    name: format!("{:?}", evidence.stage),
+                    status: match evidence.status {
+                        EvidenceStatus::Passed => purrcode_runtime_core::ValidationStatus::Passed,
+                        EvidenceStatus::Failed => purrcode_runtime_core::ValidationStatus::Failed,
+                        EvidenceStatus::TimedOut => {
+                            purrcode_runtime_core::ValidationStatus::TimedOut
+                        }
+                        EvidenceStatus::Unavailable => {
+                            purrcode_runtime_core::ValidationStatus::Unavailable
+                        }
+                        EvidenceStatus::NotDetected => {
+                            purrcode_runtime_core::ValidationStatus::NotDetected
+                        }
+                        EvidenceStatus::SkippedByConfiguration => {
+                            purrcode_runtime_core::ValidationStatus::SkippedByConfiguration
+                        }
+                        EvidenceStatus::Uncertain => {
+                            purrcode_runtime_core::ValidationStatus::Uncertain
+                        }
+                    },
+                    detail: evidence.detail,
+                    evidence_id: None,
+                },
+            )
+            .collect(),
+        Err(error) => vec![purrcode_runtime_core::delegation::ValidationEvidence {
+            name: "static check".into(),
+            status: purrcode_runtime_core::ValidationStatus::Unavailable,
+            detail: format!("the static check could not run: {error}"),
+            evidence_id: None,
+        }],
+    }
 }
 
 /// Route a failing validation back to the worker that caused it (§PR9).

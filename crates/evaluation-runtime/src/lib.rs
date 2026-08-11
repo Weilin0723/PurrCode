@@ -16,6 +16,13 @@
 //! forward- and backward-compatible readers can detect which layout produced
 //! the data.
 
+pub mod collaboration;
+
+pub use collaboration::{
+    CollaborationArm, CollaborationCategory, CollaborationComparison, CollaborationReport,
+    CollaborationRun, CollaborationTask, CollaborationVerdict, default_catalog,
+};
+
 use purrcode_runtime_core::ProposedAction;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

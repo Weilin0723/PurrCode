@@ -4044,6 +4044,7 @@ dependencies = [
  "purrcode-supervisor-runtime",
  "purrcode-terminal-runtime",
  "purrcode-ui-contracts",
+ "purrcode-validation-runtime",
  "purrcode-web-research",
  "reqwest",
  "rusqlite",
@@ -4099,9 +4100,11 @@ version = "1.0.0"
 dependencies = [
  "chrono",
  "purrcode-runtime-core",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]

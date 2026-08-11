@@ -2308,6 +2308,16 @@ async fn execute_delegated_worker(
         }
     }
 
+    // A writer proves its own change at least builds before proposing it. A
+    // reader has nothing to prove: it changed nothing.
+    let validations = match workspace.record.access {
+        purrcode_runtime_core::delegation::WorkspaceAccess::Writable => {
+            delegation::validate_worker_worktree(&mut store, worker_session, &working_directory)
+                .await
+        }
+        purrcode_runtime_core::delegation::WorkspaceAccess::ReadOnly => Vec::new(),
+    };
+
     Ok(purrcode_runtime_core::delegation::WorkerResult {
         delegation_id: delegation.id(),
         worker_id,
@@ -2322,7 +2332,7 @@ async fn execute_delegated_worker(
         changed_paths: Vec::new(),
         patch_digest: None,
         findings: Vec::new(),
-        validations: Vec::new(),
+        validations,
         unresolved: Vec::new(),
         evidence_ids: Vec::new(),
         usage,

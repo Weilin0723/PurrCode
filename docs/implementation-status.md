@@ -19,12 +19,16 @@ budgets; the agent workspace and integration review in the TUI; migration 0006
 for the queryable projection; `Policy::evaluate_delegated` as the runtime scope
 gate.
 
-**Not yet done.** The PR15 comparative benchmark has not been run, so
-"delegation beats single-agent often enough to justify its cost" remains a
-design argument rather than a measurement. Delegated workers run a bounded
-read/write loop without registry tools, MCP or skills. The main agent does not
-yet start a delegation from inside its own turn loop — planning is a daemon
-command today.
+Also shipped: the main agent can propose a split from inside its own turn
+(`AgentTurn.delegation` → `DelegationPlanner`), writers prove their change
+compiles in their own worktree before proposing, and PR15's comparison harness
+(ten-task catalog, log-derived metrics, cost-aware verdicts, a release bar that
+delegating everything cannot clear).
+
+**Not yet done.** The PR15 benchmark has been *built* but not *run* — that needs
+twenty live model runs against a fixture repository. Delegated workers execute a
+bounded read/write loop without registry tools, MCP or skills, and their
+per-worker validation is the fast static stage only.
 
 ---
 

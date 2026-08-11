@@ -10,3 +10,18 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
+
+# The benchmark runner drives a live daemon over HTTP. Kept optional so the
+# schema crate itself stays dependency-light for every other consumer.
+reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"], optional = true }
+
+[features]
+# Off by default: `cargo build --workspace` should not pull an HTTP client in
+# for a crate most callers use only for its schemas.
+benchmark = ["dep:reqwest", "dep:tokio"]
+
+[[bin]]
+name = "purrcode-collaboration-benchmark"
+path = "src/bin/collaboration_benchmark.rs"
+required-features = ["benchmark"]
