@@ -36,7 +36,7 @@ impl Reference {
     pub fn display(&self) -> String {
         match self {
             Reference::File { path, range } => match range {
-                Some((start, end)) => format!("@{}#L{}-L{}", path, start, end),
+                Some((start, end)) => format!("@{path}#L{start}-L{end}"),
                 None => format!("@{path}"),
             },
             Reference::Symbol { name } => format!("#{name}"),
