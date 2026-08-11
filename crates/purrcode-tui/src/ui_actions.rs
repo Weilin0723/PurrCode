@@ -1309,6 +1309,50 @@ pub const REGISTRY: &[UiActionDefinition] = &[
         handler: UiActionHandler::Decision("evidence.inspect_activity"),
         acceptance_scenarios: scenarios!["evidence.action_explanation"],
     },
+    // ── Delegation (v1.4) ──────────────────────────────────────
+    UiActionDefinition {
+        id: UiActionId("delegation.workspace"),
+        category: UiActionCategory::Review,
+        label: "Agent workspace",
+        description: "Inspect the delegation tree: what every specialist is doing and why",
+        commands: &["/agents", "/agents-inspect"],
+        shortcuts: &[],
+        availability: AvailabilityRule::SessionPresent,
+        risk: UiRiskClass::Safe,
+        starts_execution: false,
+        handler: UiActionHandler::Command("agents"),
+        acceptance_scenarios: scenarios!["delegation.workspace"],
+    },
+    UiActionDefinition {
+        id: UiActionId("delegation.integrate"),
+        category: UiActionCategory::Review,
+        label: "Accept worker changes",
+        description: "Integrate a specialist's reviewed patch into the session worktree",
+        commands: &["/agents-accept"],
+        shortcuts: &[],
+        availability: AvailabilityRule::SessionPresent,
+        // Applying a worker's patch authorizes a repository effect, so it is
+        // Destructive even though a human is the one pressing the key.
+        risk: UiRiskClass::Destructive,
+        starts_execution: false,
+        handler: UiActionHandler::Command("agents-accept"),
+        acceptance_scenarios: scenarios!["delegation.integrate", "delegation.refused"],
+    },
+    UiActionDefinition {
+        id: UiActionId("delegation.reject"),
+        category: UiActionCategory::Review,
+        label: "Reject worker changes",
+        description: "Discard a specialist's proposed patch, with the reason recorded",
+        commands: &["/agents-reject", "/agents-cancel"],
+        shortcuts: &[],
+        availability: AvailabilityRule::SessionPresent,
+        // Rejecting discards a worker's work, which is not recoverable from the
+        // panel afterwards.
+        risk: UiRiskClass::Destructive,
+        starts_execution: false,
+        handler: UiActionHandler::Command("agents-reject"),
+        acceptance_scenarios: scenarios!["delegation.reject", "delegation.refused"],
+    },
     // ── Skills ─────────────────────────────────────────────────
     UiActionDefinition {
         id: UiActionId("skills.browse"),
@@ -2218,6 +2262,45 @@ pub const SCENARIOS: &[AcceptanceScenario] = &[
         summary: "Missing evidence is reported as unavailable, not empty",
         kind: ScenarioKind::Failure,
         pty_test: Some("tests/evidence.rs::missing_evidence_reports_unavailable"),
+        real_terminal_case: None,
+        critical: true,
+    },
+    // Delegation (v1.4)
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("delegation.workspace"),
+        summary: "The worker tree shows every specialist, its scope and its status",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some(
+            "tests/delegation.rs::the_worker_tree_shows_every_specialist_with_its_scope_and_status",
+        ),
+        real_terminal_case: None,
+        critical: true,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("delegation.integrate"),
+        summary: "Accepting selected hunks sends exactly those hunks to the daemon",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some(
+            "tests/delegation.rs::accepting_selected_hunks_sends_exactly_those_hunks_to_the_daemon",
+        ),
+        real_terminal_case: None,
+        critical: true,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("delegation.reject"),
+        summary: "Rejecting a worker's changes reaches the daemon with a reason",
+        kind: ScenarioKind::Smoke,
+        pty_test: Some("tests/delegation.rs::rejecting_a_worker_reaches_the_daemon"),
+        real_terminal_case: None,
+        critical: false,
+    },
+    AcceptanceScenario {
+        id: AcceptanceScenarioId("delegation.refused"),
+        summary: "A daemon refusal is shown rather than reported as success",
+        kind: ScenarioKind::Failure,
+        pty_test: Some(
+            "tests/delegation.rs::a_daemon_refusal_is_shown_rather_than_reported_as_success",
+        ),
         real_terminal_case: None,
         critical: true,
     },

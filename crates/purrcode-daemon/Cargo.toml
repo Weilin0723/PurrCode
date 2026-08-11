@@ -20,6 +20,7 @@ futures.workspace = true
 reqwest.workspace = true
 purrcode-agent-runtime = { path = "../agent-runtime" }
 purrcode-codex-bridge = { path = "../codex-bridge" }
+purrcode-delegation-runtime = { path = "../delegation-runtime" }
 purrcode-pawgate = { path = "../pawgate-runtime" }
 purrcode-extension-config = { path = "../extension-config" }
 purrcode-mcp-host = { path = "../mcp-host" }

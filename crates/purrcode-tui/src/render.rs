@@ -13,6 +13,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         AppMode::SecretReview => draw_secret_review(frame, app),
         AppMode::ProviderSetup => draw_setup(frame, app),
         AppMode::SkillBrowse => draw_skills(frame, app),
+        AppMode::AgentWorkspace => draw_agent_workspace(frame, app),
         AppMode::Review => crate::screens::review::draw(frame, app),
         AppMode::Approval => crate::screens::approval::draw(frame, app),
         AppMode::Help => draw_help(frame, app),
@@ -374,6 +375,183 @@ fn draw_skills(frame: &mut Frame<'_>, app: &App) {
     );
 }
 
+// ── Agent workspace mode (v1.4 §PR11, §PR12) ─────────────────────
+
+/// The delegation tree, or the integration review when one is open.
+///
+/// Every value here came from the daemon. The panel deliberately renders the
+/// daemon's own status words rather than inventing friendlier ones: a user
+/// reading "Conflict" here and "conflict" in the log should be able to tell
+/// they are the same fact.
+fn draw_agent_workspace(frame: &mut Frame<'_>, app: &App) {
+    let area = frame.area();
+    let Some(ref workspace) = app.agent_workspace else {
+        let theme = app.theme.clone();
+        let tokens = crate::design::Tokens::new(&theme);
+        crate::components::inspector::Inspector::new(
+            crate::components::inspector::InspectorSubject::Unavailable("The agent workspace"),
+        )
+        .render(frame, area, &tokens);
+        return;
+    };
+
+    if let Some(review) = &workspace.review {
+        let mut lines = vec![
+            format!("Integration review — {}", review.decision),
+            format!("Patch {}", short(&review.patch_digest)),
+        ];
+        if review.effective_patch_digest != review.patch_digest {
+            lines.push(format!(
+                "Amended patch {} (a partial accept is a different patch)",
+                short(&review.effective_patch_digest)
+            ));
+        }
+        if review.base_drifted {
+            lines.push(
+                "The parent has changed since this worker branched; re-review before accepting."
+                    .into(),
+            );
+        }
+        lines.push(String::new());
+        for (position, hunk) in review.hunks.iter().enumerate() {
+            let cursor = if position == review.cursor {
+                "▶"
+            } else {
+                " "
+            };
+            let mark = if review.is_selected(hunk.index) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            lines.push(format!(
+                "{cursor} {mark} {} @@ -{},{}",
+                hunk.path, hunk.old_start, hunk.old_lines
+            ));
+        }
+        if review.hunks.is_empty() {
+            lines.push("This proposal has no text hunks to select.".into());
+        }
+        // A refusal arrives while the user is looking at this screen, so it has
+        // to be shown here — not only in the tree they are not currently on.
+        // It goes above the diff, where it cannot be scrolled past.
+        if let Some(error) = &workspace.error {
+            lines.push(String::new());
+            lines.push(format!("Error: {error}"));
+        }
+        if let Some(patch) = &review.patch {
+            lines.push(String::new());
+            lines.extend(patch.lines().take(200).map(ToOwned::to_owned));
+        }
+        let title = format!(
+            "{} · space select · a {} · r reject · Esc back",
+            review.delegation_id.get(..8).unwrap_or("review"),
+            review.accept_label()
+        );
+        frame.render_widget(
+            List::new(
+                lines
+                    .into_iter()
+                    .map(ListItem::new)
+                    .collect::<Vec<ListItem>>(),
+            )
+            .block(Block::default().title(title).borders(Borders::ALL)),
+            area,
+        );
+        return;
+    }
+
+    let mut items: Vec<ListItem> = Vec::new();
+    let header = match (&workspace.classification, &workspace.plan_reason) {
+        (Some(classification), Some(reason)) => format!("Main agent — {classification}: {reason}"),
+        (Some(classification), None) => format!("Main agent — {classification}"),
+        _ => "Main agent".to_owned(),
+    };
+    items.push(ListItem::new(header));
+    items.push(ListItem::new(format!(
+        "{} running · {} awaiting a decision · {}/{} workers · {}k worker tokens · parallelism {}",
+        workspace.running,
+        workspace.awaiting_decision,
+        workspace.workers_completed,
+        workspace.workers_started,
+        workspace.total_input_tokens / 1_000,
+        workspace.maximum_parallel_workers,
+    )));
+
+    for (position, row) in workspace.rows.iter().enumerate() {
+        let cursor = if position == workspace.selected {
+            "▶"
+        } else {
+            " "
+        };
+        let branch = if position + 1 == workspace.rows.len() {
+            "└"
+        } else {
+            "├"
+        };
+        let mut entry = format!(
+            "{cursor}{branch} {} [{}] — {}\n   {} · {} · {} · {}",
+            row.agent_profile.as_deref().unwrap_or("unrouted"),
+            row.capability,
+            row.status_label(),
+            row.objective,
+            row.access,
+            row.budget_label(),
+            format_args!("{} tool calls", row.tool_calls),
+        );
+        if !row.allowed_paths.is_empty() {
+            entry.push_str(&format!("\n   scope: {}", row.allowed_paths.join(", ")));
+        }
+        if !row.changed_paths.is_empty() {
+            entry.push_str(&format!("\n   changed: {}", row.changed_paths.join(", ")));
+        }
+        for validation in &row.validations {
+            entry.push_str(&format!("\n   validation: {validation}"));
+        }
+        for finding in &row.findings {
+            entry.push_str(&format!("\n   finding: {finding}"));
+        }
+        for conflict in &row.conflicts {
+            entry.push_str(&format!("\n   conflict: {conflict}"));
+        }
+        if row.repair_cycles > 0 {
+            entry.push_str(&format!("\n   repairs: {}", row.repair_cycles));
+        }
+        if let Some(reason) = &row.paused_reason {
+            entry.push_str(&format!("\n   paused: {reason}"));
+        }
+        if row.evidence_count > 0 {
+            entry.push_str(&format!("\n   evidence: {} record(s)", row.evidence_count));
+        }
+        items.push(ListItem::new(entry));
+    }
+
+    if workspace.rows.is_empty() {
+        items.push(ListItem::new(workspace.plan_reason.clone().unwrap_or_else(
+            || "No work has been delegated in this session.".into(),
+        )));
+    }
+    if let Some(notice) = &workspace.notice {
+        items.push(ListItem::new(notice.clone()));
+    }
+    if let Some(error) = &workspace.error {
+        items.push(ListItem::new(format!("Error: {error}")));
+    }
+
+    frame.render_widget(
+        List::new(items).block(
+            Block::default()
+                .title("Agent workspace — Enter inspect · x cancel · r reject · Esc close")
+                .borders(Borders::ALL),
+        ),
+        area,
+    );
+}
+
+fn short(digest: &str) -> &str {
+    &digest[..digest.len().min(12)]
+}
+
 // ── Diff view mode ───────────────────────────────────────────────
 
 #[cfg(test)]
@@ -404,6 +582,7 @@ mod tests {
             AppMode::LeaseConflict,
             AppMode::SessionChoice,
             AppMode::SkillBrowse,
+            AppMode::AgentWorkspace,
         ];
         for mode in modes {
             for (width, height) in [(60, 24), (80, 24), (120, 30), (160, 40)] {

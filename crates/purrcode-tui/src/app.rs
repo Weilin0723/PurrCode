@@ -1,5 +1,6 @@
 //! Application state, event loop, and mode management.
 
+use crate::agent_workspace::AgentWorkspace;
 use crate::command_palette::CommandPalette;
 use crate::composer::Composer;
 use crate::conversation::{Conversation, Message};
@@ -51,6 +52,8 @@ pub enum AppMode {
     SecretReview,
     ProviderSetup,
     SkillBrowse,
+    /// The v1.4 agent workspace: the delegation tree and integration review.
+    AgentWorkspace,
     /// The focused review screen: changed files, bounded diff, validation.
     Review,
     /// The focused approval decision surface.
@@ -120,6 +123,9 @@ pub struct App {
     pub workspace: WorkspaceContext,
     pub provider_setup: Option<ProviderSetup>,
     pub skill_browser: Option<SkillBrowser>,
+    /// The v1.4 delegation tree. `None` until the user opens it; every field
+    /// inside comes from the daemon, never from local bookkeeping.
+    pub agent_workspace: Option<AgentWorkspace>,
     pub diff_view: Option<DiffView>,
     pub stream: StreamController,
     /// Set when the live transport ended before the daemon emitted a verified
@@ -221,6 +227,7 @@ pub async fn run(config: TuiConfig) -> Result<()> {
         workspace,
         provider_setup: None,
         skill_browser: None,
+        agent_workspace: None,
         diff_view: None,
         stream: StreamController::new(),
         stream_reconnect_required: false,

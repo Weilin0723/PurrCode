@@ -4026,6 +4026,7 @@ dependencies = [
  "purrcode-agent-runtime",
  "purrcode-claw",
  "purrcode-codex-bridge",
+ "purrcode-delegation-runtime",
  "purrcode-environment-runtime",
  "purrcode-extension-config",
  "purrcode-lsp",

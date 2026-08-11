@@ -97,6 +97,13 @@ pub struct DaemonScript {
     /// When set, removing this named provider is refused because a session
     /// still depends on it.
     pub provider_in_use: Option<String>,
+    /// Scripted `GET /v1/sessions/{id}/delegations` payload (v1.4 §PR11).
+    pub delegations: Option<Value>,
+    /// Scripted `GET /v1/sessions/{id}/delegations/{id}` payload (§PR12).
+    pub delegation_review: Option<Value>,
+    /// When set, accepting an integration is refused with this reason — the
+    /// daemon's answer when a conflict is unresolved or the patch drifted.
+    pub integration_refusal: Option<String>,
 }
 
 /// One server-sent frame.
@@ -391,6 +398,23 @@ fn router(state: DaemonState) -> Router {
         .route("/v1/skills/install", post(skill_install_finalize))
         .route("/v1/skills/publishers/block", post(block_publisher))
         .route("/v1/research/fetch", post(research_fetch))
+        .route("/v1/sessions/{id}/delegations", get(delegations))
+        .route(
+            "/v1/sessions/{id}/delegations/{delegation_id}",
+            get(delegation_review),
+        )
+        .route(
+            "/v1/sessions/{id}/delegations/{delegation_id}/accept",
+            post(accept_delegation),
+        )
+        .route(
+            "/v1/sessions/{id}/delegations/{delegation_id}/reject",
+            post(reject_delegation),
+        )
+        .route(
+            "/v1/sessions/{id}/delegations/{delegation_id}/cancel",
+            post(cancel_delegation),
+        )
         .route("/v1/sessions/{id}/compact", post(compact))
         .route("/v1/sessions/{id}/model", post(select_session_model))
         .route("/v1/local-models/qualify", post(qualify))
@@ -1025,6 +1049,115 @@ async fn diff(
             Json(json!({"error": "session has no isolated worktree"})),
         )),
     }
+}
+
+// ── v1.4 delegation (§PR11, §PR12) ──────────────────────────────────────
+
+async fn delegations(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult {
+    guard!(state, headers);
+    record(
+        &state,
+        "GET",
+        &format!("/v1/sessions/{id}/delegations"),
+        None,
+    );
+    let script = state.script.lock().expect("script mutex");
+    Ok(Json(script.delegations.clone().unwrap_or_else(|| {
+        json!({
+            "session_id": id,
+            "running": 0,
+            "awaiting_decision": 0,
+            "workers_started": 0,
+            "workers_completed": 0,
+            "total_worker_usage": {},
+            "governance": {},
+            "delegations": [],
+        })
+    })))
+}
+
+async fn delegation_review(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path((id, delegation_id)): Path<(String, String)>,
+) -> ApiResult {
+    guard!(state, headers);
+    record(
+        &state,
+        "GET",
+        &format!("/v1/sessions/{id}/delegations/{delegation_id}"),
+        None,
+    );
+    let script = state.script.lock().expect("script mutex");
+    match script.delegation_review.clone() {
+        Some(review) => Ok(Json(review)),
+        None => Err((
+            StatusCode::CONFLICT,
+            Json(json!({"error": "this delegation has no proposal"})),
+        )),
+    }
+}
+
+async fn accept_delegation(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path((id, delegation_id)): Path<(String, String)>,
+    body: Option<Json<Value>>,
+) -> ApiResult {
+    guard!(state, headers);
+    record(
+        &state,
+        "POST",
+        &format!("/v1/sessions/{id}/delegations/{delegation_id}/accept"),
+        body.as_ref().map(|Json(body)| body),
+    );
+    let script = state.script.lock().expect("script mutex");
+    match script.integration_refusal.clone() {
+        Some(reason) => Err((StatusCode::CONFLICT, Json(json!({ "error": reason })))),
+        None => Ok(Json(
+            json!({"delegation_id": delegation_id, "applied_paths": []}),
+        )),
+    }
+}
+
+async fn reject_delegation(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path((id, delegation_id)): Path<(String, String)>,
+    body: Option<Json<Value>>,
+) -> ApiResult {
+    guard!(state, headers);
+    record(
+        &state,
+        "POST",
+        &format!("/v1/sessions/{id}/delegations/{delegation_id}/reject"),
+        body.as_ref().map(|Json(body)| body),
+    );
+    Ok(Json(
+        json!({"delegation_id": delegation_id, "rejected": true}),
+    ))
+}
+
+async fn cancel_delegation(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    Path((id, delegation_id)): Path<(String, String)>,
+    body: Option<Json<Value>>,
+) -> ApiResult {
+    guard!(state, headers);
+    record(
+        &state,
+        "POST",
+        &format!("/v1/sessions/{id}/delegations/{delegation_id}/cancel"),
+        body.as_ref().map(|Json(body)| body),
+    );
+    Ok(Json(
+        json!({"delegation_id": delegation_id, "cancelled": true}),
+    ))
 }
 
 /// Approval, with the real daemon's boundary rule.

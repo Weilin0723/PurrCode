@@ -1,5 +1,6 @@
 //! Slash command dispatch. All commands call daemon API; no second execution path.
 
+use crate::agent_workspace::AgentWorkspace;
 use crate::app::{App, AppMode, PendingModelPull};
 use crate::provider_setup::ProviderSetup;
 use crate::skill_browser::SkillBrowser;
@@ -21,6 +22,11 @@ pub struct CommandPalette;
 /// `ui_actions::coverage` / `ui_actions::orphan_commands` check it against the
 /// action registry, so neither list can drift silently.
 pub const DISPATCH_COMMANDS: &[&str] = &[
+    "agents",
+    "agents-accept",
+    "agents-cancel",
+    "agents-inspect",
+    "agents-reject",
     "approve",
     "ask",
     "build",
@@ -572,6 +578,59 @@ impl CommandPalette {
             }
             "capability" => {
                 app.message_bar = "Usage: /capability add <capability description>".into();
+            }
+            // v1.4 agent workspace. Opening it and every decision inside it go
+            // through the daemon; the panel holds no delegation state of its own.
+            "agents" | "agents-inspect" | "agents-accept" | "agents-reject" | "agents-cancel" => {
+                let Some(session_id) = app.session_id.clone() else {
+                    app.message_bar = "Start a session before opening the agent workspace".into();
+                    return;
+                };
+                let token = app.token.clone();
+                let daemon_url = app.daemon_url().to_string();
+                let client = reqwest::Client::new();
+                if app.agent_workspace.is_none() {
+                    app.agent_workspace = Some(AgentWorkspace::new(session_id));
+                }
+                app.switch_mode(AppMode::AgentWorkspace);
+                let Some(workspace) = app.agent_workspace.as_mut() else {
+                    return;
+                };
+                workspace.notice = None;
+                match cmd.as_str() {
+                    "agents-inspect" => {
+                        workspace.open_review(&client, &daemon_url, &token).await;
+                    }
+                    // Only refresh when the daemon accepted: a refusal means
+                    // nothing changed, and reloading would replace the reason
+                    // with a tree that looks fine.
+                    "agents-accept" => {
+                        if workspace.accept(&client, &daemon_url, &token).await {
+                            workspace.load(&client, &daemon_url, &token).await;
+                        }
+                    }
+                    "agents-reject" => {
+                        let reason = if args.is_empty() {
+                            "rejected in the agent workspace"
+                        } else {
+                            args
+                        };
+                        if workspace.reject(&client, &daemon_url, &token, reason).await {
+                            workspace.load(&client, &daemon_url, &token).await;
+                        }
+                    }
+                    "agents-cancel" => {
+                        let reason = if args.is_empty() {
+                            "cancelled in the agent workspace"
+                        } else {
+                            args
+                        };
+                        if workspace.cancel(&client, &daemon_url, &token, reason).await {
+                            workspace.load(&client, &daemon_url, &token).await;
+                        }
+                    }
+                    _ => workspace.load(&client, &daemon_url, &token).await,
+                }
             }
             "skills" => {
                 let token = app.token.clone();

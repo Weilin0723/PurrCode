@@ -29,6 +29,7 @@ pub(crate) fn offline_app() -> crate::app::App {
         workspace: crate::workspace::WorkspaceContext::inspect(std::path::Path::new("/tmp")),
         provider_setup: None,
         skill_browser: None,
+        agent_workspace: None,
         diff_view: None,
         stream: crate::streaming::StreamController::new(),
         stream_reconnect_required: false,

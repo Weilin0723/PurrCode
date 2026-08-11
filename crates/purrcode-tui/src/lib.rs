@@ -3,6 +3,7 @@
 #![allow(clippy::collapsible_if)]
 
 pub mod activity;
+pub mod agent_workspace;
 mod app;
 pub mod approval;
 pub mod command_palette;

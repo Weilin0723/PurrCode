@@ -26,6 +26,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         AppMode::SecretReview => handle_secret_review_key(app, key),
         AppMode::ProviderSetup => handle_setup_key(app, key),
         AppMode::SkillBrowse => handle_skill_key(app, key),
+        AppMode::AgentWorkspace => handle_agent_workspace_key(app, key),
         AppMode::Review => handle_review_key(app, key),
         AppMode::Approval => handle_approval_key(app, key),
         AppMode::Help => handle_help_key(app, key),
@@ -909,6 +910,71 @@ fn is_submit_key(key: KeyEvent) -> bool {
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::ALT))
         || (key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL))
+}
+
+/// Keys for the v1.4 agent workspace (§PR11, §PR12).
+///
+/// Nothing here mutates delegation state directly. Movement and hunk selection
+/// are local view state; every decision (accept, reject, cancel, refresh) is
+/// queued as a command so it goes through the daemon, which is the only place
+/// that may change what a worker's changes are doing.
+fn handle_agent_workspace_key(app: &mut App, key: KeyEvent) -> bool {
+    let in_review = app
+        .agent_workspace
+        .as_ref()
+        .is_some_and(|workspace| workspace.review.is_some());
+    match key.code {
+        KeyCode::Esc => {
+            match app.agent_workspace.as_mut() {
+                // Esc closes the review first, then the panel — so a user who
+                // opened a diff by accident does not lose the tree as well.
+                Some(workspace) if workspace.review.is_some() => workspace.review = None,
+                _ => {
+                    app.agent_workspace = None;
+                    app.switch_mode(AppMode::Conversation);
+                }
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let Some(workspace) = app.agent_workspace.as_mut() {
+                match workspace.review.as_mut() {
+                    Some(review) => {
+                        review.cursor = review
+                            .cursor
+                            .saturating_add(1)
+                            .min(review.hunks.len().saturating_sub(1));
+                    }
+                    None => workspace.move_selection(1),
+                }
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let Some(workspace) = app.agent_workspace.as_mut() {
+                match workspace.review.as_mut() {
+                    Some(review) => review.cursor = review.cursor.saturating_sub(1),
+                    None => workspace.move_selection(-1),
+                }
+            }
+        }
+        KeyCode::Char(' ') if in_review => {
+            if let Some(review) = app
+                .agent_workspace
+                .as_mut()
+                .and_then(|workspace| workspace.review.as_mut())
+            {
+                review.toggle_selected();
+            }
+        }
+        KeyCode::Enter => app.pending_command = Some("/agents-inspect".into()),
+        KeyCode::Char('a' | 'A') if in_review => {
+            app.pending_command = Some("/agents-accept".into());
+        }
+        KeyCode::Char('r' | 'R') => app.pending_command = Some("/agents-reject".into()),
+        KeyCode::Char('x' | 'X') => app.pending_command = Some("/agents-cancel".into()),
+        KeyCode::Char('g' | 'G') => app.pending_command = Some("/agents".into()),
+        _ => {}
+    }
+    true
 }
 
 fn handle_skill_key(app: &mut App, key: KeyEvent) -> bool {
