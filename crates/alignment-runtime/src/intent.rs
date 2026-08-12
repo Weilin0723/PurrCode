@@ -124,6 +124,8 @@ pub struct CompiledContract {
     pub contract: ExpectationContract,
     /// "What PurrCode understood", in one paragraph (§19).
     pub understanding: String,
+    /// What compiling it cost, when the provider said.
+    pub usage: crate::Usage,
 }
 
 /// What the compiler reads.
@@ -199,11 +201,11 @@ impl IntentCompiler {
                     content: complaint,
                 });
             }
-            let draft: DraftContract = self
+            let (draft, usage): (DraftContract, crate::Usage) = self
                 .route
                 .structured(messages.clone(), schema_for!(DraftContract))
                 .await?;
-            match assemble(draft, request) {
+            match assemble(draft, request, usage) {
                 Ok(compiled) => return Ok(compiled),
                 Err(AlignmentError::Unfaithful(complaint)) if attempt == 0 => {
                     last_complaint = Some(format!(
@@ -289,7 +291,7 @@ impl IntentCompiler {
                 content: body,
             },
         ];
-        let draft: DraftRevision = self
+        let (draft, _usage): (DraftRevision, crate::Usage) = self
             .route
             .structured(messages, schema_for!(DraftRevision))
             .await?;
@@ -340,6 +342,7 @@ struct DraftRevision {
 fn assemble(
     draft: DraftContract,
     request: &IntentRequest,
+    usage: crate::Usage,
 ) -> Result<CompiledContract, AlignmentError> {
     if draft.objective.trim().is_empty() {
         return Err(AlignmentError::Invalid(
@@ -445,6 +448,7 @@ fn assemble(
             draft.understanding.trim().to_owned()
         },
         contract,
+        usage,
     })
 }
 

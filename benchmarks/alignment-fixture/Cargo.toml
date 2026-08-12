@@ -1,0 +1,10 @@
+[package]
+name = "purrcode-alignment-fixture"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "The repository the v1.5 alignment benchmark scores against."
+
+[dependencies]
+
+[dev-dependencies]

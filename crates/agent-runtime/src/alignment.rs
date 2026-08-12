@@ -41,6 +41,7 @@ use purrcode_alignment_runtime::{
     review::VerdictKind,
 };
 use purrcode_ninelives::SessionStore;
+use purrcode_provider_gateway::ModelId;
 use purrcode_repository_engine::{ChangeScope, RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::expectation::{
     AlignmentEvidence, AlignmentEvidenceKind, DeliveryAssessment, DeliveryState,
@@ -70,6 +71,14 @@ pub struct AlignmentRuntime {
     coverage: AlignmentReviewer,
     code: IndependentCodeReviewer,
     alignment: AlignmentReviewer,
+    /// The models each stage runs on, kept so what a review cost lands in the
+    /// same durable ledger the implementation's spend does.
+    ///
+    /// Review that is not billed anywhere looks free, and a reviewer nobody is
+    /// billing for is exactly what the benchmark's paired gates exist to catch:
+    /// a runtime can pass every correctness condition by reviewing without
+    /// limit, and the only thing that stops it is the cost being visible.
+    routes: Vec<(&'static str, ModelId)>,
 }
 
 impl std::fmt::Debug for AlignmentRuntime {
@@ -103,12 +112,54 @@ impl AlignmentRuntime {
     /// wrote the code. Defaulting them to the same deployment is fine; being
     /// unable to change it is not.
     pub fn new(planner: ModelRoute, reviewer: ModelRoute, alignment_reviewer: ModelRoute) -> Self {
+        let routes = vec![
+            ("planner", planner.model.clone()),
+            ("reviewer", reviewer.model.clone()),
+            ("alignment_reviewer", alignment_reviewer.model.clone()),
+        ];
         Self {
             compiler: IntentCompiler::new(planner),
             coverage: AlignmentReviewer::requirement_coverage(reviewer.clone()),
             code: IndependentCodeReviewer::new(reviewer),
             alignment: AlignmentReviewer::user_alignment(alignment_reviewer),
+            routes,
         }
+    }
+
+    /// Record that a stage called a model, and what it cost.
+    ///
+    /// Both halves matter. `ModelRequestStarted` is what makes the call visible
+    /// while it is happening; `ModelRequestFinished` carries the tokens, and
+    /// `None` there is recorded as unknown rather than as zero — a provider
+    /// that does not report usage leaves the cost unmeasured, and pretending it
+    /// was free would make an expensive review look cheap.
+    fn bill(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        role: &'static str,
+        usage: purrcode_alignment_runtime::Usage,
+    ) -> Result<(), AgentError> {
+        let Some((_, model)) = self.routes.iter().find(|(name, _)| *name == role) else {
+            return Ok(());
+        };
+        store.append(
+            session_id,
+            &SessionEvent::ModelRequestStarted {
+                role: role.to_owned(),
+                provider: model.provider.clone(),
+                model: model.model.clone(),
+            },
+        )?;
+        store.append(
+            session_id,
+            &SessionEvent::ModelRequestFinished {
+                role: role.to_owned(),
+                input_tokens: usage.map(|(input, _)| input),
+                output_tokens: usage.map(|(_, output)| output),
+            },
+        )?;
+        Ok(())
     }
 
     /// Compile the user's request into a contract and record it (§3).
@@ -135,6 +186,7 @@ impl AlignmentRuntime {
         };
         match self.compiler.compile(&request).await {
             Ok(compiled) => {
+                self.bill(store, session_id, "planner", compiled.usage)?;
                 store.append(
                     session_id,
                     &SessionEvent::ExpectationContractCreated {
@@ -259,7 +311,17 @@ impl AlignmentRuntime {
             self.alignment.review(base.clone(), &requirement_ids).await,
         ] {
             match outcome {
-                Ok(outcome) => outcomes.push(outcome),
+                Ok(outcome) => {
+                    let role = if outcome.kind
+                        == purrcode_runtime_core::review::ReviewKind::UserAlignment
+                    {
+                        "alignment_reviewer"
+                    } else {
+                        "reviewer"
+                    };
+                    self.bill(store, session_id, role, outcome.usage)?;
+                    outcomes.push(outcome);
+                }
                 // One reviewer failing must not silently reduce the standard.
                 // The failure is recorded, and the requirements that reviewer
                 // would have settled stay unsettled — which blocks the gate,

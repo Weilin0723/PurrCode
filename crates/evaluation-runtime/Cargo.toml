@@ -25,3 +25,8 @@ benchmark = ["dep:reqwest", "dep:tokio"]
 name = "purrcode-collaboration-benchmark"
 path = "src/bin/collaboration_benchmark.rs"
 required-features = ["benchmark"]
+
+[[bin]]
+name = "purrcode-alignment-benchmark"
+path = "src/bin/alignment_benchmark.rs"
+required-features = ["benchmark"]

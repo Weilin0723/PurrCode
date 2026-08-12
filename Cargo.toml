@@ -39,6 +39,10 @@ members = [
   "crates/extension-config",
   "crates/project-graph",
 ]
+# The benchmark fixture is a repository the agent is pointed at, not a crate
+# this workspace builds. Including it would mean `cargo test --workspace` runs
+# a codebase whose defects are the point.
+exclude = ["benchmarks/alignment-fixture"]
 resolver = "2"
 
 [workspace.package]

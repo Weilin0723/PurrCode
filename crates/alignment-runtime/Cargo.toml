@@ -7,6 +7,7 @@ description = "The model-facing half of v1.5: compiling intent, reviewing agains
 
 [dependencies]
 async-trait.workspace = true
+futures.workspace = true
 purrcode-provider-gateway = { path = "../provider-gateway" }
 purrcode-runtime-core = { path = "../runtime-core" }
 schemars.workspace = true

@@ -1,4 +1,7 @@
 /target/
+# The benchmark fixture is a repository of its own, built independently.
+benchmarks/alignment-fixture/target/
+benchmarks/alignment-fixture/Cargo.lock
 .DS_Store
 /.purrcode/
 *.db

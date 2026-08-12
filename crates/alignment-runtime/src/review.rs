@@ -178,6 +178,9 @@ pub struct ReviewOutcome {
     pub kind: ReviewKind,
     pub findings: Vec<ReviewFinding>,
     pub verdicts: Vec<RequirementVerdict>,
+    /// What this review cost, when the provider said. `None` is reported as
+    /// unmeasured rather than as free.
+    pub usage: crate::Usage,
 }
 
 impl ReviewOutcome {
@@ -268,7 +271,8 @@ async fn run(
     }
     let review = ReviewId::new();
     let messages = input.into_messages(prompt);
-    let draft: DraftReview = route.structured(messages, schema_for!(DraftReview)).await?;
+    let (draft, usage): (DraftReview, crate::Usage) =
+        route.structured(messages, schema_for!(DraftReview)).await?;
 
     let mut findings = Vec::new();
     for raw in draft.findings {
@@ -349,6 +353,7 @@ async fn run(
         kind,
         findings,
         verdicts,
+        usage,
     })
 }
 
