@@ -16,6 +16,17 @@ chrono.workspace = true
 reqwest = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"], optional = true }
 
+[dev-dependencies]
+async-trait.workspace = true
+futures.workspace = true
+purrcode-agent-runtime = { path = "../agent-runtime" }
+purrcode-ninelives = { path = "../ninelives-recovery" }
+purrcode-pawgate = { path = "../pawgate-runtime" }
+purrcode-provider-gateway = { path = "../provider-gateway" }
+schemars.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
 [features]
 # Off by default: `cargo build --workspace` should not pull an HTTP client in
 # for a crate most callers use only for its schemas.
