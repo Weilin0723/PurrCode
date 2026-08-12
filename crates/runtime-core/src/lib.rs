@@ -3,6 +3,7 @@
 pub mod adaptation;
 pub mod authority;
 pub mod capability;
+pub mod correction;
 pub mod delegation;
 pub mod evidence;
 pub mod expectation;
@@ -10,6 +11,7 @@ pub mod extension;
 pub mod graph;
 pub mod native_tools;
 pub mod product_state;
+pub mod review;
 pub mod schema_validation;
 pub mod terminal;
 pub mod tool;
@@ -1261,6 +1263,33 @@ pub enum SessionEvent {
         /// the user can open (v1.5 §22).
         source: String,
     },
+    /// A review began, with what it was allowed to read (v1.5 §9).
+    ReviewStarted {
+        record: Box<review::ReviewRecord>,
+    },
+    /// One reviewer claim (v1.5 §27).
+    ReviewFindingRecorded {
+        finding: Box<review::ReviewFinding>,
+    },
+    ReviewCompleted {
+        review: review::ReviewId,
+    },
+    /// A bounded automatic repair attempt began (v1.5 §11).
+    CorrectionStarted {
+        cycle: u32,
+        findings: Vec<review::FindingId>,
+    },
+    /// A repair attempt finished, with what a *re-review* confirmed — not what
+    /// the repair agent claimed.
+    CorrectionCompleted {
+        cycle: u32,
+        repaired: Vec<review::FindingId>,
+        still_open: Vec<review::FindingId>,
+    },
+    /// The delivery gate ran (v1.5 §12).
+    DeliveryGateEvaluated {
+        assessment: Box<expectation::DeliveryAssessment>,
+    },
     /// A durable, reviewable statement of intent. Direct sessions may omit it;
     /// Standard and Rigorous sessions use it as the source for their task graph.
     SpecBundleRecorded {
@@ -1817,6 +1846,14 @@ pub struct SessionState {
     /// daemon restart must not lose the requirements, because an agent that
     /// resumes without them resumes without knowing what it is for.
     pub expectation_contract: Option<expectation::ExpectationContract>,
+    /// Every review this session ran (v1.5 §7–§10).
+    pub reviews: BTreeMap<review::ReviewId, review::ReviewRecord>,
+    /// Every finding, keyed so the correction loop can mark them repaired.
+    pub findings: BTreeMap<review::FindingId, review::ReviewFinding>,
+    /// What automatic correction has cost and achieved (v1.5 §11).
+    pub correction_ledger: correction::CorrectionLedger,
+    /// The most recent delivery-gate result (v1.5 §12).
+    pub delivery: Option<expectation::DeliveryAssessment>,
 }
 
 impl SessionState {
@@ -1853,6 +1890,10 @@ impl SessionState {
             delegations: BTreeMap::new(),
             delegation_ledger: delegation::DelegationLedger::default(),
             expectation_contract: None,
+            reviews: BTreeMap::new(),
+            findings: BTreeMap::new(),
+            correction_ledger: correction::CorrectionLedger::default(),
+            delivery: None,
         }
     }
 
@@ -2016,6 +2057,105 @@ impl SessionState {
                         session: self.id,
                         event: format!("{event:?}"),
                         reason: flaw.into(),
+                    });
+                }
+            }
+            SessionEvent::ReviewStarted { record } => {
+                // Refuses a "fresh-context" review that was handed the
+                // implementer's transcript. The failure is silent otherwise:
+                // the review still produces confident findings, it just mostly
+                // agrees with the work it was shown.
+                record
+                    .validate()
+                    .map_err(|error| DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    })?;
+                if self.reviews.contains_key(&record.id) {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!("review {:?} already started", record.id),
+                    });
+                }
+            }
+            SessionEvent::ReviewFindingRecorded { finding } => {
+                finding
+                    .validate()
+                    .map_err(|error| DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    })?;
+                if !self.reviews.contains_key(&finding.review) {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "a finding must belong to a review that started".into(),
+                    });
+                }
+                if let Some(requirement) = finding.requirement_id
+                    && self
+                        .expectation_contract
+                        .as_ref()
+                        .is_none_or(|contract| contract.clause(requirement).is_none())
+                {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!(
+                            "finding names requirement {requirement:?}, which is not in the contract"
+                        ),
+                    });
+                }
+            }
+            SessionEvent::ReviewCompleted { review } => {
+                if !self.reviews.contains_key(review) {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!("review {review:?} never started"),
+                    });
+                }
+            }
+            SessionEvent::CorrectionStarted { cycle, .. } => {
+                // The budget is the whole point of the loop being bounded; a
+                // cycle that skips ahead would spend it without recording it.
+                let expected = self.correction_ledger.cycles_used + 1;
+                if *cycle != expected {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!("correction cycle {cycle} does not follow {expected}"),
+                    });
+                }
+            }
+            SessionEvent::CorrectionCompleted { cycle, .. } => {
+                let expected = self.correction_ledger.cycles_used + 1;
+                if *cycle != expected {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!("correction cycle {cycle} was not the one running"),
+                    });
+                }
+            }
+            SessionEvent::DeliveryGateEvaluated { assessment } => {
+                // The one invariant that makes completion a state transition
+                // rather than a claim: `Ready` with outstanding blockers is not
+                // an optimistic assessment, it is a false one, and the log will
+                // not hold it however it was produced.
+                if assessment.state == expectation::DeliveryState::Ready
+                    && !assessment.blockers.is_empty()
+                {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!(
+                            "delivery cannot be ready with {} outstanding blocker(s)",
+                            assessment.blockers.len()
+                        ),
                     });
                 }
             }
@@ -2581,6 +2721,32 @@ impl SessionState {
                 {
                     clause.status = status.clone();
                 }
+            }
+            SessionEvent::ReviewStarted { record } => {
+                self.reviews.insert(record.id, (**record).clone());
+            }
+            SessionEvent::ReviewFindingRecorded { finding } => {
+                if let Some(review) = self.reviews.get_mut(&finding.review) {
+                    review.findings.push(finding.id);
+                }
+                self.findings.insert(finding.id, (**finding).clone());
+            }
+            SessionEvent::ReviewCompleted { review } => {
+                if let Some(record) = self.reviews.get_mut(review) {
+                    record.completed = true;
+                }
+            }
+            SessionEvent::CorrectionStarted { .. } => {}
+            SessionEvent::CorrectionCompleted {
+                repaired,
+                still_open,
+                ..
+            } => {
+                self.correction_ledger
+                    .record_cycle(repaired.clone(), still_open.clone());
+            }
+            SessionEvent::DeliveryGateEvaluated { assessment } => {
+                self.delivery = Some((**assessment).clone());
             }
             SessionEvent::SpecBundleRecorded { bundle, .. } => {
                 self.spec_bundle = Some(bundle.clone());
@@ -4904,5 +5070,281 @@ mod expectation_replay_tests {
             state.reduce_event(event).expect("replay applies");
         }
         state
+    }
+}
+
+#[cfg(test)]
+mod delivery_replay_tests {
+    use super::*;
+    use crate::correction::{CorrectionAllowance, CorrectionLedger};
+    use crate::expectation::{
+        DeliveryAssessment, DeliveryBlocker, DeliveryState, ExpectationClause, ExpectationContract,
+        IntentSource, RequirementStatus, RequirementTally,
+    };
+    use crate::review::{
+        FindingCategory, FindingId, ReviewContext, ReviewFinding, ReviewId, ReviewKind,
+        ReviewRecord, Severity,
+    };
+    use crate::work::{AcceptanceCriterion, CriterionId, EvidenceId};
+
+    fn contract_session() -> (SessionState, work::RequirementId) {
+        let mut state = SessionState::empty(SessionId::new());
+        let mut contract = ExpectationContract::new("Improve the Settings experience");
+        let clause = ExpectationClause::required(
+            "MCP configuration works",
+            vec![AcceptanceCriterion {
+                id: CriterionId::new(),
+                statement: "a user can add and remove a server".into(),
+            }],
+            IntentSource::new(0, "MCP must actually work"),
+        );
+        let id = clause.id;
+        contract.clauses.push(clause);
+        state
+            .reduce_event(&SessionEvent::ExpectationContractCreated {
+                contract: Box::new(contract),
+            })
+            .unwrap();
+        (state, id)
+    }
+
+    fn review(kind: ReviewKind, context: ReviewContext) -> ReviewRecord {
+        ReviewRecord {
+            id: ReviewId::new(),
+            kind,
+            context,
+            cycle: 0,
+            completed: false,
+            findings: vec![],
+        }
+    }
+
+    fn finding(review: ReviewId, severity: Severity) -> ReviewFinding {
+        ReviewFinding {
+            id: FindingId::new(),
+            review,
+            kind: ReviewKind::IndependentCode,
+            severity,
+            category: FindingCategory::Correctness,
+            requirement_id: None,
+            description: "the daemon never reloads the registry".into(),
+            evidence: vec!["mcp_host.rs:83".into()],
+            affected_paths: vec![],
+            recommendation: "reload after a config write".into(),
+        }
+    }
+
+    #[test]
+    fn the_log_refuses_a_ready_verdict_that_still_has_blockers() {
+        // The single guarantee behind "completion is a state transition, not
+        // something the model declares". However the assessment was produced,
+        // a Ready carrying blockers is a false claim and does not enter the log.
+        let (mut state, id) = contract_session();
+        let error = state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                assessment: Box::new(DeliveryAssessment {
+                    state: DeliveryState::Ready,
+                    blockers: vec![DeliveryBlocker::RequirementOutstanding {
+                        id,
+                        statement: "MCP configuration works".into(),
+                    }],
+                    tally: RequirementTally::default(),
+                    advisory_findings: 0,
+                }),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("cannot be ready"),
+            "got {error}"
+        );
+    }
+
+    #[test]
+    fn a_genuine_ready_verdict_is_recorded_and_replays() {
+        let (mut state, _) = contract_session();
+        let assessment = DeliveryAssessment {
+            state: DeliveryState::Ready,
+            blockers: vec![],
+            tally: RequirementTally {
+                verified: 1,
+                ..RequirementTally::default()
+            },
+            advisory_findings: 2,
+        };
+        state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                assessment: Box::new(assessment.clone()),
+            })
+            .unwrap();
+        assert_eq!(state.delivery, Some(assessment));
+        assert!(state.delivery.unwrap().state.may_report_done());
+    }
+
+    #[test]
+    fn a_contaminated_review_cannot_enter_the_log() {
+        let (mut state, _) = contract_session();
+        let error = state
+            .reduce_event(&SessionEvent::ReviewStarted {
+                record: Box::new(review(ReviewKind::UserAlignment, ReviewContext::Inherited)),
+            })
+            .unwrap_err();
+        assert!(format!("{error}").contains("transcript"), "got {error}");
+    }
+
+    #[test]
+    fn a_finding_must_belong_to_a_review_that_started() {
+        let (mut state, _) = contract_session();
+        let error = state
+            .reduce_event(&SessionEvent::ReviewFindingRecorded {
+                finding: Box::new(finding(ReviewId::new(), Severity::High)),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("review that started"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_finding_cannot_name_a_requirement_the_contract_does_not_have() {
+        let (mut state, _) = contract_session();
+        let record = review(ReviewKind::IndependentCode, ReviewContext::Fresh);
+        let review_id = record.id;
+        state
+            .reduce_event(&SessionEvent::ReviewStarted {
+                record: Box::new(record),
+            })
+            .unwrap();
+        let mut claim = finding(review_id, Severity::High);
+        claim.category = FindingCategory::RequirementGap;
+        claim.requirement_id = Some(work::RequirementId::new());
+        let error = state
+            .reduce_event(&SessionEvent::ReviewFindingRecorded {
+                finding: Box::new(claim),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("not in the contract"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn findings_and_reviews_survive_replay_and_stay_linked() {
+        let (mut state, _) = contract_session();
+        let record = review(ReviewKind::IndependentCode, ReviewContext::Fresh);
+        let review_id = record.id;
+        let claim = finding(review_id, Severity::High);
+        let finding_id = claim.id;
+        for event in [
+            SessionEvent::ReviewStarted {
+                record: Box::new(record),
+            },
+            SessionEvent::ReviewFindingRecorded {
+                finding: Box::new(claim),
+            },
+            SessionEvent::ReviewCompleted { review: review_id },
+        ] {
+            state.reduce_event(&event).unwrap();
+        }
+        assert!(state.reviews[&review_id].completed);
+        assert_eq!(state.reviews[&review_id].findings, vec![finding_id]);
+        assert!(state.findings[&finding_id].blocks_delivery());
+    }
+
+    #[test]
+    fn correction_cycles_cannot_skip_ahead_of_the_budget() {
+        // The bound is the whole point; a cycle that jumps the count would
+        // spend the budget without recording that it had.
+        let (mut state, _) = contract_session();
+        let error = state
+            .reduce_event(&SessionEvent::CorrectionStarted {
+                cycle: 3,
+                findings: vec![],
+            })
+            .unwrap_err();
+        assert!(format!("{error}").contains("does not follow"), "{error}");
+    }
+
+    #[test]
+    fn a_correction_cycle_replays_into_the_ledger_and_the_budget_shrinks() {
+        let (mut state, _) = contract_session();
+        let record = review(ReviewKind::IndependentCode, ReviewContext::Fresh);
+        let review_id = record.id;
+        let claim = finding(review_id, Severity::High);
+        let finding_id = claim.id;
+        state
+            .reduce_event(&SessionEvent::ReviewStarted {
+                record: Box::new(record),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::ReviewFindingRecorded {
+                finding: Box::new(claim),
+            })
+            .unwrap();
+
+        for cycle in 1..=2 {
+            state
+                .reduce_event(&SessionEvent::CorrectionStarted {
+                    cycle,
+                    findings: vec![finding_id],
+                })
+                .unwrap();
+            state
+                .reduce_event(&SessionEvent::CorrectionCompleted {
+                    cycle,
+                    repaired: vec![],
+                    still_open: vec![finding_id],
+                })
+                .unwrap();
+        }
+        assert_eq!(state.correction_ledger.cycles_used, 2);
+
+        // After a restart the budget is still spent — the loop does not get a
+        // fresh allowance by crashing.
+        let outstanding: Vec<&ReviewFinding> = state.findings.values().collect();
+        assert_eq!(
+            state.correction_ledger.may_correct(&outstanding),
+            CorrectionAllowance::Exhausted {
+                cycles_used: 2,
+                allowed: 2
+            }
+        );
+        assert_eq!(
+            CorrectionLedger::default().may_correct(&outstanding),
+            CorrectionAllowance::Allowed { cycle: 1 },
+            "a fresh ledger would have allowed one, which is what recovery must not do"
+        );
+    }
+
+    #[test]
+    fn a_verified_requirement_and_a_clean_gate_agree_after_replay() {
+        let (mut state, id) = contract_session();
+        state
+            .reduce_event(&SessionEvent::RequirementStatusChanged {
+                requirement_id: id,
+                status: RequirementStatus::Verified {
+                    evidence: vec![EvidenceId::new()],
+                },
+                source: "requirement coverage review".into(),
+            })
+            .unwrap();
+        let contract = state.expectation_contract.clone().unwrap();
+        let assessment =
+            crate::expectation::delivery::evaluate(crate::expectation::DeliveryInputs {
+                contract: &contract,
+                findings: &[],
+                validations: &[],
+                changed_paths: &[],
+                forbidden_prefixes: &[],
+                unresolved_conflicts: &[],
+            });
+        assert_eq!(assessment.state, DeliveryState::Ready);
+        state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                assessment: Box::new(assessment),
+            })
+            .expect("a gate result derived from the contract is accepted");
     }
 }

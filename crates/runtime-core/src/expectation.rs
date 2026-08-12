@@ -24,12 +24,16 @@
 //!   must stop counting as progress.
 
 pub mod contract;
+pub mod delivery;
 pub mod revision;
 
 pub use contract::{
     Assumption, AssumptionId, EXPECTATION_SCHEMA_VERSION, ExpectationClause, ExpectationContract,
     ExpectationStrength, IntentSource, NonGoal, OpenQuestion, QuestionId, RequirementStatus,
     RequirementTally,
+};
+pub use delivery::{
+    DeliveryAssessment, DeliveryBlocker, DeliveryInputs, DeliveryState, RequiredValidation,
 };
 pub use revision::{ContractChange, ContractRevision, RevisedContract};
 

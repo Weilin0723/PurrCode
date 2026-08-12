@@ -35,6 +35,21 @@ pub enum ModelRole {
     CodingWorker,
     Planner,
     Judge,
+    /// Independent code review (v1.5 §9, §14).
+    ///
+    /// A separate role rather than a reuse of `CodingWorker` so that a
+    /// deployment can be pointed at a *different* model from the one that wrote
+    /// the code. A model reviewing its own output shares its blind spots, and
+    /// the review it produces is correlated with the mistakes it is meant to
+    /// catch. Defaulting to the same deployment is fine; being unable to change
+    /// it is not.
+    Reviewer,
+    /// Checking the work against what the user asked for (v1.5 §10).
+    AlignmentReviewer,
+    /// Repairing what a review found (v1.5 §28) — kept distinct from
+    /// `Reviewer` because a reviewer that repairs has destroyed its own
+    /// evidence.
+    RepairWorker,
     Summarizer,
     Embedding,
     FastRouter,
@@ -51,6 +66,9 @@ impl ModelRole {
             ModelRole::CodingWorker => "coding_worker",
             ModelRole::Planner => "planner",
             ModelRole::Judge => "judge",
+            ModelRole::Reviewer => "reviewer",
+            ModelRole::AlignmentReviewer => "alignment_reviewer",
+            ModelRole::RepairWorker => "repair_worker",
             ModelRole::Summarizer => "summarizer",
             ModelRole::Embedding => "embedding",
             ModelRole::FastRouter => "fast_router",
@@ -636,5 +654,55 @@ mod tests {
             p.preference_order[0],
             SelectionPreference::Qualified
         ));
+    }
+}
+
+#[cfg(test)]
+mod alignment_role_tests {
+    use super::*;
+
+    #[test]
+    fn the_review_roles_are_separately_addressable() {
+        // The point of separate roles is that a deployment can be pointed at a
+        // different model from the one that wrote the code (§14). A model
+        // reviewing its own output shares its blind spots, so the review is
+        // correlated with the mistakes it exists to catch.
+        assert_eq!(ModelRole::Reviewer.as_str(), "reviewer");
+        assert_eq!(ModelRole::AlignmentReviewer.as_str(), "alignment_reviewer");
+        assert_eq!(ModelRole::RepairWorker.as_str(), "repair_worker");
+    }
+
+    #[test]
+    fn reviewing_and_repairing_are_not_the_same_role() {
+        // v1.5 §28: reviewers judge, repair agents repair. One role for both
+        // would make the separation a matter of prompting.
+        assert_ne!(ModelRole::Reviewer, ModelRole::RepairWorker);
+        assert_ne!(
+            ModelRole::AlignmentReviewer.as_str(),
+            ModelRole::RepairWorker.as_str()
+        );
+    }
+
+    #[test]
+    fn every_role_has_a_distinct_canonical_string() {
+        let roles = [
+            ModelRole::CodingWorker,
+            ModelRole::Planner,
+            ModelRole::Judge,
+            ModelRole::Reviewer,
+            ModelRole::AlignmentReviewer,
+            ModelRole::RepairWorker,
+            ModelRole::Summarizer,
+            ModelRole::Embedding,
+            ModelRole::FastRouter,
+            ModelRole::Scout,
+        ];
+        let names: std::collections::BTreeSet<&str> =
+            roles.iter().map(|role| role.as_str()).collect();
+        assert_eq!(
+            names.len(),
+            roles.len(),
+            "two roles resolving to one string would silently share a deployment"
+        );
     }
 }

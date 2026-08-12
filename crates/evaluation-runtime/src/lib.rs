@@ -16,8 +16,13 @@
 //! forward- and backward-compatible readers can detect which layout produced
 //! the data.
 
+pub mod alignment;
 pub mod collaboration;
 
+pub use alignment::{
+    ALIGNMENT_SCHEMA_VERSION, AlignmentOutcome, AlignmentReport, AlignmentRun, AlignmentTask,
+    AlignmentTaskKind,
+};
 pub use collaboration::{
     CollaborationArm, CollaborationCategory, CollaborationComparison, CollaborationReport,
     CollaborationRun, CollaborationTask, CollaborationVerdict, default_catalog,

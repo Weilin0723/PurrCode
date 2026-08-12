@@ -4220,6 +4220,12 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         ExpectationContractCreated { .. } => "expectation_contract_created",
         ExpectationContractRevised { .. } => "expectation_contract_revised",
         RequirementStatusChanged { .. } => "requirement_status_changed",
+        ReviewStarted { .. } => "review_started",
+        ReviewFindingRecorded { .. } => "review_finding_recorded",
+        ReviewCompleted { .. } => "review_completed",
+        CorrectionStarted { .. } => "correction_started",
+        CorrectionCompleted { .. } => "correction_completed",
+        DeliveryGateEvaluated { .. } => "delivery_gate_evaluated",
         SpecBundleRecorded { .. } => "spec_bundle_recorded",
         TaskGraphRecorded { .. } => "task_graph_recorded",
         TaskStatusChanged { .. } => "task_status_changed",
@@ -4374,6 +4380,40 @@ fn event_summary(event: &SessionEvent) -> String {
         } => format!(
             "Requirement {requirement_id:?} is now {}; {source}",
             status.label()
+        ),
+        ReviewStarted { record } => format!(
+            "{} started ({} context)",
+            record.kind.label(),
+            match record.context {
+                purrcode_runtime_core::review::ReviewContext::Fresh => "fresh",
+                purrcode_runtime_core::review::ReviewContext::Inherited => "inherited",
+            }
+        ),
+        ReviewFindingRecorded { finding } => format!(
+            "{} finding [{}]: {}",
+            finding.kind.label(),
+            finding.severity.label(),
+            finding.description
+        ),
+        ReviewCompleted { review } => format!("Review {review:?} completed"),
+        CorrectionStarted { cycle, findings } => format!(
+            "Correction cycle {cycle} started for {} finding(s)",
+            findings.len()
+        ),
+        CorrectionCompleted {
+            cycle,
+            repaired,
+            still_open,
+        } => format!(
+            "Correction cycle {cycle} finished: {} repaired, {} still open",
+            repaired.len(),
+            still_open.len()
+        ),
+        DeliveryGateEvaluated { assessment } => format!(
+            "Delivery gate: {} ({}, {} blocker(s))",
+            assessment.state.label(),
+            assessment.tally,
+            assessment.blockers.len()
         ),
         SpecBundleRecorded { bundle, reason } => format!(
             "Specification recorded: {} (revision {}, {} requirement(s)); {}",

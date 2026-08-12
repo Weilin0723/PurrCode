@@ -10,6 +10,14 @@
 //! on, and a flag saying whether more detail exists. Internal event names,
 //! payloads and identifiers stay on the runtime side of the boundary.
 
+pub mod alignment;
+
+pub use alignment::{
+    ChangeGroupView, ChangedFileView, ChangesView, ContractClauseView, FindingView, ProgressDetail,
+    ProgressPhase, ProgressView, RequirementStatusView, RequirementTraceView, ReviewPanelView,
+    TaskContractView, ValidationLineView,
+};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
