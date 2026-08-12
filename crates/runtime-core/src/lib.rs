@@ -1255,6 +1255,14 @@ pub enum SessionEvent {
     ExpectationContractRevised {
         revision: Box<expectation::ContractRevision>,
     },
+    /// Something a requirement's status may later be built on (v1.5 §8).
+    ///
+    /// Recorded when the evidence is gathered, not when it is cited, so a
+    /// citation can be checked against something written down before anyone
+    /// needed the requirement to pass.
+    AlignmentEvidenceRecorded {
+        evidence: Box<expectation::AlignmentEvidence>,
+    },
     /// A requirement's status changed, with what changed it (v1.5 §8).
     RequirementStatusChanged {
         requirement_id: work::RequirementId,
@@ -1287,8 +1295,21 @@ pub enum SessionEvent {
         still_open: Vec<review::FindingId>,
     },
     /// The delivery gate ran (v1.5 §12).
+    ///
+    /// The event carries no verdict. Everything the gate reads — the contract,
+    /// the open findings, what the diff touched, the bounds the contract set,
+    /// the unresolved worker integrations — is already in the log, so the
+    /// reducer computes the answer itself and stores its own computation. A
+    /// caller cannot hand it a `Ready`, which is the point: an assessment a
+    /// caller can write is an assessment an agent can claim.
+    ///
+    /// The one thing the log cannot decide is *which* checks this task required
+    /// — a project with no test suite is not a project with a failing one — so
+    /// that list is declared here. Its outcomes are not taken on trust: a
+    /// declared pass the durable record does not support is refused, and a
+    /// check the record shows failing cannot be left off the list.
     DeliveryGateEvaluated {
-        assessment: Box<expectation::DeliveryAssessment>,
+        validations: Vec<expectation::RequiredValidation>,
     },
     /// A durable, reviewable statement of intent. Direct sessions may omit it;
     /// Standard and Rigorous sessions use it as the source for their task graph.
@@ -1852,7 +1873,32 @@ pub struct SessionState {
     pub findings: BTreeMap<review::FindingId, review::ReviewFinding>,
     /// What automatic correction has cost and achieved (v1.5 §11).
     pub correction_ledger: correction::CorrectionLedger,
-    /// The most recent delivery-gate result (v1.5 §12).
+    /// Everything a requirement's status may be built on (v1.5 §8).
+    ///
+    /// A citation is checked against this rather than against its own
+    /// non-emptiness, so `EvidenceId::new()` — which is a valid identifier and
+    /// establishes nothing — cannot settle a requirement.
+    pub alignment_evidence: expectation::EvidenceLedger,
+    /// The latest outcome of each deterministic check, keyed by stage.
+    ///
+    /// Derived from `ValidationRecorded` so the delivery gate reads what the
+    /// checks actually did rather than what the turn that called the gate said
+    /// they did.
+    pub validation_record: BTreeMap<String, ValidationStatus>,
+    /// Every path the session has actually changed.
+    ///
+    /// The scope check reads this, not the agent's account of what it touched.
+    /// An agent that quietly edited the editor while working on settings does
+    /// not report having done so — that is what makes it worth checking.
+    pub changed_paths: BTreeSet<PathBuf>,
+    /// The checks the last delivery-gate evaluation declared this task requires.
+    ///
+    /// Kept so completion can re-run the gate against the same list. A gate that
+    /// cleared, followed by a blocking finding, followed by `SessionCompleted`
+    /// would otherwise ship on a verdict that was true a moment ago.
+    pub delivery_validations: Vec<expectation::RequiredValidation>,
+    /// The most recent delivery-gate result (v1.5 §12), computed here rather
+    /// than accepted from the event.
     pub delivery: Option<expectation::DeliveryAssessment>,
 }
 
@@ -1893,6 +1939,10 @@ impl SessionState {
             reviews: BTreeMap::new(),
             findings: BTreeMap::new(),
             correction_ledger: correction::CorrectionLedger::default(),
+            alignment_evidence: expectation::EvidenceLedger::new(),
+            validation_record: BTreeMap::new(),
+            changed_paths: BTreeSet::new(),
+            delivery_validations: Vec::new(),
             delivery: None,
         }
     }
@@ -1917,6 +1967,79 @@ impl SessionState {
             .into_iter()
             .filter(|finding| finding.blocks_delivery())
             .collect()
+    }
+
+    /// Worker integrations that never resolved (v1.4, carried into the gate).
+    pub fn unresolved_integrations(&self) -> Vec<String> {
+        self.delegations
+            .values()
+            .filter(|record| {
+                record.integration == delegation::IntegrationState::Conflicted
+                    || !record.conflicts.is_empty()
+                        && record.integration != delegation::IntegrationState::Applied
+                        && record.integration != delegation::IntegrationState::Rejected
+            })
+            .map(|record| {
+                format!(
+                    "{}: {} unresolved conflict(s)",
+                    record.delegation.objective(),
+                    record.conflicts.len().max(1)
+                )
+            })
+            .collect()
+    }
+
+    /// Run the delivery gate against the durable log (v1.5 §12).
+    ///
+    /// Every input except the list of required checks comes from state that was
+    /// written down by something other than the turn asking the question. That
+    /// is the whole design: the gate is not a function the agent calls with
+    /// arguments it chooses, it is a reading of what actually happened.
+    ///
+    /// Returns `None` when the session has no contract — there is nothing to
+    /// deliver against, and inventing a `Ready` for that case would put the
+    /// false `Done` back by the side door.
+    pub fn evaluate_delivery(
+        &self,
+        validations: &[expectation::RequiredValidation],
+    ) -> Option<expectation::DeliveryAssessment> {
+        let contract = self.expectation_contract.as_ref()?;
+        let findings: Vec<review::ReviewFinding> = self
+            .outstanding_findings()
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let changed: Vec<PathBuf> = self.changed_paths.iter().cloned().collect();
+        let forbidden = contract.forbidden_prefixes();
+        let conflicts = self.unresolved_integrations();
+        Some(expectation::delivery::evaluate(
+            expectation::DeliveryInputs {
+                contract,
+                findings: &findings,
+                validations,
+                changed_paths: &changed,
+                forbidden_prefixes: &forbidden,
+                unresolved_conflicts: &conflicts,
+            },
+        ))
+    }
+
+    /// The stage label a `ValidationRecorded` event belongs to.
+    ///
+    /// The evidence payload is a JSON blob owned by the validation runtime,
+    /// which this crate deliberately does not depend on. Reading one field out
+    /// of it is enough for the gate's purposes and keeps the dependency arrow
+    /// pointing the way it does everywhere else.
+    fn validation_stage_label(evidence: &str) -> String {
+        serde_json::from_str::<serde_json::Value>(evidence)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("stage")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "validation".to_owned())
     }
 
     /// Delegations that are still live, in creation order. The scheduler and
@@ -2018,6 +2141,58 @@ impl SessionState {
                             .into(),
                     });
                 }
+                // A contract states what the task is for. It cannot also state
+                // that the task is done: nothing has run yet, so any evidence
+                // it cites was minted rather than gathered, and a contract born
+                // verified is a delivery gate cleared before the first turn.
+                if let Some(settled) = contract
+                    .clauses
+                    .iter()
+                    .find(|clause| clause.status.was_checked())
+                {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!(
+                            "requirement {:?} arrives already {} — a contract records what the \
+                             task is for, not what it achieved",
+                            settled.id,
+                            settled.status.label()
+                        ),
+                    });
+                }
+            }
+            SessionEvent::AlignmentEvidenceRecorded { evidence } => {
+                evidence
+                    .validate()
+                    .map_err(|error| DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    })?;
+                let contract = self.expectation_contract.as_ref().ok_or_else(|| {
+                    DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "evidence needs a contract to be evidence about".into(),
+                    }
+                })?;
+                if contract.clause(evidence.requirement_id).is_none() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!(
+                            "evidence names requirement {:?}, which is not in the contract",
+                            evidence.requirement_id
+                        ),
+                    });
+                }
+                if self.alignment_evidence.contains_key(&evidence.id) {
+                    return Err(DomainError::DuplicateEvent {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                    });
+                }
             }
             SessionEvent::ExpectationContractRevised { revision } => {
                 let current = self.expectation_contract.as_ref().ok_or_else(|| {
@@ -2081,6 +2256,23 @@ impl SessionState {
                         reason: flaw.into(),
                     });
                 }
+                // And the rule a non-empty list does not give you: every cited
+                // id must resolve to evidence the log holds, recorded against
+                // this requirement. `EvidenceId::new()` clears "non-empty" and
+                // establishes nothing.
+                let cited = match status {
+                    expectation::RequirementStatus::Verified { evidence }
+                    | expectation::RequirementStatus::Violated { evidence, .. } => {
+                        evidence.as_slice()
+                    }
+                    _ => &[],
+                };
+                expectation::check_citations(&self.alignment_evidence, *requirement_id, cited)
+                    .map_err(|fault| DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: fault.to_string(),
+                    })?;
             }
             SessionEvent::ReviewStarted { record } => {
                 // Refuses a "fresh-context" review that was handed the
@@ -2163,20 +2355,67 @@ impl SessionState {
                     });
                 }
             }
-            SessionEvent::DeliveryGateEvaluated { assessment } => {
-                // The one invariant that makes completion a state transition
-                // rather than a claim: `Ready` with outstanding blockers is not
-                // an optimistic assessment, it is a false one, and the log will
-                // not hold it however it was produced.
-                if assessment.state == expectation::DeliveryState::Ready
-                    && !assessment.blockers.is_empty()
+            SessionEvent::DeliveryGateEvaluated { validations } => {
+                // The event brings no verdict, so there is no `Ready` to refuse.
+                // What is checked here is the one input the log cannot derive:
+                // the list of checks the task required.
+                if self.expectation_contract.is_none() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "there is no contract to deliver against".into(),
+                    });
+                }
+                for validation in validations {
+                    // A pass has to have happened. Anything else is the agent
+                    // grading its own homework with the marking scheme.
+                    if let Some(recorded) = self.validation_record.get(&validation.name)
+                        && validation.status == ValidationStatus::Passed
+                        && *recorded != ValidationStatus::Passed
+                    {
+                        return Err(DomainError::InvalidStateTransition {
+                            session: self.id,
+                            event: format!("{event:?}"),
+                            reason: format!(
+                                "{} is declared passed, and the log records it as {recorded:?}",
+                                validation.name
+                            ),
+                        });
+                    }
+                    if !self.validation_record.contains_key(&validation.name)
+                        && validation.status == ValidationStatus::Passed
+                    {
+                        return Err(DomainError::InvalidStateTransition {
+                            session: self.id,
+                            event: format!("{event:?}"),
+                            reason: format!(
+                                "{} is declared passed, and the log has no record of it running",
+                                validation.name
+                            ),
+                        });
+                    }
+                }
+                // Omission is the other half of the same lie. A check the log
+                // shows failing cannot be dropped from the required list on the
+                // turn that wants to deliver.
+                let declared: BTreeSet<&String> =
+                    validations.iter().map(|check| &check.name).collect();
+                if let Some((name, status)) =
+                    self.validation_record.iter().find(|(name, status)| {
+                        !declared.contains(name)
+                            && matches!(
+                                status,
+                                ValidationStatus::Failed
+                                    | ValidationStatus::TimedOut
+                                    | ValidationStatus::Uncertain
+                            )
+                    })
                 {
                     return Err(DomainError::InvalidStateTransition {
                         session: self.id,
                         event: format!("{event:?}"),
                         reason: format!(
-                            "delivery cannot be ready with {} outstanding blocker(s)",
-                            assessment.blockers.len()
+                            "{name} is recorded as {status:?} and was left off the required list"
                         ),
                     });
                 }
@@ -2381,6 +2620,34 @@ impl SessionState {
                             incomplete.id, incomplete.status
                         ),
                     });
+                }
+                // v1.5 §12. A session that has a contract ends when the gate
+                // says so and not before. The gate is re-run here rather than
+                // read from `delivery`, because a stored verdict is a fact about
+                // the moment it was computed: a gate that cleared, a blocking
+                // finding recorded a second later, and then a completion, is
+                // exactly the sequence a stale read would let through.
+                if self.expectation_contract.is_some() {
+                    let assessment = self
+                        .evaluate_delivery(&self.delivery_validations)
+                        .expect("a contract is present");
+                    if !assessment.may_report_done() {
+                        return Err(DomainError::InvalidStateTransition {
+                            session: self.id,
+                            event: format!("{event:?}"),
+                            reason: format!(
+                                "the delivery gate has not cleared this work:\n{}",
+                                assessment.summary()
+                            ),
+                        });
+                    }
+                    if self.delivery.is_none() {
+                        return Err(DomainError::InvalidStateTransition {
+                            session: self.id,
+                            event: format!("{event:?}"),
+                            reason: "completion requires the delivery gate to have run".into(),
+                        });
+                    }
                 }
                 self.require_transition(Completed, "session completed", event)?;
             }
@@ -2733,6 +3000,10 @@ impl SessionState {
                     self.expectation_contract = Some(revised.contract);
                 }
             }
+            SessionEvent::AlignmentEvidenceRecorded { evidence } => {
+                self.alignment_evidence
+                    .insert(evidence.id, (**evidence).clone());
+            }
             SessionEvent::RequirementStatusChanged {
                 requirement_id,
                 status,
@@ -2767,8 +3038,10 @@ impl SessionState {
                 self.correction_ledger
                     .record_cycle(repaired.clone(), still_open.clone());
             }
-            SessionEvent::DeliveryGateEvaluated { assessment } => {
-                self.delivery = Some((**assessment).clone());
+            SessionEvent::DeliveryGateEvaluated { validations } => {
+                // The reducer's own reading of the log, not the caller's.
+                self.delivery_validations = validations.clone();
+                self.delivery = self.evaluate_delivery(validations);
             }
             SessionEvent::SpecBundleRecorded { bundle, .. } => {
                 self.spec_bundle = Some(bundle.clone());
@@ -2877,14 +3150,33 @@ impl SessionState {
             SessionEvent::ExecutionStarted { action_id } => {
                 self.status = SessionStatus::Executing(*action_id);
             }
-            SessionEvent::ExecutionFinished { .. } => {
+            SessionEvent::ExecutionFinished { action_id, .. } => {
                 self.status = SessionStatus::Active;
+                // The scope check reads what the session actually touched. An
+                // agent that quietly edited the editor while working on
+                // settings does not mention having done so, which is precisely
+                // why the gate must not ask it.
+                match self.proposed_actions.get(action_id) {
+                    Some(ProposedAction::WriteFile(write)) => {
+                        self.changed_paths.insert(write.path.clone());
+                    }
+                    Some(ProposedAction::DeleteFile(delete)) => {
+                        self.changed_paths.insert(delete.path.clone());
+                    }
+                    _ => {}
+                }
             }
             SessionEvent::ValidationRecorded {
-                status: ValidationStatus::Uncertain,
-                ..
+                status, evidence, ..
             } => {
-                self.status = SessionStatus::Uncertain;
+                // The latest word on each stage. A stage that failed and was
+                // then repaired reads as passed; one that passed and then broke
+                // reads as broken.
+                self.validation_record
+                    .insert(Self::validation_stage_label(evidence), status.clone());
+                if *status == ValidationStatus::Uncertain {
+                    self.status = SessionStatus::Uncertain;
+                }
             }
             SessionEvent::SessionCompleted => {
                 self.status = SessionStatus::Completed;
@@ -3014,10 +3306,17 @@ impl SessionState {
                     record.integration = delegation::IntegrationState::Rejected;
                 }
             }
-            SessionEvent::IntegrationApplied { delegation_id, .. } => {
+            SessionEvent::IntegrationApplied {
+                delegation_id,
+                changed_paths,
+                ..
+            } => {
                 if let Some(record) = self.delegations.get_mut(delegation_id) {
                     record.integration = delegation::IntegrationState::Applied;
                 }
+                // A worker's changes land in the parent tree, so they are in
+                // scope for the parent's scope check too.
+                self.changed_paths.extend(changed_paths.iter().cloned());
             }
             SessionEvent::DelegationCompleted { delegation_id } => {
                 // Idempotent: a delegation may already be Completed from its
@@ -4935,7 +5234,59 @@ mod expectation_replay_tests {
 
     /// The agent read "the sidebar is cramped" as "remove the sidebar", did it,
     /// and verified it.
-    fn sidebar_session() -> (SessionState, ExpectationContract, work::RequirementId) {
+    ///
+    /// Verified in two steps rather than one, because that is the only way it
+    /// can happen: a contract records what the task is for, and a status is
+    /// moved afterwards by something that cites evidence the log holds.
+    fn sidebar_session() -> (SessionState, Vec<SessionEvent>, work::RequirementId) {
+        let mut contract = ExpectationContract::new("Improve the settings layout");
+        let clause = ExpectationClause::required(
+            "remove the sidebar",
+            vec![criterion("the sidebar is gone")],
+            IntentSource::new(0, "the sidebar feels really cramped"),
+        );
+        let id = clause.id;
+        contract.clauses.push(clause);
+
+        let evidence = crate::expectation::AlignmentEvidence::new(
+            crate::expectation::AlignmentEvidenceKind::Execution,
+            id,
+            "settings.rs",
+            "the sidebar element and its module were deleted",
+        );
+        let evidence_id = evidence.id;
+        let events = vec![
+            SessionEvent::ExpectationContractCreated {
+                contract: Box::new(contract),
+            },
+            SessionEvent::AlignmentEvidenceRecorded {
+                evidence: Box::new(evidence),
+            },
+            SessionEvent::RequirementStatusChanged {
+                requirement_id: id,
+                status: RequirementStatus::Verified {
+                    evidence: vec![evidence_id],
+                },
+                source: "requirement coverage review".into(),
+            },
+        ];
+        (replay(&events), events, id)
+    }
+
+    #[test]
+    fn a_contract_survives_replay() {
+        let (state, events, id) = sidebar_session();
+        let replayed = replay(&events);
+        assert_eq!(state.expectation_contract, replayed.expectation_contract);
+        let contract = replayed.expectation_contract.expect("the contract replays");
+        assert!(contract.clause(id).unwrap().status.clears_delivery());
+    }
+
+    #[test]
+    fn a_contract_cannot_be_born_finished() {
+        // Nothing has run, so anything it cites was minted rather than
+        // gathered — and a contract that arrives verified is a delivery gate
+        // cleared before the first turn.
         let mut state = SessionState::empty(SessionId::new());
         let mut contract = ExpectationContract::new("Improve the settings layout");
         let mut clause = ExpectationClause::required(
@@ -4946,24 +5297,16 @@ mod expectation_replay_tests {
         clause.status = RequirementStatus::Verified {
             evidence: vec![EvidenceId::new()],
         };
-        let id = clause.id;
         contract.clauses.push(clause);
-        state
+        let error = state
             .reduce_event(&SessionEvent::ExpectationContractCreated {
-                contract: Box::new(contract.clone()),
+                contract: Box::new(contract),
             })
-            .expect("a valid contract is accepted");
-        (state, contract, id)
-    }
-
-    #[test]
-    fn a_contract_survives_replay() {
-        let (state, contract, _) = sidebar_session();
-        let replayed = replay(&[SessionEvent::ExpectationContractCreated {
-            contract: Box::new(contract),
-        }]);
-        assert_eq!(state.expectation_contract, replayed.expectation_contract);
-        assert!(replayed.expectation_contract.is_some());
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("not what it achieved"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -4971,24 +5314,19 @@ mod expectation_replay_tests {
         // The crash-recovery half of the sidebar case. After a restart the
         // contract must say the deletion is no longer verified — otherwise the
         // agent resumes believing it already did the right thing.
-        let (_, contract, id) = sidebar_session();
-        let events = vec![
-            SessionEvent::ExpectationContractCreated {
-                contract: Box::new(contract),
-            },
-            SessionEvent::ExpectationContractRevised {
-                revision: Box::new(ContractRevision {
-                    revision: 2,
-                    source: IntentSource::new(1, "no, I didn't mean delete it, it's just cramped"),
-                    reason: "the user wants the sidebar kept and made less dense".into(),
-                    changes: vec![ContractChange::ClauseRestated {
-                        id,
-                        from: "remove the sidebar".into(),
-                        to: "keep the sidebar and reduce its information density".into(),
-                    }],
-                }),
-            },
-        ];
+        let (_, mut events, id) = sidebar_session();
+        events.push(SessionEvent::ExpectationContractRevised {
+            revision: Box::new(ContractRevision {
+                revision: 2,
+                source: IntentSource::new(1, "no, I didn't mean delete it, it's just cramped"),
+                reason: "the user wants the sidebar kept and made less dense".into(),
+                changes: vec![ContractChange::ClauseRestated {
+                    id,
+                    from: "remove the sidebar".into(),
+                    to: "keep the sidebar and reduce its information density".into(),
+                }],
+            }),
+        });
         let replayed = replay(&events);
         let recovered = replayed.expectation_contract.expect("the contract replays");
         assert_eq!(recovered.revision, 2);
@@ -5017,6 +5355,96 @@ mod expectation_replay_tests {
         assert!(
             format!("{error}").contains("no evidence"),
             "the log must refuse an unevidenced pass: {error}"
+        );
+    }
+
+    #[test]
+    fn a_citation_to_an_id_nothing_recorded_is_not_evidence() {
+        // The version of the failure that clears "the list is non-empty":
+        // `EvidenceId::new()` is a valid identifier that establishes nothing,
+        // and it is what a reviewer under pressure to close a requirement
+        // reaches for without meaning to deceive anyone.
+        let (mut state, _, id) = sidebar_session();
+        let error = state
+            .reduce_event(&SessionEvent::RequirementStatusChanged {
+                requirement_id: id,
+                status: RequirementStatus::Verified {
+                    evidence: vec![EvidenceId::new()],
+                },
+                source: "alignment reviewer".into(),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("never recorded"),
+            "the log must refuse a citation to nothing: {error}"
+        );
+    }
+
+    #[test]
+    fn evidence_gathered_for_another_requirement_cannot_settle_this_one() {
+        // The likelier of the two mistakes. The ids are opaque, the agent is
+        // holding several, and nothing about a UUID says which requirement it
+        // belongs to — so the check is what the evidence was recorded against,
+        // not merely that it resolves.
+        let (mut state, _, sidebar) = sidebar_session();
+        let other = ExpectationClause::required(
+            "settings persist across restarts",
+            vec![criterion("reopening shows the saved values")],
+            IntentSource::new(0, "and it should remember my settings"),
+        );
+        let other_id = other.id;
+        state
+            .reduce_event(&SessionEvent::ExpectationContractRevised {
+                revision: Box::new(ContractRevision {
+                    revision: 2,
+                    source: IntentSource::new(1, "and it should remember my settings"),
+                    reason: "the user named a second requirement".into(),
+                    changes: vec![ContractChange::ClauseAdded {
+                        clause: Box::new(other),
+                    }],
+                }),
+            })
+            .unwrap();
+        let evidence = crate::expectation::AlignmentEvidence::new(
+            crate::expectation::AlignmentEvidenceKind::Validation,
+            sidebar,
+            "cargo test",
+            "sidebar_removed passed",
+        );
+        let borrowed = evidence.id;
+        state
+            .reduce_event(&SessionEvent::AlignmentEvidenceRecorded {
+                evidence: Box::new(evidence),
+            })
+            .unwrap();
+        let error = state
+            .reduce_event(&SessionEvent::RequirementStatusChanged {
+                requirement_id: other_id,
+                status: RequirementStatus::Verified {
+                    evidence: vec![borrowed],
+                },
+                source: "alignment reviewer".into(),
+            })
+            .unwrap_err();
+        assert!(format!("{error}").contains("cannot settle"), "{error}");
+    }
+
+    #[test]
+    fn evidence_must_be_about_a_requirement_the_contract_holds() {
+        let (mut state, _, _) = sidebar_session();
+        let error = state
+            .reduce_event(&SessionEvent::AlignmentEvidenceRecorded {
+                evidence: Box::new(crate::expectation::AlignmentEvidence::new(
+                    crate::expectation::AlignmentEvidenceKind::Review,
+                    work::RequirementId::new(),
+                    "alignment review 1",
+                    "looks fine",
+                )),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("not in the contract"),
+            "{error}"
         );
     }
 
@@ -5100,14 +5528,14 @@ mod delivery_replay_tests {
     use super::*;
     use crate::correction::{CorrectionAllowance, CorrectionLedger};
     use crate::expectation::{
-        DeliveryAssessment, DeliveryBlocker, DeliveryState, ExpectationClause, ExpectationContract,
-        IntentSource, RequirementStatus, RequirementTally,
+        DeliveryAssessment, DeliveryState, ExpectationClause, ExpectationContract, IntentSource,
+        RequirementStatus,
     };
     use crate::review::{
         FindingCategory, FindingId, ReviewContext, ReviewFinding, ReviewId, ReviewKind,
         ReviewRecord, Severity,
     };
-    use crate::work::{AcceptanceCriterion, CriterionId, EvidenceId};
+    use crate::work::{AcceptanceCriterion, CriterionId};
 
     fn contract_session() -> (SessionState, work::RequirementId) {
         let mut state = SessionState::empty(SessionId::new());
@@ -5157,49 +5585,84 @@ mod delivery_replay_tests {
     }
 
     #[test]
-    fn the_log_refuses_a_ready_verdict_that_still_has_blockers() {
+    fn the_gate_reads_the_log_rather_than_taking_a_verdict() {
         // The single guarantee behind "completion is a state transition, not
-        // something the model declares". However the assessment was produced,
-        // a Ready carrying blockers is a false claim and does not enter the log.
-        let (mut state, id) = contract_session();
+        // something the model declares". The event carries no verdict to
+        // forge: the requirement is outstanding in durable state, so the gate
+        // the reducer computes says so, whatever the caller believed.
+        let (mut state, _) = contract_session();
+        state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                validations: vec![],
+            })
+            .expect("running the gate is always allowed");
+        let assessment = state.delivery.clone().expect("the gate ran");
+        assert_eq!(assessment.state(), DeliveryState::PartiallyComplete);
+        assert!(!assessment.may_report_done());
+        assert_eq!(assessment.blockers().len(), 1);
+    }
+
+    #[test]
+    fn a_ready_verdict_does_not_survive_a_round_trip_through_json() {
+        // The assessment travels through an event log, an HTTP response and a
+        // benchmark transcript, and each of those is a door a hand-written
+        // `Ready` could walk through. Deserialisation re-derives the verdict
+        // from the blockers rather than trusting the one on the wire.
+        let forged = serde_json::json!({
+            "state": "ready",
+            "blockers": [{
+                "blocker": "requirement_outstanding",
+                "id": work::RequirementId::new(),
+                "statement": "MCP configuration works",
+            }],
+            "tally": {"verified": 1, "waived": 0, "violated": 0, "unknown": 0, "unverified": 0},
+            "advisory_findings": 0,
+        });
+        let decoded: DeliveryAssessment = serde_json::from_value(forged).unwrap();
+        assert_eq!(decoded.state(), DeliveryState::PartiallyComplete);
+        assert!(!decoded.may_report_done());
+    }
+
+    #[test]
+    fn a_declared_pass_the_log_never_saw_is_refused() {
+        // The remaining input the log cannot derive is which checks the task
+        // required. Their outcomes are not the caller's to declare.
+        let (mut state, _) = contract_session();
         let error = state
             .reduce_event(&SessionEvent::DeliveryGateEvaluated {
-                assessment: Box::new(DeliveryAssessment {
-                    state: DeliveryState::Ready,
-                    blockers: vec![DeliveryBlocker::RequirementOutstanding {
-                        id,
-                        statement: "MCP configuration works".into(),
-                    }],
-                    tally: RequirementTally::default(),
-                    advisory_findings: 0,
-                }),
+                validations: vec![crate::expectation::RequiredValidation {
+                    name: "FullUnitTests".into(),
+                    status: ValidationStatus::Passed,
+                }],
             })
             .unwrap_err();
         assert!(
-            format!("{error}").contains("cannot be ready"),
-            "got {error}"
+            format!("{error}").contains("no record of it running"),
+            "{error}"
         );
     }
 
     #[test]
-    fn a_genuine_ready_verdict_is_recorded_and_replays() {
+    fn a_check_the_log_shows_failing_cannot_be_left_off_the_list() {
+        // Omission is the other half of the same lie.
         let (mut state, _) = contract_session();
-        let assessment = DeliveryAssessment {
-            state: DeliveryState::Ready,
-            blockers: vec![],
-            tally: RequirementTally {
-                verified: 1,
-                ..RequirementTally::default()
-            },
-            advisory_findings: 2,
-        };
+        let action_id = ActionId::new();
         state
-            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
-                assessment: Box::new(assessment.clone()),
+            .reduce_event(&SessionEvent::ValidationRecorded {
+                action_id,
+                status: ValidationStatus::Failed,
+                evidence: r#"{"stage":"FullUnitTests","detail":"3 tests failed"}"#.into(),
             })
             .unwrap();
-        assert_eq!(state.delivery, Some(assessment));
-        assert!(state.delivery.unwrap().state.may_report_done());
+        let error = state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                validations: vec![],
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("left off the required list"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -5397,34 +5860,194 @@ mod delivery_replay_tests {
         );
     }
 
-    #[test]
-    fn a_verified_requirement_and_a_clean_gate_agree_after_replay() {
-        let (mut state, id) = contract_session();
+    /// Move the session's one requirement to verified, the only way it can be
+    /// moved: record the evidence, then cite it.
+    fn verify(state: &mut SessionState, id: work::RequirementId) {
+        let evidence = crate::expectation::AlignmentEvidence::new(
+            crate::expectation::AlignmentEvidenceKind::Validation,
+            id,
+            "cargo test",
+            "mcp_config_roundtrip passed",
+        );
+        let evidence_id = evidence.id;
+        state
+            .reduce_event(&SessionEvent::AlignmentEvidenceRecorded {
+                evidence: Box::new(evidence),
+            })
+            .unwrap();
         state
             .reduce_event(&SessionEvent::RequirementStatusChanged {
                 requirement_id: id,
                 status: RequirementStatus::Verified {
-                    evidence: vec![EvidenceId::new()],
+                    evidence: vec![evidence_id],
                 },
                 source: "requirement coverage review".into(),
             })
             .unwrap();
-        let contract = state.expectation_contract.clone().unwrap();
-        let assessment =
-            crate::expectation::delivery::evaluate(crate::expectation::DeliveryInputs {
-                contract: &contract,
-                findings: &[],
-                validations: &[],
-                changed_paths: &[],
-                forbidden_prefixes: &[],
-                unresolved_conflicts: &[],
-            });
-        assert_eq!(assessment.state, DeliveryState::Ready);
+    }
+
+    #[test]
+    fn a_verified_requirement_and_a_clean_gate_agree_after_replay() {
+        let (mut state, id) = contract_session();
+        verify(&mut state, id);
         state
             .reduce_event(&SessionEvent::DeliveryGateEvaluated {
-                assessment: Box::new(assessment),
+                validations: vec![],
             })
-            .expect("a gate result derived from the contract is accepted");
+            .unwrap();
+        assert_eq!(state.delivery.unwrap().state(), DeliveryState::Ready);
+    }
+
+    #[test]
+    fn a_session_with_a_contract_cannot_complete_until_the_gate_clears() {
+        // The wiring the whole release turns on. Without this the gate is a
+        // function the runtime may or may not have called.
+        let (mut state, id) = contract_session();
+        let error = state
+            .reduce_event(&SessionEvent::SessionCompleted)
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("delivery gate has not cleared"),
+            "{error}"
+        );
+
+        verify(&mut state, id);
+        let still_ungated = state
+            .clone()
+            .reduce_event(&SessionEvent::SessionCompleted)
+            .unwrap_err();
+        assert!(
+            format!("{still_ungated}").contains("gate to have run"),
+            "a verdict nobody computed is not a verdict: {still_ungated}"
+        );
+
+        state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                validations: vec![],
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::SessionCompleted)
+            .expect("a gated, verified session completes");
+    }
+
+    #[test]
+    fn a_finding_raised_after_the_gate_cleared_still_stops_completion() {
+        // A stored verdict is a fact about the moment it was computed. Reading
+        // `delivery` instead of re-running the gate would let exactly this
+        // sequence through: gate clears, reviewer speaks, agent completes.
+        let (mut state, id) = contract_session();
+        verify(&mut state, id);
+        state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                validations: vec![],
+            })
+            .unwrap();
+        assert_eq!(
+            state.delivery.clone().unwrap().state(),
+            DeliveryState::Ready
+        );
+
+        let record = review(ReviewKind::IndependentCode, ReviewContext::Fresh);
+        let review_id = record.id;
+        state
+            .reduce_event(&SessionEvent::ReviewStarted {
+                record: Box::new(record),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::ReviewFindingRecorded {
+                finding: Box::new(finding(review_id, Severity::High)),
+            })
+            .unwrap();
+
+        let error = state
+            .reduce_event(&SessionEvent::SessionCompleted)
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("delivery gate has not cleared"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_scope_check_reads_the_diff_and_not_the_agents_account_of_it() {
+        // "Don't touch the editor" is checkable by a machine, and the machine
+        // must not ask the agent which files it changed.
+        let (mut state, id) = contract_session();
+        verify(&mut state, id);
+        let clause = crate::expectation::ExpectationClause::required(
+            "settings persist across restarts",
+            vec![AcceptanceCriterion {
+                id: CriterionId::new(),
+                statement: "reopening shows the saved values".into(),
+            }],
+            IntentSource::new(1, "and don't touch the editor"),
+        );
+        let second = clause.id;
+        state
+            .reduce_event(&SessionEvent::ExpectationContractRevised {
+                revision: Box::new(crate::expectation::ContractRevision {
+                    revision: 2,
+                    source: IntentSource::new(1, "and don't touch the editor"),
+                    reason: "the user ruled the editor out of bounds".into(),
+                    changes: vec![
+                        crate::expectation::ContractChange::ClauseAdded {
+                            clause: Box::new(clause),
+                        },
+                        crate::expectation::ContractChange::NonGoalAdded {
+                            non_goal: crate::expectation::NonGoal::new(
+                                "redesign the editor",
+                                IntentSource::new(1, "and don't touch the editor"),
+                            )
+                            .within("src/editor"),
+                        },
+                    ],
+                }),
+            })
+            .unwrap();
+        verify(&mut state, second);
+
+        let action_id = ActionId::new();
+        state
+            .reduce_event(&SessionEvent::ActionProposed {
+                action_id,
+                action: ProposedAction::WriteFile(WriteFileAction {
+                    path: PathBuf::from("src/editor/layout.rs"),
+                    content: "// tidy up while I'm here\n".into(),
+                    expected_digest: None,
+                }),
+                turn_id: None,
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::JudgmentRecorded {
+                action_id,
+                decision: JudgmentDecision::Allow,
+                turn_id: None,
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::ExecutionStarted { action_id })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::ExecutionFinished {
+                action_id,
+                exit_code: Some(0),
+                truncated: false,
+                sandbox_level: None,
+                sandbox_backend: None,
+            })
+            .unwrap();
+
+        state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                validations: vec![],
+            })
+            .unwrap();
+        let assessment = state.delivery.clone().expect("the gate ran");
+        assert_eq!(assessment.state(), DeliveryState::Blocked);
+        assert!(assessment.summary().contains("redesign the editor"));
     }
 }
 
@@ -5439,14 +6062,14 @@ mod gate_wiring_tests {
         FindingCategory, FindingId, ReviewContext, ReviewFinding, ReviewId, ReviewKind,
         ReviewRecord, Severity,
     };
-    use crate::work::{AcceptanceCriterion, CriterionId, EvidenceId};
+    use crate::work::{AcceptanceCriterion, CriterionId};
 
     /// A session whose only requirement is verified, with one blocking finding
     /// that a correction cycle then repairs.
     fn repaired_session() -> SessionState {
         let mut state = SessionState::empty(SessionId::new());
         let mut contract = ExpectationContract::new("Improve the Settings experience");
-        let mut clause = ExpectationClause::required(
+        let clause = ExpectationClause::required(
             "MCP configuration works",
             vec![AcceptanceCriterion {
                 id: CriterionId::new(),
@@ -5454,13 +6077,32 @@ mod gate_wiring_tests {
             }],
             IntentSource::new(0, "MCP must actually work"),
         );
-        clause.status = RequirementStatus::Verified {
-            evidence: vec![EvidenceId::new()],
-        };
+        let requirement_id = clause.id;
         contract.clauses.push(clause);
         state
             .reduce_event(&SessionEvent::ExpectationContractCreated {
                 contract: Box::new(contract),
+            })
+            .unwrap();
+        let evidence = crate::expectation::AlignmentEvidence::new(
+            crate::expectation::AlignmentEvidenceKind::Validation,
+            requirement_id,
+            "cargo test",
+            "mcp_config_roundtrip passed",
+        );
+        let evidence_id = evidence.id;
+        state
+            .reduce_event(&SessionEvent::AlignmentEvidenceRecorded {
+                evidence: Box::new(evidence),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::RequirementStatusChanged {
+                requirement_id,
+                status: RequirementStatus::Verified {
+                    evidence: vec![evidence_id],
+                },
+                source: "requirement coverage review".into(),
             })
             .unwrap();
 
@@ -5518,34 +6160,23 @@ mod gate_wiring_tests {
         // and the gate then clears. Feeding the gate the full findings history
         // instead of the outstanding set would leave this task blocked forever
         // on a problem that was fixed.
-        let state = repaired_session();
-        let contract = state.expectation_contract.clone().unwrap();
-        let outstanding: Vec<ReviewFinding> =
-            state.outstanding_findings().into_iter().cloned().collect();
-        let assessment = delivery::evaluate(DeliveryInputs {
-            contract: &contract,
-            findings: &outstanding,
-            validations: &[],
-            changed_paths: &[],
-            forbidden_prefixes: &[],
-            unresolved_conflicts: &[],
-        });
-        assert_eq!(assessment.state, DeliveryState::Ready);
-        assert!(assessment.blockers.is_empty());
+        let mut state = repaired_session();
+        state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                validations: vec![],
+            })
+            .unwrap();
+        let assessment = state.delivery.clone().expect("the gate ran");
+        assert_eq!(assessment.state(), DeliveryState::Ready);
+        assert!(assessment.blockers().is_empty());
 
         // And the history is still there, so the record of what was found and
         // fixed does not disappear from the session.
         assert_eq!(state.findings.len(), 1);
         assert_eq!(state.correction_ledger.repaired.len(), 1);
-
-        // The gate result is consistent enough for the log to accept it.
-        let mut state = state;
         state
-            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
-                assessment: Box::new(assessment),
-            })
-            .expect("a ready verdict with no blockers is accepted");
-        assert!(state.delivery.unwrap().state.may_report_done());
+            .reduce_event(&SessionEvent::SessionCompleted)
+            .expect("a repaired, gated session completes");
     }
 
     #[test]
@@ -5565,7 +6196,7 @@ mod gate_wiring_tests {
             unresolved_conflicts: &[],
         });
         assert_eq!(
-            assessment.state,
+            assessment.state(),
             DeliveryState::Blocked,
             "the repaired finding still blocks when the caller passes the full history"
         );

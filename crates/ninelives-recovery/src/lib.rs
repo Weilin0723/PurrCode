@@ -1808,6 +1808,7 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::PlanCreated { .. } => "plan_created",
         SessionEvent::PlanRevised { .. } => "plan_revised",
         SessionEvent::ExpectationContractCreated { .. } => "expectation_contract_created",
+        SessionEvent::AlignmentEvidenceRecorded { .. } => "alignment_evidence_recorded",
         SessionEvent::ExpectationContractRevised { .. } => "expectation_contract_revised",
         SessionEvent::RequirementStatusChanged { .. } => "requirement_status_changed",
         SessionEvent::ReviewStarted { .. } => "review_started",

@@ -183,6 +183,32 @@ impl ExpectationClause {
 pub struct NonGoal {
     pub statement: String,
     pub source: IntentSource,
+    /// The part of the tree this non-goal puts out of bounds, when the user's
+    /// words were concrete enough to name one.
+    ///
+    /// "Don't touch the editor" is checkable by a machine; "don't make it ugly"
+    /// is the alignment reviewer's problem. Recording the prefix here rather
+    /// than handing it to the gate at call time is what makes the scope check
+    /// derivable from durable state — a caller cannot quietly narrow the bounds
+    /// by passing a shorter list on the day it matters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_prefix: Option<std::path::PathBuf>,
+}
+
+impl NonGoal {
+    pub fn new(statement: impl Into<String>, source: IntentSource) -> Self {
+        Self {
+            statement: statement.into(),
+            source,
+            path_prefix: None,
+        }
+    }
+
+    /// Name the part of the tree this non-goal rules out.
+    pub fn within(mut self, prefix: impl Into<std::path::PathBuf>) -> Self {
+        self.path_prefix = Some(prefix.into());
+        self
+    }
 }
 
 /// Something the agent decided to believe in the absence of an answer.
@@ -406,6 +432,22 @@ impl ExpectationContract {
         self.clauses
             .iter()
             .filter(|clause| clause.blocks_delivery())
+            .collect()
+    }
+
+    /// The non-goals a machine can check, as `(prefix, statement)` pairs.
+    ///
+    /// Derived from the contract rather than supplied to the gate, so the scope
+    /// check reads the same bounds on the last turn as on the first.
+    pub fn forbidden_prefixes(&self) -> Vec<(std::path::PathBuf, String)> {
+        self.non_goals
+            .iter()
+            .filter_map(|non_goal| {
+                non_goal
+                    .path_prefix
+                    .clone()
+                    .map(|prefix| (prefix, non_goal.statement.clone()))
+            })
             .collect()
     }
 
@@ -671,10 +713,9 @@ mod tests {
             evidence: vec![EvidenceId::new()],
         };
         let mut contract = contract(vec![done, hard("model configuration works")]);
-        contract.non_goals.push(NonGoal {
-            statement: "redesign the editor".into(),
-            source: source(),
-        });
+        contract
+            .non_goals
+            .push(NonGoal::new("redesign the editor", source()).within("src/editor"));
         contract.open_questions.push(OpenQuestion {
             id: QuestionId::new(),
             question: "which provider should be the default?".into(),

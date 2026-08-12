@@ -4218,6 +4218,7 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         PlanCreated { .. } => "plan_created",
         PlanRevised { .. } => "plan_revised",
         ExpectationContractCreated { .. } => "expectation_contract_created",
+        AlignmentEvidenceRecorded { .. } => "alignment_evidence_recorded",
         ExpectationContractRevised { .. } => "expectation_contract_revised",
         RequirementStatusChanged { .. } => "requirement_status_changed",
         ReviewStarted { .. } => "review_started",
@@ -4409,11 +4410,21 @@ fn event_summary(event: &SessionEvent) -> String {
             repaired.len(),
             still_open.len()
         ),
-        DeliveryGateEvaluated { assessment } => format!(
-            "Delivery gate: {} ({}, {} blocker(s))",
-            assessment.state.label(),
-            assessment.tally,
-            assessment.blockers.len()
+        // The event carries the checks the task required, not the verdict —
+        // that is computed by the reducer from the log. Rendering the declared
+        // list is the honest thing to show here.
+        DeliveryGateEvaluated { validations } => format!(
+            "Delivery gate ran against {} required check(s): {}",
+            validations.len(),
+            if validations.is_empty() {
+                "none".to_owned()
+            } else {
+                validations
+                    .iter()
+                    .map(|check| format!("{} {:?}", check.name, check.status))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
         ),
         SpecBundleRecorded { bundle, reason } => format!(
             "Specification recorded: {} (revision {}, {} requirement(s)); {}",

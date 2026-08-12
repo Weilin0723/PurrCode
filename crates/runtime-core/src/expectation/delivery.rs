@@ -174,17 +174,93 @@ pub struct DeliveryInputs<'a> {
 }
 
 /// The gate's answer, with every reason it reached it.
-#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+///
+/// The fields are private on purpose. A `Ready` that a caller could write down
+/// is a `Ready` an agent can claim, and the whole release rests on it being
+/// something the agent cannot claim. There is exactly one way to obtain one of
+/// these — [`evaluate`] — and one way to store one, which is to let the session
+/// reducer compute it from the durable log.
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize)]
 pub struct DeliveryAssessment {
-    pub state: DeliveryState,
-    pub blockers: Vec<DeliveryBlocker>,
-    pub tally: RequirementTally,
+    state: DeliveryState,
+    blockers: Vec<DeliveryBlocker>,
+    tally: RequirementTally,
     /// Findings recorded but not blocking, so the summary can mention them
     /// without holding the work.
-    pub advisory_findings: usize,
+    advisory_findings: usize,
+}
+
+/// Deserialisation re-derives the verdict instead of trusting it.
+///
+/// The assessment travels through JSON — an event log, an HTTP response, a
+/// benchmark transcript — and every one of those is a door a wrong `Ready`
+/// could walk through. So the wire form's `state` is read and discarded: the
+/// verdict is recomputed from the blockers, by the same rule [`evaluate`] uses.
+/// A serialised `{"state":"ready","blockers":[…]}` therefore loads as whatever
+/// those blockers actually imply, exactly as a revised contract is re-derived on
+/// replay rather than restored.
+impl<'de> Deserialize<'de> for DeliveryAssessment {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default = "ready_placeholder")]
+            #[allow(dead_code)]
+            state: DeliveryState,
+            #[serde(default)]
+            blockers: Vec<DeliveryBlocker>,
+            #[serde(default)]
+            tally: RequirementTally,
+            #[serde(default)]
+            advisory_findings: usize,
+        }
+        fn ready_placeholder() -> DeliveryState {
+            DeliveryState::Ready
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            state: worst_state(&wire.blockers),
+            blockers: wire.blockers,
+            tally: wire.tally,
+            advisory_findings: wire.advisory_findings,
+        })
+    }
+}
+
+/// The gate's rule for turning a blocker list into a verdict, in one place so
+/// that [`evaluate`] and deserialisation cannot drift apart.
+fn worst_state(blockers: &[DeliveryBlocker]) -> DeliveryState {
+    blockers
+        .iter()
+        .map(DeliveryBlocker::implies)
+        .max()
+        .unwrap_or(DeliveryState::Ready)
 }
 
 impl DeliveryAssessment {
+    pub fn state(&self) -> DeliveryState {
+        self.state
+    }
+
+    pub fn blockers(&self) -> &[DeliveryBlocker] {
+        &self.blockers
+    }
+
+    pub fn tally(&self) -> RequirementTally {
+        self.tally
+    }
+
+    pub fn advisory_findings(&self) -> usize {
+        self.advisory_findings
+    }
+
+    /// Whether the agent may present this work as finished.
+    pub fn may_report_done(&self) -> bool {
+        self.state.may_report_done()
+    }
+
     /// The sentence the user reads (§34).
     pub fn summary(&self) -> String {
         let mut out = format!("{} — {}", self.state.label(), self.tally);
@@ -286,14 +362,8 @@ pub fn evaluate(inputs: DeliveryInputs<'_>) -> DeliveryAssessment {
         });
     }
 
-    let state = blockers
-        .iter()
-        .map(DeliveryBlocker::implies)
-        .max()
-        .unwrap_or(DeliveryState::Ready);
-
     DeliveryAssessment {
-        state,
+        state: worst_state(&blockers),
         blockers,
         tally: inputs.contract.tally(),
         advisory_findings,
@@ -380,10 +450,13 @@ mod tests {
         let contract = satisfied_contract();
         let validations = passing();
         let assessment = evaluate(inputs(&contract, &[], &validations));
-        assert_eq!(assessment.state, DeliveryState::Ready);
-        assert!(assessment.state.may_report_done());
-        assert!(assessment.blockers.is_empty());
-        assert_eq!(assessment.tally.to_string(), "2 / 2 requirements verified");
+        assert_eq!(assessment.state(), DeliveryState::Ready);
+        assert!(assessment.may_report_done());
+        assert!(assessment.blockers().is_empty());
+        assert_eq!(
+            assessment.tally().to_string(),
+            "2 / 2 requirements verified"
+        );
     }
 
     #[test]
@@ -395,9 +468,9 @@ mod tests {
         let findings = vec![finding(Severity::High)];
         let validations = passing();
         let assessment = evaluate(inputs(&contract, &findings, &validations));
-        assert_eq!(assessment.state, DeliveryState::Blocked);
-        assert!(!assessment.state.may_report_done());
-        assert_eq!(assessment.blockers.len(), 1);
+        assert_eq!(assessment.state(), DeliveryState::Blocked);
+        assert!(!assessment.may_report_done());
+        assert_eq!(assessment.blockers().len(), 1);
     }
 
     #[test]
@@ -406,8 +479,8 @@ mod tests {
         let findings = vec![finding(Severity::Low), finding(Severity::Medium)];
         let validations = passing();
         let assessment = evaluate(inputs(&contract, &findings, &validations));
-        assert_eq!(assessment.state, DeliveryState::Ready);
-        assert_eq!(assessment.advisory_findings, 2);
+        assert_eq!(assessment.state(), DeliveryState::Ready);
+        assert_eq!(assessment.advisory_findings(), 2);
         assert!(assessment.summary().contains("2 advisory finding(s)"));
     }
 
@@ -428,7 +501,7 @@ mod tests {
             }];
             let assessment = evaluate(inputs(&contract, &[], &validations));
             assert_eq!(
-                assessment.state,
+                assessment.state(),
                 DeliveryState::Blocked,
                 "{status:?} must not clear the gate"
             );
@@ -443,8 +516,8 @@ mod tests {
         };
         let validations = passing();
         let assessment = evaluate(inputs(&contract, &[], &validations));
-        assert_eq!(assessment.state, DeliveryState::NeedsDecision);
-        assert!(!assessment.state.may_report_done());
+        assert_eq!(assessment.state(), DeliveryState::NeedsDecision);
+        assert!(!assessment.may_report_done());
     }
 
     #[test]
@@ -453,8 +526,11 @@ mod tests {
         contract.clauses[0].status = RequirementStatus::Unverified;
         let validations = passing();
         let assessment = evaluate(inputs(&contract, &[], &validations));
-        assert_eq!(assessment.state, DeliveryState::PartiallyComplete);
-        assert_eq!(assessment.tally.to_string(), "1 / 2 requirements verified");
+        assert_eq!(assessment.state(), DeliveryState::PartiallyComplete);
+        assert_eq!(
+            assessment.tally().to_string(),
+            "1 / 2 requirements verified"
+        );
     }
 
     #[test]
@@ -469,8 +545,8 @@ mod tests {
         };
         let validations = passing();
         let assessment = evaluate(inputs(&contract, &[], &validations));
-        assert_eq!(assessment.state, DeliveryState::Blocked);
-        assert_eq!(assessment.blockers.len(), 2, "both are reported");
+        assert_eq!(assessment.state(), DeliveryState::Blocked);
+        assert_eq!(assessment.blockers().len(), 2, "both are reported");
     }
 
     #[test]
@@ -490,7 +566,7 @@ mod tests {
             forbidden_prefixes: &forbidden,
             unresolved_conflicts: &[],
         });
-        assert_eq!(assessment.state, DeliveryState::Blocked);
+        assert_eq!(assessment.state(), DeliveryState::Blocked);
         assert!(assessment.summary().contains("redesign the editor"));
     }
 
@@ -502,7 +578,7 @@ mod tests {
             .push(OpenQuestion::new("which provider comes first?", true));
         let validations = passing();
         let assessment = evaluate(inputs(&contract, &[], &validations));
-        assert_eq!(assessment.state, DeliveryState::NeedsDecision);
+        assert_eq!(assessment.state(), DeliveryState::NeedsDecision);
     }
 
     #[test]
@@ -526,7 +602,7 @@ mod tests {
         // must not pretend a task with no hard requirements is unfinished.
         let contract = ExpectationContract::new("look into something");
         let assessment = evaluate(inputs(&contract, &[], &[]));
-        assert_eq!(assessment.state, DeliveryState::Ready);
-        assert_eq!(assessment.tally.total(), 0);
+        assert_eq!(assessment.state(), DeliveryState::Ready);
+        assert_eq!(assessment.tally().total(), 0);
     }
 }

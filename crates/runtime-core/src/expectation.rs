@@ -25,6 +25,7 @@
 
 pub mod contract;
 pub mod delivery;
+pub mod evidence;
 pub mod revision;
 
 pub use contract::{
@@ -34,6 +35,9 @@ pub use contract::{
 };
 pub use delivery::{
     DeliveryAssessment, DeliveryBlocker, DeliveryInputs, DeliveryState, RequiredValidation,
+};
+pub use evidence::{
+    AlignmentEvidence, AlignmentEvidenceKind, CitationFault, EvidenceLedger, check_citations,
 };
 pub use revision::{ContractChange, ContractRevision, RevisedContract};
 
