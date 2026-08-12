@@ -5,6 +5,7 @@ pub mod authority;
 pub mod capability;
 pub mod delegation;
 pub mod evidence;
+pub mod expectation;
 pub mod extension;
 pub mod graph;
 pub mod native_tools;
@@ -1237,6 +1238,29 @@ pub enum SessionEvent {
         reason: String,
         steps: Vec<String>,
     },
+    /// What the user asked for, compiled into a checkable contract (v1.5 §3).
+    ExpectationContractCreated {
+        contract: Box<expectation::ExpectationContract>,
+    },
+    /// A user correction, recorded as the correction itself rather than as the
+    /// contract it produced (v1.5 §5).
+    ///
+    /// Storing the delta and re-applying it on replay means the reducer reaches
+    /// the same contract the live runtime did, by the same rules — including
+    /// resetting the status of work the correction invalidated. Storing the
+    /// resulting contract instead would let a buggy writer persist a state the
+    /// rules forbid, and replay would faithfully restore it.
+    ExpectationContractRevised {
+        revision: Box<expectation::ContractRevision>,
+    },
+    /// A requirement's status changed, with what changed it (v1.5 §8).
+    RequirementStatusChanged {
+        requirement_id: work::RequirementId,
+        status: expectation::RequirementStatus,
+        /// Which review or check moved it, for the requirement → evidence trace
+        /// the user can open (v1.5 §22).
+        source: String,
+    },
     /// A durable, reviewable statement of intent. Direct sessions may omit it;
     /// Standard and Rigorous sessions use it as the source for their task graph.
     SpecBundleRecorded {
@@ -1787,6 +1811,12 @@ pub struct SessionState {
     pub delegations: BTreeMap<delegation::DelegationId, delegation::DelegationRecord>,
     /// Running totals across the whole delegation tree (v1.4 §PR14).
     pub delegation_ledger: delegation::DelegationLedger,
+    /// What the user actually asked for, at its current revision (v1.5 §3).
+    ///
+    /// Rebuilt by replay like everything else here, which is the point: a
+    /// daemon restart must not lose the requirements, because an agent that
+    /// resumes without them resumes without knowing what it is for.
+    pub expectation_contract: Option<expectation::ExpectationContract>,
 }
 
 impl SessionState {
@@ -1822,6 +1852,7 @@ impl SessionState {
             delegation_plan: None,
             delegations: BTreeMap::new(),
             delegation_ledger: delegation::DelegationLedger::default(),
+            expectation_contract: None,
         }
     }
 
@@ -1901,6 +1932,90 @@ impl SessionState {
                         session: self.id,
                         event: format!("{event:?}"),
                         reason: "terminal judgment recorded for unknown action".into(),
+                    });
+                }
+            }
+            SessionEvent::ExpectationContractCreated { contract } => {
+                contract
+                    .validate()
+                    .map_err(|error| DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    })?;
+                // A second contract would silently replace the first and take
+                // its revision history with it. Corrections are how intent
+                // changes; there is no other door.
+                if self.expectation_contract.is_some() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "this session already has an expectation contract; \
+                                 record a revision instead"
+                            .into(),
+                    });
+                }
+            }
+            SessionEvent::ExpectationContractRevised { revision } => {
+                let current = self.expectation_contract.as_ref().ok_or_else(|| {
+                    DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "cannot revise an expectation contract that was never created"
+                            .into(),
+                    }
+                })?;
+                // Rehearse the correction here so an illegal one is refused at
+                // the boundary rather than corrupting state on replay.
+                current.revise((**revision).clone()).map_err(|error| {
+                    DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    }
+                })?;
+            }
+            SessionEvent::RequirementStatusChanged {
+                requirement_id,
+                status,
+                source,
+            } => {
+                require_event_reason(self.id, event, source)?;
+                let contract = self.expectation_contract.as_ref().ok_or_else(|| {
+                    DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "no expectation contract holds this requirement".into(),
+                    }
+                })?;
+                if contract.clause(*requirement_id).is_none() {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: format!("requirement {requirement_id:?} is not in the contract"),
+                    });
+                }
+                // The same two rules the contract enforces structurally, applied
+                // to the transition itself: a status is a claim, and these two
+                // claims need something behind them.
+                let flaw = match status {
+                    expectation::RequirementStatus::Verified { evidence }
+                        if evidence.is_empty() =>
+                    {
+                        Some("a requirement cannot be verified with no evidence")
+                    }
+                    expectation::RequirementStatus::Waived { reason, .. }
+                        if reason.trim().is_empty() =>
+                    {
+                        Some("a waiver must say why")
+                    }
+                    _ => None,
+                };
+                if let Some(flaw) = flaw {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: flaw.into(),
                     });
                 }
             }
@@ -2442,6 +2557,30 @@ impl SessionState {
             } => {
                 self.plan_revision = *revision;
                 self.plan_steps = steps.clone();
+            }
+            SessionEvent::ExpectationContractCreated { contract } => {
+                self.expectation_contract = Some((**contract).clone());
+            }
+            SessionEvent::ExpectationContractRevised { revision } => {
+                // Re-derived rather than restored: replay reaches the contract
+                // by applying the same rules the live runtime applied, so a
+                // status the rules would have reset cannot survive a restart.
+                if let Some(current) = self.expectation_contract.as_ref()
+                    && let Ok(revised) = current.revise((**revision).clone())
+                {
+                    self.expectation_contract = Some(revised.contract);
+                }
+            }
+            SessionEvent::RequirementStatusChanged {
+                requirement_id,
+                status,
+                ..
+            } => {
+                if let Some(contract) = self.expectation_contract.as_mut()
+                    && let Some(clause) = contract.clause_mut(*requirement_id)
+                {
+                    clause.status = status.clone();
+                }
             }
             SessionEvent::SpecBundleRecorded { bundle, .. } => {
                 self.spec_bundle = Some(bundle.clone());
@@ -4587,5 +4726,183 @@ mod session_state_tests {
         // empty here — this is what a hand-rolled empty manual-compact
         // checkpoint used to wipe permanently before the unified builder.
         assert_eq!(merged.user_constraints, vec!["task_mode=build".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod expectation_replay_tests {
+    use super::*;
+    use crate::expectation::{
+        ContractChange, ContractRevision, ExpectationClause, ExpectationContract, IntentSource,
+        RequirementStatus,
+    };
+    use crate::work::{AcceptanceCriterion, CriterionId, EvidenceId};
+
+    fn criterion(statement: &str) -> AcceptanceCriterion {
+        AcceptanceCriterion {
+            id: CriterionId::new(),
+            statement: statement.into(),
+        }
+    }
+
+    /// The agent read "the sidebar is cramped" as "remove the sidebar", did it,
+    /// and verified it.
+    fn sidebar_session() -> (SessionState, ExpectationContract, work::RequirementId) {
+        let mut state = SessionState::empty(SessionId::new());
+        let mut contract = ExpectationContract::new("Improve the settings layout");
+        let mut clause = ExpectationClause::required(
+            "remove the sidebar",
+            vec![criterion("the sidebar is gone")],
+            IntentSource::new(0, "the sidebar feels really cramped"),
+        );
+        clause.status = RequirementStatus::Verified {
+            evidence: vec![EvidenceId::new()],
+        };
+        let id = clause.id;
+        contract.clauses.push(clause);
+        state
+            .reduce_event(&SessionEvent::ExpectationContractCreated {
+                contract: Box::new(contract.clone()),
+            })
+            .expect("a valid contract is accepted");
+        (state, contract, id)
+    }
+
+    #[test]
+    fn a_contract_survives_replay() {
+        let (state, contract, _) = sidebar_session();
+        let replayed = replay(&[SessionEvent::ExpectationContractCreated {
+            contract: Box::new(contract),
+        }]);
+        assert_eq!(state.expectation_contract, replayed.expectation_contract);
+        assert!(replayed.expectation_contract.is_some());
+    }
+
+    #[test]
+    fn a_correction_is_re_derived_on_replay_rather_than_restored() {
+        // The crash-recovery half of the sidebar case. After a restart the
+        // contract must say the deletion is no longer verified — otherwise the
+        // agent resumes believing it already did the right thing.
+        let (_, contract, id) = sidebar_session();
+        let events = vec![
+            SessionEvent::ExpectationContractCreated {
+                contract: Box::new(contract),
+            },
+            SessionEvent::ExpectationContractRevised {
+                revision: Box::new(ContractRevision {
+                    revision: 2,
+                    source: IntentSource::new(1, "no, I didn't mean delete it, it's just cramped"),
+                    reason: "the user wants the sidebar kept and made less dense".into(),
+                    changes: vec![ContractChange::ClauseRestated {
+                        id,
+                        from: "remove the sidebar".into(),
+                        to: "keep the sidebar and reduce its information density".into(),
+                    }],
+                }),
+            },
+        ];
+        let replayed = replay(&events);
+        let recovered = replayed.expectation_contract.expect("the contract replays");
+        assert_eq!(recovered.revision, 2);
+        assert_eq!(
+            recovered.clause(id).unwrap().statement,
+            "keep the sidebar and reduce its information density"
+        );
+        assert_eq!(
+            recovered.clause(id).unwrap().status,
+            RequirementStatus::Unverified,
+            "a restart must not resurrect evidence the correction invalidated"
+        );
+        assert_eq!(recovered.tally().settled(), 0);
+    }
+
+    #[test]
+    fn a_requirement_cannot_be_verified_into_the_log_without_evidence() {
+        let (mut state, _, id) = sidebar_session();
+        let error = state
+            .reduce_event(&SessionEvent::RequirementStatusChanged {
+                requirement_id: id,
+                status: RequirementStatus::Verified { evidence: vec![] },
+                source: "alignment reviewer".into(),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("no evidence"),
+            "the log must refuse an unevidenced pass: {error}"
+        );
+    }
+
+    #[test]
+    fn a_status_change_for_a_requirement_outside_the_contract_is_refused() {
+        let (mut state, _, _) = sidebar_session();
+        let error = state
+            .reduce_event(&SessionEvent::RequirementStatusChanged {
+                requirement_id: work::RequirementId::new(),
+                status: RequirementStatus::Unknown {
+                    detail: "could not tell".into(),
+                },
+                source: "alignment reviewer".into(),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("not in the contract"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_second_contract_cannot_quietly_replace_the_first() {
+        // Intent changes through corrections, which keep the history. A fresh
+        // contract would drop it and nothing would show that it had.
+        let (mut state, _, _) = sidebar_session();
+        let error = state
+            .reduce_event(&SessionEvent::ExpectationContractCreated {
+                contract: Box::new(ExpectationContract::new("something else entirely")),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error}").contains("already has an expectation contract"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_correction_to_a_session_with_no_contract_is_refused() {
+        let mut state = SessionState::empty(SessionId::new());
+        let error = state
+            .reduce_event(&SessionEvent::ExpectationContractRevised {
+                revision: Box::new(ContractRevision {
+                    revision: 2,
+                    source: IntentSource::new(1, "keep the sidebar"),
+                    reason: "correction".into(),
+                    changes: vec![],
+                }),
+            })
+            .unwrap_err();
+        assert!(format!("{error}").contains("never created"), "{error}");
+    }
+
+    #[test]
+    fn an_out_of_order_correction_is_refused_by_the_log() {
+        let (mut state, _, _) = sidebar_session();
+        let error = state
+            .reduce_event(&SessionEvent::ExpectationContractRevised {
+                revision: Box::new(ContractRevision {
+                    revision: 7,
+                    source: IntentSource::new(1, "keep the sidebar"),
+                    reason: "stale correction".into(),
+                    changes: vec![],
+                }),
+            })
+            .unwrap_err();
+        assert!(format!("{error}").contains("does not follow"), "{error}");
+    }
+
+    fn replay(events: &[SessionEvent]) -> SessionState {
+        let mut state = SessionState::empty(SessionId::new());
+        for event in events {
+            state.reduce_event(event).expect("replay applies");
+        }
+        state
     }
 }

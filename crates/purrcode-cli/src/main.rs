@@ -4217,6 +4217,9 @@ fn event_type_name(event: &SessionEvent) -> &'static str {
         SubmodulesPrepared { .. } => "submodules_prepared",
         PlanCreated { .. } => "plan_created",
         PlanRevised { .. } => "plan_revised",
+        ExpectationContractCreated { .. } => "expectation_contract_created",
+        ExpectationContractRevised { .. } => "expectation_contract_revised",
+        RequirementStatusChanged { .. } => "requirement_status_changed",
         SpecBundleRecorded { .. } => "spec_bundle_recorded",
         TaskGraphRecorded { .. } => "task_graph_recorded",
         TaskStatusChanged { .. } => "task_status_changed",
@@ -4353,6 +4356,25 @@ fn event_summary(event: &SessionEvent) -> String {
         } => {
             format!("{status:?}: {evidence}")
         }
+        ExpectationContractCreated { contract } => format!(
+            "Expectation contract created: {} ({})",
+            contract.objective,
+            contract.tally()
+        ),
+        ExpectationContractRevised { revision } => format!(
+            "Expectation contract revised to revision {}: {} ({} change(s))",
+            revision.revision,
+            revision.reason,
+            revision.changes.len()
+        ),
+        RequirementStatusChanged {
+            requirement_id,
+            status,
+            source,
+        } => format!(
+            "Requirement {requirement_id:?} is now {}; {source}",
+            status.label()
+        ),
         SpecBundleRecorded { bundle, reason } => format!(
             "Specification recorded: {} (revision {}, {} requirement(s)); {}",
             bundle.title,
