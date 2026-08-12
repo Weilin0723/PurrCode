@@ -94,6 +94,11 @@ impl ModelRoute {
         messages: Vec<ModelMessage>,
         schema: RootSchema,
     ) -> Result<(T, Usage), AlignmentError> {
+        eprintln!(
+            "DEBUG_ALIGNMENT_CALL model={} messages={}",
+            self.model.model,
+            messages.len()
+        );
         let request = ModelRequest {
             model: self.model.clone(),
             messages,

@@ -951,6 +951,7 @@ impl<'a> NativeAgent<'a> {
         T: DeserializeOwned,
         V: FnOnce(&T) -> Result<(), AgentError>,
     {
+        eprintln!("DEBUG_CALL role={role} attempt={attempt}");
         let provider = self.provider_for(role);
         let (request, estimated_input_tokens) =
             self.prepare_model_request(provider, request).await?;
