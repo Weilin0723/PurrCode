@@ -443,7 +443,7 @@ impl<'a> NativeAgent<'a> {
         session_worktree: &purrcode_repository_engine::SessionWorktree,
         worktree: &std::path::Path,
         validations: &[purrcode_runtime_core::expectation::RequiredValidation],
-        alignment_rounds: u8,
+        alignment_rounds: &mut u8,
         pending_correction: &mut Option<(u32, Vec<purrcode_runtime_core::review::FindingId>)>,
         alignment_brief: &mut Option<String>,
     ) -> Result<GateDecision, AgentError> {
@@ -453,7 +453,13 @@ impl<'a> NativeAgent<'a> {
         if store.load(session_id)?.expectation_contract.is_none() {
             return Ok(GateDecision::Deliver);
         }
-        let cycle = store.load(session_id)?.correction_ledger.cycles_used;
+        // The round a review belongs to. A re-review after `CorrectionStarted`
+        // is part of that cycle, and the ledger has not counted it yet — so it
+        // is the pending cycle's number, not the ledger's.
+        let cycle = match pending_correction.as_ref() {
+            Some((cycle, _)) => *cycle,
+            None => store.load(session_id)?.correction_ledger.cycles_used,
+        };
         let assessment = alignment
             .review_and_gate(
                 store,
@@ -466,9 +472,14 @@ impl<'a> NativeAgent<'a> {
             )
             .await?;
         let current = store.load(session_id)?;
-        match crate::alignment::decide(&current, &assessment, alignment_rounds) {
+        match crate::alignment::decide(&current, &assessment, *alignment_rounds) {
             crate::alignment::AlignmentVerdict::Deliver => Ok(GateDecision::Deliver),
             crate::alignment::AlignmentVerdict::KeepWorking { brief } => {
+                // Only this branch spends an alignment round. A correction
+                // cycle has its own budget, and charging it to both would cut
+                // the correction loop short by however many times the gate had
+                // already sent the agent back to unfinished work.
+                *alignment_rounds = alignment_rounds.saturating_add(1);
                 *alignment_brief = Some(brief);
                 Ok(GateDecision::KeepGoing)
             }
@@ -3461,18 +3472,15 @@ impl<'a> NativeAgent<'a> {
                             session_id,
                             &session_worktree,
                             &worktree,
-                            &[],
-                            alignment_rounds,
+                            &carried_validations(&store.load(session_id)?),
+                            &mut alignment_rounds,
                             &mut pending_correction,
                             &mut alignment_brief,
                         )
                         .await?
                     {
                         GateDecision::Deliver => {}
-                        GateDecision::KeepGoing => {
-                            alignment_rounds = alignment_rounds.saturating_add(1);
-                            continue;
-                        }
+                        GateDecision::KeepGoing => continue,
                         GateDecision::HandBack(outcome) => return Ok(outcome),
                     }
                     store.append(session_id, &SessionEvent::SessionCompleted)?;
@@ -3603,17 +3611,14 @@ impl<'a> NativeAgent<'a> {
                             &session_worktree,
                             &worktree,
                             &required_validations(&report),
-                            alignment_rounds,
+                            &mut alignment_rounds,
                             &mut pending_correction,
                             &mut alignment_brief,
                         )
                         .await?
                     {
                         GateDecision::Deliver => {}
-                        GateDecision::KeepGoing => {
-                            alignment_rounds = alignment_rounds.saturating_add(1);
-                            continue;
-                        }
+                        GateDecision::KeepGoing => continue,
                         GateDecision::HandBack(outcome) => return Ok(outcome),
                     }
                     store.append(session_id, &SessionEvent::SessionCompleted)?;
@@ -4545,6 +4550,36 @@ fn required_validations(
             |(name, status)| purrcode_runtime_core::expectation::RequiredValidation {
                 name,
                 status,
+            },
+        )
+        .collect()
+}
+
+/// The checks this session has already run, as the gate must still see them.
+///
+/// Used on the completion path that skips validation — a turn that only answers
+/// a question. Passing an empty list there would be a caller quietly dropping a
+/// failing check from the required set, which the reducer refuses, and rightly:
+/// "explain what you changed" must not be a door out of a red test.
+fn carried_validations(
+    state: &SessionState,
+) -> Vec<purrcode_runtime_core::expectation::RequiredValidation> {
+    state
+        .validation_record
+        .iter()
+        .filter(|(_, status)| {
+            matches!(
+                status,
+                ValidationStatus::Passed
+                    | ValidationStatus::Failed
+                    | ValidationStatus::TimedOut
+                    | ValidationStatus::Uncertain
+            )
+        })
+        .map(
+            |(name, status)| purrcode_runtime_core::expectation::RequiredValidation {
+                name: name.clone(),
+                status: status.clone(),
             },
         )
         .collect()
