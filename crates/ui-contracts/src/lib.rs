@@ -13,9 +13,9 @@
 pub mod alignment;
 
 pub use alignment::{
-    ChangeGroupView, ChangedFileView, ChangesView, ContractClauseView, FindingView, ProgressDetail,
-    ProgressPhase, ProgressView, RequirementStatusView, RequirementTraceView, ReviewPanelView,
-    TaskContractView, ValidationLineView,
+    AlignmentView, ChangeGroupView, ChangedFileView, ChangesView, ContractClauseView, FindingView,
+    ProgressDetail, ProgressPhase, ProgressView, RequirementStatusView, RequirementTraceView,
+    ReviewPanelView, TaskContractView, ValidationLineView,
 };
 
 use schemars::JsonSchema;

@@ -369,6 +369,42 @@ impl RequirementTraceView {
     }
 }
 
+/// Everything the alignment surface shows, read in one go.
+///
+/// One type and one request rather than five, because the panels are one thing
+/// to the user and five independent fetches can disagree with each other: a
+/// contract from before a correction beside findings from after it describes a
+/// session that never existed. Read together, they are at least a consistent
+/// account of one moment.
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+pub struct AlignmentView {
+    pub progress: ProgressView,
+    /// "What PurrCode understood" (§19).
+    pub contract: TaskContractView,
+    /// Requirements, findings, checks and the gate's verdict (§20).
+    pub review: ReviewPanelView,
+    /// Changes grouped by the requirement they serve (§21).
+    pub changes: ChangesView,
+    /// "Why does PurrCode believe this is done?", one per requirement (§22).
+    #[serde(default)]
+    pub traces: Vec<RequirementTraceView>,
+}
+
+impl AlignmentView {
+    /// Requirements whose displayed status is not supported by the trace behind
+    /// it (§22).
+    ///
+    /// Surfaced rather than left for the user to find by expanding every row: a
+    /// checkmark with an empty evidence list is the false `Done` in
+    /// presentation form, and it is invisible until somebody looks.
+    pub fn unsupported(&self) -> Vec<&RequirementTraceView> {
+        self.traces
+            .iter()
+            .filter(|trace| !trace.supports_its_status())
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

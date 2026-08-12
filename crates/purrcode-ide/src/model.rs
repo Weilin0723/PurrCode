@@ -1424,6 +1424,219 @@ impl Supervisor {
     }
 }
 
+// ── Alignment (v1.5) ───────────────────────────────────────────────────
+
+/// What PurrCode understood, what it found, and why it believes it is done.
+///
+/// Parsed from `purrcode_ui_contracts::AlignmentView` rather than re-derived
+/// from the event log. The client's job here is to draw what the daemon
+/// concluded; a second reading in the client is how two windows come to
+/// describe the same run two different ways.
+#[derive(Clone, Debug, Default)]
+pub struct Alignment {
+    /// Absent when this session has no contract — which is a fact worth
+    /// showing, not an empty panel. It means nothing is holding the work to
+    /// what was asked for.
+    pub present: bool,
+    /// The reason, when there is no contract.
+    pub absent_because: Option<String>,
+    pub phase: String,
+    pub headline: String,
+    pub settled: u32,
+    pub total: u32,
+    pub objective: String,
+    pub revision: u64,
+    pub must_satisfy: Vec<Clause>,
+    pub preferences: Vec<Clause>,
+    pub not_requested: Vec<String>,
+    pub open_questions: Vec<String>,
+    pub findings: Vec<Finding>,
+    pub validations: Vec<(String, bool, Option<String>)>,
+    pub verdict: String,
+    pub still_working_on: Option<String>,
+    pub change_groups: Vec<ChangeGroup>,
+    pub traces: BTreeMap<String, Trace>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Clause {
+    pub id: String,
+    pub statement: String,
+    /// `verified`, `not satisfied`, `could not be determined`, `pending`,
+    /// `waived` — the daemon's word, not a re-derived one.
+    pub status: String,
+    pub marker: &'static str,
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Finding {
+    pub summary: String,
+    pub blocking: bool,
+    pub being_corrected: bool,
+    pub requirement_id: Option<String>,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ChangeGroup {
+    pub title: String,
+    pub requirement_id: Option<String>,
+    pub files: Vec<(String, u32, u32)>,
+}
+
+impl ChangeGroup {
+    /// Work that serves nothing the user asked for.
+    pub fn is_unattributed(&self) -> bool {
+        self.requirement_id.is_none()
+    }
+}
+
+/// "Why does PurrCode believe this is done?"
+#[derive(Clone, Debug)]
+pub struct Trace {
+    pub implemented_by: Vec<String>,
+    pub validated_by: Vec<String>,
+    pub reviewed_by: Vec<String>,
+    /// False when the row claims `verified` and nothing behind it says so.
+    pub supported: bool,
+}
+
+impl Alignment {
+    pub fn parse(value: &Value) -> Self {
+        let status = value["state"].as_str().unwrap_or("");
+        let data = &value["data"];
+        if status != "ready" || data.is_null() {
+            return Self {
+                present: false,
+                absent_because: value["message"].as_str().map(str::to_owned),
+                ..Self::default()
+            };
+        }
+        let contract = &data["contract"];
+        let review = &data["review"];
+        let progress = &data["progress"];
+        Self {
+            present: true,
+            absent_because: None,
+            phase: progress["phase"].as_str().unwrap_or("working").to_owned(),
+            headline: progress["headline"].as_str().unwrap_or_default().to_owned(),
+            settled: progress["requirements_settled"].as_u64().unwrap_or(0) as u32,
+            total: progress["requirements_total"].as_u64().unwrap_or(0) as u32,
+            objective: contract["objective"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            revision: contract["revision"].as_u64().unwrap_or(1),
+            must_satisfy: clauses(&contract["must_satisfy"]),
+            preferences: clauses(&contract["preferences"]),
+            not_requested: strings(contract, "not_requested"),
+            open_questions: strings(contract, "open_questions"),
+            findings: objects(&review["findings"], |item| {
+                Some(Finding {
+                    summary: item["summary"].as_str()?.to_owned(),
+                    blocking: item["blocking"].as_bool().unwrap_or(false),
+                    being_corrected: item["being_corrected"].as_bool().unwrap_or(false),
+                    requirement_id: item["requirement_id"].as_str().map(str::to_owned),
+                    evidence: strings(item, "evidence"),
+                })
+            }),
+            validations: objects(&review["validations"], |item| {
+                Some((
+                    item["name"].as_str()?.to_owned(),
+                    item["passed"].as_bool().unwrap_or(false),
+                    item["detail"].as_str().map(str::to_owned),
+                ))
+            }),
+            verdict: review["verdict"].as_str().unwrap_or("unknown").to_owned(),
+            still_working_on: review["still_working_on"].as_str().map(str::to_owned),
+            change_groups: objects(&data["changes"]["groups"], |item| {
+                Some(ChangeGroup {
+                    title: item["title"].as_str()?.to_owned(),
+                    requirement_id: item["requirement_id"].as_str().map(str::to_owned),
+                    files: objects(&item["files"], |file| {
+                        Some((
+                            file["path"].as_str()?.to_owned(),
+                            file["added"].as_u64().unwrap_or(0) as u32,
+                            file["removed"].as_u64().unwrap_or(0) as u32,
+                        ))
+                    }),
+                })
+            }),
+            traces: objects(&data["traces"], |item| {
+                let id = item["requirement_id"].as_str()?.to_owned();
+                let implemented_by = strings(item, "implemented_by");
+                let validated_by = strings(item, "validated_by");
+                let reviewed_by = strings(item, "reviewed_by");
+                // A verified row with nothing behind it is the false Done in
+                // presentation form. Computed here so the panel can mark it
+                // without the user expanding every row to find out.
+                let supported = item["status"].as_str() != Some("verified")
+                    || !validated_by.is_empty()
+                    || !reviewed_by.is_empty();
+                Some((
+                    id,
+                    Trace {
+                        implemented_by,
+                        validated_by,
+                        reviewed_by,
+                        supported,
+                    },
+                ))
+            })
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    /// `3 / 6 requirements verified` — two integers, never a percentage.
+    pub fn tally(&self) -> String {
+        format!("{} / {} requirements verified", self.settled, self.total)
+    }
+
+    pub fn blocking_findings(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| finding.blocking)
+            .count()
+    }
+
+    /// Change groups serving nothing the user asked for.
+    pub fn unattributed(&self) -> Vec<&ChangeGroup> {
+        self.change_groups
+            .iter()
+            .filter(|group| group.is_unattributed())
+            .collect()
+    }
+
+    /// Whether the surface has anything to say. A panel that is always open
+    /// and usually empty trains the user to ignore it.
+    pub fn worth_showing(&self) -> bool {
+        self.present && (!self.must_satisfy.is_empty() || !self.findings.is_empty())
+    }
+}
+
+fn clauses(value: &Value) -> Vec<Clause> {
+    objects(value, |item| {
+        let status = item["status"].as_str().unwrap_or("pending");
+        Some(Clause {
+            id: item["id"].as_str()?.to_owned(),
+            statement: item["statement"].as_str()?.to_owned(),
+            // `!` rather than `✗` for undetermined: it is not a failure, it is
+            // a question, and a user can act on the difference.
+            marker: match status {
+                "verified" => "✓",
+                "not_satisfied" => "✗",
+                "undetermined" => "?",
+                "waived" => "—",
+                _ => "·",
+            },
+            status: status.replace('_', " "),
+            detail: item["detail"].as_str().map(str::to_owned),
+        })
+    })
+}
+
 // ── Project memory ─────────────────────────────────────────────────────
 
 /// One durable thing PurrCode knows about this project.

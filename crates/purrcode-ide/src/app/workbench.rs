@@ -230,6 +230,7 @@ impl PurrCodeIde {
         // A worker the user asked to stop, applied once the transcript's
         // borrow of the message list is released.
         let mut stop_worker: Option<String> = None;
+        let mut expand_requirement: Option<String> = None;
         egui::ScrollArea::vertical()
             .id_salt("conversation_scroll")
             .stick_to_bottom(true)
@@ -285,6 +286,12 @@ impl PurrCodeIde {
                             if let Some(worker) = self.worker_tree(ui) {
                                 stop_worker = Some(worker);
                             }
+                            // What PurrCode understood, next to what it is
+                            // doing about it. Both answer "what is happening",
+                            // one in the user's terms and one in the runtime's.
+                            if let Some(requirement) = self.alignment_panel(ui) {
+                                expand_requirement = Some(requirement);
+                            }
                             self.work_log(ui, &condensed);
                             work_log_rendered = true;
                             ui.add_space(4.0);
@@ -294,6 +301,9 @@ impl PurrCodeIde {
                         ui.add_space(4.0);
                         if let Some(worker) = self.worker_tree(ui) {
                             stop_worker = Some(worker);
+                        }
+                        if let Some(requirement) = self.alignment_panel(ui) {
+                            expand_requirement = Some(requirement);
                         }
                         if !condensed.is_empty() {
                             self.work_log(ui, &condensed);
@@ -336,6 +346,9 @@ impl PurrCodeIde {
         }
         if let Some((action, message)) = message_action {
             self.apply_message_action(action, &message);
+        }
+        if let Some(requirement) = expand_requirement {
+            self.toggle_requirement_trace(requirement);
         }
         if let Some(worker) = stop_worker {
             self.stop_worker(worker);

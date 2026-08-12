@@ -28,6 +28,7 @@ pub const NATIVE_IDE_CAPABILITIES: &[&str] = &[
     "workspace.git_overview",
 ];
 
+mod alignment_presentation;
 pub(crate) mod delegation;
 mod local_models;
 pub mod model_recommendation;
@@ -497,6 +498,11 @@ pub async fn bind_and_report(
             "/v1/sessions/{id}/context-ledger/{turn_id}",
             get(session_context_ledger),
         )
+        // v1.5: what PurrCode understood, what the reviewers found, which
+        // requirement each change serves, and why a requirement is believed
+        // done. One route, because the panels are one thing to the user and
+        // five independent fetches can disagree with each other.
+        .route("/v1/sessions/{id}/alignment", get(session_alignment))
         .route("/v1/sessions/{id}/spec", get(session_spec))
         .route("/v1/sessions/{id}/tasks", get(session_tasks))
         .route("/v1/sessions/{id}/evidence", get(session_evidence))
@@ -7859,6 +7865,59 @@ async fn session_context_ledger(
         .cloned()
         .map(Json)
         .ok_or(ApiError::NotFound)
+}
+
+/// The v1.5 alignment surface (§18–§22).
+async fn session_alignment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<purrcode_ui_contracts::PanelView<purrcode_ui_contracts::AlignmentView>>, ApiError>
+{
+    authorize(&state, &headers)?;
+    let id = parse_session_id(&id)?;
+    let session = state.store.lock().await.load(id)?;
+    let observed_at = Utc::now().to_rfc3339();
+
+    let (Some(progress), Some(contract), Some(review)) = (
+        alignment_presentation::progress_view(&session),
+        alignment_presentation::task_contract_view(&session),
+        alignment_presentation::review_panel_view(&session),
+    ) else {
+        // "No contract" is a fact about this session rather than an empty
+        // panel: it means nothing is holding this work to what was asked for,
+        // and a client must be able to say so.
+        return Ok(Json(purrcode_ui_contracts::PanelView::empty(
+            "This session is running without a task contract, so no delivery gate applies to it",
+            observed_at,
+        )));
+    };
+
+    // Changes are read from the repository, so they can be genuinely
+    // unavailable. That is reported as an empty group list rather than as a
+    // missing panel — the rest of the surface is still true.
+    let changes = match session.worktree.as_ref() {
+        Some(_) => match worktree_from_state(&session) {
+            Ok(worktree) => match RepositoryEngine::changes(&worktree, ChangeScope::Agent).await {
+                Ok(changes) => alignment_presentation::changes_view(&session, &changes),
+                Err(_) => purrcode_ui_contracts::ChangesView { groups: Vec::new() },
+            },
+            Err(_) => purrcode_ui_contracts::ChangesView { groups: Vec::new() },
+        },
+        None => purrcode_ui_contracts::ChangesView { groups: Vec::new() },
+    };
+
+    let traces = alignment_presentation::requirement_traces(&session);
+    Ok(Json(purrcode_ui_contracts::PanelView::ready(
+        purrcode_ui_contracts::AlignmentView {
+            progress,
+            contract,
+            review,
+            changes,
+            traces,
+        },
+        observed_at,
+    )))
 }
 
 async fn session_spec(

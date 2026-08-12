@@ -12,6 +12,7 @@
 //! never renders a control whose only purpose is to tell the runtime something
 //! the runtime can work out for itself (PRD §10).
 
+mod alignment;
 mod bar;
 pub(crate) mod checkpoints;
 mod code;
@@ -493,6 +494,14 @@ pub struct PurrCodeIde {
     /// The session `supervisor` describes, so a switch refetches.
     pub(crate) supervisor_for: Option<String>,
 
+    // ── Alignment (v1.5) ───────────────────────────────────────────────
+    /// What PurrCode understood and whether it believes it delivered it.
+    pub(crate) alignment: model::Alignment,
+    /// The session `alignment` describes, so a switch refetches.
+    pub(crate) alignment_for: Option<String>,
+    /// Requirement rows the user has expanded to see the trace behind them.
+    pub(crate) alignment_expanded: std::collections::BTreeSet<String>,
+
     // ── Project memory ─────────────────────────────────────────────────
     /// Durable project knowledge for the open folder.
     pub(crate) memory: Vec<model::MemoryEntry>,
@@ -609,6 +618,8 @@ pub struct PurrCodeIde {
     last_disk_check: Instant,
     /// When the worker tree was last refreshed.
     last_supervisor_poll: Instant,
+    /// When the alignment surface was last refreshed.
+    last_alignment_poll: Instant,
     /// When the current `session_loading` began, so a stuck load falls back
     /// instead of spinning forever.
     session_loading_began: Option<Instant>,
@@ -749,6 +760,10 @@ impl PurrCodeIde {
             supervisor: model::Supervisor::default(),
             supervisor_for: None,
 
+            alignment: model::Alignment::default(),
+            alignment_for: None,
+            alignment_expanded: std::collections::BTreeSet::new(),
+
             memory: Vec::new(),
             memory_kind: "learnings".to_owned(),
             memory_content: String::new(),
@@ -820,6 +835,7 @@ impl PurrCodeIde {
             last_workspace_changes_poll: now,
             last_diagnostic_poll: now,
             last_supervisor_poll: now,
+            last_alignment_poll: now,
             last_disk_check: now,
             session_loading_began: None,
             current_session_load_generation: None,
@@ -1676,6 +1692,11 @@ impl PurrCodeIde {
                     self.supervisor = crate::model::Supervisor::parse(&value);
                 }
             }
+            Response::Alignment(session, value) => {
+                if self.selected.as_deref() == Some(session.as_str()) {
+                    self.alignment = crate::model::Alignment::parse(&value);
+                }
+            }
             Response::Memory(value) => {
                 self.memory = crate::model::MemoryEntry::parse_all(&value);
             }
@@ -1901,6 +1922,7 @@ impl PurrCodeIde {
             self.detect_external_changes();
             self.refresh_checkpoints();
             self.poll_supervisor();
+            self.poll_alignment();
         }
         // A running task should look running without the user touching the
         // mouse; an idle window should not burn a core.

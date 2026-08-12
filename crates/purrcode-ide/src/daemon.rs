@@ -522,6 +522,17 @@ pub enum Request {
         session: String,
         worker: String,
     },
+    // ── Alignment (v1.5) ─────────────────────────────────────────────
+    /// `GET /v1/sessions/{session}/alignment` — what PurrCode understood,
+    /// what the reviewers found, and why it believes the work is done.
+    ///
+    /// One request for the whole surface. Fetching the contract, the findings
+    /// and the changes separately lets them disagree: a contract read before a
+    /// correction beside findings read after it describes a session that never
+    /// existed.
+    Alignment {
+        session: String,
+    },
 }
 
 /// A panel in the session presentation snapshot.
@@ -767,6 +778,8 @@ pub enum Response {
     /// bounded-queue error). The UI may clear its loading state immediately;
     /// it must compare the generation before doing so.
     SessionLoaded(String, u64),
+    /// The v1.5 alignment surface for a session.
+    Alignment(String, Value),
     /// A session was created; the UI should select it.
     SessionStarted(String),
     /// A mutation completed and the named session should be reloaded.
@@ -2184,6 +2197,15 @@ impl Worker {
                 // That is the normal case, not a failure worth a notice.
                 if let Ok(value) = self.get::<Value>(&path) {
                     self.reply(Response::Supervisor(session, value));
+                }
+            }
+            Request::Alignment { session } => {
+                let path = format!("/v1/sessions/{}/alignment", urlencode(&session));
+                // A session with no contract answers with an explicit "empty"
+                // panel rather than an error, so a transport failure is the
+                // only case worth staying quiet about here.
+                if let Ok(value) = self.get::<Value>(&path) {
+                    self.reply(Response::Alignment(session, value));
                 }
             }
             Request::StopWorker { session, worker } => {
