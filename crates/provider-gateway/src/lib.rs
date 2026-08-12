@@ -1900,6 +1900,18 @@ impl HttpProvider {
             .collect();
         match self.api_mode {
             ProviderApiMode::OpenaiCompatible => {
+                // Third-party chat-completions endpoints (DeepSeek, and most
+                // other OpenAI-compatible providers) know `system`, not the
+                // newer OpenAI Responses API's `developer` role — a
+                // `developer` turn is a hard 400 there, not a fallback. This
+                // mode exists specifically for that older wire format, so it
+                // gets the one role every implementation of it accepts.
+                let mut messages = messages;
+                for message in &mut messages {
+                    if message["role"] == "developer" {
+                        message["role"] = json!("system");
+                    }
+                }
                 let mut body = json!({
                     "model": request.model.model,
                     "messages": messages,
@@ -1908,10 +1920,30 @@ impl HttpProvider {
                 if let Some(maximum) = request.max_output_tokens {
                     body["max_tokens"] = json!(maximum);
                 }
-                if schema.is_some() {
+                if let Some(schema) = schema {
+                    // `json_object` has no dedicated schema field the way
+                    // `json_schema` does — the shape has to travel in the
+                    // prompt or the model has nothing to conform to. Most
+                    // implementations of this mode (DeepSeek included) also
+                    // 400 outright if the word "json" never appears in the
+                    // prompt, as a guard against a caller that set the flag
+                    // and forgot to ask for JSON at all — so this message
+                    // satisfies both at once rather than being a workaround
+                    // for either alone.
+                    let schema = serde_json::to_value(schema)
+                        .expect("JSON Schema serialization is infallible");
                     body["response_format"] = json!({
                         "type": "json_object"
                     });
+                    if let Some(array) = body["messages"].as_array_mut() {
+                        array.push(json!({
+                            "role": "system",
+                            "content": format!(
+                                "Respond with a single JSON object only — no prose, no \
+                                 markdown fences — matching this JSON Schema:\n\n{schema}"
+                            )
+                        }));
+                    }
                 }
                 body
             }
