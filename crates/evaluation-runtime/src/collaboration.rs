@@ -133,8 +133,9 @@ pub struct CollaborationRun {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub elapsed_seconds: u64,
-    /// Workers started, from the delegation ledger. Zero for a single-agent arm
-    /// — and a non-zero value there is itself a finding.
+    /// Workers started, from the delegation ledger. Expected to be zero for a
+    /// single-agent arm; when it is not, the pair is disqualified rather than
+    /// scored — see [`CollaborationReport::contaminated_single_arms`].
     pub workers: u32,
     pub conflicts: u32,
     /// Approvals a human had to give: action approvals plus integration
@@ -145,6 +146,15 @@ pub struct CollaborationRun {
     pub policy_denials: u32,
     /// Paths the run changed, so the objective can be scored independently.
     pub changed_paths: Vec<String>,
+    /// The arm hit its wall-clock deadline instead of settling on its own.
+    ///
+    /// Set by the runner, not derived from the log — the log cannot tell "the
+    /// session failed" apart from "we stopped watching". Running out of clock
+    /// still counts as not doing the task (an agent that cannot finish inside
+    /// the catalog's budget has not succeeded), but the release record should
+    /// say which of the two happened rather than showing an unexplained loss.
+    #[serde(default)]
+    pub timed_out: bool,
 }
 
 impl CollaborationRun {
@@ -259,15 +269,23 @@ pub enum CollaborationVerdict {
     CollaborationRegressed,
     /// Neither arm did the task.
     BothFailed,
-    /// The runtime chose not to delegate — the right answer for simple tasks,
-    /// and scored as such rather than as a missing measurement.
+    /// The runtime declined to delegate a task the catalog calls simple — the
+    /// right answer, and scored as such rather than as a missing measurement.
     DeclinedToDelegate,
+    /// The runtime declined to delegate a task the catalog expects to split.
+    ///
+    /// Often not a bad session in itself: the work may well have been done. But
+    /// it is the *absence of the thing v1.4 claims to deliver*, so it cannot
+    /// count in delegation's favour. Scoring it as favourable would let a build
+    /// with delegation switched off entirely clear the release bar — the exact
+    /// mirror of the over-delegation failure this module already guards.
+    DeclinedWhenSplitExpected,
 }
 
 impl CollaborationVerdict {
     /// True when this verdict counts in delegation's favour, *including* a
     /// correct refusal to delegate. Refusing cheaply is a win for the product
-    /// even though no workers ran.
+    /// even though no workers ran — but only when refusing was the right call.
     pub fn is_favourable(self) -> bool {
         matches!(
             self,
@@ -307,9 +325,13 @@ impl CollaborationComparison {
             .then(|| collaborative.total_tokens() as f64 / single.total_tokens() as f64);
 
         let verdict = if collaborative.workers == 0 {
-            // The runtime declined. Correct for a simple task; a finding for a
-            // task the category says should have split.
-            CollaborationVerdict::DeclinedToDelegate
+            // The runtime declined. Correct for a simple task; the absence of
+            // the measurement for a task the category says should have split.
+            if task.category.delegation_expected() {
+                CollaborationVerdict::DeclinedWhenSplitExpected
+            } else {
+                CollaborationVerdict::DeclinedToDelegate
+            }
         } else {
             match (single_ok, collaborative_ok) {
                 (false, true) => CollaborationVerdict::CollaborationWon,
@@ -412,6 +434,39 @@ impl CollaborationReport {
         counts
     }
 
+    /// Tasks whose single-agent arm delegated anyway.
+    ///
+    /// The single arm is held to one agent by an instruction in the objective,
+    /// which is a request and not a capability bound. When the runtime splits
+    /// regardless, the "single vs collaborative" pair is really collaborative
+    /// vs collaborative and every number derived from it — cost multiple,
+    /// verdict, favourability — describes an experiment that did not run.
+    /// That is a broken measurement rather than a finding about delegation, so
+    /// it blocks the bar instead of scoring against it.
+    pub fn contaminated_single_arms(&self) -> Vec<&str> {
+        self.comparisons
+            .iter()
+            .filter(|comparison| comparison.single.workers > 0)
+            .map(|comparison| comparison.task_id.as_str())
+            .collect()
+    }
+
+    /// Tasks the category expects to split, that the runtime kept single-agent.
+    ///
+    /// Reported rather than gated: §PR15 treats the catalog's prior as a prior,
+    /// and one borderline call is a finding, not a failure. What stops a build
+    /// with delegation effectively switched off is
+    /// [`Self::favourable_rate`] — these verdicts do not count in its numerator.
+    pub fn complex_tasks_not_delegated(&self) -> Vec<&str> {
+        self.comparisons
+            .iter()
+            .filter(|comparison| {
+                comparison.verdict == CollaborationVerdict::DeclinedWhenSplitExpected
+            })
+            .map(|comparison| comparison.task_id.as_str())
+            .collect()
+    }
+
     /// Tasks the category says should NOT have been split, that were split
     /// anyway.
     ///
@@ -431,12 +486,20 @@ impl CollaborationReport {
 
     /// Does this run clear the §PR15 bar?
     ///
-    /// Four conditions, and the third is the one a mediocre runtime fails: a
-    /// high pass rate bought by delegating everything does not clear it,
-    /// because splitting even one task that should have stayed single-agent is
-    /// a failure of the release's central claim.
+    /// The release claims two things at once — delegation helps on complex work
+    /// *and* simple work stays single-agent — so the bar has to be able to fail
+    /// in both directions. Delegating everything is caught by
+    /// [`Self::simple_tasks_delegated`]. Delegating nothing is caught by
+    /// [`Self::favourable_rate`], because a decline on a task the catalog
+    /// expects to split is not scored in delegation's favour; without that, a
+    /// build with delegation disabled would score 100% favourable and clear
+    /// every other condition here.
+    ///
+    /// [`Self::contaminated_single_arms`] is separate from both: it does not
+    /// say delegation did badly, it says the comparison never happened.
     pub fn meets_release_bar(&self) -> bool {
         self.tasks() >= 10
+            && self.contaminated_single_arms().is_empty()
             && self.regressions() == 0
             && self.simple_tasks_delegated().is_empty()
             && self.favourable_rate() >= 0.8
@@ -454,6 +517,16 @@ impl CollaborationReport {
             self.regressions(),
             self.conflicts(),
         ));
+        let contaminated = self.contaminated_single_arms();
+        if !contaminated.is_empty() {
+            out.push_str(&format!(
+                "**Single-agent arm delegated anyway on: {}.** Those pairs compare \
+                 collaboration against collaboration, so their verdicts and cost \
+                 multiples do not mean what the table says. The bar cannot be \
+                 cleared until the run is repeated.\n\n",
+                contaminated.join(", ")
+            ));
+        }
         let over_delegated = self.simple_tasks_delegated();
         if !over_delegated.is_empty() {
             out.push_str(&format!(
@@ -462,16 +535,38 @@ impl CollaborationReport {
                 over_delegated.join(", ")
             ));
         }
+        let under_delegated = self.complex_tasks_not_delegated();
+        if !under_delegated.is_empty() {
+            out.push_str(&format!(
+                "**Tasks the catalog expects to split that stayed single-agent: {}.** \
+                 Not scored in delegation's favour: the release cannot claim a benefit \
+                 it did not demonstrate.\n\n",
+                under_delegated.join(", ")
+            ));
+        }
         out.push_str(
             "| task | category | verdict | workers | cost× | single | collaborative |\n\
              | --- | --- | --- | --- | --- | --- | --- |\n",
         );
         for comparison in &self.comparisons {
+            // A run that merely ran out of clock reads as an unexplained loss
+            // otherwise, which is the wrong thing to hand somebody triaging a
+            // failed release gate.
+            let timed_out = match (
+                comparison.single.timed_out,
+                comparison.collaborative.timed_out,
+            ) {
+                (true, true) => " (both timed out)",
+                (true, false) => " (single timed out)",
+                (false, true) => " (collaborative timed out)",
+                (false, false) => "",
+            };
             out.push_str(&format!(
-                "| {} | {} | {:?} | {} | {} | {} tok | {} tok |\n",
+                "| {} | {} | {:?}{} | {} | {} | {} tok | {} tok |\n",
                 comparison.task_id,
                 comparison.category.label(),
                 comparison.verdict,
+                timed_out,
                 comparison.collaborative.workers,
                 comparison
                     .cost_multiple
@@ -817,6 +912,128 @@ mod tests {
             report.to_markdown().contains("stay single-agent"),
             "the report must name the gate it failed"
         );
+    }
+
+    #[test]
+    fn the_release_bar_is_not_cleared_by_delegating_nothing() {
+        // The mirror of the test above, and the one that matters more: a build
+        // with delegation switched off answers every task single-agent. Ten
+        // tasks, no regressions, nothing over-delegated — three of the four
+        // original conditions pass, and the fourth used to pass as well because
+        // every decline was scored as favourable. A runtime that had shipped
+        // none of v1.4 would have cleared the v1.4 bar.
+        let comparisons: Vec<_> = CollaborationCategory::ALL
+            .iter()
+            .map(|category| {
+                let task = task(*category, &["src/"]);
+                CollaborationComparison::score(
+                    &task,
+                    run(1_000, 0, &["src/lib.rs"], true),
+                    run(1_000, 0, &["src/lib.rs"], true),
+                )
+            })
+            .collect();
+        let report = CollaborationReport::new(comparisons);
+        assert_eq!(report.tasks(), 10);
+        assert_eq!(report.regressions(), 0);
+        assert!(report.simple_tasks_delegated().is_empty());
+        assert_eq!(
+            report.complex_tasks_not_delegated().len(),
+            8,
+            "the eight categories the catalog expects to split were all kept single"
+        );
+        assert!(
+            (report.favourable_rate() - 0.2).abs() < 1e-12,
+            "only the two genuinely-simple declines count in delegation's favour"
+        );
+        assert!(
+            !report.meets_release_bar(),
+            "a run that never delegates must not clear the bar for a release whose \
+             central claim is that delegation helps"
+        );
+        assert!(
+            report.to_markdown().contains("stayed single-agent"),
+            "the report must name the gate it failed"
+        );
+    }
+
+    #[test]
+    fn declining_is_favourable_only_when_the_task_was_actually_simple() {
+        let simple = CollaborationComparison::score(
+            &task(CollaborationCategory::SingleFileFix, &["src/"]),
+            run(500, 0, &["src/lib.rs"], true),
+            run(500, 0, &["src/lib.rs"], true),
+        );
+        assert_eq!(simple.verdict, CollaborationVerdict::DeclinedToDelegate);
+        assert!(simple.verdict.is_favourable());
+
+        let complex = CollaborationComparison::score(
+            &task(CollaborationCategory::FeatureWithMigration, &["src/"]),
+            run(500, 0, &["src/lib.rs"], true),
+            run(500, 0, &["src/lib.rs"], true),
+        );
+        assert_eq!(
+            complex.verdict,
+            CollaborationVerdict::DeclinedWhenSplitExpected
+        );
+        assert!(
+            !complex.verdict.is_favourable(),
+            "not doing the thing the release is about cannot count as doing it well"
+        );
+    }
+
+    #[test]
+    fn a_single_arm_that_delegated_invalidates_the_pair_rather_than_scoring_it() {
+        // The objective asks the single arm not to delegate. That is a request,
+        // not a capability bound, so it can be ignored — and then the pair is
+        // collaborative vs collaborative and proves nothing either way.
+        let comparisons: Vec<_> = CollaborationCategory::ALL
+            .iter()
+            .map(|category| {
+                let task = task(*category, &["src/"]);
+                let delegated = if category.delegation_expected() { 3 } else { 0 };
+                CollaborationComparison::score(
+                    &task,
+                    run(1_000, 0, &["src/lib.rs"], true),
+                    run(1_100, delegated, &["src/lib.rs"], true),
+                )
+            })
+            .collect();
+        let clean = CollaborationReport::new(comparisons.clone());
+        assert!(clean.meets_release_bar(), "the clean run clears the bar");
+        assert!(clean.contaminated_single_arms().is_empty());
+
+        let mut contaminated = comparisons;
+        contaminated[1].single.workers = 2;
+        let report = CollaborationReport::new(contaminated);
+        assert_eq!(report.contaminated_single_arms(), vec!["t"]);
+        assert!(
+            !report.meets_release_bar(),
+            "a comparison whose control arm delegated cannot qualify a release"
+        );
+        assert!(
+            report.to_markdown().contains("delegated anyway"),
+            "the report must say the measurement is broken, not just show numbers"
+        );
+    }
+
+    #[test]
+    fn a_timed_out_arm_is_reported_as_a_timeout_not_an_unexplained_loss() {
+        let task = task(CollaborationCategory::LargeRefactor, &["src/"]);
+        let mut single = run(1_000, 0, &["src/lib.rs"], false);
+        single.timed_out = true;
+        let report = CollaborationReport::new(vec![CollaborationComparison::score(
+            &task,
+            single,
+            run(1_100, 3, &["src/lib.rs"], true),
+        )]);
+        // Running out of clock still counts as not doing the task, matching how
+        // the deterministic suite treats TimedOut — but the record says so.
+        assert_eq!(
+            report.comparisons[0].verdict,
+            CollaborationVerdict::CollaborationWon
+        );
+        assert!(report.to_markdown().contains("(single timed out)"));
     }
 
     #[test]

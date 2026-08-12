@@ -2520,7 +2520,9 @@ async fn a_turn_that_proposes_delegation_reaches_the_planner_and_reports_back() 
     // before the assistant message is written, so without this the log would
     // show a decision with no account of why it was asked for.
     assert!(
-        system.content.contains("splits cleanly across two specialists"),
+        system
+            .content
+            .contains("splits cleanly across two specialists"),
         "the proposing rationale must survive: {}",
         system.content
     );

@@ -7,8 +7,16 @@
 //! ```
 //!
 //! Each task runs twice against a **fresh copy** of the fixture repository:
-//! once with delegation available and once without. Both arms are measured from
-//! their durable session logs, never from what the agent said it did.
+//! once asked to stay single-agent and once left to decide for itself. Both
+//! arms are measured from their durable session logs, never from what the agent
+//! said it did.
+//!
+//! The control arm is held to one agent by an instruction in the objective, and
+//! an instruction is a request rather than a capability bound — the runtime can
+//! ignore it. That is why the report checks the control arm's worker count and
+//! refuses to qualify a release from a pair where it delegated anyway: the
+//! honest reading of such a pair is not "delegation did badly", it is "this
+//! experiment did not run".
 //!
 //! This binary deliberately does no scoring of its own — it collects sessions
 //! and hands them to `collaboration::CollaborationComparison::score`, which the
@@ -95,22 +103,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let single_repository = clone_fixture(&options.repository, &format!("{}-single", task.id))?;
         let single = run_arm(&client, &options, task, &single_repository, false).await?;
         eprintln!(
-            "  single:        {} model call(s), {} tokens, completed={}",
+            "  single:        {} model call(s), {} tokens, completed={}{}",
             single.model_calls,
             single.total_tokens(),
-            single.arm_completed
+            single.arm_completed,
+            if single.timed_out { ", TIMED OUT" } else { "" }
         );
+        if single.workers > 0 {
+            eprintln!(
+                "  ⚠ the single arm started {} worker(s) despite being asked not to; \
+                 this pair cannot qualify the release",
+                single.workers
+            );
+        }
 
         let collaborative_repository =
             clone_fixture(&options.repository, &format!("{}-collab", task.id))?;
         let collaborative =
             run_arm(&client, &options, task, &collaborative_repository, true).await?;
         eprintln!(
-            "  collaborative: {} model call(s), {} tokens, {} worker(s), completed={}",
+            "  collaborative: {} model call(s), {} tokens, {} worker(s), completed={}{}",
             collaborative.model_calls,
             collaborative.total_tokens(),
             collaborative.workers,
-            collaborative.arm_completed
+            collaborative.arm_completed,
+            if collaborative.timed_out {
+                ", TIMED OUT"
+            } else {
+                ""
+            }
         );
 
         comparisons.push(CollaborationComparison::score(task, single, collaborative));
@@ -130,6 +151,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     } else {
         eprintln!("the collaborative benchmark did not meet the v1.4 release bar");
+        // Say which gate failed. "Did not meet the bar" sends whoever reads this
+        // back into the table to work out why, and the four conditions fail for
+        // very different reasons.
+        if report.tasks() < 10 {
+            eprintln!("  · only {} task(s) ran; the bar needs 10", report.tasks());
+        }
+        for task_id in report.contaminated_single_arms() {
+            eprintln!("  · {task_id}: the single arm delegated, so the pair proves nothing");
+        }
+        for task_id in report.simple_tasks_delegated() {
+            eprintln!("  · {task_id}: a task that should have stayed single-agent was split");
+        }
+        for task_id in report.complex_tasks_not_delegated() {
+            eprintln!("  · {task_id}: a task that should have split stayed single-agent");
+        }
+        if report.regressions() > 0 {
+            eprintln!(
+                "  · {} regression(s): collaboration broke what one agent did",
+                report.regressions()
+            );
+        }
+        eprintln!(
+            "  · favourable {:.0}%, bar is 80%",
+            report.favourable_rate() * 100.0
+        );
         std::process::exit(1)
     }
 }
@@ -199,6 +245,7 @@ async fn run_arm(
     // Wait for the session to leave a live state. A task that never settles is
     // reported as an incomplete arm rather than hanging the benchmark.
     let deadline = std::time::Duration::from_secs(task.maximum_seconds);
+    let mut timed_out = false;
     loop {
         let session: serde_json::Value = client
             .get(format!(
@@ -215,7 +262,11 @@ async fn run_arm(
             status.as_str(),
             "completed" | "failed" | "cancelled" | "awaiting_review" | "awaiting_approval"
         );
-        if settled || started.elapsed() >= deadline {
+        if settled {
+            break;
+        }
+        if started.elapsed() >= deadline {
+            timed_out = true;
             break;
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -235,9 +286,7 @@ async fn run_arm(
     for event in &events {
         state.reduce_event(event)?;
     }
-    Ok(CollaborationRun::from_session(
-        &state,
-        &events,
-        started.elapsed().as_secs(),
-    ))
+    let mut measured = CollaborationRun::from_session(&state, &events, started.elapsed().as_secs());
+    measured.timed_out = timed_out;
+    Ok(measured)
 }
