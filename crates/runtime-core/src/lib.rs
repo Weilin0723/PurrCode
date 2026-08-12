@@ -1897,6 +1897,28 @@ impl SessionState {
         }
     }
 
+    /// Findings that are still open: raised, and not since confirmed repaired.
+    ///
+    /// The correction loop and the delivery gate must both read *this* rather
+    /// than `findings`, which is the full history and never shrinks. Counting a
+    /// repaired finding as outstanding spends the whole correction budget
+    /// re-fixing something already fixed, and then hands the user a task in
+    /// `NeedsAttention` with nothing actually wrong with it.
+    pub fn outstanding_findings(&self) -> Vec<&review::ReviewFinding> {
+        self.findings
+            .values()
+            .filter(|finding| !self.correction_ledger.repaired.contains(&finding.id))
+            .collect()
+    }
+
+    /// Open findings that are holding delivery.
+    pub fn blocking_findings(&self) -> Vec<&review::ReviewFinding> {
+        self.outstanding_findings()
+            .into_iter()
+            .filter(|finding| finding.blocks_delivery())
+            .collect()
+    }
+
     /// Delegations that are still live, in creation order. The scheduler and
     /// the agent workspace both read this rather than tracking their own.
     pub fn live_delegations(&self) -> impl Iterator<Item = &delegation::DelegationRecord> {
@@ -5319,6 +5341,63 @@ mod delivery_replay_tests {
     }
 
     #[test]
+    fn a_repaired_finding_stops_counting_against_the_correction_budget() {
+        // Without `outstanding_findings`, the natural thing to write is
+        // `state.findings.values()` — which is the full history and never
+        // shrinks. The loop would then spend its whole budget re-fixing
+        // something already fixed and hand the user a `NeedsAttention` task
+        // with nothing wrong with it.
+        let (mut state, _) = contract_session();
+        let record = review(ReviewKind::Deterministic, ReviewContext::Inherited);
+        let review_id = record.id;
+        let claim = finding(review_id, Severity::Critical);
+        let finding_id = claim.id;
+        state
+            .reduce_event(&SessionEvent::ReviewStarted {
+                record: Box::new(record),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::ReviewFindingRecorded {
+                finding: Box::new(claim),
+            })
+            .unwrap();
+        assert_eq!(state.outstanding_findings().len(), 1);
+        assert_eq!(state.blocking_findings().len(), 1);
+
+        state
+            .reduce_event(&SessionEvent::CorrectionStarted {
+                cycle: 1,
+                findings: vec![finding_id],
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::CorrectionCompleted {
+                cycle: 1,
+                repaired: vec![finding_id],
+                still_open: vec![],
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.findings.len(),
+            1,
+            "the finding stays in the record; the history is not rewritten"
+        );
+        assert!(
+            state.outstanding_findings().is_empty(),
+            "but it is no longer outstanding"
+        );
+        assert_eq!(
+            state
+                .correction_ledger
+                .may_correct(&state.outstanding_findings()),
+            CorrectionAllowance::NothingToFix,
+            "so no further cycle is proposed"
+        );
+    }
+
+    #[test]
     fn a_verified_requirement_and_a_clean_gate_agree_after_replay() {
         let (mut state, id) = contract_session();
         state
@@ -5346,5 +5425,149 @@ mod delivery_replay_tests {
                 assessment: Box::new(assessment),
             })
             .expect("a gate result derived from the contract is accepted");
+    }
+}
+
+#[cfg(test)]
+mod gate_wiring_tests {
+    use super::*;
+    use crate::expectation::{
+        DeliveryInputs, DeliveryState, ExpectationClause, ExpectationContract, IntentSource,
+        RequirementStatus, delivery,
+    };
+    use crate::review::{
+        FindingCategory, FindingId, ReviewContext, ReviewFinding, ReviewId, ReviewKind,
+        ReviewRecord, Severity,
+    };
+    use crate::work::{AcceptanceCriterion, CriterionId, EvidenceId};
+
+    /// A session whose only requirement is verified, with one blocking finding
+    /// that a correction cycle then repairs.
+    fn repaired_session() -> SessionState {
+        let mut state = SessionState::empty(SessionId::new());
+        let mut contract = ExpectationContract::new("Improve the Settings experience");
+        let mut clause = ExpectationClause::required(
+            "MCP configuration works",
+            vec![AcceptanceCriterion {
+                id: CriterionId::new(),
+                statement: "a user can add and remove a server".into(),
+            }],
+            IntentSource::new(0, "MCP must actually work"),
+        );
+        clause.status = RequirementStatus::Verified {
+            evidence: vec![EvidenceId::new()],
+        };
+        contract.clauses.push(clause);
+        state
+            .reduce_event(&SessionEvent::ExpectationContractCreated {
+                contract: Box::new(contract),
+            })
+            .unwrap();
+
+        let record = ReviewRecord {
+            id: ReviewId::new(),
+            kind: ReviewKind::Deterministic,
+            context: ReviewContext::Inherited,
+            cycle: 0,
+            completed: true,
+            findings: vec![],
+        };
+        let review_id = record.id;
+        let claim = ReviewFinding {
+            id: FindingId::new(),
+            review: review_id,
+            kind: ReviewKind::Deterministic,
+            severity: Severity::Critical,
+            category: FindingCategory::Correctness,
+            requirement_id: None,
+            description: "the daemon never reloads the registry".into(),
+            evidence: vec!["mcp_host.rs:83".into()],
+            affected_paths: vec![],
+            recommendation: "reload after a config write".into(),
+        };
+        let finding_id = claim.id;
+        state
+            .reduce_event(&SessionEvent::ReviewStarted {
+                record: Box::new(record),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::ReviewFindingRecorded {
+                finding: Box::new(claim),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::CorrectionStarted {
+                cycle: 1,
+                findings: vec![finding_id],
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::CorrectionCompleted {
+                cycle: 1,
+                repaired: vec![finding_id],
+                still_open: vec![],
+            })
+            .unwrap();
+        state
+    }
+
+    #[test]
+    fn a_repaired_finding_stops_blocking_delivery() {
+        // The whole loop, end to end: a blocking finding is raised, repaired,
+        // and the gate then clears. Feeding the gate the full findings history
+        // instead of the outstanding set would leave this task blocked forever
+        // on a problem that was fixed.
+        let state = repaired_session();
+        let contract = state.expectation_contract.clone().unwrap();
+        let outstanding: Vec<ReviewFinding> =
+            state.outstanding_findings().into_iter().cloned().collect();
+        let assessment = delivery::evaluate(DeliveryInputs {
+            contract: &contract,
+            findings: &outstanding,
+            validations: &[],
+            changed_paths: &[],
+            forbidden_prefixes: &[],
+            unresolved_conflicts: &[],
+        });
+        assert_eq!(assessment.state, DeliveryState::Ready);
+        assert!(assessment.blockers.is_empty());
+
+        // And the history is still there, so the record of what was found and
+        // fixed does not disappear from the session.
+        assert_eq!(state.findings.len(), 1);
+        assert_eq!(state.correction_ledger.repaired.len(), 1);
+
+        // The gate result is consistent enough for the log to accept it.
+        let mut state = state;
+        state
+            .reduce_event(&SessionEvent::DeliveryGateEvaluated {
+                assessment: Box::new(assessment),
+            })
+            .expect("a ready verdict with no blockers is accepted");
+        assert!(state.delivery.unwrap().state.may_report_done());
+    }
+
+    #[test]
+    fn the_whole_history_would_have_blocked_it_forever() {
+        // Demonstrates why `outstanding_findings` exists rather than being a
+        // convenience: passing `findings` directly is the natural mistake, and
+        // it is silent.
+        let state = repaired_session();
+        let contract = state.expectation_contract.clone().unwrap();
+        let everything: Vec<ReviewFinding> = state.findings.values().cloned().collect();
+        let assessment = delivery::evaluate(DeliveryInputs {
+            contract: &contract,
+            findings: &everything,
+            validations: &[],
+            changed_paths: &[],
+            forbidden_prefixes: &[],
+            unresolved_conflicts: &[],
+        });
+        assert_eq!(
+            assessment.state,
+            DeliveryState::Blocked,
+            "the repaired finding still blocks when the caller passes the full history"
+        );
     }
 }

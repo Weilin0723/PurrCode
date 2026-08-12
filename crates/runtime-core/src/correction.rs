@@ -96,9 +96,15 @@ pub struct CorrectionLedger {
     /// by the repair agent saying so.
     #[serde(default)]
     pub repaired: Vec<FindingId>,
-    /// Findings that survived every cycle the budget allowed.
+    /// Findings the most recent cycle left open.
+    ///
+    /// Replaced each cycle rather than accumulated, because a finding that was
+    /// open after cycle one and fixed in cycle two is not still open. Only once
+    /// [`Self::may_correct`] returns `Exhausted` does this mean "gave up on
+    /// these" — see [`Self::abandoned`], which is the question callers actually
+    /// want to ask and which this field cannot answer on its own.
     #[serde(default)]
-    pub abandoned: Vec<FindingId>,
+    pub still_open: Vec<FindingId>,
 }
 
 impl CorrectionLedger {
@@ -145,7 +151,19 @@ impl CorrectionLedger {
     pub fn record_cycle(&mut self, repaired: Vec<FindingId>, still_open: Vec<FindingId>) {
         self.cycles_used += 1;
         self.repaired.extend(repaired);
-        self.abandoned = still_open;
+        self.still_open = still_open;
+    }
+
+    /// Findings the loop gave up on, once it has actually given up.
+    ///
+    /// Empty while cycles remain: a finding that is open mid-loop has not been
+    /// abandoned, it is being worked on, and telling the user otherwise would
+    /// report a failure that has not happened yet.
+    pub fn abandoned(&self, outstanding: &[&ReviewFinding]) -> Vec<FindingId> {
+        match self.may_correct(outstanding) {
+            CorrectionAllowance::Exhausted { .. } => self.still_open.clone(),
+            _ => Vec::new(),
+        }
     }
 
     /// The phase a task should move to once correction can go no further.
@@ -249,9 +267,33 @@ mod tests {
         let mut ledger = CorrectionLedger::default();
         ledger.record_cycle(vec![blocker.id], vec![]);
         assert_eq!(ledger.repaired, vec![blocker.id]);
-        assert!(ledger.abandoned.is_empty());
+        assert!(ledger.still_open.is_empty());
+        assert!(ledger.abandoned(&[]).is_empty());
         // Re-review found nothing blocking, so no further cycle is proposed.
         assert_eq!(ledger.may_correct(&[]), CorrectionAllowance::NothingToFix);
+    }
+
+    #[test]
+    fn a_finding_open_mid_loop_has_not_been_abandoned() {
+        // It is being worked on. Reporting it as given-up-on would tell the
+        // user about a failure that has not happened.
+        let blocker = finding(ReviewKind::UserAlignment, Severity::High);
+        let outstanding = vec![&blocker];
+        let mut ledger = CorrectionLedger::default();
+
+        ledger.record_cycle(vec![], vec![blocker.id]);
+        assert_eq!(ledger.still_open, vec![blocker.id]);
+        assert!(
+            ledger.abandoned(&outstanding).is_empty(),
+            "one cycle remains, so nothing has been given up on yet"
+        );
+
+        ledger.record_cycle(vec![], vec![blocker.id]);
+        assert_eq!(
+            ledger.abandoned(&outstanding),
+            vec![blocker.id],
+            "the budget is gone, so now it has"
+        );
     }
 
     #[test]

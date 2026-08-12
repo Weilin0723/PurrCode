@@ -157,6 +157,11 @@ impl RequiredValidation {
 #[derive(Clone, Copy, Debug)]
 pub struct DeliveryInputs<'a> {
     pub contract: &'a ExpectationContract,
+    /// Findings that are **still open**.
+    ///
+    /// Pass `SessionState::outstanding_findings()`, not the whole `findings`
+    /// map — that is the full history and never shrinks, so a finding the
+    /// correction loop already repaired would block delivery forever.
     pub findings: &'a [ReviewFinding],
     pub validations: &'a [RequiredValidation],
     /// Paths the diff touched, for the scope check.
