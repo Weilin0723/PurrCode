@@ -4,6 +4,7 @@ members = [
   "crates/pawgate-runtime",
   "crates/contextual-judgment",
   "crates/delegation-runtime",
+  "crates/alignment-runtime",
   "crates/ninelives-recovery",
   "crates/claw-sandbox",
   "crates/terminal-runtime",
