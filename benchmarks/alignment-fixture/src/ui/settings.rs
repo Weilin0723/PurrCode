@@ -158,7 +158,10 @@ mod tests {
     #[test]
     fn the_sidebar_lists_every_section() {
         let panel = SettingsPanel::new();
-        assert_eq!(panel.sidebar(), vec!["General", "Editor", "Network", "Models"]);
+        assert_eq!(
+            panel.sidebar(),
+            vec!["General", "Editor", "Network", "Models"]
+        );
     }
 
     #[test]

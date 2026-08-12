@@ -22,7 +22,11 @@ pub fn completed<'a>(jobs: &'a [Job], names: &[&str]) -> Vec<&'a Job> {
 }
 
 pub fn summary(jobs: &[Job], names: &[&str]) -> String {
-    format!("{} of {} job(s) finished", completed(jobs, names).len(), jobs.len())
+    format!(
+        "{} of {} job(s) finished",
+        completed(jobs, names).len(),
+        jobs.len()
+    )
 }
 
 #[cfg(test)]
