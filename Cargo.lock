@@ -3886,6 +3886,7 @@ dependencies = [
  "blake3",
  "chrono",
  "futures",
+ "purrcode-alignment-runtime",
  "purrcode-claw",
  "purrcode-contextual-judgment",
  "purrcode-ninelives",

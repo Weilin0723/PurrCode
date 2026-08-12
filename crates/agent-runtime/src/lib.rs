@@ -3,6 +3,7 @@
 #![allow(clippy::collapsible_if)]
 
 mod agent;
+mod alignment;
 mod context;
 mod errors;
 mod normalize;
@@ -19,6 +20,7 @@ pub use purrcode_whisker::{
 pub use crate::agent::{
     AgentCancellation, AgentOutcome, CapabilityResolution, NativeAgent, SkillResolver,
 };
+pub use crate::alignment::{AlignmentRuntime, AlignmentVerdict};
 pub use crate::context::{AgentContextIndex, AgentContextPolicy};
 pub use crate::errors::AgentError;
 pub use crate::schema::{AgentAction, AgentPlan, AgentTurn};

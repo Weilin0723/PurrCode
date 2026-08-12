@@ -6261,7 +6261,14 @@ async fn run_agent_operation(
             state: state.clone(),
             repository: repository.clone(),
             parent_ceiling,
-        }));
+        }))
+        // v1.5: compile what the user asked for, review the result against it
+        // without the implementer's transcript, and let the delivery gate
+        // decide when the session ends. Attached here and nowhere else —
+        // delegated workers run their own loop below and are not the thing
+        // being delivered, so a second gate around a fragment would only mean
+        // two places that can say "done".
+        .with_alignment();
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),

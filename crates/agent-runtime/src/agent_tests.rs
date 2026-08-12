@@ -2651,3 +2651,220 @@ fn session_id_of(outcome: &AgentOutcome) -> SessionId {
         | AgentOutcome::ActionExecuted { session_id, .. } => *session_id,
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// v1.5: the alignment loop, running
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The tests below drive the real `NativeAgent` loop with a scripted provider.
+// They exist because the v1.5 state machine passed its own tests for a whole
+// release while never running once: the contract type, the review type and the
+// gate were all correct, and nothing compiled a contract, so nothing gated
+// anything. A test that only exercises the reducer cannot tell the difference.
+
+/// A contract compiled from "Make the settings page simpler, but don't remove
+/// functionality". One hard requirement, quoting the user.
+fn compiled_contract_response() -> Value {
+    serde_json::json!({
+        "objective": "Simplify the settings page without losing capability",
+        "understanding": "You want settings to feel simpler with nothing disappearing.",
+        "clauses": [{
+            "statement": "Every setting that existed before is still reachable",
+            "strength": "required",
+            "acceptance_criteria": ["each previous setting is reachable from the window"],
+            "quotation": "don't remove functionality"
+        }],
+        "non_goals": [],
+        "assumptions": [],
+        "open_questions": []
+    })
+}
+
+/// A review that settles the single requirement one way or the other.
+fn review_response(verdict: &str, findings: Value) -> Value {
+    serde_json::json!({
+        "findings": findings,
+        "verdicts": [{
+            "requirement": 0,
+            "verdict": verdict,
+            "detail": "the previous settings are all reachable from the new layout",
+            "evidence": ["settings.rs:88"]
+        }]
+    })
+}
+
+fn alignment_agent(responses: Vec<Value>) -> NativeAgent<'static> {
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(responses)),
+    };
+    NativeAgent::new(role_map(provider), Policy::default())
+        .with_controls(build_controls())
+        .with_alignment()
+}
+
+const ALIGNMENT_OBJECTIVE: &str = "Make the settings page simpler, but don't remove functionality";
+
+#[tokio::test]
+async fn a_task_ends_when_the_gate_says_so_and_not_when_the_model_does() {
+    // Responses are popped from the end: contract, the model's turn claiming
+    // completion, then the three reviews.
+    let agent = alignment_agent(vec![
+        review_response("satisfied", serde_json::json!([])),
+        review_response("satisfied", serde_json::json!([])),
+        review_response("satisfied", serde_json::json!([])),
+        serde_json::json!({
+            "rationale": "The settings page now groups the advanced controls behind a disclosure, and every previous setting is still reachable from it.",
+            "action": null,
+            "complete": true
+        }),
+        compiled_contract_response(),
+    ]);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(&mut store, repository.path(), ALIGNMENT_OBJECTIVE)
+        .await
+        .unwrap();
+    let AgentOutcome::Completed { session_id, .. } = outcome else {
+        panic!("a verified contract with no findings must deliver: {outcome:?}");
+    };
+
+    let state = store.load(session_id).unwrap();
+    let contract = state
+        .expectation_contract
+        .as_ref()
+        .expect("the user's request became a contract");
+    assert_eq!(contract.tally().to_string(), "1 / 1 requirements verified");
+    assert_eq!(
+        contract.required().next().unwrap().source.quotation,
+        "don't remove functionality",
+        "the requirement carries the user's own words, not a paraphrase"
+    );
+
+    // Three reviews ran, none of them holding the implementer's transcript.
+    assert_eq!(state.reviews.len(), 3);
+    assert!(
+        state
+            .reviews
+            .values()
+            .all(|review| review.context == purrcode_runtime_core::review::ReviewContext::Fresh),
+        "the fresh-context reviewers are the only ones that ran"
+    );
+    // And the completion came after a gate the reducer computed.
+    let delivery = state.delivery.as_ref().expect("the gate ran");
+    assert!(delivery.may_report_done());
+    assert_eq!(state.status, SessionStatus::Completed);
+}
+
+#[tokio::test]
+async fn a_blocking_finding_turns_completion_into_a_correction_cycle() {
+    // The behaviour the whole release is for: the model says it is finished,
+    // an independent reviewer disagrees, and the session does not end.
+    let blocking = serde_json::json!([{
+        "severity": "high",
+        "category": "requirement_gap",
+        "requirement": 0,
+        "description": "eleven settings were deleted rather than collapsed",
+        "evidence": ["settings.rs:221"],
+        "affected_paths": ["settings.rs"],
+        "recommendation": "put them behind a disclosure instead of removing them"
+    }]);
+    // Popped from the end, so this reads bottom-up: the contract, the model's
+    // first completion claim, three reviews that disagree, a repair turn, three
+    // more reviews that still disagree, a second repair turn, and a final round.
+    // Two automatic cycles is the budget for a judgement-shaped finding.
+    let mut responses = vec![];
+    for _ in 0..3 {
+        responses.extend([
+            review_response("violated", blocking.clone()),
+            review_response("violated", blocking.clone()),
+            review_response("violated", blocking.clone()),
+        ]);
+        responses.push(serde_json::json!({
+            "rationale": "Restored the advanced settings behind a disclosure control.",
+            "action": null,
+            "complete": true
+        }));
+    }
+    responses.push(compiled_contract_response());
+    let agent = alignment_agent(responses);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(&mut store, repository.path(), ALIGNMENT_OBJECTIVE)
+        .await
+        .unwrap();
+
+    let session_id = match outcome {
+        AgentOutcome::AwaitingOutcomeReview { session_id, reason } => {
+            assert!(
+                reason.contains("correction"),
+                "the user is told what was tried: {reason}"
+            );
+            session_id
+        }
+        other => panic!("a violated requirement must not complete: {other:?}"),
+    };
+
+    let state = store.load(session_id).unwrap();
+    assert_ne!(state.status, SessionStatus::Completed);
+    assert!(
+        !state.blocking_findings().is_empty(),
+        "the finding is still open"
+    );
+    assert!(
+        state.correction_ledger.cycles_used >= 1,
+        "a repair cycle ran rather than the session ending on the model's claim"
+    );
+    assert!(
+        !state
+            .delivery
+            .as_ref()
+            .expect("the gate ran")
+            .may_report_done()
+    );
+}
+
+#[tokio::test]
+async fn a_contract_that_cannot_quote_the_user_leaves_the_session_saying_so() {
+    // The intent compiler refuses a clause the user never asked for. When that
+    // happens twice the session continues on the v1.4 path — which is an honest
+    // degradation, not a quiet one, so the conversation says it out loud.
+    let invented = serde_json::json!({
+        "objective": "Simplify settings",
+        "understanding": "…",
+        "clauses": [{
+            "statement": "Remove the advanced settings section",
+            "strength": "required",
+            "acceptance_criteria": ["the advanced section is gone"],
+            "quotation": "remove the advanced settings"
+        }],
+        "non_goals": [], "assumptions": [], "open_questions": []
+    });
+    let agent = alignment_agent(vec![
+        serde_json::json!({
+            "rationale": "The settings page now groups the advanced controls behind a disclosure control.",
+            "action": null,
+            "complete": true
+        }),
+        invented.clone(),
+        invented,
+    ]);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(&mut store, repository.path(), ALIGNMENT_OBJECTIVE)
+        .await
+        .unwrap();
+    let AgentOutcome::Completed { session_id, .. } = outcome else {
+        panic!("without a contract the session runs as v1.4 did: {outcome:?}");
+    };
+    let state = store.load(session_id).unwrap();
+    assert!(state.expectation_contract.is_none());
+    assert!(
+        state.conversation_messages.iter().any(|message| {
+            message.role == "system" && message.content.contains("without the delivery gate")
+        }),
+        "a run with no gate must say so rather than looking like a gated one"
+    );
+}

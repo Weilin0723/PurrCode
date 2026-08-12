@@ -10,6 +10,7 @@ blake3.workspace = true
 chrono.workspace = true
 futures.workspace = true
 purrcode-whisker = { path = "../whisker-context-engine" }
+purrcode-alignment-runtime = { path = "../alignment-runtime" }
 purrcode-contextual-judgment = { path = "../contextual-judgment" }
 purrcode-pawgate = { path = "../pawgate-runtime" }
 purrcode-provider-gateway = { path = "../provider-gateway" }

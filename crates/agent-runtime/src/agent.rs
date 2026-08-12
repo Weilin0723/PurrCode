@@ -257,6 +257,14 @@ pub struct NativeAgent<'a> {
     /// runtime, which is what bounds delegation depth to one level: a
     /// specialist has no planner, so its proposal is answered "unavailable".
     delegation_planner: Option<Arc<dyn DelegationPlanner>>,
+    /// The v1.5 alignment loop: compile the contract, review against it, and
+    /// let the delivery gate rather than the model decide when the task ends.
+    ///
+    /// Optional for the same reason the delegation planner is. A delegated
+    /// worker is not the thing being delivered — its changes are reviewed by
+    /// the parent's integration review — so a second contract and a second
+    /// gate around it would be a gate on a fragment.
+    alignment: Option<Arc<crate::alignment::AlignmentRuntime>>,
 }
 
 impl<'a> NativeAgent<'a> {
@@ -281,6 +289,7 @@ impl<'a> NativeAgent<'a> {
             tool_executor: None,
             hook_evaluator: None,
             delegation_planner: None,
+            alignment: None,
         }
     }
 
@@ -395,9 +404,102 @@ impl<'a> NativeAgent<'a> {
         self
     }
 
+    /// Turn on the v1.5 alignment loop for this session.
+    ///
+    /// Without it the session behaves as v1.4 did: the model says when it is
+    /// finished. With it, the first turn compiles a contract, every prompt
+    /// carries it, and completion is a gate reading the log rather than a claim
+    /// in a transcript. The routes come from the session's own role map, so a
+    /// deployment that points `reviewer` at a different model gets a reviewer
+    /// that does not share the coder's blind spots.
+    pub fn with_alignment(mut self) -> Self {
+        let route = |role: &str| {
+            let (provider, model) = self.model_for(role);
+            purrcode_alignment_runtime::ModelRoute::new(provider.clone(), model.clone())
+        };
+        self.alignment = Some(Arc::new(crate::alignment::AlignmentRuntime::new(
+            route("planner"),
+            route("reviewer"),
+            route("alignment_reviewer"),
+        )));
+        self
+    }
+
     /// The active profile, if any.
     pub fn profile(&self) -> Option<&AgentDescriptor> {
         self.profile.as_ref()
+    }
+
+    /// Review the work against the contract and ask the gate whether it may be
+    /// delivered (v1.5 §12).
+    ///
+    /// A no-op when the session has no alignment runtime or no contract, which
+    /// is what keeps a v1.4 session behaving exactly as it did.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_delivery_gate(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        session_worktree: &purrcode_repository_engine::SessionWorktree,
+        worktree: &std::path::Path,
+        validations: &[purrcode_runtime_core::expectation::RequiredValidation],
+        alignment_rounds: u8,
+        pending_correction: &mut Option<(u32, Vec<purrcode_runtime_core::review::FindingId>)>,
+        alignment_brief: &mut Option<String>,
+    ) -> Result<GateDecision, AgentError> {
+        let Some(alignment) = self.alignment.clone() else {
+            return Ok(GateDecision::Deliver);
+        };
+        if store.load(session_id)?.expectation_contract.is_none() {
+            return Ok(GateDecision::Deliver);
+        }
+        let cycle = store.load(session_id)?.correction_ledger.cycles_used;
+        let assessment = alignment
+            .review_and_gate(
+                store,
+                session_id,
+                session_worktree,
+                &repository_rules(worktree),
+                validations,
+                cycle,
+                pending_correction.take(),
+            )
+            .await?;
+        let current = store.load(session_id)?;
+        match crate::alignment::decide(&current, &assessment, alignment_rounds) {
+            crate::alignment::AlignmentVerdict::Deliver => Ok(GateDecision::Deliver),
+            crate::alignment::AlignmentVerdict::KeepWorking { brief } => {
+                *alignment_brief = Some(brief);
+                Ok(GateDecision::KeepGoing)
+            }
+            crate::alignment::AlignmentVerdict::Correct {
+                cycle,
+                findings,
+                brief,
+            } => {
+                store.append(
+                    session_id,
+                    &SessionEvent::CorrectionStarted {
+                        cycle,
+                        findings: findings.clone(),
+                    },
+                )?;
+                *pending_correction = Some((cycle, findings));
+                *alignment_brief = Some(brief);
+                Ok(GateDecision::KeepGoing)
+            }
+            crate::alignment::AlignmentVerdict::HandBack { reason } => {
+                store.append(
+                    session_id,
+                    &SessionEvent::OutcomeReviewRequired {
+                        reason: reason.clone(),
+                    },
+                )?;
+                Ok(GateDecision::HandBack(
+                    AgentOutcome::AwaitingOutcomeReview { session_id, reason },
+                ))
+            }
+        }
     }
 
     /// The registry-generated tool manifest for the prompt, or `None` when no
@@ -2390,6 +2492,14 @@ impl<'a> NativeAgent<'a> {
         // model that keeps proposing workers instead of doing the work runs
         // out of ways to avoid it.
         let mut delegation_rounds = 0_usize;
+        // ── v1.5 alignment loop state ────────────────────────────────────
+        // How many times the gate has sent the agent back to unfinished
+        // requirements, the repair cycle currently in flight, and the message
+        // that carries either of those into the next turn.
+        let mut alignment_rounds = 0_u8;
+        let mut pending_correction: Option<(u32, Vec<purrcode_runtime_core::review::FindingId>)> =
+            None;
+        let mut alignment_brief: Option<String> = None;
         let mut iteration = 0_usize;
         for _ in 0..MAX_AUTONOMOUS_ITERATIONS {
             iteration += 1;
@@ -2460,6 +2570,29 @@ impl<'a> NativeAgent<'a> {
                 })
                 .or_else(|| state.objective.clone())
                 .ok_or_else(|| AgentError::CorruptSession("objective is missing".into()))?;
+            // ── v1.5 §3: what the user asked for, written down ────────────
+            //
+            // On the first pass of a session this compiles the request into a
+            // contract; on the first pass after a follow-up it compiles the
+            // correction into a revision, so that work done under the old
+            // wording stops counting as progress. Both are done before the
+            // request is assembled, because the contract is what the request
+            // carries.
+            if let Some(alignment) = self.alignment.clone()
+                && iteration == 1
+                && !self.controls.task_mode.read_only()
+            {
+                if state.expectation_contract.is_none() {
+                    alignment
+                        .establish_contract(store, session_id, &state, &objective)
+                        .await?;
+                } else if follow_up.is_some() {
+                    alignment
+                        .record_correction(store, session_id, &state, &objective)
+                        .await?;
+                }
+                state = store.load(session_id)?;
+            }
             let related_paths = task_related_paths(&state);
             let tracker = self.begin_stream_observation("coding_worker", 1).await?;
             let context_database = worktree.join(".purrcode").join("context.db");
@@ -2594,6 +2727,31 @@ impl<'a> NativeAgent<'a> {
                      you could finish in this turn."
                 ),
                 _ => contract_content,
+            };
+            // v1.5 §4: the contract goes into every prompt, in full.
+            //
+            // This is the whole reason it is stored. The model is never asked
+            // to recall what the user wanted forty turns ago — it is told, every
+            // time, in a form short enough to include unconditionally. A brief
+            // that were only sent "when relevant" would be absent exactly when
+            // the model had already drifted.
+            let contract_content = match state.expectation_contract.as_ref() {
+                Some(active) => format!(
+                    "{contract_content}\n\n{}\n\nCOMPLETION: you do not decide when this task is \
+                     done. When you believe the work is finished, say so and the runtime runs \
+                     independent review and a delivery gate against the requirements above. \
+                     Claiming completion early costs a review round and changes nothing.",
+                    active.brief()
+                ),
+                None => contract_content,
+            };
+            // A gate result the agent has to act on — unfinished requirements,
+            // or findings to repair. Carried on the same system message as the
+            // contract so it reaches the model through every assembly path,
+            // including the two that rebuild the request after compaction.
+            let contract_content = match alignment_brief.take() {
+                Some(brief) => format!("{contract_content}\n\n{brief}"),
+                None => contract_content,
             };
             let contract = ModelMessage {
                 role: "system".into(),
@@ -3292,6 +3450,31 @@ impl<'a> NativeAgent<'a> {
             if turn.complete {
                 if self.controls.task_mode.read_only() || objective_requests_advice_only(&objective)
                 {
+                    // A session that has a contract is held to it even on a
+                    // turn that only answers a question. Otherwise "explain
+                    // what you changed" would be a door out of the gate: the
+                    // work is unfinished, the objective reads as advice-only,
+                    // and the session ends.
+                    match self
+                        .run_delivery_gate(
+                            store,
+                            session_id,
+                            &session_worktree,
+                            &worktree,
+                            &[],
+                            alignment_rounds,
+                            &mut pending_correction,
+                            &mut alignment_brief,
+                        )
+                        .await?
+                    {
+                        GateDecision::Deliver => {}
+                        GateDecision::KeepGoing => {
+                            alignment_rounds = alignment_rounds.saturating_add(1);
+                            continue;
+                        }
+                        GateDecision::HandBack(outcome) => return Ok(outcome),
+                    }
                     store.append(session_id, &SessionEvent::SessionCompleted)?;
                     if let Some(hook_action_id) = self
                         .fire_hook(
@@ -3403,6 +3586,35 @@ impl<'a> NativeAgent<'a> {
                                 });
                             }
                         }
+                    }
+                    // ── v1.5 §12: the delivery gate ───────────────────────
+                    //
+                    // Everything above this point is the v1.4 bar: the code
+                    // builds, the tests pass, the plan's tasks closed. None of
+                    // it says the change is the one the user asked for, and
+                    // that is the failure this release exists to stop. So the
+                    // reviewers read the diff without the transcript, the gate
+                    // reads the log, and completion happens or does not happen
+                    // on what they find.
+                    match self
+                        .run_delivery_gate(
+                            store,
+                            session_id,
+                            &session_worktree,
+                            &worktree,
+                            &required_validations(&report),
+                            alignment_rounds,
+                            &mut pending_correction,
+                            &mut alignment_brief,
+                        )
+                        .await?
+                    {
+                        GateDecision::Deliver => {}
+                        GateDecision::KeepGoing => {
+                            alignment_rounds = alignment_rounds.saturating_add(1);
+                            continue;
+                        }
+                        GateDecision::HandBack(outcome) => return Ok(outcome),
                     }
                     store.append(session_id, &SessionEvent::SessionCompleted)?;
                     if let Some(hook_action_id) = self
@@ -4297,6 +4509,76 @@ fn per_file_evidence(
     evidence
 }
 
+/// The deterministic checks the delivery gate is told this task required.
+///
+/// Only checks that *happened* are declared: a stage that ran and passed, and a
+/// stage that ran and failed. A stage that was unavailable, undetected or
+/// skipped is left off, because the validation policy has already decided about
+/// those and a gate that treated "this project has no test runner" as a failure
+/// would never clear for such a project. The rule that keeps this honest lives
+/// in the reducer, not here: a check the log records as failing cannot be
+/// omitted from this list, so a caller that quietly narrowed it is refused.
+///
+/// Stage names must match what the log recorded, which is the serde name of
+/// `ValidationStage` — derived rather than formatted, so a rename cannot make
+/// the declaration silently stop matching the record.
+fn required_validations(
+    report: &purrcode_validation_runtime::ValidationReport,
+) -> Vec<purrcode_runtime_core::expectation::RequiredValidation> {
+    let mut latest: BTreeMap<String, ValidationStatus> = BTreeMap::new();
+    for evidence in &report.evidence {
+        let status = match evidence.status {
+            EvidenceStatus::Passed => ValidationStatus::Passed,
+            EvidenceStatus::Failed => ValidationStatus::Failed,
+            EvidenceStatus::TimedOut => ValidationStatus::TimedOut,
+            EvidenceStatus::Uncertain => ValidationStatus::Uncertain,
+            _ => continue,
+        };
+        let Ok(serde_json::Value::String(name)) = serde_json::to_value(evidence.stage) else {
+            continue;
+        };
+        latest.insert(name, status);
+    }
+    latest
+        .into_iter()
+        .map(
+            |(name, status)| purrcode_runtime_core::expectation::RequiredValidation {
+                name,
+                status,
+            },
+        )
+        .collect()
+}
+
+/// The repository's own rules, for the reviewers.
+///
+/// A reviewer that does not know a project bans `unwrap()` in library code
+/// reports its absence as fine, and one that does not know the house style
+/// reports the house style as a problem. Best-effort and bounded: a missing
+/// file means the reviewer judges the change on its own terms, which is the
+/// same position a new colleague would be in.
+fn repository_rules(worktree: &std::path::Path) -> String {
+    const MAXIMUM_RULE_CHARACTERS: usize = 12_000;
+    let mut out = String::new();
+    for name in ["AGENTS.md", "CLAUDE.md", ".purrcode/rules.md"] {
+        let Ok(contents) = std::fs::read_to_string(worktree.join(name)) else {
+            continue;
+        };
+        out.push_str(&format!("--- {name} ---\n"));
+        out.push_str(
+            &contents
+                .chars()
+                .take(MAXIMUM_RULE_CHARACTERS)
+                .collect::<String>(),
+        );
+        out.push('\n');
+        if out.chars().count() >= MAXIMUM_RULE_CHARACTERS {
+            break;
+        }
+    }
+    out
+}
+
 fn repair_stages(
     report: &purrcode_validation_runtime::ValidationReport,
 ) -> BTreeSet<ValidationStage> {
@@ -5155,6 +5437,19 @@ fn native_evidence_draft(
 }
 
 #[derive(Clone, Debug)]
+/// What the delivery gate told the loop to do.
+///
+/// Three answers rather than a boolean, because "not deliverable" splits into
+/// two situations the loop handles differently: one where another turn can help
+/// and one where only the user can.
+enum GateDecision {
+    Deliver,
+    /// Another turn, with the gate's reason in front of the model.
+    KeepGoing,
+    HandBack(AgentOutcome),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentOutcome {
     AwaitingApproval {
         session_id: SessionId,
