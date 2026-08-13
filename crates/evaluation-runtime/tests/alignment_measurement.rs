@@ -37,10 +37,73 @@ use serde_json::{Value, json};
 
 // ── The harness ────────────────────────────────────────────────────────────
 
-/// Returns scripted responses in order, so one test can stand in for a whole
-/// run: the contract, the model's turn, and the three reviews.
+/// Returns scripted responses, so one test can stand in for a whole run: the
+/// contract, the model's turn(s), and the three reviews.
+///
+/// Routed by *what the caller asked for* — which of `AgentTurn`,
+/// `DraftContract` or `DraftReview`'s own properties the request schema
+/// carries — rather than by one flat call-order stack. The three roles this
+/// test exercises do not take a fixed number of turns to reach a stable state
+/// (v1.4's plan/compaction/repair machinery can legitimately ask the
+/// coding-worker role more than once before the turn the test cares about),
+/// so a single shared stack is coupled to an exact call count the test has no
+/// business asserting. Each kind keeps its own queue, consumed in the order
+/// given, which is the only ordering these tests actually mean to fix.
 struct ScriptedProvider {
-    responses: Mutex<Vec<Value>>,
+    turns: Mutex<Vec<Value>>,
+    contracts: Mutex<Vec<Value>>,
+    reviews: Mutex<Vec<Value>>,
+}
+
+impl ScriptedProvider {
+    /// Sorts one flat, "reverse consumption order" list into the three typed
+    /// queues, by the shape of each scripted value rather than its position.
+    /// Relative order within a kind is preserved, since sorting only removes
+    /// items of the *other* kinds from between them.
+    fn new(responses: Vec<Value>) -> Self {
+        let mut turns = Vec::new();
+        let mut contracts = Vec::new();
+        let mut reviews = Vec::new();
+        for value in responses {
+            let bucket = if value.get("complete").is_some() {
+                &mut turns
+            } else if value.get("clauses").is_some() {
+                &mut contracts
+            } else if value.get("verdicts").is_some() {
+                &mut reviews
+            } else {
+                panic!("a scripted response matches none of this harness's known shapes: {value}")
+            };
+            bucket.push(value);
+        }
+        Self {
+            turns: Mutex::new(turns),
+            contracts: Mutex::new(contracts),
+            reviews: Mutex::new(reviews),
+        }
+    }
+
+    fn queue_for(&self, schema: &schemars::schema::RootSchema) -> &Mutex<Vec<Value>> {
+        let has_property = |name: &str| {
+            schema
+                .schema
+                .object
+                .as_ref()
+                .is_some_and(|object| object.properties.contains_key(name))
+        };
+        if has_property("complete") {
+            &self.turns
+        } else if has_property("clauses") {
+            &self.contracts
+        } else if has_property("verdicts") {
+            &self.reviews
+        } else {
+            panic!(
+                "ScriptedProvider was asked for a schema this harness does not \
+                 recognise: {schema:?}"
+            )
+        }
+    }
 }
 
 #[async_trait]
@@ -54,9 +117,9 @@ impl ModelProvider for ScriptedProvider {
     async fn structured(
         &self,
         _request: ModelRequest,
-        _schema: schemars::schema::RootSchema,
+        schema: schemars::schema::RootSchema,
     ) -> Result<Value, ProviderError> {
-        self.responses
+        self.queue_for(&schema)
             .lock()
             .unwrap()
             .pop()
@@ -77,9 +140,7 @@ impl ModelProvider for ScriptedProvider {
 }
 
 fn agent(responses: Vec<Value>) -> NativeAgent<'static> {
-    let shared: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider {
-        responses: Mutex::new(responses),
-    });
+    let shared: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(responses));
     let model = ModelId::parse("local/test").unwrap();
     let mut routes = BTreeMap::new();
     for role in [
@@ -244,17 +305,27 @@ async fn a_run_its_own_reviewers_waved_through_still_fails_on_the_tree() {
     // A benchmark that scored from the session's own reviewers would call this
     // a pass, and it is precisely the failure v1.5 exists to detect.
     let task = catalog_task("rename-constant");
+    let done = || {
+        json!({
+            "rationale": "Renamed MAX_RETRIES to MAXIMUM_RETRY_ATTEMPTS across src/retry.rs and updated every use.",
+            "action": null,
+            "complete": true
+        })
+    };
     let outcome = measure(
         &task,
         vec![
             review("satisfied", json!([])),
             review("satisfied", json!([])),
             review("satisfied", json!([])),
-            json!({
-                "rationale": "Renamed MAX_RETRIES to MAXIMUM_RETRY_ATTEMPTS across src/retry.rs and updated every use.",
-                "action": null,
-                "complete": true
-            }),
+            // A generous supply of the same completion claim: how many turns
+            // the v1.4 machinery underneath (plan/compaction/repair) takes to
+            // settle on this one is not what this test is about, and is not
+            // guaranteed to be exactly one.
+            done(),
+            done(),
+            done(),
+            done(),
             compiled_contract("Rename MAX_RETRIES to MAXIMUM_RETRY_ATTEMPTS"),
         ],
     )
@@ -298,11 +369,19 @@ async fn a_run_the_gate_stopped_is_measured_as_stopped() {
     }]);
     // Three review rounds and three completion claims: the first, and one after
     // each of the two automatic correction cycles a judgement finding allows.
+    // Padded with a few extra of each — how many turns the v1.4 machinery
+    // underneath takes to reach a given completion claim, and how many times
+    // a round's reviews get asked for, are not what this test is about.
     let mut responses = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..4 {
         for _ in 0..3 {
             responses.push(review("violated", blocking.clone()));
         }
+        responses.push(json!({
+            "rationale": "Renamed the constant and updated its uses.",
+            "action": null,
+            "complete": true
+        }));
         responses.push(json!({
             "rationale": "Renamed the constant and updated its uses.",
             "action": null,
@@ -362,14 +441,23 @@ async fn a_session_that_never_compiled_a_contract_is_reported_as_ungated() {
         }],
         "non_goals": [], "assumptions": [], "open_questions": []
     });
+    let done = || {
+        json!({
+            "rationale": "Renamed MAX_RETRIES across the crate.",
+            "action": null,
+            "complete": true
+        })
+    };
     let outcome = measure(
         &task,
         vec![
-            json!({
-                "rationale": "Renamed MAX_RETRIES across the crate.",
-                "action": null,
-                "complete": true
-            }),
+            // A generous supply: how many turns the v1.4 machinery underneath
+            // takes to reach this completion claim is not what this test is
+            // about.
+            done(),
+            done(),
+            done(),
+            done(),
             invented.clone(),
             invented,
         ],
