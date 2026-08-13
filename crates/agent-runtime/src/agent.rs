@@ -2879,6 +2879,10 @@ impl<'a> NativeAgent<'a> {
                 Ok(result) => result,
                 Err(first_error) if first_error.is_cancelled() => return Err(first_error),
                 Err(first_error) => {
+                    eprintln!(
+                        "DEBUG_FIRST_ERROR is_context_too_large={} error={first_error:?}",
+                        first_error.is_context_too_large()
+                    );
                     // P0: If the provider rejected the request because context
                     // is too large, trigger compaction+rebuild instead of
                     // pushing a repair message that would make it worse.
