@@ -305,27 +305,17 @@ async fn a_run_its_own_reviewers_waved_through_still_fails_on_the_tree() {
     // A benchmark that scored from the session's own reviewers would call this
     // a pass, and it is precisely the failure v1.5 exists to detect.
     let task = catalog_task("rename-constant");
-    let done = || {
-        json!({
-            "rationale": "Renamed MAX_RETRIES to MAXIMUM_RETRY_ATTEMPTS across src/retry.rs and updated every use.",
-            "action": null,
-            "complete": true
-        })
-    };
     let outcome = measure(
         &task,
         vec![
             review("satisfied", json!([])),
             review("satisfied", json!([])),
             review("satisfied", json!([])),
-            // A generous supply of the same completion claim: how many turns
-            // the v1.4 machinery underneath (plan/compaction/repair) takes to
-            // settle on this one is not what this test is about, and is not
-            // guaranteed to be exactly one.
-            done(),
-            done(),
-            done(),
-            done(),
+            json!({
+                "rationale": "Renamed MAX_RETRIES to MAXIMUM_RETRY_ATTEMPTS across src/retry.rs and updated every use.",
+                "action": null,
+                "complete": true
+            }),
             compiled_contract("Rename MAX_RETRIES to MAXIMUM_RETRY_ATTEMPTS"),
         ],
     )
@@ -369,19 +359,11 @@ async fn a_run_the_gate_stopped_is_measured_as_stopped() {
     }]);
     // Three review rounds and three completion claims: the first, and one after
     // each of the two automatic correction cycles a judgement finding allows.
-    // Padded with a few extra of each — how many turns the v1.4 machinery
-    // underneath takes to reach a given completion claim, and how many times
-    // a round's reviews get asked for, are not what this test is about.
     let mut responses = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..3 {
         for _ in 0..3 {
             responses.push(review("violated", blocking.clone()));
         }
-        responses.push(json!({
-            "rationale": "Renamed the constant and updated its uses.",
-            "action": null,
-            "complete": true
-        }));
         responses.push(json!({
             "rationale": "Renamed the constant and updated its uses.",
             "action": null,
@@ -441,23 +423,14 @@ async fn a_session_that_never_compiled_a_contract_is_reported_as_ungated() {
         }],
         "non_goals": [], "assumptions": [], "open_questions": []
     });
-    let done = || {
-        json!({
-            "rationale": "Renamed MAX_RETRIES across the crate.",
-            "action": null,
-            "complete": true
-        })
-    };
     let outcome = measure(
         &task,
         vec![
-            // A generous supply: how many turns the v1.4 machinery underneath
-            // takes to reach this completion claim is not what this test is
-            // about.
-            done(),
-            done(),
-            done(),
-            done(),
+            json!({
+                "rationale": "Renamed MAX_RETRIES across the crate.",
+                "action": null,
+                "complete": true
+            }),
             invented.clone(),
             invented,
         ],
