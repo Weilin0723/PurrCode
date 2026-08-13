@@ -128,14 +128,21 @@ impl CorrectionLedger {
 
     /// Decide whether to run another correction cycle.
     pub fn may_correct(&self, outstanding: &[&ReviewFinding]) -> CorrectionAllowance {
-        let blocking: Vec<&&ReviewFinding> = outstanding
+        let blocking: Vec<&ReviewFinding> = outstanding
             .iter()
             .filter(|finding| finding.invites_automatic_repair())
+            .copied()
             .collect();
         if blocking.is_empty() {
             return CorrectionAllowance::NothingToFix;
         }
-        let allowed = Self::allowance_for(outstanding);
+        // The allowance looks at what actually enters the repair loop, not
+        // every outstanding finding. A non-blocking judgement-kind finding
+        // sitting alongside a purely mechanical failure — a lint note next to
+        // a build error, say — must not pull a deterministic budget down to
+        // the tighter one; it never reaches the repair agent, so it cannot be
+        // part of what the loop is waiting to converge on.
+        let allowed = Self::allowance_for(&blocking);
         if self.cycles_used >= allowed {
             return CorrectionAllowance::Exhausted {
                 cycles_used: self.cycles_used,
