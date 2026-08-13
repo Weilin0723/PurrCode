@@ -546,7 +546,14 @@ fn assemble_revision(
                     continue;
                 }
                 // Promotion needs something that can check the clause, or the
-                // resulting contract would not validate.
+                // resulting contract would not validate. Dropping the change
+                // here rather than erroring would make it silent: a
+                // strengthen with nowhere else to go in this revision leaves
+                // `changes` empty, `assemble_revision` reads as a no-op, and
+                // `record_correction` treats that identically to "thanks" —
+                // the correction simply vanishes with no trace anywhere. That
+                // is the exact failure this crate exists to stop, so it is
+                // refused loudly instead, the same way an unquoted clause is.
                 if to == ExpectationStrength::Required && clause.acceptance_criteria.is_empty() {
                     let criteria: Vec<AcceptanceCriterion> = change
                         .acceptance_criteria
@@ -558,7 +565,12 @@ fn assemble_revision(
                         })
                         .collect();
                     if criteria.is_empty() {
-                        continue;
+                        return Err(AlignmentError::Unfaithful(format!(
+                            "\"{}\" would need to become required, but nothing was given \
+                             that could check it — say one concrete thing that would prove \
+                             it's done, and it can become required",
+                            clause.statement
+                        )));
                     }
                     changes.push(ContractChange::AcceptanceCriteriaSet {
                         id: clause.id,
@@ -866,5 +878,53 @@ mod tests {
             .await
             .expect_err("an empty revision is not a revision");
         assert!(matches!(error, AlignmentError::Invalid(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn strengthening_a_clause_with_nothing_that_could_check_it_is_refused_not_dropped() {
+        // The bug this guards: "strengthen" with no acceptance_criteria used
+        // to `continue` past both pushes, so a revision containing only this
+        // change ended up with an empty `changes` list — indistinguishable
+        // from a correction that changed nothing, and silently discarded by
+        // `record_correction` without a trace anywhere. A user who says
+        // "actually that's not optional" deserves better than the correction
+        // vanishing.
+        let provider = ScriptedProvider::new(vec![faithful()]);
+        let contract = IntentCompiler::new(route(provider))
+            .compile(&request())
+            .await
+            .unwrap()
+            .contract;
+        // Index 1 is `faithful()`'s preferred clause with no acceptance
+        // criteria: "The Settings page reads as less busy".
+        assert!(!contract.clauses[1].is_required());
+        assert!(contract.clauses[1].acceptance_criteria.is_empty());
+
+        let revising = ScriptedProvider::new(vec![json!({
+            "reason": "the user says decluttering settings is not optional",
+            "quotation": "it's not optional",
+            "changes": [{
+                "kind": "strengthen",
+                "requirement": 1,
+                "statement": null,
+                "acceptance_criteria": [],
+                "reason": null
+            }]
+        })]);
+        let error = IntentCompiler::new(route(revising))
+            .revise(
+                &contract,
+                &IntentRequest::from_messages(vec![REQUEST.into(), "it's not optional".into()]),
+            )
+            .await
+            .expect_err("a strengthen with nothing to check it must not silently vanish");
+        assert!(
+            matches!(error, AlignmentError::Unfaithful(_)),
+            "must be surfaced to the user rather than swallowed as a no-op: {error:?}"
+        );
+        assert!(
+            error.to_string().contains("less busy"),
+            "the message should name the clause that could not be strengthened: {error}"
+        );
     }
 }
