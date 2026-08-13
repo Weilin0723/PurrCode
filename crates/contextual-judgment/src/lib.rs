@@ -65,7 +65,7 @@ impl<'a> ContextualJudge<'a> {
                 },
             ],
             tools: Vec::new(),
-            max_output_tokens: Some(1024),
+            max_output_tokens: Some(8192),
             reasoning_effort: Some("medium".into()),
         };
         let value = self
@@ -136,7 +136,7 @@ impl<'a> ContextualJudge<'a> {
                 },
             ],
             tools: Vec::new(),
-            max_output_tokens: Some(1024),
+            max_output_tokens: Some(8192),
             reasoning_effort: Some("high".into()),
         };
         let value = self

@@ -951,10 +951,6 @@ impl<'a> NativeAgent<'a> {
         T: DeserializeOwned,
         V: FnOnce(&T) -> Result<(), AgentError>,
     {
-        eprintln!(
-            "DEBUG_CALL thread={:?} role={role} attempt={attempt}",
-            std::thread::current().name()
-        );
         let provider = self.provider_for(role);
         let (request, estimated_input_tokens) =
             self.prepare_model_request(provider, request).await?;
@@ -1622,7 +1618,7 @@ impl<'a> NativeAgent<'a> {
             model: planner.1.clone(),
             messages: build_plan_messages(objective, worktree, &hits, revision),
             tools: Vec::new(),
-            max_output_tokens: Some(4096),
+            max_output_tokens: Some(16384),
             reasoning_effort: None,
         };
         let first = self
@@ -1724,7 +1720,7 @@ impl<'a> NativeAgent<'a> {
                 model: model.clone(),
                 messages: messages.clone(),
                 tools: Vec::new(),
-                max_output_tokens: Some(4096),
+                max_output_tokens: Some(16384),
                 reasoning_effort: None,
             };
 
@@ -2863,7 +2859,7 @@ impl<'a> NativeAgent<'a> {
                 model: self.model_for("coding_worker").1.clone(),
                 messages,
                 tools: Vec::new(),
-                max_output_tokens: Some(4096),
+                max_output_tokens: Some(16384),
                 reasoning_effort: None,
             };
             let first = self
@@ -2879,23 +2875,9 @@ impl<'a> NativeAgent<'a> {
                 )
                 .await;
             let (mut turn, mut usage) = match first {
-                Ok(result) => {
-                    eprintln!(
-                        "DEBUG_FIRST_OK thread={:?} complete={} has_action={} rationale={:?}",
-                        std::thread::current().name(),
-                        result.0.complete,
-                        result.0.action.is_some(),
-                        result.0.rationale.chars().take(60).collect::<String>()
-                    );
-                    result
-                }
+                Ok(result) => result,
                 Err(first_error) if first_error.is_cancelled() => return Err(first_error),
                 Err(first_error) => {
-                    eprintln!(
-                        "DEBUG_FIRST_ERROR thread={:?} is_context_too_large={} error={first_error:?}",
-                        std::thread::current().name(),
-                        first_error.is_context_too_large()
-                    );
                     // P0: If the provider rejected the request because context
                     // is too large, trigger compaction+rebuild instead of
                     // pushing a repair message that would make it worse.
@@ -2947,7 +2929,7 @@ impl<'a> NativeAgent<'a> {
                             model: self.model_for("coding_worker").1.clone(),
                             messages: rebuilt_msgs,
                             tools: Vec::new(),
-                            max_output_tokens: Some(4096),
+                            max_output_tokens: Some(16384),
                             reasoning_effort: None,
                         };
                         self.structured_observed(

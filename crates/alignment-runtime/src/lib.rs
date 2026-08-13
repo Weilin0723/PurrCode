@@ -94,17 +94,11 @@ impl ModelRoute {
         messages: Vec<ModelMessage>,
         schema: RootSchema,
     ) -> Result<(T, Usage), AlignmentError> {
-        eprintln!(
-            "DEBUG_ALIGNMENT_CALL thread={:?} model={} messages={}",
-            std::thread::current().name(),
-            self.model.model,
-            messages.len()
-        );
         let request = ModelRequest {
             model: self.model.clone(),
             messages,
             tools: Vec::new(),
-            max_output_tokens: Some(4096),
+            max_output_tokens: Some(16384),
             reasoning_effort: None,
         };
         let mut stream = self.provider.structured_stream(request, schema).await?;
