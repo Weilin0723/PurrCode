@@ -2879,7 +2879,16 @@ impl<'a> NativeAgent<'a> {
                 )
                 .await;
             let (mut turn, mut usage) = match first {
-                Ok(result) => result,
+                Ok(result) => {
+                    eprintln!(
+                        "DEBUG_FIRST_OK thread={:?} complete={} has_action={} rationale={:?}",
+                        std::thread::current().name(),
+                        result.0.complete,
+                        result.0.action.is_some(),
+                        result.0.rationale.chars().take(60).collect::<String>()
+                    );
+                    result
+                }
                 Err(first_error) if first_error.is_cancelled() => return Err(first_error),
                 Err(first_error) => {
                     eprintln!(
