@@ -1487,6 +1487,17 @@ pub enum SessionEvent {
         sandbox_level: Option<String>,
         #[serde(default)]
         sandbox_backend: Option<String>,
+        /// What the repository diff actually shows changed, for every action
+        /// kind — not just the native write/delete actions whose path is
+        /// known in advance. A shell command or a non-native tool can touch
+        /// files no `ProposedAction` variant names, and `changed_paths`
+        /// (the sole input to the `ScopeEscape` non-goal check) must see
+        /// those too, or a stated non-goal like "don't touch the editor" is
+        /// enforceable only against the one way an agent could violate it
+        /// that happens to use a native write. `#[serde(default)]` so a
+        /// durable event recorded before this field existed still replays.
+        #[serde(default)]
+        affected_paths: Vec<PathBuf>,
     },
     ActionOutputRecorded {
         action_id: ActionId,
@@ -3150,20 +3161,33 @@ impl SessionState {
             SessionEvent::ExecutionStarted { action_id } => {
                 self.status = SessionStatus::Executing(*action_id);
             }
-            SessionEvent::ExecutionFinished { action_id, .. } => {
+            SessionEvent::ExecutionFinished {
+                action_id,
+                affected_paths,
+                ..
+            } => {
                 self.status = SessionStatus::Active;
                 // The scope check reads what the session actually touched. An
                 // agent that quietly edited the editor while working on
                 // settings does not mention having done so, which is precisely
-                // why the gate must not ask it.
-                match self.proposed_actions.get(action_id) {
-                    Some(ProposedAction::WriteFile(write)) => {
-                        self.changed_paths.insert(write.path.clone());
+                // why the gate must not ask it — and that holds regardless of
+                // which action kind did the touching, so `affected_paths`
+                // (the real repository diff, computed for every action) is
+                // the primary source. The per-variant match stays as a
+                // fallback for durable events recorded before that field
+                // existed, where it is empty on replay.
+                if affected_paths.is_empty() {
+                    match self.proposed_actions.get(action_id) {
+                        Some(ProposedAction::WriteFile(write)) => {
+                            self.changed_paths.insert(write.path.clone());
+                        }
+                        Some(ProposedAction::DeleteFile(delete)) => {
+                            self.changed_paths.insert(delete.path.clone());
+                        }
+                        _ => {}
                     }
-                    Some(ProposedAction::DeleteFile(delete)) => {
-                        self.changed_paths.insert(delete.path.clone());
-                    }
-                    _ => {}
+                } else {
+                    self.changed_paths.extend(affected_paths.iter().cloned());
                 }
             }
             SessionEvent::ValidationRecorded {
@@ -4668,9 +4692,70 @@ mod tests {
                 truncated: false,
                 sandbox_level: None,
                 sandbox_backend: None,
+                affected_paths: Vec::new(),
             })
             .unwrap();
         assert_eq!(state.status, SessionStatus::Active);
+    }
+
+    #[test]
+    fn a_command_actions_effect_is_seen_by_the_scope_check_same_as_a_write() {
+        // The bug this guards: only WriteFile/DeleteFile used to populate
+        // `changed_paths`, so a shell command that edited a forbidden path —
+        // `sed -i` on src/editor/foo.rs when the contract's non-goal is "don't
+        // touch the editor" — left no trace for `ScopeEscape` to find, even
+        // though the diff plainly showed it. `ExecutionFinished` now carries
+        // the real repository diff (`affected_paths`) regardless of which
+        // action kind produced it, and the reducer must fold it in the same
+        // way for a Command action as it already does for a native write.
+        let mut state = SessionState::empty(SessionId::new());
+        state
+            .reduce_event(&SessionEvent::SessionCreated {
+                objective: "fix settings".into(),
+                repository: PathBuf::from("/repo"),
+                authority_mode: Default::default(),
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::WorktreeCreated {
+                path: PathBuf::from("/repo/.purrcode/worktrees/session"),
+                base_head: "HEAD".into(),
+                source_was_dirty: false,
+            })
+            .unwrap();
+        let action_id = ActionId::new();
+        state
+            .reduce_event(&SessionEvent::ActionProposed {
+                action_id,
+                action: ProposedAction::Command(CommandAction {
+                    program: "sed".into(),
+                    arguments: vec!["-i".into(), "s/foo/bar/".into()],
+                    working_directory: PathBuf::from("/repo"),
+                    environment: BTreeMap::new(),
+                }),
+                turn_id: None,
+            })
+            .unwrap();
+        state
+            .reduce_event(&SessionEvent::ExecutionStarted { action_id })
+            .unwrap();
+        let touched = PathBuf::from("src/editor/foo.rs");
+        state
+            .reduce_event(&SessionEvent::ExecutionFinished {
+                action_id,
+                exit_code: Some(0),
+                truncated: false,
+                sandbox_level: None,
+                sandbox_backend: None,
+                affected_paths: vec![touched.clone()],
+            })
+            .unwrap();
+        assert!(
+            state.changed_paths.contains(&touched),
+            "a Command action's real effect on the tree must reach changed_paths, \
+             the same as a native write does — this is the only input the \
+             ScopeEscape non-goal check has"
+        );
     }
 
     #[test]
@@ -5032,6 +5117,7 @@ mod tests {
                 truncated: false,
                 sandbox_level: None,
                 sandbox_backend: None,
+                affected_paths: Vec::new(),
             })
             .unwrap();
         assert_eq!(state.status, SessionStatus::Active);
@@ -6037,6 +6123,7 @@ mod delivery_replay_tests {
                 truncated: false,
                 sandbox_level: None,
                 sandbox_backend: None,
+                affected_paths: Vec::new(),
             })
             .unwrap();
 

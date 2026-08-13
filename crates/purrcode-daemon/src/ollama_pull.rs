@@ -560,6 +560,7 @@ async fn record_terminal(
                 truncated,
                 sandbox_level: Some("dedicated_network_native_action".into()),
                 sandbox_backend: Some("exact-argv-credential-scrubbed".into()),
+                affected_paths: Vec::new(),
             },
         )
         .map_err(|error| error.to_string())?;

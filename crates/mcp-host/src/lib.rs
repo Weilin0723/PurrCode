@@ -1547,6 +1547,7 @@ impl Qualifier {
                         truncated: result.truncated,
                         sandbox_level: Some(format!("{:?}", result.sandbox_level)),
                         sandbox_backend: Some(result.sandbox_backend.clone()),
+                        affected_paths: result.affected_paths.clone(),
                     },
                 ) {
                     report.status = QualificationStatus::Failed;
@@ -1637,6 +1638,7 @@ impl Qualifier {
                         truncated: false,
                         sandbox_level: Some("qualification_failed".into()),
                         sandbox_backend: Some(capability.backend.clone()),
+                        affected_paths: Vec::new(),
                     },
                 ) {
                     report.cases.push(QualificationCase {

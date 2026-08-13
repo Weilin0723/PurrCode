@@ -1426,6 +1426,7 @@ impl IsolatedWorker for JudgedSupervisorWorker {
                     truncated: result.truncated,
                     sandbox_level: Some(format!("{:?}", result.sandbox_level)),
                     sandbox_backend: Some(result.sandbox_backend),
+                    affected_paths: result.affected_paths.clone(),
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -5047,6 +5048,7 @@ async fn invoke_mcp(
             truncated: false,
             sandbox_level: Some("external-plugin-isolation".into()),
             sandbox_backend: Some("mcp-host-child".into()),
+            affected_paths: Vec::new(),
         },
     )?;
     if let Some(skill) = installed_skill {
@@ -13178,6 +13180,7 @@ async fn search_skills(
                     truncated: false,
                     sandbox_level: Some("governed-network-adapter".into()),
                     sandbox_backend: Some("skill-registry".into()),
+                    affected_paths: Vec::new(),
                 },
             )?;
             session_store.append(
@@ -13203,6 +13206,7 @@ async fn search_skills(
                     truncated: false,
                     sandbox_level: Some("governed-network-adapter".into()),
                     sandbox_backend: Some("skill-registry".into()),
+                    affected_paths: Vec::new(),
                 },
             )?;
             session_store.append(
@@ -13501,6 +13505,7 @@ async fn download_skill(
             truncated: false,
             sandbox_level: Some("safe-archive-extraction".into()),
             sandbox_backend: Some("zip-enclosed-path".into()),
+            affected_paths: Vec::new(),
         },
     )?;
     store.append(
@@ -13683,6 +13688,7 @@ async fn fetch_research_page(
                     truncated: false,
                     sandbox_level: Some("governed-network-adapter".into()),
                     sandbox_backend: Some("web-research".into()),
+                    affected_paths: Vec::new(),
                 },
             )?;
             return Err(ApiError::BadRequest(error.to_string()));
@@ -13706,6 +13712,7 @@ async fn fetch_research_page(
             truncated: page.truncated,
             sandbox_level: Some("governed-network-adapter".into()),
             sandbox_backend: Some("web-research".into()),
+            affected_paths: Vec::new(),
         },
     )?;
     Ok(Json(serde_json::to_value(page).unwrap_or_default()))
@@ -13905,6 +13912,7 @@ async fn record_failed_skill_install_execution(
             truncated: false,
             sandbox_level: Some("atomic-qualified-skill-store".into()),
             sandbox_backend: Some("skill-store".into()),
+            affected_paths: Vec::new(),
         },
     )?;
     store.append(
@@ -14376,6 +14384,7 @@ async fn install_skill(
                 truncated: false,
                 sandbox_level: Some("atomic-qualified-skill-store".into()),
                 sandbox_backend: Some("skill-store".into()),
+                affected_paths: Vec::new(),
             },
         )?;
         session_store.append(

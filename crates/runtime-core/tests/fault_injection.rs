@@ -302,6 +302,7 @@ fn missing_execution_finished_leaves_session_executing_not_completed() {
         truncated: false,
         sandbox_level: None,
         sandbox_backend: None,
+        affected_paths: Vec::new(),
     });
     assert!(
         matches!(

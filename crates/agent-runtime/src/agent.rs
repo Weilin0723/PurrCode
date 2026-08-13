@@ -951,7 +951,10 @@ impl<'a> NativeAgent<'a> {
         T: DeserializeOwned,
         V: FnOnce(&T) -> Result<(), AgentError>,
     {
-        eprintln!("DEBUG_CALL role={role} attempt={attempt}");
+        eprintln!(
+            "DEBUG_CALL thread={:?} role={role} attempt={attempt}",
+            std::thread::current().name()
+        );
         let provider = self.provider_for(role);
         let (request, estimated_input_tokens) =
             self.prepare_model_request(provider, request).await?;
@@ -2880,7 +2883,8 @@ impl<'a> NativeAgent<'a> {
                 Err(first_error) if first_error.is_cancelled() => return Err(first_error),
                 Err(first_error) => {
                     eprintln!(
-                        "DEBUG_FIRST_ERROR is_context_too_large={} error={first_error:?}",
+                        "DEBUG_FIRST_ERROR thread={:?} is_context_too_large={} error={first_error:?}",
+                        std::thread::current().name(),
                         first_error.is_context_too_large()
                     );
                     // P0: If the provider rejected the request because context
@@ -5306,6 +5310,7 @@ async fn execute_and_record(
                     truncated: result.truncated,
                     sandbox_level: Some(format!("{:?}", result.sandbox_level)),
                     sandbox_backend: Some(result.sandbox_backend.clone()),
+                    affected_paths: result.affected_paths.clone(),
                 },
             )?;
             store.append(

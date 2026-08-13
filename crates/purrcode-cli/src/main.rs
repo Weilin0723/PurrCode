@@ -1114,6 +1114,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                             truncated: result.truncated,
                             sandbox_level: Some(format!("{:?}", result.sandbox_level)),
                             sandbox_backend: Some(result.sandbox_backend.clone()),
+                            affected_paths: result.affected_paths.clone(),
                         },
                     )?;
                     let validation = if result.exit_code == Some(0) {
@@ -1894,6 +1895,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
                     truncated: false,
                     sandbox_level: Some("external-plugin-isolation".into()),
                     sandbox_backend: Some("mcp-host-child".into()),
+                    affected_paths: Vec::new(),
                 },
             )?;
             store.append(

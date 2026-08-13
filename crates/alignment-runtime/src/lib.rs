@@ -95,7 +95,8 @@ impl ModelRoute {
         schema: RootSchema,
     ) -> Result<(T, Usage), AlignmentError> {
         eprintln!(
-            "DEBUG_ALIGNMENT_CALL model={} messages={}",
+            "DEBUG_ALIGNMENT_CALL thread={:?} model={} messages={}",
+            std::thread::current().name(),
             self.model.model,
             messages.len()
         );

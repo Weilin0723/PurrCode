@@ -1173,6 +1173,7 @@ mod action_normalization_tests {
             truncated: false,
             sandbox_level: None,
             sandbox_backend: None,
+            affected_paths: Vec::new(),
         }];
 
         assert_eq!(

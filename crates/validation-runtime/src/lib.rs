@@ -394,6 +394,7 @@ impl ValidationRunner {
                             truncated: result.truncated,
                             sandbox_level: Some(format!("{:?}", result.sandbox_level)),
                             sandbox_backend: Some(result.sandbox_backend.clone()),
+                            affected_paths: result.affected_paths.clone(),
                         },
                     )?;
                     ValidationEvidence {

@@ -1022,6 +1022,7 @@ pub async fn execute_worker_action(
                 truncated: result.truncated,
                 sandbox_level: Some(format!("{:?}", result.sandbox_level)),
                 sandbox_backend: Some(result.sandbox_backend.clone()),
+                affected_paths: result.affected_paths.clone(),
             },
         )
         .map_err(|error| error.to_string())?;
