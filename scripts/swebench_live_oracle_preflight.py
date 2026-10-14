@@ -181,11 +181,6 @@ def main() -> int:
                 existing[str(row["instance_id"])] = row
     processed = 0
     selected_ids = set(args.instance_ids or [])
-    selected_existing = {
-        key: value
-        for key, value in existing.items()
-        if not selected_ids or key in selected_ids
-    }
     for task in tasks:
         instance_id = str(task["instance_id"])
         if selected_ids and instance_id not in selected_ids:
@@ -202,6 +197,11 @@ def main() -> int:
             os.fsync(handle.fileno())
         processed += 1
         print(f"[{row['selection_index']:02d}] {instance_id}: {row['status']}", flush=True)
+    selected_existing = {
+        key: value
+        for key, value in existing.items()
+        if not selected_ids or key in selected_ids
+    }
     summary = {
         "schema_version": 1,
         "kind": "swebench-live-hidden-oracle-gold-preflight",
