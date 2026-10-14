@@ -123,6 +123,50 @@
           ]
         }
       ]
+    },
+    "deepset-ai__haystack-8708": {
+      "base_commit": "4f73b192f8bcab8077ef7adac7063b23c237f630",
+      "source_workflow_run_id": 38629415831,
+      "source_row_sha256": "5d72be43f72f9775b8ce738bf735d16960df0dfb53461986886b88308ab3fd8a",
+      "source_registry_repo_digests": [
+        "starryzhang/sweb.eval.x86_64.deepset-ai_1776_haystack-8708@sha256:2b43296d09d4e61f554217f308e857695260c47c277bbb265d5b106fadda20d6"
+      ],
+      "reference_python_version": "3.9.22",
+      "constraints": [
+        "ddtrace==2.18.1",
+        "torch==2.5.1+cpu"
+      ],
+      "execution_variant": "Host Python 3.11 and CPU Torch wheels; reference uses Python 3.9; GPU behavior is outside scope.",
+      "prerequisites": [
+        {
+          "index_url": "https://download.pytorch.org/whl/cpu",
+          "requirements": [
+            "torch==2.5.1+cpu"
+          ]
+        }
+      ]
+    },
+    "deepset-ai__haystack-8725": {
+      "base_commit": "26b80778f52246214efe72b777d548f85d810198",
+      "source_workflow_run_id": 38629415831,
+      "source_row_sha256": "613f6dcdd624442ea9c4278fb8765425e9fb1b0bf6dd9737d5c81bc329149980",
+      "source_registry_repo_digests": [
+        "starryzhang/sweb.eval.x86_64.deepset-ai_1776_haystack-8725@sha256:a425e8e9cd4430a462b3657bd4dc6b7bb8864a9f5cc623e15e8fcbc50d1e89d4"
+      ],
+      "reference_python_version": "3.9.22",
+      "constraints": [
+        "ddtrace==2.18.1",
+        "torch==2.5.1+cpu"
+      ],
+      "execution_variant": "Host Python 3.11 and CPU Torch wheels; reference uses Python 3.9; GPU behavior is outside scope.",
+      "prerequisites": [
+        {
+          "index_url": "https://download.pytorch.org/whl/cpu",
+          "requirements": [
+            "torch==2.5.1+cpu"
+          ]
+        }
+      ]
     }
   }
 }
