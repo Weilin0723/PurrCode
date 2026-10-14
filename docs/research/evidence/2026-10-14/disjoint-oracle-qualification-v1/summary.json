@@ -1,0 +1,11 @@
+{
+  "workflow_run_id": 38514744241,
+  "reference_qualified": 25,
+  "scheduled": 30,
+  "model_calls": 0,
+  "rejected_repository_groups": [
+    "conan-io/conan",
+    "kedro-org/kedro"
+  ],
+  "scope": "operator-only oracle qualification, not efficacy evidence"
+}

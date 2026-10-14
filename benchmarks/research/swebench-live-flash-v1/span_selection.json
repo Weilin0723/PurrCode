@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "selection_rule": "Withhold one unique issue-title behavior statement, or an exact explicit expected-result statement where available; no generated constraints or oracle-derived wording.",
+  "tasks": [
+    {
+      "instance_id": "python-attrs__attrs-1319",
+      "span": "`kw_only` with `default` breaks `__attrs_pre_init__` call",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "python-attrs__attrs-1320",
+      "span": "`attr.filters.exclude` or `include` not simultaneously usable with `validators.in_` set.",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "conan-io__conan-16776",
+      "span": "[bug] export_sources fails if a local repo does not contain the recipe revision being exported",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "streamlink__streamlink-6111",
+      "span": "webbrowser: Cloak headless Chrome user agent string",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "conan-io__conan-16789",
+      "span": "[feature] PkgConfigDeps.set_property() for renaming .pc files",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "kedro-org__kedro-4075",
+      "span": "Reenable stack trace on error, removed in `0.19.7`",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "kedro-org__kedro-4092",
+      "span": "This should ideally not throw an error and if I want `params:pipeline1` it should be a merge dict based on both of these configs.",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "pydata__xarray-9369",
+      "span": "allow using non-dimension coordinates in polyfit",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "kozea__weasyprint-2233",
+      "span": "Flex containers not positioned correctly when their margin-left/right is set to `auto`",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "shapely__shapely-2120",
+      "span": "{'type': 'Point', 'coordinates': ()}",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "conan-io__conan-16870",
+      "span": "[bug] dependency cycle can't be avoided when bootstrapping a compiler",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "ipython__ipython-14503",
+      "span": "Raising SystemExit leads to internal inspect module error",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "reflex-dev__reflex-3833",
+      "span": "Mixin computed vars are serialized multiple times",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "beeware__briefcase-1972",
+      "span": "Seemingly malformed `dist-info` directories are ignored....or at least don't crash the build.",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "reflex-dev__reflex-3842",
+      "span": "the pages displays \"id: hello\" and \"title: hello\"",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "reflex-dev__reflex-3982",
+      "span": "global style selectors are converted to camelCase, which hinders interop with existing components that expect underscore or double underscore",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "streamlink__streamlink-6205",
+      "span": "HTTP NO SSL Verify broken",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "streamlink__streamlink-6207",
+      "span": "cli: --player=\"\" --player-passthrough=hls causes AttributeError: 'NoneType' object has no attribute 'name'",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "pydata__xarray-9586",
+      "span": "DataArray.where() can truncate strings with `<U` dtypes",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "beeware__briefcase-2035",
+      "span": "Requires-python checks don't work with pre-release Python versions",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "ipython__ipython-14555",
+      "span": "autocall full behavior change in 8.27 (not present in 8.26.)",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "pydata__xarray-9760",
+      "span": "Support for astropy.units",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "kozea__weasyprint-2300",
+      "span": "When overflow: hidden is added to .cell, all cells appear on top of each other instead of next to each other.",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "kozea__weasyprint-2301",
+      "span": "v63.0 margin is ignored for block inside inline-block",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "python-attrs__attrs-1372",
+      "span": "Error occurs when using converters.optional and converters.pipe together",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "beeware__briefcase-2088",
+      "span": "Briefcase references Standalone Python from the context of Astral.",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "ipython__ipython-14693",
+      "span": "Jupyter shebang cells ignore exit code on SIGINT",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "shapely__shapely-2223",
+      "span": "Use `int32` dtype for offset arrays in `to_ragged_array`",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "shapely__shapely-2226",
+      "span": "BUG: GeometryCollection() constructor doesn't accept an array of geometries",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    },
+    {
+      "instance_id": "kedro-org__kedro-4540",
+      "span": "Function works properly as with `notebook==7.1.2`.",
+      "rationale": "Exact public issue behavior or expected-result statement; no solution or hidden-test input used."
+    }
+  ]
+}

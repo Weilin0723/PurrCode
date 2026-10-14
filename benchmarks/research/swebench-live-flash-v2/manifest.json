@@ -1,0 +1,911 @@
+{
+  "schema_version": 1,
+  "status": "acquisition_pending",
+  "outcomes": "unrun",
+  "source": {
+    "dataset": "SWE-bench-Live/SWE-bench-Live",
+    "config": "default",
+    "split": "verified",
+    "revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
+    "rows_endpoint": "https://datasets-server.huggingface.co/rows",
+    "license": "mit"
+  },
+  "selection": {
+    "algorithm": "Apply pinned eligibility; exclude prior repositories; retain the next ten groups in first-eligible-row order and each group's first three rows. Oracle qualification precedes the scientific freeze. Repository groups with any failed reference-patch qualification are rejected before model generation; retain their failure records.",
+    "task_count": 30,
+    "distinct_repository_count": 10,
+    "tasks_per_repository": 3,
+    "difficulty_lines_max": 50,
+    "requires_fail_to_pass": true,
+    "requires_pass_to_pass": true,
+    "source_rows_scanned": 500,
+    "eligible_row_count": 370,
+    "eligible_repository_count": 87,
+    "repository_order": [
+      "python-attrs/attrs",
+      "streamlink/streamlink",
+      "pydata/xarray",
+      "Kozea/WeasyPrint",
+      "shapely/shapely",
+      "ipython/ipython",
+      "reflex-dev/reflex",
+      "beeware/briefcase",
+      "joke2k/faker",
+      "sissbruecker/linkding"
+    ],
+    "excluded_prior_repository_order": [
+      "pylint-dev/pylint",
+      "aws-cloudformation/cfn-lint",
+      "keras-team/keras",
+      "falconry/falcon",
+      "matplotlib/matplotlib",
+      "sphinx-doc/sphinx",
+      "instructlab/instructlab",
+      "python-babel/babel",
+      "bridgecrewio/checkov",
+      "patroni/patroni",
+      "conan-io/conan",
+      "kedro-org/kedro"
+    ],
+    "oracle_qualification_exclusions": {
+      "conan-io/conan": "2 of 3 reference patches failed the official required oracle",
+      "kedro-org/kedro": "3 of 3 reference patches failed the official required oracle"
+    }
+  },
+  "visibility": {
+    "agent_fields": [
+      "repo",
+      "instance_id",
+      "base_commit",
+      "problem_statement"
+    ],
+    "auditor_only_fields": [
+      "patch",
+      "test_patch",
+      "hints_text",
+      "all_hints_text",
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "difficulty",
+      "test_cmds",
+      "log_parser"
+    ],
+    "forbidden_agent_fields": [
+      "patch",
+      "test_patch",
+      "hints_text",
+      "all_hints_text",
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "gold_patch",
+      "reference_solution"
+    ]
+  },
+  "run_plan": {
+    "repositories": 10,
+    "tasks": 30,
+    "arms": [
+      "B",
+      "C"
+    ],
+    "request_variants": [
+      "static",
+      "correction"
+    ],
+    "repeat_labels": [
+      0
+    ],
+    "runs_per_model": 120,
+    "arm_definitions": {
+      "B": "alignment disabled",
+      "C": "alignment enabled with automatic evidence refresh"
+    },
+    "requirement_phases": [
+      "P0",
+      "P1"
+    ],
+    "requirement_revision": {
+      "status": "verified",
+      "per_task": true,
+      "P0": "controlled abridged problem_statement with one withheld original constraint span in the correction variant",
+      "P1": "the exact original constraint span selected from the complete problem_statement",
+      "static_delivery": "complete original problem_statement delivered from call 0",
+      "correction_delivery": "abridged P0 at call 0; the identical P1 span after the first phase settles with a qualifying successful mutation",
+      "injection_trigger": "first qualifying ExecutionFinished; identical P1 delivered after the first phase settles",
+      "production_path_filter": false,
+      "acknowledgement_event": "requirement_revision_ack",
+      "acknowledgement_required": true,
+      "correction_text_stored": true,
+      "authoring_asset": "requirement_revision.json",
+      "span_selection": "one unique original behavior-related sentence or concise span; reject non-unique or non-specific spans",
+      "span_offsets_unit": "unicode_codepoints",
+      "final_requirement": "reconstructing abridged P0 with P1 at the recorded offset equals the complete original statement",
+      "shared_final_requirement_hash": true
+    },
+    "status": "blocked_until_environment_oracle_audit"
+  },
+  "tasks": [
+    {
+      "instance_id": "python-attrs__attrs-1319",
+      "repo": "python-attrs/attrs",
+      "base_commit": "689a0e64012d1e576ebd99e786a254bc537582c6",
+      "pull_number": "1319",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 13
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 0,
+      "dataset_row": 25,
+      "repo_url": "https://github.com/python-attrs/attrs.git",
+      "commit_url": "https://github.com/python-attrs/attrs/commit/689a0e64012d1e576ebd99e786a254bc537582c6",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 1405,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "32106c22c950ad28f056e97e7b7c715b75e58c326193dd58a78a6c6032301d2d",
+      "patch_sha256": "e78c8b6b60566ff672d466179cd6531d407d1868e49e4527f007da1c8630dee0",
+      "test_patch_sha256": "3cc9ab19b887f0e12a55c1f48a9a64ddc0611fe6535efc736715fe46413ab41e"
+    },
+    {
+      "instance_id": "python-attrs__attrs-1320",
+      "repo": "python-attrs/attrs",
+      "base_commit": "09161fc9181bf94aa3bbc5509c663d736a9553dc",
+      "pull_number": "1320",
+      "difficulty": {
+        "files": 2,
+        "hunks": 4,
+        "lines": 28
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 1,
+      "dataset_row": 26,
+      "repo_url": "https://github.com/python-attrs/attrs.git",
+      "commit_url": "https://github.com/python-attrs/attrs/commit/09161fc9181bf94aa3bbc5509c663d736a9553dc",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1407,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "2940b8672763b27ea473614f36ecc6ecaba8e3a6c4d7b62eed6cd951f84a821b",
+      "patch_sha256": "36256c53bcf988ab4e5e7b7dd0a97d008dc3eb81fcf2b8ce86cd4fb4e4f939c4",
+      "test_patch_sha256": "38aeb60159e1f2edfd13376f415a3c8bbadc76e5fda269e8fb6f177de63d48a7"
+    },
+    {
+      "instance_id": "streamlink__streamlink-6111",
+      "repo": "streamlink/streamlink",
+      "base_commit": "bb070a7d912866805fad67482b1a029908e0eab4",
+      "pull_number": "6111",
+      "difficulty": {
+        "files": 2,
+        "hunks": 4,
+        "lines": 12
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 2,
+      "dataset_row": 31,
+      "repo_url": "https://github.com/streamlink/streamlink.git",
+      "commit_url": "https://github.com/streamlink/streamlink/commit/bb070a7d912866805fad67482b1a029908e0eab4",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 6222,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "bd9d68c7a8b38fa8e619fc7537f1a76b6b50a6e5d0deff7964ad6372d57be668",
+      "patch_sha256": "5818be11c06686c0d2d5c18591dd266b7d7dcc8667d018b8ee306dcf839e0a9d",
+      "test_patch_sha256": "9b5ab218365404483b3b902dfc4bd9b284e314dbda6d93e31b9948b7e4134ab0"
+    },
+    {
+      "instance_id": "pydata__xarray-9369",
+      "repo": "pydata/xarray",
+      "base_commit": "f01096fef402485092c7132dfd042cc8f467ed09",
+      "pull_number": "9369",
+      "difficulty": {
+        "files": 3,
+        "hunks": 6,
+        "lines": 26
+      },
+      "test_cmds": [
+        "pytest -n 4 --timeout 180 --cov=xarray --cov-report=xml -rA",
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 3,
+      "dataset_row": 53,
+      "repo_url": "https://github.com/pydata/xarray.git",
+      "commit_url": "https://github.com/pydata/xarray/commit/f01096fef402485092c7132dfd042cc8f467ed09",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 14722,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "3cea2df183e662254efad43c95684cbbc4625cfadf1d80df2feea7e59672bc6c",
+      "patch_sha256": "f0250c00477f7c4e286591269e09ec61b17450951d8f5401b537be13f8767495",
+      "test_patch_sha256": "81c55f601726105a50ce49da6fcf5fcbc87ba1f10857b9842389d2ad7724954e"
+    },
+    {
+      "instance_id": "kozea__weasyprint-2233",
+      "repo": "Kozea/WeasyPrint",
+      "base_commit": "f17bd4bfcab07d10a35a7e9c47920dbc43623e5b",
+      "pull_number": "2233",
+      "difficulty": {
+        "files": 1,
+        "hunks": 2,
+        "lines": 17
+      },
+      "test_cmds": [
+        "python -m pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 4,
+      "dataset_row": 60,
+      "repo_url": "https://github.com/Kozea/WeasyPrint.git",
+      "commit_url": "https://github.com/Kozea/WeasyPrint/commit/f17bd4bfcab07d10a35a7e9c47920dbc43623e5b",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 2691,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "b4e45398236b9503d501f6fb5fb4f67eb2b146954413fc211a75a0011e1a37a1",
+      "patch_sha256": "8e806c14147a09d4b28a76e608b8422304565e78b4491c8386a3a268f2be8d36",
+      "test_patch_sha256": "97dc0ec58b3b26dc8dca68cfaf142094c30fdcffb779252ebec51ee45cc46f55"
+    },
+    {
+      "instance_id": "shapely__shapely-2120",
+      "repo": "shapely/shapely",
+      "base_commit": "f1b98cf1241e5d31eff6deefa1419507221d0c2f",
+      "pull_number": "2120",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 4
+      },
+      "test_cmds": [
+        "pytest --pyargs shapely.tests -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 5,
+      "dataset_row": 64,
+      "repo_url": "https://github.com/shapely/shapely.git",
+      "commit_url": "https://github.com/shapely/shapely/commit/f1b98cf1241e5d31eff6deefa1419507221d0c2f",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 5414,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "fb83d6ce58ed125222401796f52416a5a3e5311c05d1cad1e73c678f31ee11af",
+      "patch_sha256": "3d08fa8dee2db66baff0d180e78ed42b8b40b15fc2376b13b50114e12c039579",
+      "test_patch_sha256": "2a814a685981e3e882aa5b46ad72e9fce854aec09dae058b7836e77ffc9b5c55"
+    },
+    {
+      "instance_id": "ipython__ipython-14503",
+      "repo": "ipython/ipython",
+      "base_commit": "78fea5f8d7bf6ca55796e82ed341e7fd291878f0",
+      "pull_number": "14503",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 43
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 6,
+      "dataset_row": 67,
+      "repo_url": "https://github.com/ipython/ipython.git",
+      "commit_url": "https://github.com/ipython/ipython/commit/78fea5f8d7bf6ca55796e82ed341e7fd291878f0",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1250,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "cbd2006f15dfc3be33902880dd4e640952233ff4f0a4950a63f4f1085c5c36d6",
+      "patch_sha256": "3c063b26083cc24e22ad20acc725382a2f0a0e3aa75a657af8948219c26b3927",
+      "test_patch_sha256": "b472e69ca06443317613f732938d4b63382f57a6ec347a8ffb2743909250321e"
+    },
+    {
+      "instance_id": "reflex-dev__reflex-3833",
+      "repo": "reflex-dev/reflex",
+      "base_commit": "ea15b184c008f06f3205884e85dd4fb2269158e8",
+      "pull_number": "3833",
+      "difficulty": {
+        "files": 1,
+        "hunks": 2,
+        "lines": 5
+      },
+      "test_cmds": [
+        "poetry run pytest -rA tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 7,
+      "dataset_row": 69,
+      "repo_url": "https://github.com/reflex-dev/reflex.git",
+      "commit_url": "https://github.com/reflex-dev/reflex/commit/ea15b184c008f06f3205884e85dd4fb2269158e8",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 2854,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "d4f7ee30f9bd5e2e9705787d164b2c1cf37aaccc95bbd2315d7ed9cc8335f231",
+      "patch_sha256": "16a3a38efa6b9b010ce28e3b051440cd6fdef8e0edcf14f83abeefb6d1086c94",
+      "test_patch_sha256": "ebfb15857981335a042f8e76e1d8eeaadc0f25b7b1a434a7b93a0ab863249f83"
+    },
+    {
+      "instance_id": "beeware__briefcase-1972",
+      "repo": "beeware/briefcase",
+      "base_commit": "f366e9cc11d9f8196454356af8d4bd40f0d1d6f1",
+      "pull_number": "1972",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 3
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 8,
+      "dataset_row": 70,
+      "repo_url": "https://github.com/beeware/briefcase.git",
+      "commit_url": "https://github.com/beeware/briefcase/commit/f366e9cc11d9f8196454356af8d4bd40f0d1d6f1",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 2943,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "f98607f1da2d1b2424e838f7d112c4a8e100bd2df033f07c4e86eeb1f0e0cf66",
+      "patch_sha256": "40fdb4e521530a233b3ec0b9b991a74eae8e534d02f65a59a1b6a12a690710a8",
+      "test_patch_sha256": "0cafc6664a0bbf82b14c093c5ceacdf30079a6dfb2825efe3fd5f31d87989f59"
+    },
+    {
+      "instance_id": "reflex-dev__reflex-3842",
+      "repo": "reflex-dev/reflex",
+      "base_commit": "43d79d3a2428122bf0284ce7f23fb3773a048a9f",
+      "pull_number": "3842",
+      "difficulty": {
+        "files": 1,
+        "hunks": 5,
+        "lines": 23
+      },
+      "test_cmds": [
+        "poetry run pytest -rA tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 9,
+      "dataset_row": 71,
+      "repo_url": "https://github.com/reflex-dev/reflex.git",
+      "commit_url": "https://github.com/reflex-dev/reflex/commit/43d79d3a2428122bf0284ce7f23fb3773a048a9f",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 2770,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "2d2a59d4255eccaadbc50118e8810842b1f782ca2e362c7707ced474e225b5ce",
+      "patch_sha256": "e7636f5d37842754067faeaf90edf9bed23459f8ccea3e8360c2c42d91a3beec",
+      "test_patch_sha256": "4010afe37fc1822fae3335f99fa6db05b80894fa1c36e94a17b37fdc55894cf5"
+    },
+    {
+      "instance_id": "joke2k__faker-2096",
+      "repo": "joke2k/faker",
+      "base_commit": "4240ef8fc783c0c1598085b596783ace9ccaee03",
+      "pull_number": "2096",
+      "difficulty": {
+        "files": 1,
+        "hunks": 2,
+        "lines": 4
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 10,
+      "dataset_row": 75,
+      "repo_url": "https://github.com/joke2k/faker.git",
+      "commit_url": "https://github.com/joke2k/faker/commit/4240ef8fc783c0c1598085b596783ace9ccaee03",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1959,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "ce28c12c681dd79ad8a933bcdc7bb2d90e1bd64d302f58cc9459ea72ace84518",
+      "patch_sha256": "844ac1bcfdc30efe9cd2605a5b91e4eef5bec4da33e1328dd9cf296e57903dee",
+      "test_patch_sha256": "4840ef029458283452490bb317fb2576320b870a163765a1ba02457888642b78"
+    },
+    {
+      "instance_id": "sissbruecker__linkding-812",
+      "repo": "sissbruecker/linkding",
+      "base_commit": "1c6e5902db227517e452cfd55fe977c5f9c3fb0a",
+      "pull_number": "812",
+      "difficulty": {
+        "files": 2,
+        "hunks": 3,
+        "lines": 7
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 11,
+      "dataset_row": 77,
+      "repo_url": "https://github.com/sissbruecker/linkding.git",
+      "commit_url": "https://github.com/sissbruecker/linkding/commit/1c6e5902db227517e452cfd55fe977c5f9c3fb0a",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 762,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "0cfdefe06dd5e380512ed79f6783fbcc74752d74e1c35098cb473c8cc397f6f9",
+      "patch_sha256": "04fb162195c1fbb69d1ffd3a1ef1f51e857404e011c53cf5499385ff9c182066",
+      "test_patch_sha256": "28190f27d0c7bc1e4799dcc5a51ca1b852b85a450c8855e200ecc937f96b0054"
+    },
+    {
+      "instance_id": "joke2k__faker-2101",
+      "repo": "joke2k/faker",
+      "base_commit": "01b90b5dcdb472345e4508846e6f949544388d58",
+      "pull_number": "2101",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 4
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 12,
+      "dataset_row": 82,
+      "repo_url": "https://github.com/joke2k/faker.git",
+      "commit_url": "https://github.com/joke2k/faker/commit/01b90b5dcdb472345e4508846e6f949544388d58",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 1943,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "8c4d1189790edd9942453e55f06e517ec0883c45773b07baddb0acb8a886da17",
+      "patch_sha256": "fd0bbcc791b219f8e5b7e89551ed16de807c6064ce560d7686f876b99991ca27",
+      "test_patch_sha256": "6728b6312af0594bc3974c40afa4c572de6cf5bcf0f21c0d8594a6c99298209f"
+    },
+    {
+      "instance_id": "joke2k__faker-2104",
+      "repo": "joke2k/faker",
+      "base_commit": "4240ef8fc783c0c1598085b596783ace9ccaee03",
+      "pull_number": "2104",
+      "difficulty": {
+        "files": 1,
+        "hunks": 2,
+        "lines": 7
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 13,
+      "dataset_row": 102,
+      "repo_url": "https://github.com/joke2k/faker.git",
+      "commit_url": "https://github.com/joke2k/faker/commit/4240ef8fc783c0c1598085b596783ace9ccaee03",
+      "fail_to_pass_count": 6,
+      "pass_to_pass_count": 1968,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "029b41845af711731fa3d63ff60ee08d5da2a36b86ca11492ef20213beafd36c",
+      "patch_sha256": "226f4d87ae39bcea611e98ff24492809a0901d1ec74345d06026ad7494bb6e70",
+      "test_patch_sha256": "7378383ff9a089432fc5873fa45bbd3d14d1ad886bacdf483b44cc39e7977796"
+    },
+    {
+      "instance_id": "reflex-dev__reflex-3982",
+      "repo": "reflex-dev/reflex",
+      "base_commit": "2c4310d9ff4136416bbfe7e255a3d7ab610ccac7",
+      "pull_number": "3982",
+      "difficulty": {
+        "files": 2,
+        "hunks": 4,
+        "lines": 16
+      },
+      "test_cmds": [
+        "poetry run pytest -rA tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 14,
+      "dataset_row": 111,
+      "repo_url": "https://github.com/reflex-dev/reflex.git",
+      "commit_url": "https://github.com/reflex-dev/reflex/commit/2c4310d9ff4136416bbfe7e255a3d7ab610ccac7",
+      "fail_to_pass_count": 6,
+      "pass_to_pass_count": 2674,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "1d6db50f95e69b9f5302690ab25d0fc3c58dc003ecc058fd19ecdfb1826c1e4a",
+      "patch_sha256": "9d46f15bd0500058930ae247edce6dbd82879486b9978611d58930deed40edf9",
+      "test_patch_sha256": "fb7b8ae59460149ed70fd73273f19aec1510bb631ce0e7d34fde3e054b83aa69"
+    },
+    {
+      "instance_id": "streamlink__streamlink-6205",
+      "repo": "streamlink/streamlink",
+      "base_commit": "ffa7db56eaa8ee4b349613eedff476ab311c809d",
+      "pull_number": "6205",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 10
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 15,
+      "dataset_row": 116,
+      "repo_url": "https://github.com/streamlink/streamlink.git",
+      "commit_url": "https://github.com/streamlink/streamlink/commit/ffa7db56eaa8ee4b349613eedff476ab311c809d",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 5936,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "c5a7ccdbfe71b551969cb82da9231d3970bcbe7a48ab80140b6148019dfa4e9f",
+      "patch_sha256": "df745edf40c46feb7a75cb22c511c0aa60fb71d37afe236458d29fb2318a70eb",
+      "test_patch_sha256": "ad4fab9cb7f827593e357144726cb7b0aa5046cf0b2f795f732ac7b9c4d176d7"
+    },
+    {
+      "instance_id": "streamlink__streamlink-6207",
+      "repo": "streamlink/streamlink",
+      "base_commit": "c22bab6233f89efa9a091c5d736e7c7b58199970",
+      "pull_number": "6207",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 6
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 16,
+      "dataset_row": 118,
+      "repo_url": "https://github.com/streamlink/streamlink.git",
+      "commit_url": "https://github.com/streamlink/streamlink/commit/c22bab6233f89efa9a091c5d736e7c7b58199970",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 5937,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "a41969608efba19dbc838f3c8ea93e5f1e7fc69d2a7d554712aa5df3e2659fd8",
+      "patch_sha256": "3f47c8884023b7212587873f2d229e73c5bb5663cd76309768353b2e66ce573b",
+      "test_patch_sha256": "64eb0b1911aabfa9c10f9e3bc8f611cce04c0cf2f31222977b750eefdfd7286f"
+    },
+    {
+      "instance_id": "pydata__xarray-9586",
+      "repo": "pydata/xarray",
+      "base_commit": "f24cae348e5fb32a5de7d3b383e0adea13131d24",
+      "pull_number": "9586",
+      "difficulty": {
+        "files": 1,
+        "hunks": 3,
+        "lines": 14
+      },
+      "test_cmds": [
+        "pytest -n 4 --timeout 180 -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 17,
+      "dataset_row": 122,
+      "repo_url": "https://github.com/pydata/xarray.git",
+      "commit_url": "https://github.com/pydata/xarray/commit/f24cae348e5fb32a5de7d3b383e0adea13131d24",
+      "fail_to_pass_count": 4,
+      "pass_to_pass_count": 15103,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "279f44079119996a01d06ea28fad28581c488bcd5361279e0651986b3feda468",
+      "patch_sha256": "32ef3e9e66bfb7af3668490d916b3fa4198e8bbbd03baed02a260a39bf6b8a3d",
+      "test_patch_sha256": "922f5055fd44488a959f8f0f96bbfbadc56eb0d553749128a141aae65acfd96d"
+    },
+    {
+      "instance_id": "beeware__briefcase-2035",
+      "repo": "beeware/briefcase",
+      "base_commit": "ad3b3354e4e57bc0ac4d8cd9b7748adb1d2034ed",
+      "pull_number": "2035",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 3
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 18,
+      "dataset_row": 135,
+      "repo_url": "https://github.com/beeware/briefcase.git",
+      "commit_url": "https://github.com/beeware/briefcase/commit/ad3b3354e4e57bc0ac4d8cd9b7748adb1d2034ed",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 2961,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "3f842d6d56e91c8c42cbd7e5845de20f2949357016c67035c3f69415dac7eb0c",
+      "patch_sha256": "d929c7984918b7ccc2c6f2bd3bb841583475022fe626d9ac26184dc2246d3064",
+      "test_patch_sha256": "d6e21300153e5cefd5d1fbf7f42d83b90f36caa21b05b7118af0e958b55860b1"
+    },
+    {
+      "instance_id": "ipython__ipython-14555",
+      "repo": "ipython/ipython",
+      "base_commit": "02545e95585fa222f9e83b83161e6af4065fd6f7",
+      "pull_number": "14555",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 6
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 19,
+      "dataset_row": 149,
+      "repo_url": "https://github.com/ipython/ipython.git",
+      "commit_url": "https://github.com/ipython/ipython/commit/02545e95585fa222f9e83b83161e6af4065fd6f7",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1251,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "a2dacb97189207b4822cbbcd5592cb269ea9df44edc15565da815057b6f2590e",
+      "patch_sha256": "b9b4869f14f50bd5e4f42055d583d68d86ac8cb6a201edad64901425317ff3ca",
+      "test_patch_sha256": "cb6746a5711a6ecc5fb143e21961feabe10afd28bc91b1cd0a77aa02946147ec"
+    },
+    {
+      "instance_id": "pydata__xarray-9760",
+      "repo": "pydata/xarray",
+      "base_commit": "5a9ff0beb17090a64bc886bed6265c583ba8e32d",
+      "pull_number": "9760",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 14
+      },
+      "test_cmds": [
+        "pytest -n 4 --timeout 180 --cov=xarray --cov-report=xml --junitxml=pytest.xml -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 20,
+      "dataset_row": 175,
+      "repo_url": "https://github.com/pydata/xarray.git",
+      "commit_url": "https://github.com/pydata/xarray/commit/5a9ff0beb17090a64bc886bed6265c583ba8e32d",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 15184,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "47f0cc5f7a78d59ae04c9d25ee005369743175ddae7219b703fd7d374df88971",
+      "patch_sha256": "9249934ce644fb2768eb8e57c4995ecc4e0da58c179de0cfd19dbc76bd306452",
+      "test_patch_sha256": "2a99757b60dbbcbdcca2e4660df29f4d0f906543eba447eaae00c332fcc5ba95"
+    },
+    {
+      "instance_id": "kozea__weasyprint-2300",
+      "repo": "Kozea/WeasyPrint",
+      "base_commit": "ca74c8e81ce48b0f7b838492cab8634b9f1d33b7",
+      "pull_number": "2300",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 6
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 21,
+      "dataset_row": 177,
+      "repo_url": "https://github.com/Kozea/WeasyPrint.git",
+      "commit_url": "https://github.com/Kozea/WeasyPrint/commit/ca74c8e81ce48b0f7b838492cab8634b9f1d33b7",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 2698,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "5f83960b190442971adfb4826c527f3edfa647a120d4bd222d8b19654cfb4e20",
+      "patch_sha256": "a80da1b3cf1e1989df5b9d521433519150ae3c0efd559f4c626d3439c0219899",
+      "test_patch_sha256": "b8cc95457002cb682b73d51f33c7f34b61c2f963729935f828d38515e8838c8a"
+    },
+    {
+      "instance_id": "kozea__weasyprint-2301",
+      "repo": "Kozea/WeasyPrint",
+      "base_commit": "33763ade9bed7e20f0bc4fee4b207596abee5375",
+      "pull_number": "2301",
+      "difficulty": {
+        "files": 1,
+        "hunks": 3,
+        "lines": 17
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 22,
+      "dataset_row": 181,
+      "repo_url": "https://github.com/Kozea/WeasyPrint.git",
+      "commit_url": "https://github.com/Kozea/WeasyPrint/commit/33763ade9bed7e20f0bc4fee4b207596abee5375",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 2698,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "4df74fdb6b796213a321a49a05c291909e636966e3b35c1f478ac241b5912322",
+      "patch_sha256": "b78ad14b7fb37ae62d14dde2bedf7ffa19b3b9f9013a5362296825cdd7452588",
+      "test_patch_sha256": "082cc324e0266bf41667de5616fe5bd3d89a9db0df49b441fbdf1ddaccaeefa8"
+    },
+    {
+      "instance_id": "python-attrs__attrs-1372",
+      "repo": "python-attrs/attrs",
+      "base_commit": "ee0f19b696c60064c58cdc08b3265aef56d49ff8",
+      "pull_number": "1372",
+      "difficulty": {
+        "files": 2,
+        "hunks": 4,
+        "lines": 23
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 23,
+      "dataset_row": 186,
+      "repo_url": "https://github.com/python-attrs/attrs.git",
+      "commit_url": "https://github.com/python-attrs/attrs/commit/ee0f19b696c60064c58cdc08b3265aef56d49ff8",
+      "fail_to_pass_count": 4,
+      "pass_to_pass_count": 1311,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "de9d8c4b75d91279e75750682150ea354d8bde052c151020a07c5d788db5a996",
+      "patch_sha256": "c1f27e7907d8b8f092b2d65d46e82fca4d5692a3d387fe6f53f01653dcd4e481",
+      "test_patch_sha256": "759c2ed68d675965afef8a345b3351ecc00d250d01b2505603afc2c1d979d2c1"
+    },
+    {
+      "instance_id": "beeware__briefcase-2088",
+      "repo": "beeware/briefcase",
+      "base_commit": "d7befc67ad35d4aca37e6b36ba62950e71068efb",
+      "pull_number": "2088",
+      "difficulty": {
+        "files": 2,
+        "hunks": 3,
+        "lines": 13
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 24,
+      "dataset_row": 235,
+      "repo_url": "https://github.com/beeware/briefcase.git",
+      "commit_url": "https://github.com/beeware/briefcase/commit/d7befc67ad35d4aca37e6b36ba62950e71068efb",
+      "fail_to_pass_count": 7,
+      "pass_to_pass_count": 2975,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "ae1a2047436ebb9702754fc257f076a0dd54cdfdc07d886be8deaec47b08ab0f",
+      "patch_sha256": "f17e54d0f94e81aea6877cf2b53474d2ad4785af893d0fea565b541ffe6f17d4",
+      "test_patch_sha256": "c06025b8a3c0220bd363f1195e2d10cd173efa8dc6036f7089e75e8e6d1461b2"
+    },
+    {
+      "instance_id": "ipython__ipython-14693",
+      "repo": "ipython/ipython",
+      "base_commit": "637e037d668db7aebe61ae04261ebfc5cb7f32c5",
+      "pull_number": "14693",
+      "difficulty": {
+        "files": 2,
+        "hunks": 4,
+        "lines": 49
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 25,
+      "dataset_row": 300,
+      "repo_url": "https://github.com/ipython/ipython.git",
+      "commit_url": "https://github.com/ipython/ipython/commit/637e037d668db7aebe61ae04261ebfc5cb7f32c5",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1162,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "b266d310ae0d9e96aee727ee5f5cd8d7bdc4f1a3266e85f05c52d6aaafd4448b",
+      "patch_sha256": "8f5a0b020a26faf75fc8d384aa40772eb56e28b318d1687a0f90fefb437a82d8",
+      "test_patch_sha256": "419fff84f7d199a40b799073b74306da333621eb22c103db638984ea27543ddc"
+    },
+    {
+      "instance_id": "sissbruecker__linkding-984",
+      "repo": "sissbruecker/linkding",
+      "base_commit": "c5a300a4357d40d202f92dd08894ea520f2ade3f",
+      "pull_number": "984",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 4
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 26,
+      "dataset_row": 321,
+      "repo_url": "https://github.com/sissbruecker/linkding.git",
+      "commit_url": "https://github.com/sissbruecker/linkding/commit/c5a300a4357d40d202f92dd08894ea520f2ade3f",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 736,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "6516bbacfe4305285b05cfbaaeab89417db7c7868b85117c68c360206f3d2b3c",
+      "patch_sha256": "e4d060e3abcaa514651b6879d6d037cdfe6ed178992d64fdd5a052948e82854e",
+      "test_patch_sha256": "88a99a849a57b4faf7fe163f650528455e58ffea2ac10a080a2e1110317a2833"
+    },
+    {
+      "instance_id": "sissbruecker__linkding-989",
+      "repo": "sissbruecker/linkding",
+      "base_commit": "78608135d9dd2d14a569253c80c5a959cf32bff7",
+      "pull_number": "989",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 13
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 27,
+      "dataset_row": 339,
+      "repo_url": "https://github.com/sissbruecker/linkding.git",
+      "commit_url": "https://github.com/sissbruecker/linkding/commit/78608135d9dd2d14a569253c80c5a959cf32bff7",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 737,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "2bc8cc8786e96746edbfbc9ac83bfecde90cf0fe016ed7e965443b8d195a67af",
+      "patch_sha256": "67767729528d4b15806b98e14242bd816d01728b2c94e91018266379613a5439",
+      "test_patch_sha256": "6e27e05bac86f572b723a67e49730b81caed7a93f71bf716f9c43fe30e3865b9"
+    },
+    {
+      "instance_id": "shapely__shapely-2223",
+      "repo": "shapely/shapely",
+      "base_commit": "d602a4a33ed33d5c9dd02d7e0777055674dd549f",
+      "pull_number": "2223",
+      "difficulty": {
+        "files": 1,
+        "hunks": 6,
+        "lines": 22
+      },
+      "test_cmds": [
+        "pytest shapely/tests -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 28,
+      "dataset_row": 340,
+      "repo_url": "https://github.com/shapely/shapely.git",
+      "commit_url": "https://github.com/shapely/shapely/commit/d602a4a33ed33d5c9dd02d7e0777055674dd549f",
+      "fail_to_pass_count": 5,
+      "pass_to_pass_count": 5450,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "7ad14ebe8e4b07cac98dac5392e5da380bb6a2d7c0ed740b36d0f74c4c23ae30",
+      "patch_sha256": "3f2bdcf012b02741004560deb17428c30ac9482283196a2d37bdd3a12d79bae6",
+      "test_patch_sha256": "652a0cd446467953f887fb0ed38185fe24a69f8991e06755ec020f09f800e75f"
+    },
+    {
+      "instance_id": "shapely__shapely-2226",
+      "repo": "shapely/shapely",
+      "base_commit": "74eddd6af20566771ae4551a21e389e9ec188e66",
+      "pull_number": "2226",
+      "difficulty": {
+        "files": 2,
+        "hunks": 3,
+        "lines": 7
+      },
+      "test_cmds": [
+        "pytest --pyargs shapely.tests -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 29,
+      "dataset_row": 341,
+      "repo_url": "https://github.com/shapely/shapely.git",
+      "commit_url": "https://github.com/shapely/shapely/commit/74eddd6af20566771ae4551a21e389e9ec188e66",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 5454,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "83b568448e313f156f3c3900b6f2c7bd53b43a9eb35c7bdd82febc723aeb7822",
+      "patch_sha256": "dca2bffaf6f243384d7469747fe6112d03db8f7de3b4c513f9e88a02aea44e71",
+      "test_patch_sha256": "30e60693167cf0009d801d367fa4ef241742c381afe2d04e2f92093db5d0fdef"
+    }
+  ],
+  "study_role": "repository-disjoint pre-model oracle qualification candidates; no efficacy outcomes"
+}
