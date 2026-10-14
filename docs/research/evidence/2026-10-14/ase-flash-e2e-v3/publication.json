@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "study_id": "ase-flash-e2e-v3-valid-paired",
+  "freeze_sha256": "858208ca9cbd1e39584b42745127773bf6adc9995ac7f02acaacaeb4bb9e200c",
+  "source_and_freeze_commit": "caf912cb1ff6b59a6457f10c58a39945707ec207",
+  "scientific_model_calls_at_publication": 0,
+  "published_at": "2026-10-14T19:19:57.166651+00:00",
+  "publication_requirement": "Push this publication commit before workflow dispatch"
+}
