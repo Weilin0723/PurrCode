@@ -27,6 +27,9 @@ use purrcode_runtime_core::expectation::ExpectationContract;
 pub struct ReviewSubject {
     pub path: PathBuf,
     pub content: String,
+    pub file_byte_length: Option<usize>,
+    pub file_content_digest: Option<String>,
+    pub excerpt_truncated: bool,
 }
 
 impl ReviewSubject {
@@ -34,7 +37,23 @@ impl ReviewSubject {
         Self {
             path: path.into(),
             content: content.into(),
+            file_byte_length: None,
+            file_content_digest: None,
+            excerpt_truncated: false,
         }
+    }
+
+    /// Identity of the complete observed file, independent of the excerpt.
+    pub fn with_file_identity(
+        mut self,
+        byte_length: usize,
+        content_digest: String,
+        truncated: bool,
+    ) -> Self {
+        self.file_byte_length = Some(byte_length);
+        self.file_content_digest = Some(content_digest);
+        self.excerpt_truncated = truncated;
+        self
     }
 }
 
@@ -154,7 +173,10 @@ impl FreshReviewInput {
             "Read observations labelled before and after the latest user request \
             can establish preservation across turns. The full Git diff is against the \
             original checkout, not the latest request boundary; a file added in an earlier \
-            turn is not necessarily newly created by the current request. Compare actual \
+            turn is not necessarily newly created by the current request. Evaluate an \
+            unchanged requirement relative to the instruction that introduced it, not as \
+            a new demand introduced by every follow-up. Native before-write observations \
+            can establish observed prior existence or absence, with their stated limitations. Compare actual \
             observations and file contents; ordering alone does not prove preservation.\n",
         );
         if self.tool_observations.is_empty() {
@@ -175,6 +197,10 @@ impl FreshReviewInput {
 
         for file in &self.files {
             body.push_str(&format!("\nFILE {}\n", file.path.display()));
+            if let (Some(length), Some(digest)) = (file.file_byte_length, &file.file_content_digest)
+            {
+                body.push_str(&format!("Complete observed file identity: UTF-8 byte length {length}, BLAKE3 content digest {digest}. Supplied excerpt truncated: {}. Compare full-file identities for preservation, not behavioral correctness.\n", file.excerpt_truncated));
+            }
             // Length and escaping describe the exact reviewed string, including
             // trailing newlines that plain text rendering otherwise hides.
             body.push_str(&format!(

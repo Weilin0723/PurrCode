@@ -1,0 +1,51 @@
+{
+  "instance_id": "projectmesa__mesa-2523",
+  "base_commit": "dbb926408d96258e30f8139aeed7e1ce3ec20167",
+  "status": "passed",
+  "commands": [
+    [
+      "/opt/hostedtoolcache/Python/3.11.17/x64/bin/python",
+      "-m",
+      "venv",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv"
+    ],
+    [
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "pytest==8.3.5",
+      "ruff==0.11.5",
+      "hypothesis==6.131.9",
+      "pytest-mock==3.14.0"
+    ],
+    [
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/projectmesa__mesa-2523"
+    ]
+  ],
+  "public_test_extras": [],
+  "public_test_group_dependencies": [],
+  "installed_packages": [
+    "attrs==26.1.0",
+    "hypothesis==6.131.9",
+    "iniconfig==2.3.1",
+    "Mesa @ file:///home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/projectmesa__mesa-2523",
+    "numpy==2.4.6",
+    "packaging==26.3",
+    "pandas==3.0.6",
+    "pip==24.0",
+    "pluggy==1.6.0",
+    "pytest==8.3.5",
+    "pytest-mock==3.14.0",
+    "python-dateutil==2.9.0.post0",
+    "ruff==0.11.5",
+    "setuptools==79.0.1",
+    "six==1.17.0",
+    "sortedcontainers==2.4.0",
+    "tqdm==4.70.1"
+  ]
+}

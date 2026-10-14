@@ -1,0 +1,2448 @@
+{
+  "workflow_run_id": 38527000535,
+  "source_commit": "35766d4541916e6fb8ca87b44560d6cf6ace0c89",
+  "files": [
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-1972-correction-B-0.patch",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-1972-correction-B-0.patch",
+      "original_sha256": "634078e93e9bc2d475e9b17b6a9e145ff700a970093a73375a122806fcdf76d7",
+      "bytes": 3275
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-1972-correction-C-0.patch",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-1972-correction-C-0.patch",
+      "original_sha256": "c2acb6556bcdd5de0fdfe2f558ad80e805dffdcdfaf25e893c224ff0ed6ef860",
+      "bytes": 3043
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-1972-static-B-0.patch",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-1972-static-B-0.patch",
+      "original_sha256": "a8e0a182fdaba1ca605b246310d572ed0a6883968c2a5d1db79ac80cbb214baf",
+      "bytes": 3052
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-1972-static-C-0.patch",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-1972-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "b5a0094f009ae58a4fb40a7899261d1ad4762979e60998c18776a8842b6518dd",
+      "bytes": 9342
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-1972-correction-B-0.json",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-1972-correction-B-0.json.gz",
+      "original_sha256": "74c3eb51f6725b21283bde275fb9cc80b142f4884b209aaadb69e6339bc63d31",
+      "bytes": 406954
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-1972-correction-C-0.json",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-1972-correction-C-0.json.gz",
+      "original_sha256": "c32f29a085b61a7b8fa73c6c6e594bdd89d3ea6bafefab412e1b177042381795",
+      "bytes": 1000008
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-1972-static-B-0.json",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-1972-static-B-0.json.gz",
+      "original_sha256": "40b9686c00edd64129e50befb3e3504bcf5a3949739e474f87aec61ff0a0a82c",
+      "bytes": 264777
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-1972-static-C-0.json",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-1972-static-C-0.json.gz",
+      "original_sha256": "8a594a172510e46a6c35e55a537086feca7448106f4d70bab22e1c89553b3c5e",
+      "bytes": 269050
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-1972-correction-B-0.json",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-1972-correction-B-0.json",
+      "original_sha256": "988747d64598ce6ff5bae2a021e01b06a123e0f02afae02bb4e4bc834c4bb69a",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-1972-correction-C-0.json",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-1972-correction-C-0.json",
+      "original_sha256": "224bf1cc82f6f91950edf559d33b401e2c122026a38bd3f701c9b333fd81fe45",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-1972-static-B-0.json",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-1972-static-B-0.json",
+      "original_sha256": "eafb8226813f275723efea3fe75832cc4595213c33f29ff04783654666d6d9ae",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-1972-static-C-0.json",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-1972-static-C-0.json",
+      "original_sha256": "04468d1472e64851d8997317f694ba90f20d0d63b8eeddad7b24cf52f918589c",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-beeware__briefcase-1972/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "ef6e11af4a13134ee6142389f4d22c0f487d1024da5ee28461526affef2c97f4",
+      "bytes": 750
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-2035-correction-B-0.patch",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-2035-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-2035-correction-C-0.patch",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-2035-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-2035-static-B-0.patch",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-2035-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-2035-static-C-0.patch",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/patches/beeware__briefcase-2035-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "73eb3f0a260ed7d6537eaf907f76966c7f95aaa877dd6c8a10fc2b68e0cc2cfa",
+      "bytes": 14532
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-2035-correction-B-0.json",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-2035-correction-B-0.json.gz",
+      "original_sha256": "20f4567919799b7fab4cf9a2714af7996b9f09b05ded319026b48dbd6bac1df0",
+      "bytes": 23239
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-2035-correction-C-0.json",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-2035-correction-C-0.json.gz",
+      "original_sha256": "e5917b6d79fb1afb3eaac5dc164310710b0f5eea5b4519f1c1c232b34f21d18d",
+      "bytes": 17672
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-2035-static-B-0.json",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-2035-static-B-0.json.gz",
+      "original_sha256": "3a3698418425da424f615502c36bbe8a66b6d184a57e906a5590ddffd79684fd",
+      "bytes": 23570
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-2035-static-C-0.json",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/session-audit/beeware__briefcase-2035-static-C-0.json.gz",
+      "original_sha256": "013c7b050c4f47be73f34d500e5a4906839fb845cd06e296c384edc6a451c2ba",
+      "bytes": 17937
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-2035-correction-B-0.json",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-2035-correction-B-0.json",
+      "original_sha256": "e3d5e8824f45ebd1be338ee29c7ded939903e7a16ebe923e5d0ccc7b103d1fe2",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-2035-correction-C-0.json",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-2035-correction-C-0.json",
+      "original_sha256": "5c40553e0c68231c390a437e7c799cad9071d078e73677943d396d7bb8ac77d3",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-2035-static-B-0.json",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-2035-static-B-0.json",
+      "original_sha256": "33d70e2e3dc876df1b9d0e685bea992802721ea9a507cf452d3814668763a0d5",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-2035-static-C-0.json",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/e2e/started/beeware__briefcase-2035-static-C-0.json",
+      "original_sha256": "d7115efbdea31afbc0f45bdbacfd177ee7a07a95cacdd5476d0d4bff82eff992",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-beeware__briefcase-2035/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "aca7b4e83eb52e788c445c33bb884aae03f2ce55b722fd964e834957b801a301",
+      "bytes": 751
+    },
+    {
+      "original_path": "e2e-beeware__briefcase-2088/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-beeware__briefcase-2088/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "c24cc10dfc807f761e31781a12f59dbfaecce710a398d664c1e88c7399013ffb",
+      "bytes": 611
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14503-correction-B-0.patch",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14503-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14503-correction-C-0.patch",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14503-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14503-static-B-0.patch",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14503-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14503-static-C-0.patch",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14503-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "bd0d4b437db467402227f721c96c9ac750e3e3597d0dc69a006d73512b3abdc1",
+      "bytes": 14554
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14503-correction-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14503-correction-B-0.json.gz",
+      "original_sha256": "48a5702218a252c959f691c020e0326b2de04b5262f4c45527179e0e04cf3b9b",
+      "bytes": 1382857
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14503-correction-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14503-correction-C-0.json.gz",
+      "original_sha256": "499325b0e84a201edcc6012ad4ad1f0180cc26cc434b240dbd9c3b95d38860f4",
+      "bytes": 1236587
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14503-static-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14503-static-B-0.json.gz",
+      "original_sha256": "2b6a9cbe62183c1dfa49791b5bb426f2e0fb7999d46da5c57c2801991188ad1d",
+      "bytes": 663617
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14503-static-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14503-static-C-0.json.gz",
+      "original_sha256": "f800615685b6af8680d85464a08c5ad25e32c82865a9f22a3322d2dd53f74fc1",
+      "bytes": 1323408
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14503-correction-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14503-correction-B-0.json",
+      "original_sha256": "a33f62de60c1dccbb3da7cc886854d2fe3fc247a8492a7c12a61a049769c9931",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14503-correction-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14503-correction-C-0.json",
+      "original_sha256": "15dad8a6480694b95c8c51ee7393eac2eac00a69e1e7f6a9b822e7fd4730b86b",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14503-static-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14503-static-B-0.json",
+      "original_sha256": "0b4274bb83cd39fb8bd49c806e811a315497361719a1207eba7797ead6b5f000",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14503-static-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14503-static-C-0.json",
+      "original_sha256": "8731dc40d872431ffb51b50b50211b0a8b1f7a32941ba92ec3ec50e695c304c0",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-ipython__ipython-14503/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "b8e3ef5806241f159a575d5b7ecb6e1eac9f119f3eedaff1acec782fb962037f",
+      "bytes": 746
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14555-correction-B-0.patch",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14555-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14555-correction-C-0.patch",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14555-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14555-static-B-0.patch",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14555-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14555-static-C-0.patch",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14555-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "5b51afd555e68f81b11f14d010824cfd6d3bd94f79c36ae22c3cf3598446d920",
+      "bytes": 14512
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14555-correction-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14555-correction-B-0.json.gz",
+      "original_sha256": "1be5d4fe8c3e098b9369ac137cc7dce030765d4387f7049808839720511d5845",
+      "bytes": 11815
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14555-correction-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14555-correction-C-0.json.gz",
+      "original_sha256": "3ee7068a6d9907989e61ce332ebd79b052bb921bb5589d5b7547410a9947b5bd",
+      "bytes": 8250
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14555-static-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14555-static-B-0.json.gz",
+      "original_sha256": "9f85a19f0cd32ab52771785b50c0d1dd16fc5637e327912ea2f32aa98d81ab11",
+      "bytes": 12116
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14555-static-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14555-static-C-0.json.gz",
+      "original_sha256": "8df7c9d3bce43f849655c27818b75df203dcc33836e76753959419e599ac8890",
+      "bytes": 8491
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14555-correction-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14555-correction-B-0.json",
+      "original_sha256": "b464b06157a4944747cf5503029131f83c1e6d92f25dc4c8a7cccba58142bb8c",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14555-correction-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14555-correction-C-0.json",
+      "original_sha256": "4755eb5774769fe3e0aa36073a6789260789c193dd4f83dbd5ae623981b906b7",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14555-static-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14555-static-B-0.json",
+      "original_sha256": "48d9d489ba0775299b4b1e665b7a24a25a8aaafa3c486807020982bb60d3efdd",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14555-static-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14555-static-C-0.json",
+      "original_sha256": "1d9857240d041ff9eb37e8e555a719deb949203c230f655643dad150c74a2221",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-ipython__ipython-14555/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "d1e69b797864f70ae053794d728db53f94a7e5dc794231ddb177298defd7da3f",
+      "bytes": 747
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14693-correction-B-0.patch",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14693-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14693-correction-C-0.patch",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14693-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14693-static-B-0.patch",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14693-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14693-static-C-0.patch",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/patches/ipython__ipython-14693-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "e27f4500b71bd65bdfed3c7042452475be56fdae0b8bf6be3a03c31ffd8205c7",
+      "bytes": 14512
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14693-correction-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14693-correction-B-0.json.gz",
+      "original_sha256": "732571fa52a7912cc601eeb4147254517a46585e62a21ee1812f7b1a19e07d74",
+      "bytes": 18211
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14693-correction-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14693-correction-C-0.json.gz",
+      "original_sha256": "e596f116d4f7c66844b66cc7f9ad996f28f74575c920a2c80ef08fc98a94e527",
+      "bytes": 13578
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14693-static-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14693-static-B-0.json.gz",
+      "original_sha256": "ccbd0738da964b122a0fd79bdbfee6074db03e5755782e8b3a2d57cea070d0c0",
+      "bytes": 18452
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14693-static-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/session-audit/ipython__ipython-14693-static-C-0.json.gz",
+      "original_sha256": "057235631f9f800299bf8abae801332c05bfd0828a5c0f74ae4cd7c51d8f9b4b",
+      "bytes": 13771
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14693-correction-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14693-correction-B-0.json",
+      "original_sha256": "b21f8dc21ceef99e2ac5631b9937fd91d4ffa30f4536ec05bb74fb4375ad8b4b",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14693-correction-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14693-correction-C-0.json",
+      "original_sha256": "1074e9d71c2d81ef91364883dc813d590b94568c7cb4c2c1b2cc2dc1788fe156",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14693-static-B-0.json",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14693-static-B-0.json",
+      "original_sha256": "e03eaacd85c67dd88224c62185431dde319bc866ff636b14ba2b697080e4c374",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14693-static-C-0.json",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/e2e/started/ipython__ipython-14693-static-C-0.json",
+      "original_sha256": "43b9400caac7e6948a678463d8dd2a138d87874707baf3493e2b734393b72d77",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-ipython__ipython-14693/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "fffa10aa2ba46750018b63d4599e6df63f46782be34126b322c964e35b503a59",
+      "bytes": 747
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2096-correction-B-0.patch",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2096-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2096-correction-C-0.patch",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2096-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2096-static-B-0.patch",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2096-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2096-static-C-0.patch",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2096-static-C-0.patch",
+      "original_sha256": "7325908dc17972c703df11ce387b2aec19bf38523c776f178c857cb229cbd154",
+      "bytes": 2495
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "f21e62349ccb69c7b234be6cf9bfda9fa9ef4cdc09b8f6b58f8210c8041e8a67",
+      "bytes": 12742
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2096-correction-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2096-correction-B-0.json.gz",
+      "original_sha256": "7a89736cb5efd12eddf22123691e45b686ba0788a34d9f7802e9f61dfeb4f874",
+      "bytes": 93099
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2096-correction-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2096-correction-C-0.json.gz",
+      "original_sha256": "ff897bd9857fa8f83cd5a9f9f1e00e86e8a0cfb9babfec46cf84e79827f0e280",
+      "bytes": 14229
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2096-static-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2096-static-B-0.json.gz",
+      "original_sha256": "b695aca86851b1982afaf0603c15db3fc5cb0ca9f523efb04c99fa8628baab1c",
+      "bytes": 277719
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2096-static-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2096-static-C-0.json.gz",
+      "original_sha256": "461d819f898050c02d702de52d2154d019095c5cd0a87a659763c0552d1f2dd4",
+      "bytes": 378623
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2096-correction-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2096-correction-B-0.json",
+      "original_sha256": "089a643d6a410a6898df81b69eacb3e371b4b6a621d37d2c13256d78cb78a32b",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2096-correction-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2096-correction-C-0.json",
+      "original_sha256": "f85d739008414706d7f59ae54ec3f8e8e501e9de29cb803b98bc9ab61a5739c5",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2096-static-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2096-static-B-0.json",
+      "original_sha256": "d0360b24ef27f41250c873e70c80dddb32901d62a936745e6f771bd118e45bad",
+      "bytes": 173
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2096-static-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2096-static-C-0.json",
+      "original_sha256": "35d9b7f0a44d9f4497c8516ed418393a8715605e57242fecbd00d1e4ad486c85",
+      "bytes": 173
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-joke2k__faker-2096/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "1284634404ac4b92292630e0c8196f3b438de0baa0434e1fa75b83e9e6422bc7",
+      "bytes": 736
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2101-correction-B-0.patch",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2101-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2101-correction-C-0.patch",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2101-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2101-static-B-0.patch",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2101-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2101-static-C-0.patch",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2101-static-C-0.patch",
+      "original_sha256": "bc59d35e198d3cdd7502c02dec1b84c18837ed10720bd455b47353163f80cd4c",
+      "bytes": 762
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "ed4ccb7f695f4cceaa0880eefa2e984163dbd4cbd410854e1064dd7bfc7062ea",
+      "bytes": 12381
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2101-correction-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2101-correction-B-0.json.gz",
+      "original_sha256": "f3e7cb059f75197707e8fcc27a00d2a56e3cf8b60256cc3275dd69b8fb658202",
+      "bytes": 13350
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2101-correction-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2101-correction-C-0.json.gz",
+      "original_sha256": "b35e1b2284b58b556b142b18983b97e6be2b79acf865ee1f4e67f728a99378ab",
+      "bytes": 9669
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2101-static-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2101-static-B-0.json.gz",
+      "original_sha256": "ddc9364d759dcb477b6576e3a27078c0f30be63987e2c443a88505f091641748",
+      "bytes": 144546
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2101-static-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2101-static-C-0.json.gz",
+      "original_sha256": "1461ca3f38bea04f47d0ab462bab041c5394760642da87521945c8794dbc4b3a",
+      "bytes": 290766
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2101-correction-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2101-correction-B-0.json",
+      "original_sha256": "762f5adc33142b991935878e02b29e43880a6a7654312712bc1cf89c210d1958",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2101-correction-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2101-correction-C-0.json",
+      "original_sha256": "abfaab2297361220a396b49c6ec573d4eb637487685f8be28fa89a65e3f6d018",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2101-static-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2101-static-B-0.json",
+      "original_sha256": "9e580a7f7194c6f5403eba2a3c65c2082276534c5136504f9327604d5a432dbb",
+      "bytes": 173
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2101-static-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2101-static-C-0.json",
+      "original_sha256": "7c0e6ad273e9409e8a1a37123a639611bf87c0f7d465b6ce4501e96d70e47381",
+      "bytes": 173
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-joke2k__faker-2101/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "0238af410cca29c52aa6ef19788550648336fe8cda6747df8ba473de725ae5e1",
+      "bytes": 736
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2104-correction-B-0.patch",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2104-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2104-correction-C-0.patch",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2104-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2104-static-B-0.patch",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2104-static-B-0.patch",
+      "original_sha256": "8b214a19f152d7a23a56a52c289793f0802dd268e75dbde0e949a05ecabd1bce",
+      "bytes": 898
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2104-static-C-0.patch",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/patches/joke2k__faker-2104-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "d4af332baebf3c4e9ef13fb68021da1d9bdb817e94d329e1406b2dd6e1999ec3",
+      "bytes": 12716
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2104-correction-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2104-correction-B-0.json.gz",
+      "original_sha256": "381e6a0c8dd31167dd053296c89b7694d1901d8d35465595e3ac61f79764c545",
+      "bytes": 12147
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2104-correction-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2104-correction-C-0.json.gz",
+      "original_sha256": "b0fd40bfab44f277dd545bbd2ecdeb82897926b34990e916883321c1f3657561",
+      "bytes": 8514
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2104-static-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2104-static-B-0.json.gz",
+      "original_sha256": "d033adef88eb131f80fb1833d82ede72fff712dbaa58f2da90088d0c9a2e5df8",
+      "bytes": 265187
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2104-static-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/session-audit/joke2k__faker-2104-static-C-0.json.gz",
+      "original_sha256": "9e6abc1474d985d46895370ed388b2984985cb032f895043ff2250b9b97ca6a8",
+      "bytes": 8719
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2104-correction-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2104-correction-B-0.json",
+      "original_sha256": "7b8931628da4b2e8c2108017164f836de227c3b2d645302ac74112a5ba93bbbc",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2104-correction-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2104-correction-C-0.json",
+      "original_sha256": "1693da35750a92b03c2a3c9e2ad15784838ee073e0162b7ce7f41190439654ee",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2104-static-B-0.json",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2104-static-B-0.json",
+      "original_sha256": "94f3d5fd7dc32be67dc7da7b2aa8763922eafe726e1c671c22c5362a4cf1f7ab",
+      "bytes": 173
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2104-static-C-0.json",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/e2e/started/joke2k__faker-2104-static-C-0.json",
+      "original_sha256": "1b0a053d566da809b4f1d136c9134ee4230c110d219aecd40401a78ac91a66d3",
+      "bytes": 173
+    },
+    {
+      "original_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-joke2k__faker-2104/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "947f9e83adf38cb518541688810604b05eb9907631f460fb951776629207e678",
+      "bytes": 736
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2233-correction-B-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2233-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2233-correction-C-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2233-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2233-static-B-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2233-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2233-static-C-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2233-static-C-0.patch",
+      "original_sha256": "10a7ed2fc79cb0c056f494f4897f6ae495620cadcfa1200b728c069ffdd3368d",
+      "bytes": 26270
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "cb067b81235d94f5a1a6d14c92d9c0accdec04a79603da294d982c60981a62c5",
+      "bytes": 14768
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2233-correction-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2233-correction-B-0.json.gz",
+      "original_sha256": "da4b30be17cda202dd7b27114f82d17681d13e7f83ee6ada12797efbd6ca8ca9",
+      "bytes": 13521
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2233-correction-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2233-correction-C-0.json.gz",
+      "original_sha256": "57f5ae72d89df9607046ef373a36a015f1404b233244e92f000e6208fa5c801e",
+      "bytes": 9826
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2233-static-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2233-static-B-0.json.gz",
+      "original_sha256": "b30fb3a1f65d9dd323eb1f6319f8271e3042f8d7d37494c5040163d2b62777aa",
+      "bytes": 892006
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2233-static-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2233-static-C-0.json.gz",
+      "original_sha256": "613fbaabea6a6f64b9a880241f94cf85acef9246c452b3bf323327f107a9e339",
+      "bytes": 850791
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2233-correction-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2233-correction-B-0.json",
+      "original_sha256": "13f86622800ae639a1988004d67324b094a2fe3f08d07419d51bf46ec12cce84",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2233-correction-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2233-correction-C-0.json",
+      "original_sha256": "260d56aa6857518d32932c7f2c98a5f2bd00aaf430bf8938446462b9ac9ff777",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2233-static-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2233-static-B-0.json",
+      "original_sha256": "05092e81ede614595372b28c8a9636c10b1e3022820f0162d128889b8002906a",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2233-static-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2233-static-C-0.json",
+      "original_sha256": "4d64f99f43094c4c1bfbe9d4d80b903363f5586af1753887f16fa901c072f676",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-kozea__weasyprint-2233/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "c6885de83489c87f4cf59c2791fb305517a67ce8d5f2a5fa84c60e6f181a2d8f",
+      "bytes": 747
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2300-correction-B-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2300-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2300-correction-C-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2300-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2300-static-B-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2300-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2300-static-C-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2300-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "4859cdbd950facf548aa9106f41d4808424a8e956d0949baa64e06bc2af1b76a",
+      "bytes": 14172
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2300-correction-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2300-correction-B-0.json.gz",
+      "original_sha256": "f2d293caea1170db060a5728487c3df75c7057f10f7162ae6b23787ac81ef7bf",
+      "bytes": 12130
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2300-correction-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2300-correction-C-0.json.gz",
+      "original_sha256": "0a7db1733bc5435f728708ca81cb7fe8e54149828edb501e1e65f2cccaa9c8fe",
+      "bytes": 8714
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2300-static-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2300-static-B-0.json.gz",
+      "original_sha256": "ce3ce2c3398f767375c51afd32fcd41e39a25293338ffaca610b5f59cd0e16ca",
+      "bytes": 12676
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2300-static-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2300-static-C-0.json.gz",
+      "original_sha256": "880fa3d72899f030a7fe067600726fac358527aab048eca4330e3cc02ca02ce0",
+      "bytes": 9151
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2300-correction-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2300-correction-B-0.json",
+      "original_sha256": "cf14b01c42364e71f9951f0beae05b8fd8cdf1394dac5b36764f45dd9c2d8d4f",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2300-correction-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2300-correction-C-0.json",
+      "original_sha256": "2bc06dbc363d562700a2cafd0eecec81b34c47401e73f45303c5322358964abe",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2300-static-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2300-static-B-0.json",
+      "original_sha256": "4c1e2c658df5940d22dd1a0aa2b9cfe9ce48805d1693dd7e3d33c0380ecb8cbb",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2300-static-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2300-static-C-0.json",
+      "original_sha256": "afa3cd344bf51301f8c5adee18fbaf38e80816e28eda2eaf79205707102c0756",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-kozea__weasyprint-2300/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "423f92066fed39cd33f51bc7c495209a3aad84a8ffb5e8054d58654c02f7a750",
+      "bytes": 748
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2301-correction-B-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2301-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2301-correction-C-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2301-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2301-static-B-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2301-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2301-static-C-0.patch",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/patches/kozea__weasyprint-2301-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "4d758265d5dbda91c0194abeb801630003ed55d52a88e3ef5c9ae6e3b2346f87",
+      "bytes": 14516
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2301-correction-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2301-correction-B-0.json.gz",
+      "original_sha256": "693c6dee7ccb3f90c5e1659a1bf62a8703d296ef62b8283557e9c94e0f6be2fa",
+      "bytes": 13866
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2301-correction-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2301-correction-C-0.json.gz",
+      "original_sha256": "748f1bd26dd1168a8388484632539e88a95d737e2cb8804d6d3b33fab45f1769",
+      "bytes": 10102
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2301-static-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2301-static-B-0.json.gz",
+      "original_sha256": "a661d18aec51773438c7fa9e802147589198e2d977c268658a16b1a244fe5ee9",
+      "bytes": 14134
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2301-static-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/session-audit/kozea__weasyprint-2301-static-C-0.json.gz",
+      "original_sha256": "9f9de06f9b3f4a61ad0be3ddd8962555c5ffbed00b85def1d649cfb03c8973c9",
+      "bytes": 10315
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2301-correction-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2301-correction-B-0.json",
+      "original_sha256": "bdf0722fcc1791837c7cd3dafd8924911cef879da67f2f5cb7ae7bf65e2966c3",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2301-correction-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2301-correction-C-0.json",
+      "original_sha256": "5b758e55bd911de3d594ea65682935f3d4fbaa74c891f161b969535f58476de8",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2301-static-B-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2301-static-B-0.json",
+      "original_sha256": "788f2511983c78b1e45fa0fa5ec7d32d21e63c88f467830e46c850ae7c7ded91",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2301-static-C-0.json",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/e2e/started/kozea__weasyprint-2301-static-C-0.json",
+      "original_sha256": "830ba55d729c2e6a767b8b81a73712c7fcfc73248ae257542b06b1333b091c26",
+      "bytes": 177
+    },
+    {
+      "original_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-kozea__weasyprint-2301/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "9fc268ed96ce3092ceb1997d594a15cfe8fef64cc473391a49ad00be6ed6c82d",
+      "bytes": 748
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9369-correction-B-0.patch",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9369-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9369-correction-C-0.patch",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9369-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9369-static-B-0.patch",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9369-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9369-static-C-0.patch",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9369-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "78fb91eb0de9dc34e5aac29dfc7aeb49e438368879a74092cf800f665e7202d1",
+      "bytes": 14504
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9369-correction-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9369-correction-B-0.json.gz",
+      "original_sha256": "6f01efc9d11215b862b077c42c6553b69371e125983ef5dd9d624e6e539adf39",
+      "bytes": 116635
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9369-correction-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9369-correction-C-0.json.gz",
+      "original_sha256": "bbdad2b2bd9097b617e9e68cde7d9106f07434e7e86bf735d1fa103506c2be77",
+      "bytes": 183764
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9369-static-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9369-static-B-0.json.gz",
+      "original_sha256": "06b6013dbba9f2e6c4b7978f17602578f34bf45337e62c92f920ad4770920e16",
+      "bytes": 1167943
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9369-static-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9369-static-C-0.json.gz",
+      "original_sha256": "85ffb7474bf394aa5078e0c4a8e55623742bb9d9896a776080bae38185075bda",
+      "bytes": 902199
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9369-correction-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9369-correction-B-0.json",
+      "original_sha256": "740eda541a04b7c71ec3b3e3e25118dd5a536e1eb3dc572f6d534f3be18e87f2",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9369-correction-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9369-correction-C-0.json",
+      "original_sha256": "5d5687df8e4ca8c7ad6e78500ef8a9a9a5be87c6e8b1283f5ad6e373da6f36a1",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9369-static-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9369-static-B-0.json",
+      "original_sha256": "6c7ac24e7baab34e3fe2779bb8bb0c9a342e3556878a97df9ebf44fb67ee2bc6",
+      "bytes": 174
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9369-static-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9369-static-C-0.json",
+      "original_sha256": "6a8d281df2d061d5c1ffcff592f01fa6c80024958a74b6bf2418abadf7fac8ca",
+      "bytes": 174
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-pydata__xarray-9369/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "84fa1fc3feb0a700e3d74640ed63b4b646a7e23d77eb5a40c6e2df5f103c8c50",
+      "bytes": 738
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9586-correction-B-0.patch",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9586-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9586-correction-C-0.patch",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9586-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9586-static-B-0.patch",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9586-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9586-static-C-0.patch",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9586-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "ce53f55af13c81f62a7591d950ab4d397075403be4999c117bd90dc954beb42f",
+      "bytes": 14468
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9586-correction-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9586-correction-B-0.json.gz",
+      "original_sha256": "abe6f88967258c8efa31be7c9e9a0c0dde0a9ef0486e815dbbd820f38a665c40",
+      "bytes": 27995
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9586-correction-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9586-correction-C-0.json.gz",
+      "original_sha256": "bc67ad0eb37ad29be29c0e5147664842cd5b0a379409dee684b8714938c8e42d",
+      "bytes": 21920
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9586-static-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9586-static-B-0.json.gz",
+      "original_sha256": "12f41265259a25f4594fb5c48171ee1d81e1de19291ac04dad652b58d66081ce",
+      "bytes": 28270
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9586-static-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9586-static-C-0.json.gz",
+      "original_sha256": "241c461f387bad7c094718e9dd748f527f42b3a35dd79fa18406a8c8769a7ce6",
+      "bytes": 22141
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9586-correction-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9586-correction-B-0.json",
+      "original_sha256": "44e494bb10143a712d7ebb5a9aae6851b1309b6f36628bac1912f1ebf5b6e5e4",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9586-correction-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9586-correction-C-0.json",
+      "original_sha256": "47c4fb8a86594827bf81a60b5fcdd456b4bf183c40bd69e41c6c775511241343",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9586-static-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9586-static-B-0.json",
+      "original_sha256": "e8f431d1d972f95c0d60f8368688ddac1d3ddc7031a55d061b54a959fccb8b23",
+      "bytes": 174
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9586-static-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9586-static-C-0.json",
+      "original_sha256": "6dc0f0dfbf5aa7020cd4f2d114d43c6a4e578f91293d43c741a9857a9f68de00",
+      "bytes": 174
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-pydata__xarray-9586/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "6cac98c11c813aadcb93186e4b395ca66c0897686a935b6052ad1476ac057bf1",
+      "bytes": 739
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9760-correction-B-0.patch",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9760-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9760-correction-C-0.patch",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9760-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9760-static-B-0.patch",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9760-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9760-static-C-0.patch",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/patches/pydata__xarray-9760-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "7e5d237043af61c02f8faca05b48269bf68fc39c6697347e5d44aba5fc369aaf",
+      "bytes": 14468
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9760-correction-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9760-correction-B-0.json.gz",
+      "original_sha256": "931836da124b1e5cf46137820339995919cb9becfe98db7950830637f7a3c424",
+      "bytes": 32017
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9760-correction-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9760-correction-C-0.json.gz",
+      "original_sha256": "24172d547ca6cc70471f42cc1cfef18103ee5dd562718d5d0ec4c463c00ffae1",
+      "bytes": 25167
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9760-static-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9760-static-B-0.json.gz",
+      "original_sha256": "a279af319e53baa0f9158ec7bf1bebf49a33813804f553553e740b224064b5b1",
+      "bytes": 32331
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9760-static-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/session-audit/pydata__xarray-9760-static-C-0.json.gz",
+      "original_sha256": "832799e388f0e0dcf8b0a61f6629429045c7a9d8cadc07d533b72b1182813912",
+      "bytes": 25268
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9760-correction-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9760-correction-B-0.json",
+      "original_sha256": "b08ee7b8ea3824fda86b1fda232ec17b36f4f710d2bebaad6da340e7a1794c56",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9760-correction-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9760-correction-C-0.json",
+      "original_sha256": "a0d396b62862db1dda43e3b29ff8a4398dc2cabb370dc61e58ab40b32ac61cca",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9760-static-B-0.json",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9760-static-B-0.json",
+      "original_sha256": "9c67939f1de21d4c44984fe0177bfc9facb30d1e43e037c9d2723d2bbbe5a376",
+      "bytes": 174
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9760-static-C-0.json",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/e2e/started/pydata__xarray-9760-static-C-0.json",
+      "original_sha256": "0970449a32727cbdf7ef41befe8cbb16baf43cf4feecaa477c680be11f301852",
+      "bytes": 174
+    },
+    {
+      "original_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-pydata__xarray-9760/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "ad99dfb4077a2487b57fd8054071c06ce1d22cb5f12efc13c0e013b4f601836d",
+      "bytes": 739
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1319-correction-B-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1319-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1319-correction-C-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1319-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1319-static-B-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1319-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1319-static-C-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1319-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "22653a54bc5c327413cfbfb696d515f79578e3a211174aa56cbc834a24d20d1e",
+      "bytes": 14591
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1319-correction-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1319-correction-B-0.json.gz",
+      "original_sha256": "4356cd4e8989e953fc87e5990e6dae70e376e9474b54c62337d9d19f759ce23d",
+      "bytes": 775751
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1319-correction-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1319-correction-C-0.json.gz",
+      "original_sha256": "4efd5c5171aa5d8dfa63e8bc16e1c2757fba0577ab694adde27dc42fb6e7c68e",
+      "bytes": 148838
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1319-static-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1319-static-B-0.json.gz",
+      "original_sha256": "faaec4c9ac1793e0550103eb4fd65469d76bbf5a9f5c94e9fa19ed3257601c98",
+      "bytes": 330334
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1319-static-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1319-static-C-0.json.gz",
+      "original_sha256": "b1ca54cf0635203ecce5f27148712ebf2a600276aea1be801a6ca1108e742b58",
+      "bytes": 407907
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1319-correction-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1319-correction-B-0.json",
+      "original_sha256": "2a70e8ae2c34beb8dc18c8a941b53ad2f7d0b27d533b2b1a7711cd06e8ed2cc7",
+      "bytes": 183
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1319-correction-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1319-correction-C-0.json",
+      "original_sha256": "50511902fb015bfacd26bf911c7b123f0f873260d1de0811ee0aff754830ff36",
+      "bytes": 183
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1319-static-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1319-static-B-0.json",
+      "original_sha256": "6850880485104dfbe184134231a69e4d9014cc3d2452243d33446b980ae4f6dc",
+      "bytes": 179
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1319-static-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1319-static-C-0.json",
+      "original_sha256": "c30aaab5295458602bf1363411154deb8d21c99b22e5ed113f026d576bdf5810",
+      "bytes": 179
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-python-attrs__attrs-1319/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "a5da5bf7c6f3daf22e0e362120b883f805d8a1cff04053bcb742c897e21b387d",
+      "bytes": 753
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1320-correction-B-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1320-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1320-correction-C-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1320-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1320-static-B-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1320-static-B-0.patch",
+      "original_sha256": "248f0ac6a41fd24959ee7a65acf5a42516ed2bb6f345450d0c5865278f4e141c",
+      "bytes": 404
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1320-static-C-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1320-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "70f79c978ecd4b7739f7b25d2e9546d18f97968b2b63d36c4804a64b8984a846",
+      "bytes": 12844
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1320-correction-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1320-correction-B-0.json.gz",
+      "original_sha256": "fe99e645f4b77806b354d0553a657a7532861dc37c5e9e0dd59d423994375bbb",
+      "bytes": 185453
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1320-correction-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1320-correction-C-0.json.gz",
+      "original_sha256": "957e3e14a14ebbc7f6ca4576bd12d9f6a4da82acec0b25c25967388587797505",
+      "bytes": 241707
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1320-static-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1320-static-B-0.json.gz",
+      "original_sha256": "ea2112ca00205d6db1ec39b5a88922314636c516bd9c7ed68c06385ea6c1cec1",
+      "bytes": 221108
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1320-static-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1320-static-C-0.json.gz",
+      "original_sha256": "b65bc22ebff2f9a80e9d1b8dd9429a3336a07c0c4d03c99b84cafae2635aaf6d",
+      "bytes": 13048
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1320-correction-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1320-correction-B-0.json",
+      "original_sha256": "5e13e2707a6cd3338ef46d2f9addf76be4f3089336d10585f6297f1aa6b2f0cc",
+      "bytes": 183
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1320-correction-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1320-correction-C-0.json",
+      "original_sha256": "5b116771833e362debc2b25f81799e6e010bb86e7c56cd82501931cd0feba7c0",
+      "bytes": 183
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1320-static-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1320-static-B-0.json",
+      "original_sha256": "1e20020d80c08bd7bfa459a8ffb5a0157b9abf21afcef3e2ac087f9f832257fb",
+      "bytes": 179
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1320-static-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1320-static-C-0.json",
+      "original_sha256": "f81fdc86fff5ba3215ac719f5466efcc08865dbc32db52b273baa51511cf4bfc",
+      "bytes": 179
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-python-attrs__attrs-1320/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "42f9343499e8399b2559286916e08e32ab6cb4abfa32c966afb8a2b827ceb77a",
+      "bytes": 753
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1372-correction-B-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1372-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1372-correction-C-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1372-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1372-static-B-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1372-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1372-static-C-0.patch",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/patches/python-attrs__attrs-1372-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "dbec73d74f77ab91182973ecc837e29c79da1fcc819093e5a2ef8473b5bcced5",
+      "bytes": 14548
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1372-correction-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1372-correction-B-0.json.gz",
+      "original_sha256": "fd096b0db27d4756db6a24e2aa07cfffc1f3158f5d85c11ce60b359c55aeaf61",
+      "bytes": 19563
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1372-correction-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1372-correction-C-0.json.gz",
+      "original_sha256": "cab0e65ebad3fb959a41d8e0b81ad9efe93c5352b4a7ae5f66e554e8fd700854",
+      "bytes": 15479
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1372-static-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1372-static-B-0.json.gz",
+      "original_sha256": "81a2b76b1f1c55155508862c097d70715de0f9ebbd042aa56355ee4a93141b54",
+      "bytes": 19923
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1372-static-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/session-audit/python-attrs__attrs-1372-static-C-0.json.gz",
+      "original_sha256": "9140ee5bede3c6780fa504a6a2c9437bb42954e9eed44f77f76e127e765085ae",
+      "bytes": 15768
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1372-correction-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1372-correction-B-0.json",
+      "original_sha256": "1939bb7c6ed9d6d1896fe03631c54ff6a6a384f98757077274be8e8635a7a574",
+      "bytes": 183
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1372-correction-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1372-correction-C-0.json",
+      "original_sha256": "200e6965ae31a6b88564bcc24f0377b7593b4473b5d00dfc68235358af7a2dc2",
+      "bytes": 183
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1372-static-B-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1372-static-B-0.json",
+      "original_sha256": "e8a48ce190ed3b9ebabb4840d973a481170bd20bfa4b852df5be1b55997c4b3c",
+      "bytes": 179
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1372-static-C-0.json",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/e2e/started/python-attrs__attrs-1372-static-C-0.json",
+      "original_sha256": "99557158735c16f347f07c15e0841cf12bcd06aaa3645ab05ac7b4b37ed98982",
+      "bytes": 179
+    },
+    {
+      "original_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-python-attrs__attrs-1372/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "cbfd5920305cee8cdb66d13ba310c6d20c4e8cf4f8c726a5c38061c4ca49b19a",
+      "bytes": 754
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3833-correction-B-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3833-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3833-correction-C-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3833-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3833-static-B-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3833-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3833-static-C-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3833-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "9f2e5a8bea911571c9712b457d373860ade065c61e8cf0e15cfcb851c1b0bc95",
+      "bytes": 14576
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3833-correction-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3833-correction-B-0.json.gz",
+      "original_sha256": "6d86e2316bb332e5668fbfab088110f19a29cefad07f5200c7f5720332101fab",
+      "bytes": 587369
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3833-correction-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3833-correction-C-0.json.gz",
+      "original_sha256": "c0063f3fca230f0e01147c57519160eca6a535960c451bc9e5eb95196b8107ed",
+      "bytes": 1103995
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3833-static-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3833-static-B-0.json.gz",
+      "original_sha256": "c09ad9a61c10223a07eb51b32fc0a3ff63f54bc59d6aebf1150e04226205499f",
+      "bytes": 1005773
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3833-static-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3833-static-C-0.json.gz",
+      "original_sha256": "087332e9022f21c83a39f97343c369a97645daf4021a071beedaca08e2a1ccd4",
+      "bytes": 773297
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3833-correction-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3833-correction-B-0.json",
+      "original_sha256": "9787a2b92d046ffaa28b63f8fa9f870e1ae37b6eef84af80b52626c68caf199e",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3833-correction-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3833-correction-C-0.json",
+      "original_sha256": "6bc6d190b23f6568ef6d872f9e67a890500bd1446fed65a7d4ffd270698a359e",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3833-static-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3833-static-B-0.json",
+      "original_sha256": "789bf5df4e7dc488e562f26e0e372df62c548dad637466037c688057dfc9248c",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3833-static-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3833-static-C-0.json",
+      "original_sha256": "e343d7b7032d1815dcb7309046773772cb05bf72a169f74c18e4fc92f83fe334",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-reflex-dev__reflex-3833/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "bbcb2e09441423d0997be0f26faa507b6fde055c09928ce9755c701279cab133",
+      "bytes": 750
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3842-correction-B-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3842-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3842-correction-C-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3842-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3842-static-B-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3842-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3842-static-C-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3842-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "1fce33d6652824f7b2682e2ae75282cd038cb2fe8b8580b0a0acb17739d9af77",
+      "bytes": 14581
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3842-correction-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3842-correction-B-0.json.gz",
+      "original_sha256": "89d616f919fb8e4e94c7bae5ae200dae9228789cddaf140714277b5ba678ef31",
+      "bytes": 684582
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3842-correction-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3842-correction-C-0.json.gz",
+      "original_sha256": "d59ec8c184ca77dafc0c9b41c3b3d60b52b5f84566de911be2ceed04754c8790",
+      "bytes": 215572
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3842-static-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3842-static-B-0.json.gz",
+      "original_sha256": "67fd2666336bb2159b5d5034218c5622a8e14c9fb5b4b2b4cf4a18af7015ca6e",
+      "bytes": 505669
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3842-static-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3842-static-C-0.json.gz",
+      "original_sha256": "7427fd72dec96c8a5186754ed7d546f0d01ccf2e114ba5438784ef1848c9397f",
+      "bytes": 1292679
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3842-correction-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3842-correction-B-0.json",
+      "original_sha256": "874ff847d02665587cc30d2f411fb3dcba8316060520657b3b21d3a1f55e712f",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3842-correction-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3842-correction-C-0.json",
+      "original_sha256": "d5ecf9d0ce6ca83f67601f7f6a2cb3b576412f11fae3877a109e207dfca67058",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3842-static-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3842-static-B-0.json",
+      "original_sha256": "3ecd0950a64c663f12eb7bca4e349ce7a27275297b9280e25497a4244acfcec8",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3842-static-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3842-static-C-0.json",
+      "original_sha256": "5ce373c8d088da31c5e343c83dcea9dd01e86b8574488951c8d276c51035298b",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-reflex-dev__reflex-3842/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "90c9e5c09ec47d410c8f7f68d7a543aaafb123cb7818cce7b5c922cf602dff23",
+      "bytes": 750
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3982-correction-B-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3982-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3982-correction-C-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3982-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3982-static-B-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3982-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3982-static-C-0.patch",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/patches/reflex-dev__reflex-3982-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "41b90e55026264f5dad3e310d42945616700fd7e345b53973f85928a50cc2615",
+      "bytes": 14543
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3982-correction-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3982-correction-B-0.json.gz",
+      "original_sha256": "6590b2b6640eecf5310710e1f26451e43a7bcda2877a13047229ae2ccfbbe15e",
+      "bytes": 27510
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3982-correction-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3982-correction-C-0.json.gz",
+      "original_sha256": "24d58de486a3336a7b63c1d8d94a5346cac50d9f9356ae81242d3df6529bdf53",
+      "bytes": 21839
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3982-static-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3982-static-B-0.json.gz",
+      "original_sha256": "e03369891faee2716bb6b60f864835d26603cadd9432ab33d16172c85b1fa5ef",
+      "bytes": 828802
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3982-static-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/session-audit/reflex-dev__reflex-3982-static-C-0.json.gz",
+      "original_sha256": "31b2ca7dabaa0970a2e271c0d6dd6d68a00879a812c06fbd352305aac3baeda5",
+      "bytes": 22404
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3982-correction-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3982-correction-B-0.json",
+      "original_sha256": "9d08c3ab8e1ee3ad5a07efeb25f7268dfcd5b4648a3491db9520b90321c33103",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3982-correction-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3982-correction-C-0.json",
+      "original_sha256": "cc3bad79171f02ed009b7c7ee7de2bb3bf5a5a01f2873d6cc7b35cac5920f7b9",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3982-static-B-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3982-static-B-0.json",
+      "original_sha256": "f1a81e13aacabae32412e84c8cc324f22c1f3aa69be73969f85fc67f73a6cb82",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3982-static-C-0.json",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/e2e/started/reflex-dev__reflex-3982-static-C-0.json",
+      "original_sha256": "c37bca16a119a659cde304fe7e847aac5bc9bdb2563a68eb6e107c69555c13c6",
+      "bytes": 178
+    },
+    {
+      "original_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-reflex-dev__reflex-3982/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "2e9112707d14de74c88b8b89126f852f8c108f4067a91e6cb8cc862d3f07f775",
+      "bytes": 751
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2120-correction-B-0.patch",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2120-correction-B-0.patch",
+      "original_sha256": "29d150de9cd4f1109dce0a75af9d3c733ff40667e1d30bac95e31ad1da4355ee",
+      "bytes": 545
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2120-correction-C-0.patch",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2120-correction-C-0.patch",
+      "original_sha256": "29d150de9cd4f1109dce0a75af9d3c733ff40667e1d30bac95e31ad1da4355ee",
+      "bytes": 545
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2120-static-B-0.patch",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2120-static-B-0.patch",
+      "original_sha256": "c4b9d640c3c39e3a519c1053da938e483e00b56a71b4dedd602d78059fc71e41",
+      "bytes": 617
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2120-static-C-0.patch",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2120-static-C-0.patch",
+      "original_sha256": "1583e2094927a169f6aca80fefc8dafe89eb959dfb01cc7efae571998fdd835b",
+      "bytes": 1671
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "28cb62b6752484c2a616f91ae807f1c71bcb1c6b5f6ca28c2e7e2253f2f936f9",
+      "bytes": 7676
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2120-correction-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2120-correction-B-0.json.gz",
+      "original_sha256": "66c21d16286a3f638c7ca824c8c820b042f452e7a06ff8946bc8878a99724198",
+      "bytes": 245485
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2120-correction-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2120-correction-C-0.json.gz",
+      "original_sha256": "b529104501a8027f676c44871838755489353eda0d01b1de66c1cdfeb663306e",
+      "bytes": 179163
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2120-static-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2120-static-B-0.json.gz",
+      "original_sha256": "35fba6990e296f7e134e66688e68d22ce6d0951176e354c0d32327d1d2994810",
+      "bytes": 129159
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2120-static-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2120-static-C-0.json.gz",
+      "original_sha256": "fb3e8ecb2e9d05872c0e80e788a71fa3f708b6cadbebf1aa7bd1651b91d1c97f",
+      "bytes": 241875
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2120-correction-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2120-correction-B-0.json",
+      "original_sha256": "add3468d5f52f588d873a73e5c60f7a7f335a3c1ec5405ea754fcda5f9e48164",
+      "bytes": 180
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2120-correction-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2120-correction-C-0.json",
+      "original_sha256": "e9aec39b4862443218b9fd742f39c97409a780838ca887ed3b122bec2d3f4251",
+      "bytes": 180
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2120-static-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2120-static-B-0.json",
+      "original_sha256": "bc4ad65e08dad838790681ceac02df670a39191c9bcef31319ac7037665ef8b3",
+      "bytes": 176
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2120-static-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2120-static-C-0.json",
+      "original_sha256": "e219973f95571fefaf68fd02e42ae8b297044789e215815c938698de5b28eb02",
+      "bytes": 176
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-shapely__shapely-2120/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "3c67b18d1c03809640be0c4b925cda854cf8e30603c1e21c61d4757aca60eb1a",
+      "bytes": 744
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2223-correction-B-0.patch",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2223-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2223-correction-C-0.patch",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2223-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2223-static-B-0.patch",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2223-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2223-static-C-0.patch",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2223-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "dc777e63ad9de8cbc49a469e41fb7d39abb0da4366003c9f01a7ddef64dcc7e9",
+      "bytes": 14500
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2223-correction-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2223-correction-B-0.json.gz",
+      "original_sha256": "ae33a1ea99ce5ed15661bfcb1c67a41e2b4aae1340cdaed6946a06e7b5c60963",
+      "bytes": 15698
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2223-correction-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2223-correction-C-0.json.gz",
+      "original_sha256": "1279038cf04c74040bf5c8dc397689d4bc8c8fbb361b0e67c40a026025b6e10b",
+      "bytes": 11460
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2223-static-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2223-static-B-0.json.gz",
+      "original_sha256": "b17aa0e125fd289450ea31dd4a6d674b6c951179babe444cb59c88d175b57dcc",
+      "bytes": 15979
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2223-static-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2223-static-C-0.json.gz",
+      "original_sha256": "69f42a2646df825ee71d4a5763746128bda3a37b59367b5f98223c864bbe3b04",
+      "bytes": 11685
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2223-correction-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2223-correction-B-0.json",
+      "original_sha256": "ca4ccc68f27b16d55199c0b3a2c41e4fa9834be83412f4313c23705b4474e56f",
+      "bytes": 180
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2223-correction-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2223-correction-C-0.json",
+      "original_sha256": "e27f6a8798978ce0bea971c7a3047b944ba57bad5b8ce9b4c679fac6ad772685",
+      "bytes": 180
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2223-static-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2223-static-B-0.json",
+      "original_sha256": "ccaf82935dceaeeffd9574599ce124fe7fd316b61b54c0e3d4f4fdfac376948b",
+      "bytes": 176
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2223-static-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2223-static-C-0.json",
+      "original_sha256": "b0debae806143438ba8021fe27c86f5df1792b9b828eabacd72b057075a632f5",
+      "bytes": 176
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-shapely__shapely-2223/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "ac1ed6984db28a76bb09e81352bac0c1934574e1115a0246bb1cb35889fab788",
+      "bytes": 745
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2226-correction-B-0.patch",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2226-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2226-correction-C-0.patch",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2226-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2226-static-B-0.patch",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2226-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2226-static-C-0.patch",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/patches/shapely__shapely-2226-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "92102c6d85129c1877be9b5b4a351557b129cf9a3fa5501bcf7114ddff3468f4",
+      "bytes": 14500
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2226-correction-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2226-correction-B-0.json.gz",
+      "original_sha256": "03ebdca62759285d4ab5e66ca659790dd2ec35830ef22cdb52ff4561aa49d27d",
+      "bytes": 19367
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2226-correction-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2226-correction-C-0.json.gz",
+      "original_sha256": "634c73cbc58641001cb581a2786d49087c1edeaba5c2521e04d4f4979b1bf409",
+      "bytes": 15210
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2226-static-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2226-static-B-0.json.gz",
+      "original_sha256": "86b39b38af6fd2ba1d29d2f72e46d982f57c6e7af4f0cf395ff5e0dfd5a215b2",
+      "bytes": 19931
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2226-static-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/session-audit/shapely__shapely-2226-static-C-0.json.gz",
+      "original_sha256": "54cee77f34bbec7732a498256108041bf6f887260864fd8cf8f96d9642c69d36",
+      "bytes": 15511
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2226-correction-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2226-correction-B-0.json",
+      "original_sha256": "53cbbc93d70b0605e1f7d08ed276159e936c7e9549f1c4fbb054695046000de7",
+      "bytes": 180
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2226-correction-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2226-correction-C-0.json",
+      "original_sha256": "f4c44b7afad9c8567a2f325e238f65fe43d6234ec8dbd0bd75986c0c8b7a9bb1",
+      "bytes": 180
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2226-static-B-0.json",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2226-static-B-0.json",
+      "original_sha256": "3c8e8af0107377337209007dcd1a5ae020bdea70b3ea1deb870d1edba4bd63ae",
+      "bytes": 176
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2226-static-C-0.json",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/e2e/started/shapely__shapely-2226-static-C-0.json",
+      "original_sha256": "5a0e579440ca61d14929c7d870c84a605a36a76b68424e0e3dbaf0167c5af87a",
+      "bytes": 176
+    },
+    {
+      "original_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-shapely__shapely-2226/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "d98ae1d522851406433865ee34da8dee05d954cc743fcbf7b046e41fa855eb75",
+      "bytes": 745
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-812-correction-B-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-812-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-812-correction-C-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-812-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-812-static-B-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-812-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-812-static-C-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-812-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "393f2bd930366ffb63327065e7fd51dc904036c77fa571aa095a5d6b698b5be5",
+      "bytes": 14584
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-812-correction-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-812-correction-B-0.json.gz",
+      "original_sha256": "1bddf7f87efe5c12cbab2a2b0ffcb2da4566081ade03db36148ab04b000e849a",
+      "bytes": 12080
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-812-correction-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-812-correction-C-0.json.gz",
+      "original_sha256": "286319115acdd0ac1fa0675c15d4e33e868f45389dcdbea813260208571ce913",
+      "bytes": 8869
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-812-static-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-812-static-B-0.json.gz",
+      "original_sha256": "229d4c0c47c08e89de996da1f331be79b479a94df54d8db8d3fe6991277d81b1",
+      "bytes": 12594
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-812-static-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-812-static-C-0.json.gz",
+      "original_sha256": "98fc29156252d7598cc45ac43d8f8a90054cc20b6634070e09aed15383110f69",
+      "bytes": 9130
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-812-correction-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-812-correction-B-0.json",
+      "original_sha256": "d3fccbf3409e4da9a67fd3c1664e08779acd0f7d37c748965978bb5265d67a41",
+      "bytes": 185
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-812-correction-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-812-correction-C-0.json",
+      "original_sha256": "23f03b1a19e221f0ed6ff080e735ac19aa62e27de21023b9684ab4ceef9131ab",
+      "bytes": 185
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-812-static-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-812-static-B-0.json",
+      "original_sha256": "1159862a1c93fc9a158bfc40bc5b12d26286819a0394722767269da934041698",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-812-static-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-812-static-C-0.json",
+      "original_sha256": "d72ed911f8d0c9646d4a504d94c4e8350d8bcb7e036a2450a3b15ee3b5aeecaa",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-sissbruecker__linkding-812/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "a0e353193b529ab8388d4edcb969fa2d3f759e32296cab647e10bf6a306f4f8e",
+      "bytes": 761
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-984-correction-B-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-984-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-984-correction-C-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-984-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-984-static-B-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-984-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-984-static-C-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-984-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "b170ca6ed624f418022d665d74564b4cb29b90a05582021c067bf0208d41a5c6",
+      "bytes": 14584
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-984-correction-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-984-correction-B-0.json.gz",
+      "original_sha256": "0f3c3c5d56f31618a0d7987cb76abe279ced082e7edbad80188601b88ff62492",
+      "bytes": 12353
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-984-correction-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-984-correction-C-0.json.gz",
+      "original_sha256": "6c5fcf51c18b0ea5d00a2e96c0e43f14f43585a950de49eb879f4a1486fa24f8",
+      "bytes": 8894
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-984-static-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-984-static-B-0.json.gz",
+      "original_sha256": "fbf700ad4e2b0e546987ebd14bd1004b8c8cf9879303d6e34766b5d7c5886c56",
+      "bytes": 12860
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-984-static-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-984-static-C-0.json.gz",
+      "original_sha256": "201bec53c6f1815f2a9b379fdecd55867c061e63c2836effc87f1b30e1e8ff0e",
+      "bytes": 9299
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-984-correction-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-984-correction-B-0.json",
+      "original_sha256": "e719a936a90312eddfef2f10aa13de01b0ecfbfb672cab50edf8ebab0985909a",
+      "bytes": 185
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-984-correction-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-984-correction-C-0.json",
+      "original_sha256": "80fbf37187125530479669a692c6a984390b902bc199736fa770042b44c9e03e",
+      "bytes": 185
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-984-static-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-984-static-B-0.json",
+      "original_sha256": "951e9b7a2bcb24d649aa1ac18f0ece7700df5740a297205a0b22752d9da19288",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-984-static-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-984-static-C-0.json",
+      "original_sha256": "1e4fecd7b4b1272af81a611f6285dd996fffa5fef1654a96e8b1cc6de04a5108",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-sissbruecker__linkding-984/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "67c471415e5b1dee40e805cc8e759c359e53fb5cc62f3888ea849b444029ae58",
+      "bytes": 761
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-989-correction-B-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-989-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-989-correction-C-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-989-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-989-static-B-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-989-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-989-static-C-0.patch",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/patches/sissbruecker__linkding-989-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "17557829adc77860280a366f80f49811dd579ee4f3520857c189ef495c3c447e",
+      "bytes": 14584
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-989-correction-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-989-correction-B-0.json.gz",
+      "original_sha256": "bb479f5605d7bd4170bdfea7b5450aec4ef1784ebf5df6335f80bc45fedb1d53",
+      "bytes": 12804
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-989-correction-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-989-correction-C-0.json.gz",
+      "original_sha256": "0ee0601e4a40b0b25a338f24f2c15e6552eb95b1cc22e3f166eeaceab4d1251c",
+      "bytes": 9254
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-989-static-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-989-static-B-0.json.gz",
+      "original_sha256": "ee52fa6b07834a9eacd7e6d9329ab7dea41522e69f476a9eaa084684ab5e9677",
+      "bytes": 13390
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-989-static-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/session-audit/sissbruecker__linkding-989-static-C-0.json.gz",
+      "original_sha256": "43d06757d79fd04cc5f70c19480f6bd26ca320b7076b86a840c4fb1c0458c8ba",
+      "bytes": 9723
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-989-correction-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-989-correction-B-0.json",
+      "original_sha256": "d576f813cefbae3c3e563fc84f330cd48b4dccbc706848a6b7b378901afb30f0",
+      "bytes": 185
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-989-correction-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-989-correction-C-0.json",
+      "original_sha256": "08d99db23a209eb6cca7561f3d1bc2624a452cd010c028c7ce6cd906a16d7247",
+      "bytes": 185
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-989-static-B-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-989-static-B-0.json",
+      "original_sha256": "53bb7bfe28bdea81572602157d18861aa27fe57a5468b811bd32cf38c903d0be",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-989-static-C-0.json",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/e2e/started/sissbruecker__linkding-989-static-C-0.json",
+      "original_sha256": "f55ff124a21b8a7ec2e9df43725cb760f6c38eab31cbe98eb0bf24b36cea47ed",
+      "bytes": 181
+    },
+    {
+      "original_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-sissbruecker__linkding-989/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "7639aea9dedca659adfc18863874c37bd4c84131d0f9d8e43c9a00518a4d14cc",
+      "bytes": 761
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6111-correction-B-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6111-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6111-correction-C-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6111-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6111-static-B-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6111-static-B-0.patch",
+      "original_sha256": "73a3d474cea9b0c37c3a96c223d81bcc2018ca765fd78d88aef022f469151038",
+      "bytes": 2562
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6111-static-C-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6111-static-C-0.patch",
+      "original_sha256": "796e5ef32b321dbd42fd8c81d6820cd7ddbf528ad47a0143a1c8a8bbe0cb84ea",
+      "bytes": 1913
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "1cf6509dbd0b51d5b9c8d3e263ac8b3752365ccc282c3159bcdd2ff5eaec7db5",
+      "bytes": 11168
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6111-correction-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6111-correction-B-0.json.gz",
+      "original_sha256": "19cee9dcbbc311844b104faa07c7173390dbb92da4acd5bbbafd3033341be7b8",
+      "bytes": 752345
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6111-correction-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6111-correction-C-0.json.gz",
+      "original_sha256": "2aef789bf71daa638cdc1416ab0d8737801ef2db4323409c1c3f2d71e01e662f",
+      "bytes": 646014
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6111-static-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6111-static-B-0.json.gz",
+      "original_sha256": "a74fa851abd1d0fc2c6748e3d99e1166da0128d03e1d2a6f273a838aafd3fb98",
+      "bytes": 761502
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6111-static-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6111-static-C-0.json.gz",
+      "original_sha256": "484e41706ba4b3efc40b2b6a71c0e248f5ed7624757c343d978579eee29cadde",
+      "bytes": 966024
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6111-correction-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6111-correction-B-0.json",
+      "original_sha256": "02f4bec2328cdc6f4bdbf76ab78ef434590d64400346eeb10ac37350d0d1dde3",
+      "bytes": 186
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6111-correction-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6111-correction-C-0.json",
+      "original_sha256": "9736f777b0f33da99b8c75f16cea5e37f781590309298a0d6f62e80eb2f3608f",
+      "bytes": 186
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6111-static-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6111-static-B-0.json",
+      "original_sha256": "8603121e49b1716c42fd5ce9c74c10d6bf4e3504573fcd3bc27e110542ebf4fb",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6111-static-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6111-static-C-0.json",
+      "original_sha256": "c319c627fe1dd197d4678d467ff4eedfd19af8d1346081e7825a9d862a96d45d",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-streamlink__streamlink-6111/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "998e6b26b9f0f8a781f3ec4a608bd33f1abc2ecba22c33c16773b6d57a37e59c",
+      "bytes": 762
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6205-correction-B-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6205-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6205-correction-C-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6205-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6205-static-B-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6205-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6205-static-C-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6205-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "1a8dd383f320f0ad835c7eef5b05eeaf1a9533577c3a4b4c38f0dd6ae75b33c8",
+      "bytes": 14596
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6205-correction-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6205-correction-B-0.json.gz",
+      "original_sha256": "6fc8694c2b4d505ad9a21601dd35a5de7840bc1ff9a1280059d5271c23290154",
+      "bytes": 44034
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6205-correction-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6205-correction-C-0.json.gz",
+      "original_sha256": "70ae2f3e1f9311215b8ecf888f9f5319a5156d7173b08ac2aadb35ae50b3bffc",
+      "bytes": 34752
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6205-static-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6205-static-B-0.json.gz",
+      "original_sha256": "89854c15c37703778e5e620250da5bcf9e505f45787206464cca0556ea6c242c",
+      "bytes": 44160
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6205-static-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6205-static-C-0.json.gz",
+      "original_sha256": "cb8c8f3fa3c91fb241579682bc1bdf39dd317f1f55d21f1dc7df615ad93a90e4",
+      "bytes": 34853
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6205-correction-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6205-correction-B-0.json",
+      "original_sha256": "127cdb471aee65c2b46d6a7a6ccf04d746f98226cd1fea965ae7102e91bdabbd",
+      "bytes": 186
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6205-correction-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6205-correction-C-0.json",
+      "original_sha256": "bd90cd19b62ae86a5bb504bf406d325b45d969b60958569fa06ae930f7ae7c56",
+      "bytes": 186
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6205-static-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6205-static-B-0.json",
+      "original_sha256": "7c3331609687d43d3cbd5cbc0feaf99129d02da7902326c758a51f0b9d1b50be",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6205-static-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6205-static-C-0.json",
+      "original_sha256": "9f9caa61da268c2f0ef893195758e0cea8771ea9a3bccc9a19b675ed2846f651",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-streamlink__streamlink-6205/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "f7634a17b33d0b3abe5df82defb5d7678c00858aeb4c6db82a5b6ebe4e311af2",
+      "bytes": 763
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6207-correction-B-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6207-correction-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6207-correction-C-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6207-correction-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6207-static-B-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6207-static-B-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6207-static-C-0.patch",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/patches/streamlink__streamlink-6207-static-C-0.patch",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "original_sha256": "e4dc4ac0a7047af7fc1b64066538fb9c325ef15e4ddeed754f2759e9569b50d6",
+      "bytes": 14596
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6207-correction-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6207-correction-B-0.json.gz",
+      "original_sha256": "9079a4805924b152a9c4a88c99428fb09f897772edd34aef022be9da9486a300",
+      "bytes": 34974
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6207-correction-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6207-correction-C-0.json.gz",
+      "original_sha256": "b49d6f4bf22c06e1b063114643f7265e622ef81653140c1ce5247e42cc17491c",
+      "bytes": 27504
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6207-static-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6207-static-B-0.json.gz",
+      "original_sha256": "c20f42cc51ba34cc36166a4875d4915e81a0450eba81b8b61a309821fdd1745e",
+      "bytes": 35515
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6207-static-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/session-audit/streamlink__streamlink-6207-static-C-0.json.gz",
+      "original_sha256": "3fac79442d817e1d49c2e67a2e271dc7e12cf3e2b4a61b19b9bbab85fe86b187",
+      "bytes": 27937
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6207-correction-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6207-correction-B-0.json",
+      "original_sha256": "ab45631f9a830441d43d7a4902476c378eec4b63f2ebe2eafe7817ed8ea34054",
+      "bytes": 186
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6207-correction-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6207-correction-C-0.json",
+      "original_sha256": "cb402e0453946a4919ee1849c866be9db9ccdc37daf597117b3ca8d567a852c2",
+      "bytes": 186
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6207-static-B-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6207-static-B-0.json",
+      "original_sha256": "87428d1c0947a14e86e90b31d213a0b5276ffdfc24453e4ed39d76bb34d0f991",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6207-static-C-0.json",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/e2e/started/streamlink__streamlink-6207-static-C-0.json",
+      "original_sha256": "ecdb5f7604911c4880dc10a953e4c9a6dc8cb9ab642cfec208b64425eee03647",
+      "bytes": 182
+    },
+    {
+      "original_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "archived_path": "e2e-streamlink__streamlink-6207/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "original_sha256": "7c290c440c045747776bb87ef2f95e2a70bb4632c065a593f8d396317de26fd4",
+      "bytes": 763
+    }
+  ]
+}

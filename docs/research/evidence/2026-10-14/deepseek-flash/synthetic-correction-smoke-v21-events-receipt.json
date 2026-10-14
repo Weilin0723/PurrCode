@@ -1,0 +1,16 @@
+[
+  {
+    "arm": "B",
+    "session_id": "dca540bf-468e-44cc-98ac-cc8c682e9a82",
+    "event_sha256": "27ef5906684f353ea6e83ab2173bb7c98421ed0a4596dc5c0620564ce2b8c6f1",
+    "event_bytes": 63933,
+    "archive_sha256": "20842ae1c7d6268b51aa87c7c1ac118d333102ba85a9c5e07ce465c94a494fc2"
+  },
+  {
+    "arm": "C",
+    "session_id": "5527d90b-6450-4574-a8ee-f761b91f44c0",
+    "event_sha256": "000ae5c2c4fbc28fc3e7c303f4f3c03c2376e6e51814a042ed26659adb6d88be",
+    "event_bytes": 91095,
+    "archive_sha256": "8a51924d81d34ccde207500fde50004308a9b7ea4e7c7c98258d22967f117856"
+  }
+]

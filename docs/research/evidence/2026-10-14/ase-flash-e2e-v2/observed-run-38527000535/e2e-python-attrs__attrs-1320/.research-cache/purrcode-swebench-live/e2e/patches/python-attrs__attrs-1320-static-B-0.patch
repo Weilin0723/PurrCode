@@ -1,0 +1,13 @@
+diff --git a/src/attr/validators.py b/src/attr/validators.py
+index 54607f0..db14e1d 100644
+--- a/src/attr/validators.py
++++ b/src/attr/validators.py
+@@ -681,7 +681,7 @@ def or_(*validators):
+ 
+     Args:
+         validators (~collections.abc.Iterable[typing.Callable]):
+-            Arbitrary number of validators.
++            Arbitrary number of wrapped validators.
+ 
+     Raises:
+         ValueError:

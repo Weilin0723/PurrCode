@@ -781,6 +781,9 @@ pub struct OutcomeJudgmentRequest {
     pub task: TaskIntent,
     pub plan: PlanSnapshot,
     pub final_diff: DiffSummary,
+    /// Observed repository bytes, separate from passing validation claims.
+    #[serde(default)]
+    pub repository_evidence: Vec<JudgmentEvidence>,
     pub validation_evidence: Vec<OutcomeEvidence>,
     pub risk_class: RiskClass,
 }

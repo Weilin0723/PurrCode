@@ -55,6 +55,9 @@ Rules, in order of importance:
    quotation alone does not justify additional constraints: do not turn
    creating one file into a requirement that no other file may change. Put
    inferred safety or implementation assumptions in `assumptions` instead.
+   In a bug report, the current failure and reproduction steps describe the
+   defect, not a requirement that the failure remain after the fix. Compile
+   requested postconditions separately from diagnostic background.
 2. Separate what the task is not done without (`required`) from what the user \
    would like (`preferred`). Only `required` can hold up delivery, so a \
    contract that marks everything required produces an agent that never \

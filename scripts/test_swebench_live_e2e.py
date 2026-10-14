@@ -25,8 +25,8 @@ class SwebenchLiveE2ETests(unittest.TestCase):
         self.assertEqual(metrics["model_calls"], 1)
         self.assertEqual(metrics["unknown_usage_calls"], 1)
 
-    def test_blocked_review_does_not_receive_correction(self) -> None:
-        view = dict(status_code="awaiting_review", lease_active=False)
+    def test_pending_native_approval_does_not_receive_correction(self) -> None:
+        view = dict(status_code="awaiting_approval", lease_active=False)
         task = dict(objective="synthetic", model="synthetic", max_tokens=10,
                     arm="C", variant="correction", mid_run_correction="correction")
         with patch.object(e2e, "http_json", return_value={"id": "s"}) as http, \

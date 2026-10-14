@@ -472,6 +472,7 @@ impl<'a> NativeAgent<'a> {
                 pending_correction.take(),
             )
             .await?;
+        self.sync_auxiliary_usage(store, session_id)?;
         let current = store.load(session_id)?;
         match crate::alignment::decide(&current, &assessment, *alignment_rounds) {
             crate::alignment::AlignmentVerdict::Deliver => Ok(GateDecision::Deliver),
@@ -893,6 +894,92 @@ impl<'a> NativeAgent<'a> {
             )));
         }
         let _ = role;
+        Ok(())
+    }
+
+    fn sync_auxiliary_usage(
+        &self,
+        store: &SessionStore,
+        session_id: SessionId,
+    ) -> Result<(), AgentError> {
+        let state = store.load(session_id)?;
+        let mut ledger = self
+            .usage_ledger
+            .lock()
+            .map_err(|_| AgentError::CorruptSession("usage ledger lock poisoned".into()))?;
+        for record in &state.usage_records {
+            if !ledger
+                .records
+                .iter()
+                .any(|existing| existing.request_id == record.request_id)
+            {
+                ledger.records.push(record.clone());
+                self.model_calls_started.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+        let budget = self.budget();
+        for (limit, used, label) in [
+            (
+                budget.maximum_input_tokens,
+                ledger.input_tokens(),
+                "input-token",
+            ),
+            (
+                budget.maximum_output_tokens,
+                ledger.output_tokens(),
+                "output-token",
+            ),
+            (
+                budget.maximum_total_tokens,
+                ledger.input_tokens().saturating_add(ledger.output_tokens()),
+                "total-token",
+            ),
+        ] {
+            if limit.is_some_and(|limit| used > limit) {
+                return Err(AgentError::InvalidModelTurn(format!(
+                    "{label} budget exhausted after auxiliary model calls"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn record_contextual_call_usage(
+        &self,
+        store: &mut SessionStore,
+        session_id: SessionId,
+        judge: &ContextualJudge<'_>,
+    ) -> Result<(), AgentError> {
+        for call in judge
+            .take_call_usage()
+            .map_err(|error| AgentError::InvalidModelTurn(error.to_string()))?
+        {
+            self.model_calls_started.fetch_add(1, Ordering::AcqRel);
+            store.append(
+                session_id,
+                &SessionEvent::ModelRequestStarted {
+                    role: "judge".into(),
+                    provider: judge.model().provider.clone(),
+                    model: judge.model().model.clone(),
+                },
+            )?;
+            store.append(
+                session_id,
+                &SessionEvent::ModelRequestFinished {
+                    role: "judge".into(),
+                    input_tokens: call.usage.map(|(input, _)| input),
+                    output_tokens: call.usage.map(|(_, output)| output),
+                },
+            )?;
+            self.append_usage(
+                store,
+                session_id,
+                "judge",
+                call.usage,
+                None,
+                call.latency_ms,
+            )?;
+        }
         Ok(())
     }
 
@@ -2604,6 +2691,7 @@ impl<'a> NativeAgent<'a> {
                         .await?;
                 }
                 state = store.load(session_id)?;
+                self.sync_auxiliary_usage(store, session_id)?;
             }
             let related_paths = task_related_paths(&state);
             let tracker = self.begin_stream_observation("coding_worker", 1).await?;
@@ -3677,9 +3765,13 @@ impl<'a> NativeAgent<'a> {
                             state.plan_revision + u64::from(turn.plan.is_some()),
                             &session_worktree,
                             &report,
+                            &state,
+                            &store.events(session_id)?,
                         )
                         .await?;
-                        let judgment = match judge.evaluate_outcome(&outcome_request).await {
+                        let outcome = judge.evaluate_outcome(&outcome_request).await;
+                        self.record_contextual_call_usage(store, session_id, judge)?;
+                        let judgment = match outcome {
                             Ok(judgment) => judgment,
                             Err(error) => ContextualJudgment {
                                 decision: ContextualDecision::RequireApproval,
@@ -3918,7 +4010,9 @@ impl<'a> NativeAgent<'a> {
                     session_events: &events,
                 })
                 .await?;
-                match judge.evaluate(&request, &deterministic).await {
+                let outcome = judge.evaluate(&request, &deterministic).await;
+                self.record_contextual_call_usage(store, session_id, judge)?;
+                match outcome {
                     Ok(outcome) => {
                         store.append(
                             session_id,

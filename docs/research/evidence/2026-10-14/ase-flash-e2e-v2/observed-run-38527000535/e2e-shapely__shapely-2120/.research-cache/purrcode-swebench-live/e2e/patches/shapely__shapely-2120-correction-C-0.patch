@@ -1,0 +1,13 @@
+diff --git a/shapely/geometry/point.py b/shapely/geometry/point.py
+index ccdd5c6..cb95e6e 100644
+--- a/shapely/geometry/point.py
++++ b/shapely/geometry/point.py
+@@ -116,6 +116,8 @@ class Point(BaseGeometry):
+     @property
+     def __geo_interface__(self):
+         """Return a GeoJSON-like mapping of the Point geometry."""
++        if self.is_empty:
++            return {"type": "Point", "coordinates": ()}
+         return {"type": "Point", "coordinates": self.coords[0]}
+ 
+     def svg(self, scale_factor=1.0, fill_color=None, opacity=None):

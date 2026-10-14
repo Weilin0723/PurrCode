@@ -364,6 +364,12 @@ pub(crate) fn validate_turn(turn: &AgentTurn) -> Result<(), AgentError> {
             "expected_postconditions exceeds 16 entries".into(),
         ));
     }
+    for action in turn.action.iter().chain(turn.actions.iter()) {
+        if let AgentAction::Read(read) = action {
+            read.validate_bounds()
+                .map_err(|error| AgentError::InvalidModelTurn(error.to_string()))?;
+        }
+    }
     Ok(())
 }
 
@@ -393,6 +399,19 @@ pub(crate) fn validate_plan(plan: &AgentPlan) -> Result<(), AgentError> {
 #[cfg(test)]
 mod compatibility_tests {
     use super::*;
+    #[test]
+    fn zero_read_bounds_are_rejected_during_turn_validation() {
+        let turn: AgentTurn = serde_json::from_value(serde_json::json!({
+            "rationale": "Read the file", "action": {
+                "type": "read", "kind": "read_file", "path": "file.txt", "max_bytes": 0
+            }, "complete": false
+        }))
+        .unwrap();
+        assert!(matches!(
+            validate_turn(&turn),
+            Err(AgentError::InvalidModelTurn(_))
+        ));
+    }
 
     #[test]
     fn scalar_string_lists_are_normalized_without_weakening_validation() {
@@ -823,10 +842,32 @@ pub(crate) fn rationale_grounded_in_events(rationale: &str, events: &[SessionEve
     // output is the evidence the model is allowed to cite. Fold the recorded
     // read output into the ground too, so a rationale that names a file that a
     // `list` or `grep` surfaced is grounded.
+    let mutations = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::ActionProposed {
+                action_id,
+                action: ProposedAction::WriteFile(_) | ProposedAction::DeleteFile(_),
+                ..
+            } => Some(*action_id),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     for event in events {
-        let SessionEvent::ActionOutputRecorded { stdout, stderr, .. } = event else {
+        let SessionEvent::ActionOutputRecorded {
+            action_id,
+            stdout,
+            stderr,
+            ..
+        } = event
+        else {
             continue;
         };
+        // Native mutation receipts describe effects; their metadata field names
+        // and hashes are not repository artifacts that a rationale must name.
+        if mutations.contains(action_id) {
+            continue;
+        }
         ground.extend(read_output_tokens(stdout));
         ground.extend(read_output_tokens(stderr));
     }

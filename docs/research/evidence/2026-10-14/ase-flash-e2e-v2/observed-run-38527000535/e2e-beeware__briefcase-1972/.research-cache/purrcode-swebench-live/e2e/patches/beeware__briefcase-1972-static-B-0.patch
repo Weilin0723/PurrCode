@@ -1,0 +1,72 @@
+diff --git a/src/briefcase/platforms/macOS/utils.py b/src/briefcase/platforms/macOS/utils.py
+index 16c90b1c..39d25b6d 100644
+--- a/src/briefcase/platforms/macOS/utils.py
++++ b/src/briefcase/platforms/macOS/utils.py
+@@ -44,11 +44,15 @@ class AppPackagesMergeMixin:
+         for distinfo in install_path.glob("**/*.dist-info"):
+             # Read the WHEEL file in the dist-info folder.
+             # Use this to determine if the wheel is "pure", and the tag
+-            # for the wheel.
+-            with (distinfo / "WHEEL").open("r", encoding="utf-8") as f:
+-                wheel_data = email.message_from_string(f.read())
+-                is_purelib = wheel_data.get("Root-Is-Purelib", "false") == "true"
+-                tag = wheel_data["Tag"]
++            # for the wheel. Some dist-info folders (e.g., setuptools >= 73) are
++            # malformed and don't contain a WHEEL file; ignore those.
++            try:
++                with (distinfo / "WHEEL").open("r", encoding="utf-8") as f:
++                    wheel_data = email.message_from_string(f.read())
++                    is_purelib = wheel_data.get("Root-Is-Purelib", "false") == "true"
++                    tag = wheel_data["Tag"]
++            except FileNotFoundError:
++                continue
+ 
+             # If the wheel is pure, it's not a binary package
+             if is_purelib:
+diff --git a/tests/platforms/macOS/test_AppPackagesMergeMixin__find_binary_packages.py b/tests/platforms/macOS/test_AppPackagesMergeMixin__find_binary_packages.py
+index 9a7c145c..cfb95007 100644
+--- a/tests/platforms/macOS/test_AppPackagesMergeMixin__find_binary_packages.py
++++ b/tests/platforms/macOS/test_AppPackagesMergeMixin__find_binary_packages.py
+@@ -1,4 +1,6 @@
+-from ...utils import create_installed_package
++import os
++
++from ...utils import create_file, create_installed_package
+ 
+ 
+ def test_find_binary_packages(dummy_command, tmp_path):
+@@ -103,3 +105,34 @@ def test_find_binary_packages_non_universal(dummy_command, tmp_path):
+         ("binary-package-1", "3.4.5"),
+         ("binary-package-2", "3.4.6"),
+     }
++
++
++def test_find_binary_packages_malformed_distinfo(dummy_command, tmp_path):
++    """A dist-info folder that doesn't contain a WHEEL file is ignored."""
++
++    create_installed_package(
++        tmp_path / "app-packages",
++        "binary-package-1",
++        version="3.4.5",
++        tag="macOS_11_arm64",
++    )
++
++    # A malformed dist-info folder (e.g., the vendored ``packaging`` copy in
++    # setuptools >= 73) that has no WHEEL file.
++    create_file(
++        tmp_path
++        / "app-packages"
++        / "setuptools"
++        / "_vendor"
++        / "packaging-24.1.dist-info"
++        / "METADATA",
++        "Name: packaging\nVersion: 24.1\n",
++    )
++
++    binary_packages = dummy_command.find_binary_packages(
++        tmp_path / "app-packages",
++        universal_suffix="_universal2",
++    )
++
++    # The malformed dist-info folder is ignored; the binary package is still found.
++    assert binary_packages == [("binary-package-1", "3.4.5")]

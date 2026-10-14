@@ -1,0 +1,51 @@
+diff --git a/src/streamlink/webbrowser/chromium.py b/src/streamlink/webbrowser/chromium.py
+index 6ce9f948..9cbdb3c9 100644
+--- a/src/streamlink/webbrowser/chromium.py
++++ b/src/streamlink/webbrowser/chromium.py
+@@ -6,6 +6,7 @@ from typing import AsyncGenerator, List, Optional, Union
+ import trio
+ 
+ from streamlink.compat import is_darwin, is_win32
++from streamlink.session.http_useragents import CHROME as CHROME_USERAGENT
+ from streamlink.plugin.api import validate
+ from streamlink.session import Streamlink
+ from streamlink.utils.socket import find_free_port_ipv4, find_free_port_ipv6
+@@ -151,6 +152,9 @@ class ChromiumWebbrowser(Webbrowser):
+         self.port = port
+         if headless:
+             self.arguments.append("--headless=new")
++        # Set a custom user agent, because Chromium's headless mode reports itself as "HeadlessChrome"
++        # https://github.com/streamlink/streamlink/issues/6110
++        self.arguments.append(f"--user-agent={CHROME_USERAGENT.replace('HeadlessChrome', 'Chrome')}")
+ 
+     @asynccontextmanager
+     async def launch(self, timeout: Optional[float] = None) -> AsyncGenerator[trio.Nursery, None]:
+diff --git a/tests/webbrowser/test_chromium.py b/tests/webbrowser/test_chromium.py
+index cacece58..ac017a44 100644
+--- a/tests/webbrowser/test_chromium.py
++++ b/tests/webbrowser/test_chromium.py
+@@ -11,6 +11,7 @@ from requests import Timeout
+ from streamlink.compat import is_win32
+ from streamlink.exceptions import PluginError
+ from streamlink.session import Streamlink
++from streamlink.session.http_useragents import CHROME as CHROME_USERAGENT
+ from streamlink.webbrowser.chromium import ChromiumWebbrowser
+ from streamlink.webbrowser.exceptions import WebbrowserError
+ 
+@@ -108,6 +109,16 @@ class TestLaunchArgs:
+         webbrowser = ChromiumWebbrowser(headless=headless)
+         assert ("--headless=new" in webbrowser.arguments) is headless
+ 
++    @pytest.mark.parametrize("headless", [True, False])
++    def test_user_agent(self, headless: bool):
++        webbrowser = ChromiumWebbrowser(headless=headless)
++        expected = CHROME_USERAGENT.replace("HeadlessChrome", "Chrome")
++        # The cloaked user agent must never report "HeadlessChrome" and must be based on the CHROME constant
++        assert "HeadlessChrome" not in expected
++        assert "Chrome/" in expected
++        assert f"--user-agent={expected}" in webbrowser.arguments
++        assert not any("HeadlessChrome" in arg for arg in webbrowser.arguments)
++
+ 
+ @pytest.mark.trio()
+ @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])

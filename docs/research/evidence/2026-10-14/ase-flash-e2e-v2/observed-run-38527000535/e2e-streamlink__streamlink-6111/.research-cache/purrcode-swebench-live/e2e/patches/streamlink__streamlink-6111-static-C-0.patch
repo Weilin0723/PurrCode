@@ -1,0 +1,37 @@
+diff --git a/src/streamlink/webbrowser/chromium.py b/src/streamlink/webbrowser/chromium.py
+index 6ce9f948..ae62b28a 100644
+--- a/src/streamlink/webbrowser/chromium.py
++++ b/src/streamlink/webbrowser/chromium.py
+@@ -151,6 +151,10 @@ class ChromiumWebbrowser(Webbrowser):
+         self.port = port
+         if headless:
+             self.arguments.append("--headless=new")
++            # Headless Chromium advertises itself with "HeadlessChrome" in its user agent string,
++            # which lets websites detect that the browser is running in headless mode.
++            # Cloak it by setting a custom user agent where the "HeadlessChrome" token is replaced with "Chrome".
++            self.arguments.append("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+ 
+     @asynccontextmanager
+     async def launch(self, timeout: Optional[float] = None) -> AsyncGenerator[trio.Nursery, None]:
+diff --git a/tests/webbrowser/test_chromium.py b/tests/webbrowser/test_chromium.py
+index cacece58..ec20448c 100644
+--- a/tests/webbrowser/test_chromium.py
++++ b/tests/webbrowser/test_chromium.py
+@@ -108,6 +108,17 @@ class TestLaunchArgs:
+         webbrowser = ChromiumWebbrowser(headless=headless)
+         assert ("--headless=new" in webbrowser.arguments) is headless
+ 
++    @pytest.mark.parametrize("headless", [True, False])
++    def test_headless_useragent(self, headless: bool):
++        webbrowser = ChromiumWebbrowser(headless=headless)
++        useragent = next((arg for arg in webbrowser.arguments if arg.startswith("--user-agent=")), None)
++        if not headless:
++            assert useragent is None
++        else:
++            assert useragent is not None
++            assert "HeadlessChrome" not in useragent
++            assert "Chrome/" in useragent
++
+ 
+ @pytest.mark.trio()
+ @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])

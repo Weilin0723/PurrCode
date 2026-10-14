@@ -1,0 +1,19 @@
+diff --git a/faker/providers/internet/__init__.py b/faker/providers/internet/__init__.py
+index 1d84b928..741c0135 100644
+--- a/faker/providers/internet/__init__.py
++++ b/faker/providers/internet/__init__.py
+@@ -728,7 +728,14 @@ class Provider(BaseProvider):
+     def slug(self, value: Optional[str] = None) -> str:
+         """Django algorithm"""
+         if value is None:
++            # Generate a value and retry until a non-empty slug is produced.
++            # Some locales use non-ASCII characters in their lorem words,
++            # and `slugify` strips those out, which can result in an empty
++            # string. Retrying guarantees `slug()` never returns an empty
++            # string for any locale.
+             value = self.generator.text(20)
++            while not text.slugify(value):
++                value = self.generator.text(20)
+         return value
+ 
+     def image_url(

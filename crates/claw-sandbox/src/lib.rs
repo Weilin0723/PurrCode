@@ -114,12 +114,18 @@ impl ToolRuntime {
             ProposedAction::RepositoryRead(read) => execute_typed_read(read, constraints).await,
             ProposedAction::Command(command) => execute_command(command, constraints).await,
             ProposedAction::WriteFile(write) => {
-                execute_write(write, constraints)?;
+                let existed_before = execute_write(write, constraints)?;
+                let mut stdout = format!(
+                    "Native write observation: destination_existed_before_write={existed_before}; written_utf8_bytes={}; written_blake3={}. Existence was sampled before the atomic rename, not guaranteed atomically against concurrent external changes.\n",
+                    write.content.len(), blake3::hash(write.content.as_bytes()).to_hex()
+                ).into_bytes();
+                let truncated = stdout.len() > constraints.maximum_output_bytes;
+                stdout.truncate(constraints.maximum_output_bytes);
                 Ok(ExecutionResult {
                     exit_code: Some(0),
-                    stdout: Vec::new(),
+                    stdout,
                     stderr: Vec::new(),
-                    truncated: false,
+                    truncated,
                     affected_paths: vec![write.path.clone()],
                     sandbox_level: SandboxLevel::WorktreeWriteNoShell,
                     sandbox_backend: "cap-std".into(),
@@ -765,9 +771,14 @@ async fn terminate_process_tree(child: &mut tokio::process::Child) -> Result<(),
 fn execute_write(
     action: &WriteFileAction,
     constraints: &purrcode_runtime_core::ActionConstraints,
-) -> Result<(), ExecutionError> {
+) -> Result<bool, ExecutionError> {
     validate_mutation_path(&action.path, constraints)?;
     let directory = Dir::open_ambient_dir(&constraints.working_directory, ambient_authority())?;
+    let existed_before = match directory.metadata(&action.path) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
     if let Some(expected) = &action.expected_digest {
         let existing = read_cap_file(&directory, &action.path)?;
         if blake3::hash(&existing).to_hex().as_str() != expected {
@@ -792,7 +803,7 @@ fn execute_write(
         let _ = directory.remove_file(&temporary);
         return Err(error.into());
     }
-    Ok(())
+    Ok(existed_before)
 }
 
 fn execute_delete(
@@ -987,9 +998,14 @@ mod tests {
                 approved_by: ApprovalAuthority::Human,
             })
             .unwrap();
-        ToolRuntime::execute(&mut store, action_id, &action, &constraints)
+        let execution = ToolRuntime::execute(&mut store, action_id, &action, &constraints)
             .await
             .unwrap();
+        assert!(
+            String::from_utf8(execution.stdout)
+                .unwrap()
+                .contains("destination_existed_before_write=false")
+        );
         assert_eq!(
             std::fs::read_to_string(temporary.path().join("src/new.txt")).unwrap(),
             "safe"
@@ -1072,6 +1088,35 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(temporary.path().join("tracked.txt")).unwrap(),
             "newer"
+        );
+    }
+
+    #[test]
+    fn write_observation_distinguishes_creation_from_replacement() {
+        let temporary = tempfile::tempdir().unwrap();
+        let action = WriteFileAction {
+            path: "observed.txt".into(),
+            content: "first".into(),
+            expected_digest: None,
+        };
+        let constraints = ActionConstraints {
+            working_directory: temporary.path().into(),
+            network: false,
+            timeout_seconds: 10,
+            maximum_output_bytes: 1024,
+            allowed_write_globs: vec!["observed.txt".into()],
+            maximum_changed_files: 1,
+        };
+        assert!(!execute_write(&action, &constraints).unwrap());
+        let replacement = WriteFileAction {
+            content: "second".into(),
+            expected_digest: Some(blake3::hash(b"first").to_hex().to_string()),
+            ..action
+        };
+        assert!(execute_write(&replacement, &constraints).unwrap());
+        assert_eq!(
+            std::fs::read(temporary.path().join("observed.txt")).unwrap(),
+            b"second"
         );
     }
 

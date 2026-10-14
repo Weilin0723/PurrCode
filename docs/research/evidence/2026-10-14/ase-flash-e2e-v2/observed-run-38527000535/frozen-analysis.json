@@ -1,0 +1,1899 @@
+{
+  "alpha": 0.05,
+  "analysis_plan_sha256": "56d8a1258ab143d0a08f507afd33d6b4afe6c6a5df0cddc32d020a29f222cc1d",
+  "attrition": {
+    "B": {
+      "by_variant": {
+        "correction": {
+          "acknowledgement_failures": 0,
+          "claim_not_applicable": 27,
+          "failed": 30,
+          "formula": "terminal failure OR oracle unknown OR correction trigger/ack failure",
+          "missing_claim": 0,
+          "oracle_unknown": 30,
+          "oracle_unknown_rate": 1.0,
+          "rate": 1.0,
+          "scheduled": 30,
+          "terminal_failure_rate": 0.9,
+          "terminal_status_counts": {
+            "error": 27,
+            "invalid": 0,
+            "missing": 0,
+            "timeout": 0,
+            "uncertain": 0,
+            "valid": 3
+          },
+          "trigger_failures": 29
+        },
+        "static": {
+          "acknowledgement_failures": 0,
+          "claim_not_applicable": 23,
+          "failed": 27,
+          "formula": "terminal failure OR oracle unknown OR correction trigger/ack failure",
+          "missing_claim": 0,
+          "oracle_unknown": 27,
+          "oracle_unknown_rate": 0.9,
+          "rate": 0.9,
+          "scheduled": 30,
+          "terminal_failure_rate": 0.7666666666666667,
+          "terminal_status_counts": {
+            "error": 23,
+            "invalid": 0,
+            "missing": 0,
+            "timeout": 0,
+            "uncertain": 0,
+            "valid": 7
+          },
+          "trigger_failures": 0
+        }
+      },
+      "failed": 57,
+      "rate": 0.95,
+      "scheduled": 60
+    },
+    "C": {
+      "by_variant": {
+        "correction": {
+          "acknowledgement_failures": 0,
+          "claim_not_applicable": 27,
+          "failed": 30,
+          "formula": "terminal failure OR oracle unknown OR correction trigger/ack failure",
+          "missing_claim": 0,
+          "oracle_unknown": 30,
+          "oracle_unknown_rate": 1.0,
+          "rate": 1.0,
+          "scheduled": 30,
+          "terminal_failure_rate": 0.9,
+          "terminal_status_counts": {
+            "error": 26,
+            "invalid": 0,
+            "missing": 0,
+            "timeout": 1,
+            "uncertain": 0,
+            "valid": 3
+          },
+          "trigger_failures": 30
+        },
+        "static": {
+          "acknowledgement_failures": 0,
+          "claim_not_applicable": 26,
+          "failed": 29,
+          "formula": "terminal failure OR oracle unknown OR correction trigger/ack failure",
+          "missing_claim": 0,
+          "oracle_unknown": 29,
+          "oracle_unknown_rate": 0.9666666666666667,
+          "rate": 0.9666666666666667,
+          "scheduled": 30,
+          "terminal_failure_rate": 0.8666666666666667,
+          "terminal_status_counts": {
+            "error": 26,
+            "invalid": 0,
+            "missing": 0,
+            "timeout": 0,
+            "uncertain": 0,
+            "valid": 4
+          },
+          "trigger_failures": 0
+        }
+      },
+      "failed": 59,
+      "rate": 0.9833333333333333,
+      "scheduled": 60
+    },
+    "correction:B": {
+      "acknowledgement_failures": 0,
+      "claim_not_applicable": 27,
+      "failed": 30,
+      "formula": "terminal failure OR oracle unknown OR correction trigger/ack failure",
+      "missing_claim": 0,
+      "oracle_unknown": 30,
+      "oracle_unknown_rate": 1.0,
+      "rate": 1.0,
+      "scheduled": 30,
+      "terminal_failure_rate": 0.9,
+      "terminal_status_counts": {
+        "error": 27,
+        "invalid": 0,
+        "missing": 0,
+        "timeout": 0,
+        "uncertain": 0,
+        "valid": 3
+      },
+      "trigger_failures": 29
+    },
+    "correction:C": {
+      "acknowledgement_failures": 0,
+      "claim_not_applicable": 27,
+      "failed": 30,
+      "formula": "terminal failure OR oracle unknown OR correction trigger/ack failure",
+      "missing_claim": 0,
+      "oracle_unknown": 30,
+      "oracle_unknown_rate": 1.0,
+      "rate": 1.0,
+      "scheduled": 30,
+      "terminal_failure_rate": 0.9,
+      "terminal_status_counts": {
+        "error": 26,
+        "invalid": 0,
+        "missing": 0,
+        "timeout": 1,
+        "uncertain": 0,
+        "valid": 3
+      },
+      "trigger_failures": 30
+    },
+    "static:B": {
+      "acknowledgement_failures": 0,
+      "claim_not_applicable": 23,
+      "failed": 27,
+      "formula": "terminal failure OR oracle unknown OR correction trigger/ack failure",
+      "missing_claim": 0,
+      "oracle_unknown": 27,
+      "oracle_unknown_rate": 0.9,
+      "rate": 0.9,
+      "scheduled": 30,
+      "terminal_failure_rate": 0.7666666666666667,
+      "terminal_status_counts": {
+        "error": 23,
+        "invalid": 0,
+        "missing": 0,
+        "timeout": 0,
+        "uncertain": 0,
+        "valid": 7
+      },
+      "trigger_failures": 0
+    },
+    "static:C": {
+      "acknowledgement_failures": 0,
+      "claim_not_applicable": 26,
+      "failed": 29,
+      "formula": "terminal failure OR oracle unknown OR correction trigger/ack failure",
+      "missing_claim": 0,
+      "oracle_unknown": 29,
+      "oracle_unknown_rate": 0.9666666666666667,
+      "rate": 0.9666666666666667,
+      "scheduled": 30,
+      "terminal_failure_rate": 0.8666666666666667,
+      "terminal_status_counts": {
+        "error": 26,
+        "invalid": 0,
+        "missing": 0,
+        "timeout": 0,
+        "uncertain": 0,
+        "valid": 4
+      },
+      "trigger_failures": 0
+    }
+  },
+  "attrition_limit": 0.1,
+  "bootstrap": {
+    "method": "equal-weight repository cluster percentile bootstrap",
+    "samples": 100000,
+    "seed": 20261013
+  },
+  "dataset_manifest_sha256": "6794c9e0fb0f3266aeaaeb6405104979630393c569bfdd0af37fc8f2235883d5",
+  "decision": {
+    "false_ready_supported": false,
+    "guardrail_supported": false,
+    "inconclusive_if_ineligible": true,
+    "joint_method_support": null,
+    "status": "operationally_inconclusive"
+  },
+  "endpoints": {
+    "correct_delivery": {
+      "B": 0.0,
+      "C": 0.0,
+      "by_variant": {
+        "correction": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository_cluster_bootstrap_confidence": 0.95,
+          "repository_cluster_bootstrap_interval": [
+            0.0,
+            0.0
+          ],
+          "repository_cluster_bootstrap_one_sided_lower": 0.0,
+          "repository_differences": {
+            "Kozea/WeasyPrint": 0.0,
+            "beeware/briefcase": 0.0,
+            "ipython/ipython": 0.0,
+            "joke2k/faker": 0.0,
+            "pydata/xarray": 0.0,
+            "python-attrs/attrs": 0.0,
+            "reflex-dev/reflex": 0.0,
+            "shapely/shapely": 0.0,
+            "sissbruecker/linkding": 0.0,
+            "streamlink/streamlink": 0.0
+          },
+          "repository_sign_test_p_two_sided": null,
+          "task_differences": {
+            "beeware__briefcase-1972": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "beeware__briefcase-2035": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "beeware__briefcase-2088": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "ipython__ipython-14503": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "ipython__ipython-14555": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "ipython__ipython-14693": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "joke2k__faker-2096": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "joke2k__faker-2101": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "joke2k__faker-2104": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "kozea__weasyprint-2233": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "kozea__weasyprint-2300": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "kozea__weasyprint-2301": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "pydata__xarray-9369": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "pydata__xarray-9586": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "pydata__xarray-9760": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "python-attrs__attrs-1319": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "python-attrs__attrs-1320": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "python-attrs__attrs-1372": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "reflex-dev__reflex-3833": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "reflex-dev__reflex-3842": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "reflex-dev__reflex-3982": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "shapely__shapely-2120": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "shapely__shapely-2223": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "shapely__shapely-2226": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "sissbruecker__linkding-812": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "sissbruecker__linkding-984": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "sissbruecker__linkding-989": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "streamlink__streamlink-6111": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            },
+            "streamlink__streamlink-6205": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            },
+            "streamlink__streamlink-6207": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            }
+          }
+        },
+        "static": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository_cluster_bootstrap_confidence": 0.95,
+          "repository_cluster_bootstrap_interval": [
+            0.0,
+            0.0
+          ],
+          "repository_cluster_bootstrap_one_sided_lower": 0.0,
+          "repository_differences": {
+            "Kozea/WeasyPrint": 0.0,
+            "beeware/briefcase": 0.0,
+            "ipython/ipython": 0.0,
+            "joke2k/faker": 0.0,
+            "pydata/xarray": 0.0,
+            "python-attrs/attrs": 0.0,
+            "reflex-dev/reflex": 0.0,
+            "shapely/shapely": 0.0,
+            "sissbruecker/linkding": 0.0,
+            "streamlink/streamlink": 0.0
+          },
+          "repository_sign_test_p_two_sided": null,
+          "task_differences": {
+            "beeware__briefcase-1972": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "beeware__briefcase-2035": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "beeware__briefcase-2088": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "ipython__ipython-14503": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "ipython__ipython-14555": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "ipython__ipython-14693": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "joke2k__faker-2096": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "joke2k__faker-2101": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "joke2k__faker-2104": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "kozea__weasyprint-2233": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "kozea__weasyprint-2300": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "kozea__weasyprint-2301": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "pydata__xarray-9369": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "pydata__xarray-9586": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "pydata__xarray-9760": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "python-attrs__attrs-1319": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "python-attrs__attrs-1320": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "python-attrs__attrs-1372": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "reflex-dev__reflex-3833": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "reflex-dev__reflex-3842": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "reflex-dev__reflex-3982": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "shapely__shapely-2120": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "shapely__shapely-2223": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "shapely__shapely-2226": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "sissbruecker__linkding-812": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "sissbruecker__linkding-984": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "sissbruecker__linkding-989": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "streamlink__streamlink-6111": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            },
+            "streamlink__streamlink-6205": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            },
+            "streamlink__streamlink-6207": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            }
+          }
+        }
+      },
+      "difference": 0.0,
+      "interaction": {
+        "difference": 0.0,
+        "repository_cluster_bootstrap_confidence": 0.95,
+        "repository_cluster_bootstrap_interval": [
+          0.0,
+          0.0
+        ],
+        "repository_cluster_bootstrap_one_sided_lower": 0.0,
+        "repository_differences": {
+          "Kozea/WeasyPrint": 0.0,
+          "beeware/briefcase": 0.0,
+          "ipython/ipython": 0.0,
+          "joke2k/faker": 0.0,
+          "pydata/xarray": 0.0,
+          "python-attrs/attrs": 0.0,
+          "reflex-dev/reflex": 0.0,
+          "shapely/shapely": 0.0,
+          "sissbruecker/linkding": 0.0,
+          "streamlink/streamlink": 0.0
+        },
+        "repository_sign_test_p_two_sided": null,
+        "task_differences": {
+          "beeware__briefcase-1972": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "beeware/briefcase",
+            "static_difference": 0.0
+          },
+          "beeware__briefcase-2035": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "beeware/briefcase",
+            "static_difference": 0.0
+          },
+          "beeware__briefcase-2088": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "beeware/briefcase",
+            "static_difference": 0.0
+          },
+          "ipython__ipython-14503": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "ipython/ipython",
+            "static_difference": 0.0
+          },
+          "ipython__ipython-14555": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "ipython/ipython",
+            "static_difference": 0.0
+          },
+          "ipython__ipython-14693": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "ipython/ipython",
+            "static_difference": 0.0
+          },
+          "joke2k__faker-2096": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "joke2k/faker",
+            "static_difference": 0.0
+          },
+          "joke2k__faker-2101": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "joke2k/faker",
+            "static_difference": 0.0
+          },
+          "joke2k__faker-2104": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "joke2k/faker",
+            "static_difference": 0.0
+          },
+          "kozea__weasyprint-2233": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "Kozea/WeasyPrint",
+            "static_difference": 0.0
+          },
+          "kozea__weasyprint-2300": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "Kozea/WeasyPrint",
+            "static_difference": 0.0
+          },
+          "kozea__weasyprint-2301": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "Kozea/WeasyPrint",
+            "static_difference": 0.0
+          },
+          "pydata__xarray-9369": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "pydata/xarray",
+            "static_difference": 0.0
+          },
+          "pydata__xarray-9586": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "pydata/xarray",
+            "static_difference": 0.0
+          },
+          "pydata__xarray-9760": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "pydata/xarray",
+            "static_difference": 0.0
+          },
+          "python-attrs__attrs-1319": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "python-attrs/attrs",
+            "static_difference": 0.0
+          },
+          "python-attrs__attrs-1320": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "python-attrs/attrs",
+            "static_difference": 0.0
+          },
+          "python-attrs__attrs-1372": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "python-attrs/attrs",
+            "static_difference": 0.0
+          },
+          "reflex-dev__reflex-3833": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "reflex-dev/reflex",
+            "static_difference": 0.0
+          },
+          "reflex-dev__reflex-3842": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "reflex-dev/reflex",
+            "static_difference": 0.0
+          },
+          "reflex-dev__reflex-3982": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "reflex-dev/reflex",
+            "static_difference": 0.0
+          },
+          "shapely__shapely-2120": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "shapely/shapely",
+            "static_difference": 0.0
+          },
+          "shapely__shapely-2223": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "shapely/shapely",
+            "static_difference": 0.0
+          },
+          "shapely__shapely-2226": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "shapely/shapely",
+            "static_difference": 0.0
+          },
+          "sissbruecker__linkding-812": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "sissbruecker/linkding",
+            "static_difference": 0.0
+          },
+          "sissbruecker__linkding-984": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "sissbruecker/linkding",
+            "static_difference": 0.0
+          },
+          "sissbruecker__linkding-989": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "sissbruecker/linkding",
+            "static_difference": 0.0
+          },
+          "streamlink__streamlink-6111": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "streamlink/streamlink",
+            "static_difference": 0.0
+          },
+          "streamlink__streamlink-6205": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "streamlink/streamlink",
+            "static_difference": 0.0
+          },
+          "streamlink__streamlink-6207": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "streamlink/streamlink",
+            "static_difference": 0.0
+          }
+        }
+      },
+      "repository_cluster_bootstrap_confidence": 0.95,
+      "repository_cluster_bootstrap_interval": [
+        0.0,
+        0.0
+      ],
+      "repository_cluster_bootstrap_one_sided_lower": 0.0,
+      "repository_differences": {
+        "Kozea/WeasyPrint": 0.0,
+        "beeware/briefcase": 0.0,
+        "ipython/ipython": 0.0,
+        "joke2k/faker": 0.0,
+        "pydata/xarray": 0.0,
+        "python-attrs/attrs": 0.0,
+        "reflex-dev/reflex": 0.0,
+        "shapely/shapely": 0.0,
+        "sissbruecker/linkding": 0.0,
+        "streamlink/streamlink": 0.0
+      },
+      "repository_sign_test_p_two_sided": null,
+      "task_differences": {
+        "beeware__briefcase-1972": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "beeware/briefcase"
+        },
+        "beeware__briefcase-2035": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "beeware/briefcase"
+        },
+        "beeware__briefcase-2088": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "beeware/briefcase"
+        },
+        "ipython__ipython-14503": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "ipython/ipython"
+        },
+        "ipython__ipython-14555": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "ipython/ipython"
+        },
+        "ipython__ipython-14693": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "ipython/ipython"
+        },
+        "joke2k__faker-2096": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "joke2k/faker"
+        },
+        "joke2k__faker-2101": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "joke2k/faker"
+        },
+        "joke2k__faker-2104": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "joke2k/faker"
+        },
+        "kozea__weasyprint-2233": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "Kozea/WeasyPrint"
+        },
+        "kozea__weasyprint-2300": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "Kozea/WeasyPrint"
+        },
+        "kozea__weasyprint-2301": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "Kozea/WeasyPrint"
+        },
+        "pydata__xarray-9369": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "pydata/xarray"
+        },
+        "pydata__xarray-9586": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "pydata/xarray"
+        },
+        "pydata__xarray-9760": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "pydata/xarray"
+        },
+        "python-attrs__attrs-1319": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "python-attrs/attrs"
+        },
+        "python-attrs__attrs-1320": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "python-attrs/attrs"
+        },
+        "python-attrs__attrs-1372": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "python-attrs/attrs"
+        },
+        "reflex-dev__reflex-3833": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "reflex-dev/reflex"
+        },
+        "reflex-dev__reflex-3842": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "reflex-dev/reflex"
+        },
+        "reflex-dev__reflex-3982": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "reflex-dev/reflex"
+        },
+        "shapely__shapely-2120": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "shapely/shapely"
+        },
+        "shapely__shapely-2223": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "shapely/shapely"
+        },
+        "shapely__shapely-2226": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "shapely/shapely"
+        },
+        "sissbruecker__linkding-812": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "sissbruecker/linkding"
+        },
+        "sissbruecker__linkding-984": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "sissbruecker/linkding"
+        },
+        "sissbruecker__linkding-989": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "sissbruecker/linkding"
+        },
+        "streamlink__streamlink-6111": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "streamlink/streamlink"
+        },
+        "streamlink__streamlink-6205": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "streamlink/streamlink"
+        },
+        "streamlink__streamlink-6207": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "streamlink/streamlink"
+        }
+      }
+    },
+    "false_ready": {
+      "B": 0.0,
+      "C": 0.0,
+      "by_variant": {
+        "correction": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository_cluster_bootstrap_confidence": 0.95,
+          "repository_cluster_bootstrap_interval": [
+            0.0,
+            0.0
+          ],
+          "repository_cluster_bootstrap_one_sided_lower": 0.0,
+          "repository_differences": {
+            "Kozea/WeasyPrint": 0.0,
+            "beeware/briefcase": 0.0,
+            "ipython/ipython": 0.0,
+            "joke2k/faker": 0.0,
+            "pydata/xarray": 0.0,
+            "python-attrs/attrs": 0.0,
+            "reflex-dev/reflex": 0.0,
+            "shapely/shapely": 0.0,
+            "sissbruecker/linkding": 0.0,
+            "streamlink/streamlink": 0.0
+          },
+          "repository_sign_test_p_two_sided": null,
+          "task_differences": {
+            "beeware__briefcase-1972": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "beeware__briefcase-2035": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "beeware__briefcase-2088": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "ipython__ipython-14503": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "ipython__ipython-14555": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "ipython__ipython-14693": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "joke2k__faker-2096": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "joke2k__faker-2101": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "joke2k__faker-2104": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "kozea__weasyprint-2233": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "kozea__weasyprint-2300": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "kozea__weasyprint-2301": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "pydata__xarray-9369": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "pydata__xarray-9586": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "pydata__xarray-9760": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "python-attrs__attrs-1319": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "python-attrs__attrs-1320": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "python-attrs__attrs-1372": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "reflex-dev__reflex-3833": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "reflex-dev__reflex-3842": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "reflex-dev__reflex-3982": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "shapely__shapely-2120": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "shapely__shapely-2223": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "shapely__shapely-2226": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "sissbruecker__linkding-812": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "sissbruecker__linkding-984": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "sissbruecker__linkding-989": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "streamlink__streamlink-6111": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            },
+            "streamlink__streamlink-6205": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            },
+            "streamlink__streamlink-6207": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            }
+          }
+        },
+        "static": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository_cluster_bootstrap_confidence": 0.95,
+          "repository_cluster_bootstrap_interval": [
+            0.0,
+            0.0
+          ],
+          "repository_cluster_bootstrap_one_sided_lower": 0.0,
+          "repository_differences": {
+            "Kozea/WeasyPrint": 0.0,
+            "beeware/briefcase": 0.0,
+            "ipython/ipython": 0.0,
+            "joke2k/faker": 0.0,
+            "pydata/xarray": 0.0,
+            "python-attrs/attrs": 0.0,
+            "reflex-dev/reflex": 0.0,
+            "shapely/shapely": 0.0,
+            "sissbruecker/linkding": 0.0,
+            "streamlink/streamlink": 0.0
+          },
+          "repository_sign_test_p_two_sided": null,
+          "task_differences": {
+            "beeware__briefcase-1972": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "beeware__briefcase-2035": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "beeware__briefcase-2088": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "beeware/briefcase"
+            },
+            "ipython__ipython-14503": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "ipython__ipython-14555": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "ipython__ipython-14693": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "ipython/ipython"
+            },
+            "joke2k__faker-2096": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "joke2k__faker-2101": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "joke2k__faker-2104": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "joke2k/faker"
+            },
+            "kozea__weasyprint-2233": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "kozea__weasyprint-2300": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "kozea__weasyprint-2301": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "Kozea/WeasyPrint"
+            },
+            "pydata__xarray-9369": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "pydata__xarray-9586": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "pydata__xarray-9760": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "pydata/xarray"
+            },
+            "python-attrs__attrs-1319": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "python-attrs__attrs-1320": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "python-attrs__attrs-1372": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "python-attrs/attrs"
+            },
+            "reflex-dev__reflex-3833": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "reflex-dev__reflex-3842": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "reflex-dev__reflex-3982": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "reflex-dev/reflex"
+            },
+            "shapely__shapely-2120": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "shapely__shapely-2223": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "shapely__shapely-2226": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "shapely/shapely"
+            },
+            "sissbruecker__linkding-812": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "sissbruecker__linkding-984": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "sissbruecker__linkding-989": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "sissbruecker/linkding"
+            },
+            "streamlink__streamlink-6111": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            },
+            "streamlink__streamlink-6205": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            },
+            "streamlink__streamlink-6207": {
+              "B": 0.0,
+              "C": 0.0,
+              "difference": 0.0,
+              "repository": "streamlink/streamlink"
+            }
+          }
+        }
+      },
+      "difference": 0.0,
+      "interaction": {
+        "difference": 0.0,
+        "repository_cluster_bootstrap_confidence": 0.95,
+        "repository_cluster_bootstrap_interval": [
+          0.0,
+          0.0
+        ],
+        "repository_cluster_bootstrap_one_sided_lower": 0.0,
+        "repository_differences": {
+          "Kozea/WeasyPrint": 0.0,
+          "beeware/briefcase": 0.0,
+          "ipython/ipython": 0.0,
+          "joke2k/faker": 0.0,
+          "pydata/xarray": 0.0,
+          "python-attrs/attrs": 0.0,
+          "reflex-dev/reflex": 0.0,
+          "shapely/shapely": 0.0,
+          "sissbruecker/linkding": 0.0,
+          "streamlink/streamlink": 0.0
+        },
+        "repository_sign_test_p_two_sided": null,
+        "task_differences": {
+          "beeware__briefcase-1972": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "beeware/briefcase",
+            "static_difference": 0.0
+          },
+          "beeware__briefcase-2035": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "beeware/briefcase",
+            "static_difference": 0.0
+          },
+          "beeware__briefcase-2088": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "beeware/briefcase",
+            "static_difference": 0.0
+          },
+          "ipython__ipython-14503": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "ipython/ipython",
+            "static_difference": 0.0
+          },
+          "ipython__ipython-14555": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "ipython/ipython",
+            "static_difference": 0.0
+          },
+          "ipython__ipython-14693": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "ipython/ipython",
+            "static_difference": 0.0
+          },
+          "joke2k__faker-2096": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "joke2k/faker",
+            "static_difference": 0.0
+          },
+          "joke2k__faker-2101": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "joke2k/faker",
+            "static_difference": 0.0
+          },
+          "joke2k__faker-2104": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "joke2k/faker",
+            "static_difference": 0.0
+          },
+          "kozea__weasyprint-2233": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "Kozea/WeasyPrint",
+            "static_difference": 0.0
+          },
+          "kozea__weasyprint-2300": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "Kozea/WeasyPrint",
+            "static_difference": 0.0
+          },
+          "kozea__weasyprint-2301": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "Kozea/WeasyPrint",
+            "static_difference": 0.0
+          },
+          "pydata__xarray-9369": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "pydata/xarray",
+            "static_difference": 0.0
+          },
+          "pydata__xarray-9586": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "pydata/xarray",
+            "static_difference": 0.0
+          },
+          "pydata__xarray-9760": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "pydata/xarray",
+            "static_difference": 0.0
+          },
+          "python-attrs__attrs-1319": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "python-attrs/attrs",
+            "static_difference": 0.0
+          },
+          "python-attrs__attrs-1320": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "python-attrs/attrs",
+            "static_difference": 0.0
+          },
+          "python-attrs__attrs-1372": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "python-attrs/attrs",
+            "static_difference": 0.0
+          },
+          "reflex-dev__reflex-3833": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "reflex-dev/reflex",
+            "static_difference": 0.0
+          },
+          "reflex-dev__reflex-3842": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "reflex-dev/reflex",
+            "static_difference": 0.0
+          },
+          "reflex-dev__reflex-3982": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "reflex-dev/reflex",
+            "static_difference": 0.0
+          },
+          "shapely__shapely-2120": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "shapely/shapely",
+            "static_difference": 0.0
+          },
+          "shapely__shapely-2223": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "shapely/shapely",
+            "static_difference": 0.0
+          },
+          "shapely__shapely-2226": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "shapely/shapely",
+            "static_difference": 0.0
+          },
+          "sissbruecker__linkding-812": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "sissbruecker/linkding",
+            "static_difference": 0.0
+          },
+          "sissbruecker__linkding-984": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "sissbruecker/linkding",
+            "static_difference": 0.0
+          },
+          "sissbruecker__linkding-989": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "sissbruecker/linkding",
+            "static_difference": 0.0
+          },
+          "streamlink__streamlink-6111": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "streamlink/streamlink",
+            "static_difference": 0.0
+          },
+          "streamlink__streamlink-6205": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "streamlink/streamlink",
+            "static_difference": 0.0
+          },
+          "streamlink__streamlink-6207": {
+            "correction_difference": 0.0,
+            "difference": 0.0,
+            "repository": "streamlink/streamlink",
+            "static_difference": 0.0
+          }
+        }
+      },
+      "repository_cluster_bootstrap_confidence": 0.95,
+      "repository_cluster_bootstrap_interval": [
+        0.0,
+        0.0
+      ],
+      "repository_cluster_bootstrap_one_sided_lower": 0.0,
+      "repository_differences": {
+        "Kozea/WeasyPrint": 0.0,
+        "beeware/briefcase": 0.0,
+        "ipython/ipython": 0.0,
+        "joke2k/faker": 0.0,
+        "pydata/xarray": 0.0,
+        "python-attrs/attrs": 0.0,
+        "reflex-dev/reflex": 0.0,
+        "shapely/shapely": 0.0,
+        "sissbruecker/linkding": 0.0,
+        "streamlink/streamlink": 0.0
+      },
+      "repository_sign_test_p_two_sided": null,
+      "task_differences": {
+        "beeware__briefcase-1972": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "beeware/briefcase"
+        },
+        "beeware__briefcase-2035": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "beeware/briefcase"
+        },
+        "beeware__briefcase-2088": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "beeware/briefcase"
+        },
+        "ipython__ipython-14503": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "ipython/ipython"
+        },
+        "ipython__ipython-14555": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "ipython/ipython"
+        },
+        "ipython__ipython-14693": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "ipython/ipython"
+        },
+        "joke2k__faker-2096": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "joke2k/faker"
+        },
+        "joke2k__faker-2101": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "joke2k/faker"
+        },
+        "joke2k__faker-2104": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "joke2k/faker"
+        },
+        "kozea__weasyprint-2233": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "Kozea/WeasyPrint"
+        },
+        "kozea__weasyprint-2300": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "Kozea/WeasyPrint"
+        },
+        "kozea__weasyprint-2301": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "Kozea/WeasyPrint"
+        },
+        "pydata__xarray-9369": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "pydata/xarray"
+        },
+        "pydata__xarray-9586": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "pydata/xarray"
+        },
+        "pydata__xarray-9760": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "pydata/xarray"
+        },
+        "python-attrs__attrs-1319": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "python-attrs/attrs"
+        },
+        "python-attrs__attrs-1320": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "python-attrs/attrs"
+        },
+        "python-attrs__attrs-1372": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "python-attrs/attrs"
+        },
+        "reflex-dev__reflex-3833": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "reflex-dev/reflex"
+        },
+        "reflex-dev__reflex-3842": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "reflex-dev/reflex"
+        },
+        "reflex-dev__reflex-3982": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "reflex-dev/reflex"
+        },
+        "shapely__shapely-2120": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "shapely/shapely"
+        },
+        "shapely__shapely-2223": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "shapely/shapely"
+        },
+        "shapely__shapely-2226": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "shapely/shapely"
+        },
+        "sissbruecker__linkding-812": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "sissbruecker/linkding"
+        },
+        "sissbruecker__linkding-984": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "sissbruecker/linkding"
+        },
+        "sissbruecker__linkding-989": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "sissbruecker/linkding"
+        },
+        "streamlink__streamlink-6111": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "streamlink/streamlink"
+        },
+        "streamlink__streamlink-6205": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "streamlink/streamlink"
+        },
+        "streamlink__streamlink-6207": {
+          "B": 0.0,
+          "C": 0.0,
+          "difference": 0.0,
+          "repository": "streamlink/streamlink"
+        }
+      }
+    }
+  },
+  "estimand": "repository_average_correction_c_minus_b_all_scheduled_risk_difference",
+  "freeze_sha256": "1941fc7c60cf6fb4612911e2f75e2b56f85365217257ff8b1ed232b941b01c29",
+  "guardrail": {
+    "criterion": "observed difference and one-sided repository-cluster bootstrap lower bound are at least the margin, and both arms meet their frozen absolute utility floor",
+    "endpoint": "correct_delivery",
+    "minimum_baseline_correct_delivery_risk": 0.1,
+    "minimum_method_correct_delivery_risk": 0.1,
+    "noninferiority_margin": -0.05,
+    "passed": false
+  },
+  "interaction_estimand": "repository_average_revision_specific_difference_in_differences",
+  "model_freeze_sha256": "a625d31b587f1f62426ead60a545b1b5f45bac035f7d4abe0a5d99927cb9807c",
+  "notes": [
+    "Repository is the equal-weight outer estimand, resampling unit, and sign-test cluster.",
+    "The correction C-minus-B contrast is primary; static/correction interaction is revision-specific secondary evidence.",
+    "Non-valid, untriggered, undelivered, and unacknowledged scheduled runs remain in ITT; attrition above the frozen limit suppresses support.",
+    "Correct delivery is an all-scheduled risk, not post-treatment conditional coverage."
+  ],
+  "operationally_eligible": false,
+  "primary_model": "deepseek/deepseek-flash",
+  "primary_variant": "correction",
+  "qualification_sha256": "aa2644a8440ed676913b2c6ab6d0f9a76885619f3ab5a1a63c56e843de89420e",
+  "repositories": 10,
+  "request_variants": [
+    "static",
+    "correction"
+  ],
+  "requirement_revision": {
+    "p0_hashes_sha256": "dea7feeab17182f1bfd9b890fe72e00e8ac66b6f29105a62a849c7541cbd02bd",
+    "p1_hashes_sha256": "77c8db37933afa532b0913795bd77da6058f6fe1bf17a5571d65a5e4565da153",
+    "trigger_policy": {
+      "acknowledgement_event": "requirement_revision_ack",
+      "acknowledgement_required": true,
+      "event": "ExecutionFinished",
+      "requires_nonempty_affected_paths": true,
+      "success_exit_code": 0,
+      "undelivered_policy": "retain_itt"
+    },
+    "trigger_policy_sha256": "e5d6a92b68fccad2cd3ee3cfbc330bccb7e508048745bea5c8dee22684272792"
+  },
+  "runs_per_model": 120,
+  "schedule_sha256": "a26cb53c3b270c6b72fdd02fe5c6398c73e7e3cc11b4f7d9f3fd6913a017e460",
+  "scheduled_rows": 120,
+  "scheduled_runs_per_model": 120,
+  "schema_version": 1,
+  "session_token_budget": 1000000,
+  "tasks": 30
+}

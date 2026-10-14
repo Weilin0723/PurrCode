@@ -1,0 +1,72 @@
+diff --git a/src/briefcase/platforms/macOS/utils.py b/src/briefcase/platforms/macOS/utils.py
+index 16c90b1c..a705ec04 100644
+--- a/src/briefcase/platforms/macOS/utils.py
++++ b/src/briefcase/platforms/macOS/utils.py
+@@ -45,10 +45,18 @@ class AppPackagesMergeMixin:
+             # Read the WHEEL file in the dist-info folder.
+             # Use this to determine if the wheel is "pure", and the tag
+             # for the wheel.
+-            with (distinfo / "WHEEL").open("r", encoding="utf-8") as f:
+-                wheel_data = email.message_from_string(f.read())
+-                is_purelib = wheel_data.get("Root-Is-Purelib", "false") == "true"
+-                tag = wheel_data["Tag"]
++            #
++            # Some packages (e.g., setuptools >= 73.0.0) ship dist-info folders for
++            # vendored dependencies that don't include a WHEEL file. These aren't
++            # wheels that pip has installed, so they can't be binary packages;
++            # ignore them.
++            try:
++                with (distinfo / "WHEEL").open("r", encoding="utf-8") as f:
++                    wheel_data = email.message_from_string(f.read())
++                    is_purelib = wheel_data.get("Root-Is-Purelib", "false") == "true"
++                    tag = wheel_data["Tag"]
++            except FileNotFoundError:
++                continue
+ 
+             # If the wheel is pure, it's not a binary package
+             if is_purelib:
+diff --git a/tests/platforms/macOS/test_AppPackagesMergeMixin__find_binary_packages.py b/tests/platforms/macOS/test_AppPackagesMergeMixin__find_binary_packages.py
+index 9a7c145c..90bae5a3 100644
+--- a/tests/platforms/macOS/test_AppPackagesMergeMixin__find_binary_packages.py
++++ b/tests/platforms/macOS/test_AppPackagesMergeMixin__find_binary_packages.py
+@@ -1,4 +1,4 @@
+-from ...utils import create_installed_package
++from ...utils import create_file, create_installed_package
+ 
+ 
+ def test_find_binary_packages(dummy_command, tmp_path):
+@@ -103,3 +103,34 @@ def test_find_binary_packages_non_universal(dummy_command, tmp_path):
+         ("binary-package-1", "3.4.5"),
+         ("binary-package-2", "3.4.6"),
+     }
++
++
++def test_find_binary_packages_no_wheel_file(dummy_command, tmp_path):
++    """A dist-info folder that doesn't contain a WHEEL file is ignored.
++
++    Some packages (e.g., setuptools >= 73.0.0) ship dist-info folders for vendored
++    dependencies that don't include a WHEEL file. These are not the metadata for
++    an installed wheel, so they can't describe a binary package.
++    """
++
++    create_installed_package(
++        tmp_path / "app-packages",
++        "binary-package-1",
++        version="3.4.5",
++        tag="macOS_11_arm64",
++    )
++
++    # A dist-info folder with no WHEEL file.
++    create_file(
++        tmp_path / "app-packages" / "_vendor" / "packaging-24.0.dist-info" / "METADATA",
++        "Metadata-Version: 2.1\nName: packaging\nVersion: 24.0\n",
++    )
++
++    binary_packages = dummy_command.find_binary_packages(
++        tmp_path / "app-packages",
++        universal_suffix="_universal2",
++    )
++
++    # Only the package with a WHEEL file is identified as binary; the dist-info
++    # folder without a WHEEL file is ignored.
++    assert binary_packages == [("binary-package-1", "3.4.5")]

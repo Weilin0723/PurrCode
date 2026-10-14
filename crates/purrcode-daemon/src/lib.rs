@@ -3403,9 +3403,13 @@ async fn append_message(
     let id = parse_session_id(&id)?;
     let session = state.store.lock().await.load(id)?;
     let paused = session.status == SessionStatus::Paused;
+    let review_pending = session.status == SessionStatus::AwaitingReview;
     let ended_status = matches!(
         session.status,
-        SessionStatus::Completed | SessionStatus::Failed | SessionStatus::Cancelled
+        SessionStatus::Completed
+            | SessionStatus::Failed
+            | SessionStatus::Cancelled
+            | SessionStatus::AwaitingReview
     )
     .then(|| session.status.clone());
     if session.status != SessionStatus::Active && !paused && ended_status.is_none() {
@@ -3467,7 +3471,7 @@ async fn append_message(
         }
     };
     let mut store = state.store.lock().await;
-    if ended_status.is_some() {
+    if ended_status.is_some() && !(review_pending && is_simple_conversational_intent(content)) {
         store.append(id, &SessionEvent::SessionResumed)?;
     }
     store.append(
@@ -3490,10 +3494,38 @@ async fn append_message(
     if paused {
         store.append(id, &SessionEvent::SessionResumed)?;
     }
+    if review_pending && is_simple_conversational_intent(content) {
+        // A greeting is not approval of the previously blocked outcome.
+        store.append(
+            id,
+            &SessionEvent::ConversationMessageAdded {
+                message: ConversationMessage {
+                    id: Uuid::new_v4().to_string(),
+                    role: "assistant".into(),
+                    content: format!(
+                        "{} The previous outcome still requires review.",
+                        direct_reply_for(content)
+                    ),
+                    timestamp: Utc::now(),
+                    tool_calls: Vec::new(),
+                    tool_results: Vec::new(),
+                    model: None,
+                    turn_id: None,
+                },
+            },
+        )?;
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(AcceptedSession {
+                id: id.0.to_string(),
+                status: "message accepted; outcome review still pending",
+            }),
+        ));
+    }
     // A lightweight follow-up stays lightweight. It still records a complete
     // turn in the same durable conversation, but does not start a provider,
     // plan, worktree, or validation workflow.
-    if ended_status.is_some() && is_simple_conversational_intent(content) {
+    if ended_status.is_some() && !review_pending && is_simple_conversational_intent(content) {
         store.append(
             id,
             &SessionEvent::ConversationMessageAdded {
@@ -3583,6 +3615,10 @@ async fn resume_or_restore_pause(
             },
             SessionStatus::Cancelled => SessionEvent::SessionCancelled {
                 reason: "the follow-up could not start".into(),
+            },
+            SessionStatus::AwaitingReview => SessionEvent::OutcomeReviewRequired {
+                reason: "the follow-up could not start; the prior outcome still requires review"
+                    .into(),
             },
             _ => unreachable!("only ended turn states are retained"),
         };
@@ -18619,7 +18655,9 @@ allow_same_model = true
         std::fs::write(source.join("SKILL.md"), "# safe").unwrap();
         std::fs::write(
             source.join("manifest.toml"),
-            "name='safe'\nversion='1.0.0'\n[entrypoints]\nrun='run'\n[qualification]\nentrypoint='run'\ntimeout_seconds=5\n",
+            // This tests authorization and digest rechecking, not sandbox startup speed.
+            // Leave headroom for a concurrently running workspace test suite.
+            "name='safe'\nversion='1.0.0'\n[entrypoints]\nrun='run'\n[qualification]\nentrypoint='run'\ntimeout_seconds=30\n",
         )
         .unwrap();
         let entrypoint = source.join("run");
@@ -18693,8 +18731,9 @@ allow_same_model = true
             handle.abort();
             return;
         }
-        assert_eq!(proposal.status(), StatusCode::OK);
+        let status = proposal.status();
         let proposal: serde_json::Value = proposal.json().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "qualification response: {proposal}");
         let action_id = proposal["action_id"].as_str().unwrap();
         let events = SessionStore::open(&database)
             .unwrap()
@@ -19854,6 +19893,104 @@ judge = "openai/judge-model"
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer test-token".parse().unwrap());
         (temporary, state, session, headers)
+    }
+
+    #[tokio::test]
+    async fn a_greeting_does_not_approve_or_complete_a_blocked_outcome() {
+        let (_temporary, state, session, headers) = delegation_fixture().await;
+        state
+            .store
+            .lock()
+            .await
+            .append(
+                session,
+                &SessionEvent::OutcomeReviewRequired {
+                    reason: "preservation is not established".into(),
+                },
+            )
+            .unwrap();
+        let response = append_message(
+            State(state.clone()),
+            headers,
+            AxumPath(session.0.to_string()),
+            Json(AppendMessageRequest {
+                content: "thanks".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.0, StatusCode::ACCEPTED);
+        let store = state.store.lock().await;
+        assert_eq!(
+            store.load(session).unwrap().status,
+            SessionStatus::AwaitingReview
+        );
+        assert!(!store.events(session).unwrap().iter().any(|event| matches!(
+            event,
+            SessionEvent::SessionResumed
+                | SessionEvent::OutcomeReviewApproved { .. }
+                | SessionEvent::SessionCompleted
+        )));
+    }
+
+    #[tokio::test]
+    async fn a_correction_cannot_bypass_pending_native_action_approval() {
+        let (_temporary, state, session, headers) = delegation_fixture().await;
+        let mut store = state.store.lock().await;
+        let action_id = ActionId::new();
+        let worktree = store.load(session).unwrap().worktree.unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::ActionProposed {
+                    action_id,
+                    action: ProposedAction::WriteFile(purrcode_runtime_core::WriteFileAction {
+                        path: "pending.txt".into(),
+                        content: "pending\n".into(),
+                        expected_digest: None,
+                    }),
+                    turn_id: None,
+                },
+            )
+            .unwrap();
+        store
+            .append(
+                session,
+                &SessionEvent::JudgmentRecorded {
+                    action_id,
+                    decision: JudgmentDecision::RequireApproval {
+                        reason: "explicit approval required".into(),
+                        constraints: ActionConstraints {
+                            working_directory: worktree,
+                            network: false,
+                            timeout_seconds: 30,
+                            maximum_output_bytes: 1024,
+                            allowed_write_globs: vec!["pending.txt".into()],
+                            maximum_changed_files: 1,
+                        },
+                    },
+                    turn_id: None,
+                },
+            )
+            .unwrap();
+        let before = store.events(session).unwrap().len();
+        drop(store);
+        let response = append_message(
+            State(state.clone()),
+            headers,
+            AxumPath(session.0.to_string()),
+            Json(AppendMessageRequest {
+                content: "Also create another file".into(),
+            }),
+        )
+        .await;
+        assert!(matches!(response, Err(ApiError::Conflict(_))));
+        let store = state.store.lock().await;
+        assert_eq!(store.events(session).unwrap().len(), before);
+        assert_eq!(
+            store.load(session).unwrap().status,
+            SessionStatus::AwaitingApproval(action_id)
+        );
     }
 
     #[tokio::test]

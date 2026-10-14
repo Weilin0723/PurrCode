@@ -1,0 +1,67 @@
+{
+  "instance_id": "koxudaxi__datamodel-code-generator-2259",
+  "base_commit": "0def44efc13ac98ecef691daf217a31f6c459812",
+  "status": "passed",
+  "commands": [
+    [
+      "/opt/hostedtoolcache/Python/3.11.17/x64/bin/python",
+      "-m",
+      "venv",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv"
+    ],
+    [
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "pytest==8.3.5",
+      "ruff==0.11.5",
+      "hypothesis==6.131.9",
+      "pytest-mock==3.14.0"
+    ],
+    [
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/koxudaxi__datamodel-code-generator-2259"
+    ]
+  ],
+  "public_test_extras": [],
+  "public_test_group_dependencies": [],
+  "installed_packages": [
+    "annotated-types==0.8.0",
+    "argcomplete==3.7.2",
+    "attrs==26.1.0",
+    "black==26.10.1",
+    "click==8.5.0",
+    "datamodel-code-generator @ file:///home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/koxudaxi__datamodel-code-generator-2259",
+    "dnspython==2.9.0",
+    "email-validator==2.3.0",
+    "genson==1.4.0",
+    "hypothesis==6.131.9",
+    "idna==3.20",
+    "inflect==5.6.2",
+    "iniconfig==2.3.1",
+    "isort==5.13.2",
+    "Jinja2==3.1.6",
+    "MarkupSafe==3.0.4",
+    "mypy_extensions==1.1.0",
+    "packaging==26.3",
+    "pathspec==1.1.1",
+    "pip==24.0",
+    "platformdirs==4.13.0",
+    "pluggy==1.6.0",
+    "pydantic==2.14.1",
+    "pydantic_core==2.50.1",
+    "pytest==8.3.5",
+    "pytest-mock==3.14.0",
+    "pytokens==0.4.1",
+    "PyYAML==6.0.3",
+    "ruff==0.11.5",
+    "setuptools==79.0.1",
+    "sortedcontainers==2.4.0",
+    "typing-inspection==0.4.4",
+    "typing_extensions==4.16.0"
+  ]
+}

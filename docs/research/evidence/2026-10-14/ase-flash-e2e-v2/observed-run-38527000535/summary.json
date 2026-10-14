@@ -1,0 +1,37 @@
+{
+  "workflow_run_id": 38527000535,
+  "scheduled_cells": 120,
+  "observed_rows": 116,
+  "not_started_cells": 4,
+  "missing_policy": "explicit derived dispositions; original 116 rows and all file hashes preserved",
+  "terminal_status": {
+    "error": 98,
+    "valid": 17,
+    "timeout": 1
+  },
+  "oracle_status": {
+    "unknown": 112,
+    "incorrect": 3,
+    "correct": 1
+  },
+  "session_status": {
+    "failed": 98,
+    "paused": 16,
+    "cancelled": 1,
+    "awaiting_approval": 1
+  },
+  "failure_categories": {
+    "validation_failure_lifecycle": 11,
+    "insufficient_balance": 74,
+    "token_budget_exhausted": 7,
+    "invalid_native_bounds": 3,
+    "contract_compilation_rejected": 1,
+    "invalid_model_structure": 2
+  },
+  "recorded_input_tokens": 20747757,
+  "recorded_output_tokens": 284550,
+  "recorded_model_calls": 809,
+  "no_completed_deliveries": true,
+  "scientific_conclusion": "operationally inconclusive; no method efficacy claim; no outcome replacement retry",
+  "cost_limitations": "Recorded provider usage is a lower bound; contextual-judgment calls do not currently return usage to this ledger."
+}

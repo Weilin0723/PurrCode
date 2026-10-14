@@ -1,0 +1,3 @@
+# Flash valid-paired experiment freeze
+
+All model roles use official DeepSeek deepseek-flash with no fallback. Alias is mutable; no immutable weights are claimed. Each logical session has a 1,000,000 token budget across roles and a 1,200 second whole-task deadline; 32 autonomous iterations per phase. Public environments and gold oracles passed for all 30 tasks in workflow 38604737010, before scientific model calls. Current B/C correction smokes v26 passed. Primary analysis includes only valid evaluable paired rounds; invalid observations remain in the separate operational audit. No scientific cells have been generated before this freeze.

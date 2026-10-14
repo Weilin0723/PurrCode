@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "selection_rule": "First nonempty public title, extended through subsequent complete lines until exactly one occurrence; selected before model calls.",
+  "tasks": [
+    {
+      "instance_id": "pdm-project__pdm-3170",
+      "span": "`/` is not URL encoded in environment variables",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "pytorch__torchtune-1697",
+      "span": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "pytorch__torchtune-1806",
+      "span": "[Qwen2 tokenizer] Ensure ``eos_token`` is not added if ``add_eos=False``",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "pytorch__torchtune-1832",
+      "span": "Unclear Error Message for GatedRepoError When --hf-token is Provided",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "yt-dlp__yt-dlp-11425",
+      "span": "Linux/macOS/BSD chromium cookies could not be decrypted; failed to decrypt cookie (AES-CBC) because UTF-8 decoding failed",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "pdm-project__pdm-3255",
+      "span": "PDM ignores no_proxy when all_proxy is set",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "projectmesa__mesa-2463",
+      "span": "PR #2454 prevents use of **kwargs in model initialization",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "run-llama__llama_deploy-356",
+      "span": "There is a conflict between control planes which are reading from the same topic called \"control_plane\"",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "delgan__loguru-1236",
+      "span": "How to escape `\\` before tag",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "python-control__python-control-1065",
+      "span": "rlocus evaluation for a single gain value",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "run-llama__llama_deploy-384",
+      "span": "Error: 'ModelWrapper' object has no attribute 'tasks'\nI did nothing else than set up the quickstart to run it locally.",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "delgan__loguru-1240",
+      "span": "call stack is not deep enough (Cython)",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "projectmesa__mesa-2523",
+      "span": "Batch_Run begins, performs no iterations, no errors, writes empty .csv file. Help?",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "deepset-ai__haystack-8609",
+      "span": "`PyPDFToDocument` - remove deprecated `converter` init parameter",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "yt-dlp__yt-dlp-11880",
+      "span": "wrong value of aspect_ratio parameter used for format selection",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "pdm-project__pdm-3374",
+      "span": "PDM repeatedly queries the keyring for each configured repo when username/password not defined",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "koxudaxi__datamodel-code-generator-2257",
+      "span": "null bytes (`\\u0000`) not correctly escaped in generated code",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "koxudaxi__datamodel-code-generator-2259",
+      "span": "`--set-default-enum-member` neglects integer type enums",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "koxudaxi__datamodel-code-generator-2260",
+      "span": "Generated model doesn't import `Literal` when using `--enum-field-as-literal=one` option",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "deepset-ai__haystack-8708",
+      "span": "PDFMinerToDocument updates Document's meta field after initializing it",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "privacyidea__privacyidea-4206",
+      "span": "The sign '','' cannot be used in a text field of a policy",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "python-control__python-control-1096",
+      "span": "Nyquist plot indent direction doesn't seem to work",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "deepset-ai__haystack-8725",
+      "span": "`ChatMessage` - remove deprecated `function` role and `ChatMessage.from_function`",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "python-control__python-control-1099",
+      "span": "Unexpected and unwanted behaviour of control.ctrb",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "projectmesa__mesa-2632",
+      "span": "Bug in visualization of hexgrids",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "privacyidea__privacyidea-4226",
+      "span": "privacyidea-token-janitor mistakenly unassigns (many) tokens on LDAP errors",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "privacyidea__privacyidea-4233",
+      "span": "enroll_via_multichallenge add otpauth link to returned data",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "run-llama__llama_deploy-457",
+      "span": "Non‐registered service in a llamactl call",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "delgan__loguru-1297",
+      "span": "Won't handle future time",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    },
+    {
+      "instance_id": "yt-dlp__yt-dlp-12714",
+      "span": "Some m3u8/HLS manifests have no audio codec/bitrate info and yt-dlp doesn't sort them correctly",
+      "rationale": "First nonempty public title, extended through subsequent complete lines only when needed for a unique exact span; selected before model calls."
+    }
+  ]
+}

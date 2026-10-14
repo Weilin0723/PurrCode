@@ -336,7 +336,12 @@ def load_plan_object(raw: Any, *, source: str = "<plan>") -> dict[str, Any]:
     for field, expected in protocol_constants.items():
         if not math.isclose(float(raw[field]), expected, abs_tol=1e-12):
             raise AnalysisError(f"{source}.{field}: confirmatory protocol requires {expected}")
-    if raw.get("primary_estimand") != PRIMARY_ESTIMAND:
+    population = raw.get("analysis_population", "all_scheduled")
+    if population not in {"all_scheduled", "valid_paired_evaluable"}:
+        raise AnalysisError(f"{source}.analysis_population: unsupported population")
+    expected_estimand = ("repository_average_correction_c_minus_b_valid_paired_risk_difference"
+                        if population == "valid_paired_evaluable" else PRIMARY_ESTIMAND)
+    if raw.get("primary_estimand") != expected_estimand:
         raise AnalysisError(f"{source}.primary_estimand: unsupported confirmatory estimand")
     if raw.get("interaction_estimand") != INTERACTION_ESTIMAND:
         raise AnalysisError(f"{source}.interaction_estimand: unsupported confirmatory estimand")
@@ -346,6 +351,63 @@ def load_plan_object(raw: Any, *, source: str = "<plan>") -> dict[str, Any]:
         )
     _validate_requirement_revision(raw.get("requirement_revision"), tasks, f"{source}.requirement_revision")
     return dict(raw)
+
+
+def valid_round_exclusion(row: Mapping[str, Any]) -> str | None:
+    if row["terminal_status"] != "valid":
+        return "terminal_" + str(row["terminal_status"])
+    if row.get("model_output_observed") is not True:
+        return "no_usable_model_output"
+    if row["oracle_status"] not in {"correct", "incorrect"}:
+        return "oracle_unknown"
+    if row["variant"] == "correction" and not row.get("mid_run_correction_acknowledged"):
+        return "correction_not_delivered"
+    return None
+
+
+def valid_paired_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    cells = {(r["base_task_id"], r["variant"], r["repeat"], r["arm"]): r for r in rows}
+    included, excluded = [], []
+    for row in rows:
+        other = cells.get((row["base_task_id"], row["variant"], row["repeat"], "C" if row["arm"] == "B" else "B"))
+        reason = valid_round_exclusion(row)
+        if reason is None and (other is None or valid_round_exclusion(other) is not None):
+            reason = "counterpart_not_valid"
+        if reason is None:
+            included.append(dict(row))
+        else:
+            excluded.append({"run_id": row["run_id"], "arm": row["arm"], "variant": row["variant"], "reason": reason})
+    return included, excluded
+
+
+def _valid_round_report(rows, plan, attrition):
+    included, excluded = valid_paired_rows(rows)
+    endpoints = {}
+    for offset, endpoint in enumerate(("false_ready", "correct_delivery")):
+        by_variant, task_sets = {}, {}
+        for variant in REQUEST_VARIANTS:
+            tasks = _task_differences([r for r in included if r["variant"] == variant], endpoint)
+            task_sets[variant] = tasks
+            if len(_repo_differences(tasks)) >= 2:
+                by_variant[variant] = _endpoint_report(tasks, samples=plan["bootstrap_samples"], seed=plan["bootstrap_seed"] + offset, alpha=plan["alpha"])
+            else:
+                by_variant[variant] = {"estimable": False, "tasks": len(tasks)}
+        common = set(task_sets["static"]) & set(task_sets["correction"])
+        interaction = _difference_in_differences({k:task_sets["static"][k] for k in common}, {k:task_sets["correction"][k] for k in common})
+        endpoints[endpoint] = {"by_variant": by_variant,
+            "interaction": _interaction_report(interaction, samples=plan["bootstrap_samples"], seed=plan["bootstrap_seed"] + offset + 20, alpha=plan["alpha"]) if len(_repo_differences(interaction)) >= 2 else {"estimable": False}}
+    correction_tasks = _task_differences([r for r in included if r["variant"] == "correction"], "false_ready")
+    adequate = len(correction_tasks) >= plan.get("minimum_valid_correction_pairs", 24) and len(_repo_differences(correction_tasks)) >= plan.get("minimum_valid_repository_clusters", 8)
+    false_ready = endpoints["false_ready"]["by_variant"]["correction"]
+    delivery = endpoints["correct_delivery"]["by_variant"]["correction"]
+    primary_supported = adequate and false_ready["difference"] < 0 and false_ready["repository_sign_test_p_two_sided"] is not None and false_ready["repository_sign_test_p_two_sided"] < plan["alpha"] and false_ready["repository_cluster_bootstrap_interval"][1] < 0
+    guardrail_supported = adequate and delivery["repository_cluster_bootstrap_one_sided_lower"] >= -plan["guardrail_margin"] and delivery["B"] >= plan["minimum_baseline_correct_delivery_risk"] and delivery["C"] >= plan["minimum_method_correct_delivery_risk"]
+    return {"schema_version": 1, "study_id": plan["study_id"], "analysis_population": "valid_paired_evaluable",
+            "decision": {"status": "insufficient_valid_pairs" if not adequate else "conditional_joint_method_supported" if primary_supported and guardrail_supported else "conditional_joint_method_not_supported", "false_ready_supported": primary_supported, "guardrail_supported": guardrail_supported, "adequate_valid_pairs": adequate},
+            "primary_estimand": plan["primary_estimand"], "scheduled_rows": len(rows),
+            "included_rows": len(included), "included_run_ids": [r["run_id"] for r in included],
+            "excluded_rows": excluded, "operational_attrition_audit": attrition, "endpoints": endpoints,
+            "interpretation": "Conditional on evaluable B/C pairs; invalid cells are not failure-valued observations. Differential exclusions limit generalization. Incorrect but evaluable outcomes remain included."}
 
 
 def load_freeze(path: Path) -> dict[str, Any]:
@@ -776,6 +838,8 @@ def analyze(
                 f"task {row['base_task_id']!r} repository does not match the frozen plan"
             )
     attrition = _attrition(selected)
+    if plan.get("analysis_population") == "valid_paired_evaluable":
+        return _valid_round_report(selected, plan, attrition)
     operationally_eligible = all(
         attrition[f"{request_variant}:{arm}"]["rate"] <= attrition_limit
         for request_variant in REQUEST_VARIANTS

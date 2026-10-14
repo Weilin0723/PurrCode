@@ -1,0 +1,40 @@
+diff --git a/shapely/geometry/point.py b/shapely/geometry/point.py
+index ccdd5c6..31244aa 100644
+--- a/shapely/geometry/point.py
++++ b/shapely/geometry/point.py
+@@ -116,7 +116,10 @@ class Point(BaseGeometry):
+     @property
+     def __geo_interface__(self):
+         """Return a GeoJSON-like mapping of the Point geometry."""
+-        return {"type": "Point", "coordinates": self.coords[0]}
++        coords = self.coords
++        if len(coords) == 0:
++            return {"type": "Point", "coordinates": ()}
++        return {"type": "Point", "coordinates": coords[0]}
+ 
+     def svg(self, scale_factor=1.0, fill_color=None, opacity=None):
+         """Return SVG circle element for the Point geometry.
+diff --git a/shapely/tests/geometry/test_point.py b/shapely/tests/geometry/test_point.py
+index b8af140..f15938c 100644
+--- a/shapely/tests/geometry/test_point.py
++++ b/shapely/tests/geometry/test_point.py
+@@ -4,6 +4,7 @@ import pytest
+ from shapely import Point, geos_version
+ from shapely.coords import CoordinateSequence
+ from shapely.errors import DimensionError, UnsupportedGEOSVersionError
++from shapely.geometry import mapping
+ 
+ 
+ def test_from_coordinates():
+@@ -151,6 +152,11 @@ class TestPoint:
+         assert p_null.coords[:] == []
+         assert p_null.area == 0.0
+ 
++        # Geo interface of an empty Point matches other empty geometries:
++        # a mapping with a 'type' key and a coordinates value (#2120)
++        assert p_null.__geo_interface__ == {"type": "Point", "coordinates": ()}
++        assert mapping(p_null) == {"type": "Point", "coordinates": ()}
++
+     def test_coords(self):
+         # From Array.txt
+         p = Point(0.0, 0.0, 1.0)

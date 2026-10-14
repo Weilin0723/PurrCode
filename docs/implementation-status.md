@@ -24,7 +24,13 @@ are unchanged; their runner locks are not reused for the repaired study.
 A new repository-disjoint 30-task/10-repository set has **30 passing gold-oracle
 qualifications**: 24 retained tasks and six replacements for two wholly rejected repository
 groups. Failed qualification evidence remains archived; replacement precedes model generation.
-It has no efficacy outcomes. ASE submission
+The subsequently completed frozen v2 workflow (38527000535) produced 116 attempted
+cells and four cells blocked before model execution. No session completed; 74 cells
+encountered insufficient balance, and other cells exposed validation lifecycle,
+input-bound, and review-grounding defects. Original artifacts, explicit not-started
+dispositions, and attrition-suppressed analysis are retained under
+`research/evidence/2026-10-14/ase-flash-e2e-v2/observed-run-38527000535/`.
+This run does not establish comparative efficacy. ASE submission
 readiness remains open until genuine live evidence, analysis, anonymous artifacts, and manuscript
 validation pass. The manuscript now explicitly distinguishes deterministic conjunction from live
 review and explains the structural limitation of the component sign-test interpretation.
@@ -36,7 +42,44 @@ against the current user instruction while preserving the prior durable plan; du
 cannot leave a phantom approval state. The context index's SQLite scratch is excluded from
 repository changes, while project settings remain visible. Native action authorization and
 adapter revalidation still apply independently. Full current-snapshot workspace validation
-and successful end-to-end correction qualification remain open; synthetic failures are retained.
+remains open; synthetic failures are retained alongside operational qualifications.
+
+Further operational repairs are under validation: contextual judges now record their
+actual streamed token usage, citations are constrained to supplied evidence IDs, and
+outcome reviews receive bounded repository observations and all actual user requests.
+Validation errors close their durable execution attempt without inventing success;
+Python lint/format checks follow public project configuration, and imports prioritize
+the current worktree. Genuine corrections can resume an outcome-review hold, while
+native-action approval still requires its separate authorization. The research workflow
+provisions public base-revision dependencies before materializing provider credentials,
+with pinned test tools, an isolated environment, and a package receipt. Targeted agent
+(113), alignment (29), Claw (12), contextual judgment (5), and validation (15) tests pass
+for their respective current source checks; the full final-snapshot workspace check remains open.
+The v21 real-API C correction preflight completed with exact required files, a durable
+correction acknowledgement, and alignment enabled (15 calls, 41,450 recorded tokens;
+one call has unknown usage). The corresponding B preflight preserved both exact files
+but failed closed at outcome review due to a malformed or ungrounded judge response
+(10 calls, 37,784 recorded tokens). Both complete event archives and results are kept;
+they are operational preflights, not scientific efficacy observations. Further v22/v23
+failures remain recorded. The v26 same-binary B and C correction preflights both completed
+with exact required files and durable correction acknowledgements: B used 11 calls and
+44,216 recorded tokens; C used 15 calls and 46,823 recorded tokens, with no unknown-usage
+calls in either. Native writes now expose bounded before-write existence observations
+and written-content identity, explicitly without an atomic absence guarantee. These
+observations are available to fresh review, while their scalar receipt fields are excluded
+from the heuristic for citing repository read artifacts. Exact authorization and adapter
+revalidation are unchanged.
+
+Candidate acquisition v3 qualified 27 reference patches and rejected all three in the
+geopandas repository group (workflow 38595587391). Before any scientific model generation,
+v4 retains the 27 tasks and replaces that whole group with the next eligible repository,
+privacyidea; its three reference qualifications are running in workflow 38601307024.
+Public projection caching preserves task order, eligibility counts and solution/test hashes
+without exporting solution code, test bodies, or hidden test names. All 500 pinned source
+rows were read, and v3 task identities and input hashes were independently reproduced.
+This evidence must not be pooled with failed Flash v2 efficacy observations. A six-page
+anonymous working manuscript PDF has been typeset, with the live audit included; final
+results, anonymous package extension, and final PDF QA still remain open.
 
 
 Full design in [`v1.5-architecture.md`](v1.5-architecture.md).

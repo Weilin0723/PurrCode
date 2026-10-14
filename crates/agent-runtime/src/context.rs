@@ -277,6 +277,8 @@ pub(crate) async fn build_outcome_request(
     plan_revision: u64,
     worktree: &SessionWorktree,
     report: &ValidationReport,
+    state: &SessionState,
+    events: &[SessionEvent],
 ) -> Result<OutcomeJudgmentRequest, AgentError> {
     let effects = RepositoryEngine::effects(worktree).await?;
     let patch = String::from_utf8_lossy(&effects.binary_patch);
@@ -288,6 +290,43 @@ pub(crate) async fn build_outcome_request(
         .lines()
         .filter(|line| line.starts_with('-') && !line.starts_with("---"))
         .count();
+    let mut repository_evidence = vec![JudgmentEvidence {
+        id: "artifact-diff".into(),
+        kind: "observed_repository_diff".into(),
+        source: "diff against original checkout; untrusted repository data, not passing tests"
+            .into(),
+        excerpt: bounded_repository_observation(&patch, 8192),
+        digest: blake3::hash(&effects.binary_patch).to_hex().to_string(),
+    }];
+    for path in effects.changed_files.iter().take(6) {
+        let Ok(contents) = RepositoryEngine::file_diff_contents(worktree, path).await else {
+            continue;
+        };
+        let Some(after) = contents.after else {
+            continue;
+        };
+        let text = format!(
+            "UTF-8 byte length: {}. JSON-escaped file contents: {}",
+            after.len(),
+            serde_json::to_string(&after)?
+        );
+        repository_evidence.push(JudgmentEvidence {
+            id: format!("artifact-file-{}", repository_evidence.len()),
+            kind: "observed_repository_file".into(),
+            source: path.display().to_string(),
+            excerpt: bounded_repository_observation(&text, 8192),
+            digest: blake3::hash(after.as_bytes()).to_hex().to_string(),
+        });
+    }
+    for (source, excerpt) in crate::alignment::prior_successful_write_observations(state, events) {
+        repository_evidence.push(JudgmentEvidence {
+            id: format!("prior-write-{}", repository_evidence.len()),
+            kind: "successful_native_write_before_request".into(),
+            source,
+            digest: blake3::hash(excerpt.as_bytes()).to_hex().to_string(),
+            excerpt,
+        });
+    }
     let steps = if plan.is_empty() {
         vec![PlanStep {
             id: "completion".into(),
@@ -336,10 +375,23 @@ pub(crate) async fn build_outcome_request(
     } else {
         RiskClass::Medium
     };
+    let mut accepted_requirements = Vec::new();
+    for request in state.objective.iter().map(String::as_str).chain(
+        state
+            .conversation_messages
+            .iter()
+            .filter(|message| message.role.eq_ignore_ascii_case("user"))
+            .map(|message| message.content.as_str()),
+    ) {
+        let request = bounded_repository_observation(request, 32 * 1024);
+        if !accepted_requirements.contains(&request) {
+            accepted_requirements.push(request);
+        }
+    }
     Ok(OutcomeJudgmentRequest {
         task: TaskIntent {
             objective: objective.into(),
-            accepted_requirements: Vec::new(),
+            accepted_requirements,
         },
         plan: PlanSnapshot {
             revision: plan_revision.max(1),
@@ -351,9 +403,22 @@ pub(crate) async fn build_outcome_request(
             additions,
             deletions,
         },
+        repository_evidence,
         validation_evidence,
         risk_class,
     })
+}
+
+pub(crate) fn bounded_repository_observation(text: &str, maximum_bytes: usize) -> String {
+    if text.len() <= maximum_bytes {
+        return text.to_owned();
+    }
+    const MARKER: &str = "\n[TRUNCATED: omitted bytes are unknown]";
+    let mut boundary = maximum_bytes.saturating_sub(MARKER.len());
+    while !text.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    format!("{}{MARKER}", &text[..boundary])
 }
 
 pub(crate) fn evidence_status(status: EvidenceStatus) -> ValidationStatus {
@@ -1376,6 +1441,14 @@ pub(crate) fn session_worktree(state: &SessionState) -> Result<SessionWorktree, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn observed_repository_text_is_bounded_in_bytes_and_marks_missing_data() {
+        let text = "界".repeat(4_000);
+        let observed = bounded_repository_observation(&text, 8192);
+        assert!(observed.len() <= 8192);
+        assert!(observed.ends_with("[TRUNCATED: omitted bytes are unknown]"));
+        assert_eq!(bounded_repository_observation("marker\n", 8192), "marker\n");
+    }
     use purrcode_runtime_core::ConversationMessage;
 
     #[test]

@@ -320,6 +320,22 @@ impl ValidationRunner {
                 "HOME".into(),
                 working_directory.to_string_lossy().into_owned(),
             );
+            if matches!(
+                Path::new(&command.program)
+                    .file_name()
+                    .and_then(|name| name.to_str()),
+                Some("python" | "python3" | "pytest" | "pytest3")
+            ) {
+                let search_path = std::env::join_paths([
+                    working_directory.join("src"),
+                    working_directory.clone(),
+                ])
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+                environment
+                    .entry("PYTHONPATH".into())
+                    .or_insert_with(|| search_path.to_string_lossy().into_owned());
+                environment.insert("PYTHONDONTWRITEBYTECODE".into(), "1".into());
+            }
             if matches!(command.program.as_str(), "npm" | "pnpm" | "yarn" | "bun") {
                 environment.insert("NPM_CONFIG_UPDATE_NOTIFIER".into(), "false".into());
                 environment.insert("NO_UPDATE_NOTIFIER".into(), "1".into());
@@ -369,6 +385,22 @@ impl ValidationRunner {
             })?;
             store.append(session_id, &SessionEvent::ExecutionStarted { action_id })?;
             let result = ToolRuntime::execute(store, action_id, &action, &constraints).await;
+            if result.is_err() {
+                // Finish the attempt without claiming a successful process
+                // exit. Otherwise an unavailable command leaves Executing in
+                // the durable state and the next validation cannot start.
+                store.append(
+                    session_id,
+                    &SessionEvent::ExecutionFinished {
+                        action_id,
+                        exit_code: None,
+                        truncated: false,
+                        sandbox_level: None,
+                        sandbox_backend: None,
+                        affected_paths: Vec::new(),
+                    },
+                )?;
+            }
             let item = match result {
                 Ok(result) => {
                     let status = if result.exit_code == Some(0) {
@@ -431,6 +463,12 @@ impl ValidationRunner {
                     evidence: serde_json::to_string(&item)?,
                 },
             )?;
+            if item.status == EvidenceStatus::Uncertain {
+                // The failed adapter may not establish safe process effects.
+                // Preserve its evidence and stop rather than launching more
+                // commands from a quarantined session.
+                return Err(ValidationError::UncertainExecution(item.detail));
+            }
             evidence.push(item);
         }
         let required_passed = plan.required_stages.iter().all(|stage| {
@@ -493,6 +531,10 @@ fn generated_write_globs(program: &str) -> Vec<String> {
     match program {
         "cargo" => vec!["target/**".into()],
         "go" => vec!["**/*.test".into()],
+        "python" | "python3" | "pytest" | "pytest3" => {
+            vec!["**/__pycache__/**".into(), ".pytest_cache/**".into()]
+        }
+        "ruff" => vec![".ruff_cache/**".into()],
         "npm" | "pnpm" | "yarn" | "bun" => vec![
             "dist/**".into(),
             "build/**".into(),
@@ -549,7 +591,7 @@ impl ValidationDetector {
             || repository.join("requirements.txt").is_file()
             || has_python_test_files(&repository.join("tests"))?
         {
-            commands.extend(python_commands(&repository));
+            commands.extend(python_commands(&repository)?);
         }
         if has_dotnet_project(&repository)? {
             commands.extend(dotnet_commands());
@@ -594,7 +636,7 @@ impl ValidationDetector {
                 || project.join("requirements.txt").is_file()
                 || has_python_test_files(&project.join("tests"))?
             {
-                python_commands(&project)
+                python_commands(&project)?
             } else if has_dotnet_project(&project)? {
                 dotnet_commands()
             } else if project.join("gradlew").is_file() {
@@ -851,15 +893,41 @@ fn node_commands(repository: &Path) -> Result<Vec<ValidationCommand>, Validation
     Ok(commands)
 }
 
-fn python_commands(repository: &Path) -> Vec<ValidationCommand> {
+fn python_commands(repository: &Path) -> Result<Vec<ValidationCommand>, ValidationError> {
     let mut commands = Vec::new();
-    if repository.join("pyproject.toml").is_file() {
+    let project_path = repository.join("pyproject.toml");
+    let configuration = if project_path.is_file() {
+        let metadata = fs::symlink_metadata(&project_path)?;
+        if !metadata.is_file() || metadata.len() > 1024 * 1024 {
+            return Err(ValidationError::UnsafeManifest(project_path));
+        }
+        Some(toml::from_str::<toml::Value>(&fs::read_to_string(
+            &project_path,
+        )?)?)
+    } else {
+        None
+    };
+    let ruff = configuration
+        .as_ref()
+        .and_then(|value| value.get("tool"))
+        .and_then(|tool| tool.get("ruff"));
+    // A Python manifest is not evidence that the project adopted Ruff or its
+    // formatter. Check syntax universally, then honor declared tooling.
+    commands.push(command(
+        ValidationStage::SyntaxStatic,
+        "python3",
+        &["-m", "compileall", "-q", "."],
+        "Python syntax compilation",
+    ));
+    if ruff.is_some() {
         commands.push(command(
             ValidationStage::SyntaxStatic,
             "ruff",
             &["check", "."],
             "Python project detected; availability checked at execution",
         ));
+    }
+    if ruff.is_some_and(|tool| tool.get("format").is_some()) {
         commands.push(command(
             ValidationStage::SyntaxStatic,
             "ruff",
@@ -885,7 +953,7 @@ fn python_commands(repository: &Path) -> Vec<ValidationCommand> {
             "Python unittest directory detected",
         ));
     }
-    commands
+    Ok(commands)
 }
 
 fn has_python_test_files(root: &Path) -> Result<bool, ValidationError> {
@@ -1095,6 +1163,8 @@ pub enum ValidationError {
     Io(#[from] std::io::Error),
     #[error("package.json is invalid: {0}")]
     PackageJson(#[from] serde_json::Error),
+    #[error("pyproject.toml is invalid: {0}")]
+    PythonManifest(#[from] toml::de::Error),
     #[error("session storage failed: {0}")]
     Store(#[from] StoreError),
     #[error("domain operation failed: {0}")]
@@ -1105,11 +1175,84 @@ pub enum ValidationError {
     UnsafeWorkingDirectory(PathBuf),
     #[error("validation manifest is not a bounded regular file: {0}")]
     UnsafeManifest(PathBuf),
+    #[error("validation execution is uncertain: {0}")]
+    UncertainExecution(String),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn python_validation_honors_declared_lint_and_format_tools() {
+        let repository = tempfile::tempdir().unwrap();
+        let manifest = repository.path().join("pyproject.toml");
+        fs::write(&manifest, "[project]\nname='fixture'\n").unwrap();
+        let bare = ValidationDetector::detect(repository.path()).unwrap();
+        assert!(bare.commands.iter().any(|cmd| cmd.program == "python3" && cmd.arguments.contains(&"compileall".into())));
+        assert!(!bare.commands.iter().any(|cmd| cmd.program == "ruff"));
+        fs::write(&manifest, "[tool.ruff.lint]\nselect=['E']\n").unwrap();
+        let lint = ValidationDetector::detect(repository.path()).unwrap();
+        assert_eq!(
+            lint.commands
+                .iter()
+                .filter(|cmd| cmd.program == "ruff")
+                .count(),
+            1
+        );
+        fs::write(
+            &manifest,
+            "[tool.ruff.lint]\nselect=['E']\n[tool.ruff.format]\nquote-style='double'\n",
+        )
+        .unwrap();
+        let formatted = ValidationDetector::detect(repository.path()).unwrap();
+        assert_eq!(
+            formatted
+                .commands
+                .iter()
+                .filter(|cmd| cmd.program == "ruff")
+                .count(),
+            2
+        );
+        fs::write(&manifest, "[tool.ruff invalid").unwrap();
+        assert!(matches!(
+            ValidationDetector::detect(repository.path()),
+            Err(ValidationError::PythonManifest(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn python_validation_imports_the_current_worktree_source() {
+        let repository = tempfile::tempdir().unwrap();
+        fs::create_dir(repository.path().join("src")).unwrap();
+        fs::write(
+            repository.path().join("src/current_bytes.py"),
+            "VALUE = 17\n",
+        )
+        .unwrap();
+        let plan = ValidationPlan {
+            commands: vec![command(
+                ValidationStage::FocusedTests,
+                "python3",
+                &[
+                    "-c",
+                    "import current_bytes; assert current_bytes.VALUE == 17",
+                ],
+                "current worktree import",
+            )],
+            undetected_stages: Vec::new(),
+            required_stages: BTreeSet::from([ValidationStage::FocusedTests]),
+            accepted_unavailable_stages: BTreeSet::new(),
+        };
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        let report = ValidationRunner::run(&mut store, session, repository.path(), &plan)
+            .await
+            .unwrap();
+        assert!(report.completion_allowed());
+        assert!(store.events(session).unwrap().iter().any(|event| matches!(event,
+            SessionEvent::ActionProposed { action: ProposedAction::Command(action), .. }
+                if action.environment.get("PYTHONPATH").is_some_and(|value| value.contains("/src")))));
+    }
 
     #[test]
     fn monorepo_and_docker_validation_preserve_project_working_directories() {
@@ -1169,6 +1312,133 @@ mod tests {
                 .iter()
                 .all(|item| item.status == EvidenceStatus::NotDetected)
         );
+    }
+
+    #[tokio::test]
+    async fn missing_validation_program_finishes_its_attempt_without_passing() {
+        let repository = tempfile::tempdir().unwrap();
+        let plan = ValidationPlan {
+            commands: vec![
+                command(
+                    ValidationStage::FocusedTests,
+                    "purrcode-validation-executable-does-not-exist",
+                    &[],
+                    "missing fixture tool",
+                ),
+                command(
+                    ValidationStage::Build,
+                    "git",
+                    &["--version"],
+                    "subsequent command",
+                ),
+            ],
+            undetected_stages: Vec::new(),
+            required_stages: BTreeSet::from([
+                ValidationStage::FocusedTests,
+                ValidationStage::Build,
+            ]),
+            accepted_unavailable_stages: BTreeSet::new(),
+        };
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        let report = ValidationRunner::run(&mut store, session, repository.path(), &plan)
+            .await
+            .unwrap();
+        assert!(!report.completion_allowed());
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|item| item.stage == ValidationStage::FocusedTests
+                    && matches!(
+                        item.status,
+                        EvidenceStatus::Unavailable | EvidenceStatus::Failed
+                    ))
+        );
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|item| item.stage == ValidationStage::Build
+                    && item.status == EvidenceStatus::Passed)
+        );
+        let events = store.events(session).unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, SessionEvent::ExecutionStarted { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, SessionEvent::ExecutionFinished { .. }))
+                .count(),
+            2
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SessionEvent::ExecutionFinished {
+                exit_code,
+                ..
+            } if *exit_code != Some(0)
+        )));
+    }
+
+    #[tokio::test]
+    async fn uncertain_validation_stops_after_finishing_the_failed_attempt() {
+        let repository = tempfile::tempdir().unwrap();
+        let plan = ValidationPlan {
+            commands: vec![
+                command(
+                    ValidationStage::FocusedTests,
+                    "git",
+                    &["\0"],
+                    "invalid process argument",
+                ),
+                command(
+                    ValidationStage::Build,
+                    "git",
+                    &["--version"],
+                    "must not launch",
+                ),
+            ],
+            undetected_stages: Vec::new(),
+            required_stages: BTreeSet::from([
+                ValidationStage::FocusedTests,
+                ValidationStage::Build,
+            ]),
+            accepted_unavailable_stages: BTreeSet::new(),
+        };
+        let mut store = SessionStore::in_memory().unwrap();
+        let session = SessionId::new();
+        assert!(matches!(
+            ValidationRunner::run(&mut store, session, repository.path(), &plan).await,
+            Err(ValidationError::UncertainExecution(_))
+        ));
+        let events = store.events(session).unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, SessionEvent::ExecutionStarted { .. }))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SessionEvent::ExecutionFinished {
+                exit_code: None,
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SessionEvent::ValidationRecorded {
+                status: ValidationStatus::Uncertain,
+                ..
+            }
+        )));
     }
 
     #[tokio::test]

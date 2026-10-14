@@ -157,6 +157,29 @@ impl AlignmentRuntime {
                 output_tokens: usage.map(|(_, output)| output),
             },
         )?;
+        store.append(
+            session_id,
+            &SessionEvent::UsageRecorded {
+                record: purrcode_runtime_core::adaptation::UsageRecord {
+                    request_id: Default::default(),
+                    session_id,
+                    workflow_lane_id: None,
+                    provider_id: model.provider.clone(),
+                    model_id: model.model.clone(),
+                    credential_id: "daemon-managed".into(),
+                    input_tokens: usage.map(|(input, _)| input).unwrap_or(0),
+                    output_tokens: usage.map(|(_, output)| output).unwrap_or(0),
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    tool_result_tokens: 0,
+                    search_requests: 0,
+                    mcp_calls: 0,
+                    estimated_cost: None,
+                    latency_ms: 0,
+                    recorded_at: chrono::Utc::now(),
+                },
+            },
+        )?;
         Ok(())
     }
 
@@ -301,7 +324,9 @@ impl AlignmentRuntime {
         let changes = RepositoryEngine::changes(worktree, ChangeScope::Agent).await?;
         let diff = render_diff(&changes.patch);
         let files = review_files(worktree, &changes).await;
-        let tool_observations = review_tool_observations(&state, &store.events(session_id)?);
+        let events = store.events(session_id)?;
+        let mut tool_observations = review_tool_observations(&state, &events);
+        tool_observations.extend(prior_successful_write_observations(&state, &events));
         let base = FreshReviewInput::for_contract(&contract)
             .with_repository_rules(repository_rules)
             .with_diff(diff)
@@ -694,11 +719,18 @@ async fn review_files(
         let Some(after) = contents.after else {
             continue;
         };
+        let file_byte_length = after.len();
+        let file_content_digest = blake3::hash(after.as_bytes()).to_hex().to_string();
         let mut trimmed: String = after.chars().take(MAXIMUM_FILE_CHARACTERS).collect();
-        if trimmed.len() < after.len() {
+        let truncated = trimmed.len() < after.len();
+        if truncated {
             trimmed.push_str("\n[FILE TRUNCATED: only the supplied prefix was reviewed; omitted bytes are unknown]");
         }
-        files.push(ReviewSubject::new(path, trimmed));
+        files.push(ReviewSubject::new(path, trimmed).with_file_identity(
+            file_byte_length,
+            file_content_digest,
+            truncated,
+        ));
     }
     files
 }
@@ -743,12 +775,15 @@ fn review_tool_observations(
                 return None;
             }
             let action = state.proposed_actions.get(action_id)?;
-            if !matches!(
-                action,
-                purrcode_runtime_core::ProposedAction::RepositoryRead(_)
-            ) {
-                return None;
-            }
+            let descriptor = match action {
+                purrcode_runtime_core::ProposedAction::RepositoryRead(read) => {
+                    format!("repository read {read:?}")
+                }
+                purrcode_runtime_core::ProposedAction::WriteFile(write) if !stdout.is_empty() => {
+                    format!("native write to {:?}", write.path)
+                }
+                _ => return None,
+            };
             let combined = format!(
                 "stdout:\n{}\nstderr:\n{}\ntruncated: {}",
                 stdout, stderr, truncated
@@ -758,7 +793,7 @@ fn review_tool_observations(
                 before_request,
                 (
                     format!(
-                        "successful repository read {} the latest user request: {action:?}",
+                        "successful {descriptor} {} the latest user request",
                         if before_request { "before" } else { "after" }
                     ),
                     combined
@@ -783,6 +818,129 @@ fn review_tool_observations(
         .map(|(_, observation)| observation.clone())
         .chain(prior)
         .collect()
+}
+
+/// Exact payloads of successful, authorized native writes are observations,
+/// not the implementer's explanation. Stop at opaque or failed mutations:
+/// an earlier payload cannot establish bytes after an intervening command.
+pub(crate) fn prior_successful_write_observations(
+    state: &SessionState,
+    events: &[SessionEvent],
+) -> Vec<(String, String)> {
+    let Some(boundary) = events.iter().rposition(|event| {
+        matches!(event,
+        SessionEvent::ConversationMessageAdded { message }
+            if message.role.eq_ignore_ascii_case("user"))
+    }) else {
+        return Vec::new();
+    };
+    let mut paths = BTreeSet::new();
+    let mut finished = BTreeSet::new();
+    let cache_only_validation = events[..boundary]
+        .iter()
+        .filter_map(|event| {
+            let SessionEvent::AuthorizationPersisted { authorization } = event else {
+                return None;
+            };
+            let purrcode_runtime_core::ApprovalAuthority::SignedPolicy { policy_id } =
+                &authorization.approved_by
+            else {
+                return None;
+            };
+            let action = state.proposed_actions.get(&authorization.action_id)?;
+            (policy_id == "purrcode-validation-v1"
+                && authorization
+                    .constraints
+                    .allowed_write_globs
+                    .iter()
+                    .all(|glob| {
+                        matches!(
+                            glob.as_str(),
+                            "target/**"
+                                | "**/__pycache__/**"
+                                | ".pytest_cache/**"
+                                | ".ruff_cache/**"
+                        )
+                    })
+                && action.digest(&authorization.constraints).ok().as_ref()
+                    == Some(&authorization.action_digest))
+            .then_some(authorization.action_id)
+        })
+        .collect::<BTreeSet<_>>();
+    let mut observations = Vec::new();
+    for event in events[..boundary].iter().rev() {
+        if matches!(
+            event,
+            SessionEvent::ExternalChangeDetected { .. } | SessionEvent::CheckpointRestored { .. }
+        ) {
+            break;
+        }
+        if let SessionEvent::ExecutionStarted { action_id } = event
+            && !finished.contains(action_id)
+            && !matches!(
+                state.proposed_actions.get(action_id),
+                Some(purrcode_runtime_core::ProposedAction::RepositoryRead(_))
+            )
+        {
+            break;
+        }
+        let SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code,
+            ..
+        } = event
+        else {
+            continue;
+        };
+        finished.insert(*action_id);
+        let Some(action) = state.proposed_actions.get(action_id) else {
+            break;
+        };
+        if matches!(
+            action,
+            purrcode_runtime_core::ProposedAction::RepositoryRead(_)
+        ) {
+            continue;
+        }
+        if *exit_code != Some(0) {
+            break;
+        }
+        if matches!(action, purrcode_runtime_core::ProposedAction::Command(_))
+            && cache_only_validation.contains(action_id)
+        {
+            continue;
+        }
+        match action {
+            purrcode_runtime_core::ProposedAction::WriteFile(write) => {
+                if !paths.insert(write.path.clone()) {
+                    continue;
+                }
+                if write.path.components().any(|component| {
+                    matches!(
+                        component.as_os_str().to_str(),
+                        Some("target" | "__pycache__" | ".pytest_cache" | ".ruff_cache")
+                    )
+                }) {
+                    continue;
+                }
+                let content = serde_json::to_string(&write.content).expect("a string serializes");
+                observations.push((
+                    format!("successful native write before latest user request: {}", write.path.display()),
+                    crate::context::bounded_repository_observation(&format!(
+                        "No subsequent observed command with permission to change this path, or write to this path, is recorded before the request. Digest-verified cache-only validation commands are excluded, and this path is outside their cache directories. UTF-8 byte length: {}. BLAKE3 content digest: {}. JSON-escaped successfully written bytes: {}",
+                        write.content.len(), blake3::hash(write.content.as_bytes()).to_hex(), content), 6_000),
+                ));
+                if observations.len() == 4 {
+                    break;
+                }
+            }
+            purrcode_runtime_core::ProposedAction::DeleteFile(delete) => {
+                paths.insert(delete.path.clone());
+            }
+            _ => break,
+        }
+    }
+    observations
 }
 
 /// Say something to the user in the conversation, as the runtime rather than as
@@ -815,6 +973,71 @@ mod tests {
     use purrcode_runtime_core::work::{AcceptanceCriterion, CriterionId};
 
     use super::*;
+    #[test]
+    fn prior_write_observations_stop_at_opaque_or_unsettled_mutations() {
+        use purrcode_runtime_core::{
+            ActionId, CommandAction, ConversationMessage, ProposedAction, SessionId, SessionState,
+            WriteFileAction,
+        };
+        let mut state = SessionState::empty(SessionId::new());
+        let write = ActionId::new();
+        state.proposed_actions.insert(
+            write,
+            ProposedAction::WriteFile(WriteFileAction {
+                path: "marker.txt".into(),
+                content: "marker\n".into(),
+                expected_digest: None,
+            }),
+        );
+        let completed = |action_id| SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code: Some(0),
+            truncated: false,
+            sandbox_level: None,
+            sandbox_backend: None,
+            affected_paths: vec![],
+        };
+        let user = SessionEvent::ConversationMessageAdded {
+            message: ConversationMessage {
+                id: "correction".into(),
+                role: "user".into(),
+                content: "Preserve marker.txt".into(),
+                timestamp: chrono::Utc::now(),
+                tool_calls: vec![],
+                tool_results: vec![],
+                model: None,
+                turn_id: None,
+            },
+        };
+        let events = vec![
+            SessionEvent::ExecutionStarted { action_id: write },
+            completed(write),
+            user.clone(),
+        ];
+        let observation = prior_successful_write_observations(&state, &events);
+        assert_eq!(observation.len(), 1);
+        assert!(observation[0].1.contains("\"marker\\n\""));
+        let command = ActionId::new();
+        state.proposed_actions.insert(
+            command,
+            ProposedAction::Command(CommandAction {
+                program: "git".into(),
+                arguments: vec!["status".into()],
+                working_directory: ".".into(),
+                environment: Default::default(),
+            }),
+        );
+        let mut opaque = events[..2].to_vec();
+        opaque.extend([
+            SessionEvent::ExecutionStarted { action_id: command },
+            completed(command),
+            user.clone(),
+        ]);
+        assert!(prior_successful_write_observations(&state, &opaque).is_empty());
+        let mut unsettled = events[..2].to_vec();
+        unsettled.extend([SessionEvent::ExecutionStarted { action_id: command }, user]);
+        assert!(prior_successful_write_observations(&state, &unsettled).is_empty());
+    }
 
     #[test]
     fn preservation_reviews_keep_bounded_reads_from_before_the_user_revision() {

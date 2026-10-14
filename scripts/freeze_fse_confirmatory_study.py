@@ -180,6 +180,7 @@ def build(
     model_freeze: Path,
     frozen_at: str,
     protocol: Mapping[str, Any] | None = None,
+    analysis_population: str = "all_scheduled",
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     source = manifest.get("source")
     tasks = manifest.get("tasks")
@@ -215,7 +216,8 @@ def build(
         "session_token_budget": analysis.SESSION_TOKEN_BUDGET,
         "qualification_sha256": qualification_sha256,
         "model_freeze_sha256": model_freeze_sha256,
-        "primary_estimand": analysis.PRIMARY_ESTIMAND,
+        "analysis_population": analysis_population,
+        "primary_estimand": "repository_average_correction_c_minus_b_valid_paired_risk_difference" if analysis_population == "valid_paired_evaluable" else analysis.PRIMARY_ESTIMAND,
         "interaction_estimand": analysis.INTERACTION_ESTIMAND,
         "attrition_definition": "terminal_failure_or_oracle_unknown",
         "repositories": {key: sorted(value) for key, value in sorted(repositories.items())},
@@ -228,6 +230,8 @@ def build(
         "attrition_limit": 0.10,
         "minimum_baseline_correct_delivery_risk": 0.10,
         "minimum_method_correct_delivery_risk": 0.10,
+        "minimum_valid_correction_pairs": 24,
+        "minimum_valid_repository_clusters": 8,
     }
     plan["schedule_sha256"] = analysis.canonical_hash(analysis.schedule_payload(plan))
     plan = analysis.load_plan_object(plan)
@@ -302,6 +306,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="optional contamination-safe P0/P1 and trigger metadata JSON",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--analysis-population", choices=("all_scheduled", "valid_paired_evaluable"), default="all_scheduled")
     args = parser.parse_args(argv)
     try:
         values = build(
@@ -314,6 +319,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             model_freeze=args.model_freeze,
             frozen_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             protocol=load_object(args.protocol) if args.protocol else None,
+            analysis_population=args.analysis_population,
         )
         artifacts = dict(zip(("analysis-plan.json", "freeze.json", "receipt.json"), values))
         if not args.dry_run:

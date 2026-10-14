@@ -1,0 +1,34 @@
+{
+  "kind": "synthetic_harness_preflight_not_study_evidence",
+  "arm": "C",
+  "passed": true,
+  "measurement": {
+    "session_id": "3e049c1c-caaf-4522-ae77-2901ffd243bb",
+    "session_status": "completed",
+    "timed_out": false,
+    "elapsed_ms": 82525,
+    "mid_run_correction_requested": true,
+    "mid_run_correction_triggered": true,
+    "mid_run_correction_acknowledged": true,
+    "mid_run_correction_trigger_event_sha256": "5e59c3e416fe5d3fb845a15ba53f72572129d75007ad1c4bc4e208e616ce9faa",
+    "mid_run_correction_message_event_sha256": "be972e8899bedf33b0d055c1de2f1b45e4ce19a1d905751a16d32465cf546abe"
+  },
+  "metrics": {
+    "model_calls": 15,
+    "incomplete_model_calls": 0,
+    "unknown_usage_calls": 0,
+    "input_tokens": 41102,
+    "output_tokens": 5721,
+    "providers": [
+      "deepseek"
+    ],
+    "models": [
+      "deepseek-flash"
+    ]
+  },
+  "contents": {
+    "marker.txt": "marker\n",
+    "followup.txt": "followup\n"
+  },
+  "patch": "diff --git a/followup.txt b/followup.txt\nnew file mode 100644\nindex 0000000..132c3f4\n--- /dev/null\n+++ b/followup.txt\n@@ -0,0 +1 @@\n+followup\ndiff --git a/marker.txt b/marker.txt\nnew file mode 100644\nindex 0000000..5abed26\n--- /dev/null\n+++ b/marker.txt\n@@ -0,0 +1 @@\n+marker\n"
+}

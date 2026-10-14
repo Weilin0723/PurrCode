@@ -1,0 +1,83 @@
+{
+  "binary_sha256": "d2b0ca50a917ebe166e0a48394f90c34e3d74030bf88129f76153ea33c9b994c",
+  "captured_at_utc": "2026-10-14T04:29:02.310699+00:00",
+  "cargo_lock_sha256": "8facaf8a4d5cce717fe473898a9bb11cc2873efb2cc606c867fb92cbfb39028e",
+  "credential_material_recorded": false,
+  "current_runtime_smokes": [
+    {
+      "path": "docs/research/evidence/2026-10-14/deepseek-flash/synthetic-B-correction-smoke-v26.json",
+      "sha256": "e09310da85dbb13c98d6f14ff242834f41912043bbb10ea81b8b6c780bc7e4c2"
+    },
+    {
+      "path": "docs/research/evidence/2026-10-14/deepseek-flash/synthetic-C-correction-smoke-v26.json",
+      "sha256": "4e00149afd069804ed5358397a5a49210a96b6eab7b6227509a6ac4ebebccce7"
+    }
+  ],
+  "exit_status": 0,
+  "model_alias_is_mutable": true,
+  "provider_gateway_source_sha256": "6e1b044d57f413896185b144a41da50bf2553a0fbffdd64a8bb50c3625db9d02",
+  "qualification_scope": "Original seven provider cases retained with original binary provenance; current runtime additionally qualified by both v26 B/C correction smoke sessions.",
+  "report": {
+    "accuracy": 1.0,
+    "cases": [
+      {
+        "detail": "exact match",
+        "latency_ms": 1317,
+        "name": "structured-output",
+        "passed": true
+      },
+      {
+        "detail": "exact match",
+        "latency_ms": 983,
+        "name": "tool-schema",
+        "passed": true
+      },
+      {
+        "detail": "exact match",
+        "latency_ms": 823,
+        "name": "multi-file-reasoning",
+        "passed": true
+      },
+      {
+        "detail": "exact match",
+        "latency_ms": 1092,
+        "name": "patch-generation",
+        "passed": true
+      },
+      {
+        "detail": "exact match",
+        "latency_ms": 1390,
+        "name": "context-retention",
+        "passed": true
+      },
+      {
+        "detail": "exact match",
+        "latency_ms": 711,
+        "name": "test-failure-interpretation",
+        "passed": true
+      },
+      {
+        "detail": "exact match",
+        "latency_ms": 630,
+        "name": "judgment-calibration",
+        "passed": true
+      }
+    ],
+    "estimated_tokens_per_second": 3.1658649533389283,
+    "maximum_reliable_context_tokens": 16384,
+    "mean_latency_ms": 992.2857142857143,
+    "model": {
+      "model": "deepseek-flash",
+      "provider": "deepseek"
+    },
+    "not_recommended_roles": [],
+    "recommended_roles": [
+      "router",
+      "summarizer",
+      "simple-coding",
+      "planner",
+      "high-risk-judge"
+    ]
+  },
+  "visible_environment_and_gold_workflow_run_id": 38604737010
+}

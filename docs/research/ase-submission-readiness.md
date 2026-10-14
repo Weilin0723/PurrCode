@@ -6,14 +6,14 @@ submission work, not a claim about acceptance probability.
 | Required result | Current evidence | Remaining work |
 | --- | --- | --- |
 | Defensible research question | Freshness/correctness counterexamples; structural conjunction limitation disclosed | Evaluate live evidence refresh separately |
-| Qualified affordable provider | Fresh official `deepseek-flash` 7/7; 16,384-token context probe | Verify operational agent loop on rebuilt daemon |
-| Independent real repositories | All 30 tasks in acquisition v2 have passing official gold-oracle evidence; ten repositories disjoint from prior study | Publish new model-study freeze |
-| Complete live observations | Prior incomplete/failed run archived, never pooled | Complete newly frozen schedule without selective retries |
+| Qualified affordable provider | Fresh official `deepseek-flash` 7/7; 16,384-token context probe; same-binary v26 B/C correction preflights completed with exact files and fully recorded usage | Verify visible dependency environment on real repository tasks |
+| Independent real repositories | v3 has 27 reference passes and one whole rejected group; v4 replaces that group before scientific model generation | Finish three replacement qualifications and archive every original row before new model-study freeze |
+| Complete live observations | Earlier failures and frozen Flash v2 (116 attempted, four not started, no completed delivery) retained; no efficacy pooling | Complete newly frozen schedule without selective retries |
 | Useful comparative finding | Static gate guardrail failed and remains reported | Assess safety, correct delivery, latency and token cost using frozen inference |
 | Audited inference | Existing offline analysis tests pass; unknown outcomes retained | Recompute new results independently and assess attrition/minimum competence gates |
 | Anonymous reproducibility | Existing component archive validated earlier | Rebuild with final study and recheck identities, credentials and checksums |
-| Submission manuscript | English draft and Chinese companion revised; Flash editorial critique recorded | Finish results, limitations, bibliography, venue format and PDF QA |
-| Repository validation | Format check passed; Python regressions and actionlint passed | Finish workspace Clippy and tests; retain explicit ignored/external checks |
+| Submission manuscript | English/Chinese live audits updated; verified bibliography; six-page anonymous working PDF typeset | Finish live results, final contribution assessment and final PDF QA |
+| Repository validation | Current targeted Rust tests, Clippy, Python regressions and actionlint pass; full workspace run in progress | Finish final-snapshot workspace tests; retain explicit ignored/external checks |
 
 The current component p-values remain in the audited historical evidence. For the paired static
 conjunction, positive C-minus-B risk differences are structurally impossible; sign symmetry does

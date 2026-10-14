@@ -367,11 +367,11 @@ def run_session(
 
     deadline = started + maximum_seconds
     phase_view, phase_events, timed_out = await_phase(deadline)
-    # A blocked review/approval is an observed outcome, not permission to
-    # resume it. The daemon accepts follow-ups only at these settled states.
+    # A new user correction can reopen an outcome review, but it does not
+    # approve that outcome or an awaiting native-action authorization.
     phase_view = wait_until_stopped(base, token, session_id)
     if (correction_requested and not timed_out
-            and session_status(phase_view) in {"completed", "paused"}):
+            and session_status(phase_view) in {"completed", "paused", "awaiting_review"}):
         trigger = first_successful_mutation(phase_events)
         if trigger is not None:
             event, event_index = trigger
@@ -553,6 +553,7 @@ def run_oracle(
         str(task["base_task_id"]),
         "--predictions-path",
         str(prediction_path),
+        "--evaluate-empty",
         "--max-workers",
         "1",
         "--timeout",
@@ -796,6 +797,14 @@ def run_one(
         timeout_seconds=oracle_timeout,
     )
     metrics = event_metrics(events)
+    model_output_observed = any(
+        (event.get("event") == "action_proposed" and event.get("data", {}).get("turn_id") is not None)
+        or (event.get("event") == "conversation_message_added"
+            and event.get("data", {}).get("message", {}).get("role") == "assistant"
+            and event.get("data", {}).get("message", {}).get("model") is not None
+            and bool(event.get("data", {}).get("message", {}).get("content", "").strip()))
+        for event in events
+    )
     requested_alignment = task["arm"] == "C"
     observed_alignment = alignment_observed(events)
     terminal_status = "valid"
@@ -825,6 +834,7 @@ def run_one(
         "schedule_sha256": plan["schedule_sha256"],
         "bundle_sha256": bundle_sha256,
         "terminal_status": terminal_status,
+        "model_output_observed": model_output_observed,
         "oracle_status": oracle_status,
         "claimed_complete": claimed_complete,
         "externally_correct": None if oracle_status == "unknown" else oracle_status == "correct",

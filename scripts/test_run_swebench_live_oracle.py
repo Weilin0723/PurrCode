@@ -15,6 +15,23 @@ import run_swebench_live_oracle as oracle
 
 
 class OracleInputsTests(unittest.TestCase):
+    def test_empty_prediction_selection_does_not_change_submitted_bytes(self):
+        predictions = {
+            "empty": {"model_patch": ""}, "normal": {"model_patch": "real diff"},
+            "missing": {"model_patch": None},
+        }
+        original = json.loads(json.dumps(predictions))
+        def selector(predictions):
+            return [instance_id for instance_id, row in predictions.items()
+                    if row["model_patch"] not in (None, "")]
+        harness = types.SimpleNamespace(get_dataset_from_preds=selector,
+                                        GIT_APPLY_CMDS=["git apply --verbose", "patch --batch -p1 -i"])
+        oracle.enable_empty_prediction_scoring(harness)
+        self.assertEqual(harness.get_dataset_from_preds(predictions), ["empty", "normal"])
+        self.assertEqual(predictions, original)
+        self.assertEqual(harness.GIT_APPLY_CMDS[0], "git apply --allow-empty --verbose")
+        self.assertEqual(harness.GIT_APPLY_CMDS[1], "patch --batch -p1 -i")
+
     def test_revision_is_pinned_and_missing_instances_fail_closed(self):
         rows = [{"instance_id": "selected", "patch": "synthetic-gold",
                  "created_at": datetime(2026, 10, 14)},

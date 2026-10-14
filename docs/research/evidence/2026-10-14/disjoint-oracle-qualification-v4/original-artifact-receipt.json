@@ -1,0 +1,39 @@
+{
+  "model_calls": 0,
+  "original_file_count": 6,
+  "task_count": 3,
+  "passed_count": 3,
+  "failed_count": 0,
+  "files": [
+    {
+      "path": "e2e-privacyidea__privacyidea-4206/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "6133750cae30ee4945831aaefa8325e271cbd60b4de3512b7945353bfc014b6f",
+      "bytes": 769
+    },
+    {
+      "path": "e2e-privacyidea__privacyidea-4206/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1",
+      "bytes": 36806
+    },
+    {
+      "path": "e2e-privacyidea__privacyidea-4226/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "017d624235c37d15704802f85062de975d7ef34419cbd95720dc2096cad52648",
+      "bytes": 769
+    },
+    {
+      "path": "e2e-privacyidea__privacyidea-4226/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1",
+      "bytes": 36806
+    },
+    {
+      "path": "e2e-privacyidea__privacyidea-4233/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "d4ab242d6dceed736210946183a1d5b530ccb17ecdb775462db71fd8598a37e3",
+      "bytes": 769
+    },
+    {
+      "path": "e2e-privacyidea__privacyidea-4233/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1",
+      "bytes": 36806
+    }
+  ]
+}

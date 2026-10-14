@@ -5,7 +5,10 @@ This wrapper is intentionally small and auditable. In its default mode it does
 not alter the dataset, predictions, test lists, or grading. The explicit
 ``--targeted`` mode keeps the official test patch, image, parser, and declared
 F2P/P2P IDs, while invoking those IDs in bounded chunks instead of unrelated
-full-suite tests. Two host-interface details are also fixed before delegating
+full-suite tests. Explicit ``--evaluate-empty`` scores unchanged code for
+empty-string submissions instead of skipping them; it preserves actual
+prediction bytes, test scripts, test patches, images and grading. The following
+host-interface details are also fixed before delegating
 to the pinned official harness:
 
 1. The dataset is materialized from its immutable Hugging Face revision to
@@ -22,6 +25,7 @@ to the pinned official harness:
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import shlex
@@ -51,6 +55,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--modal", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--targeted", action="store_true")
+    parser.add_argument("--evaluate-empty", action="store_true",
+                        help="Run unchanged code for submitted empty-string patches; keep predictions and grading unchanged")
     return parser.parse_args()
 
 
@@ -71,6 +77,35 @@ def materialize_pinned_dataset(args: argparse.Namespace, target: Path) -> None:
     target.write_text(json.dumps(rows, default=dataset_json_value), encoding="utf-8")
 
 
+def enable_empty_prediction_scoring(harness) -> None:
+    """Include empty-string submissions and apply them as genuine no-ops.
+
+    The selector receives a temporary nonempty sentinel only to avoid its
+    skip filter. Actual prediction objects/files remain unchanged; the official
+    evaluator receives the original zero-byte patch. Missing (None) predictions
+    remain missing. Test scripts, test patches, images and grading are unchanged.
+    """
+    original = harness.get_dataset_from_preds
+    signature = inspect.signature(original)
+
+    def select_with_empty(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
+        predictions = bound.arguments["predictions"]
+        bound.arguments["predictions"] = {
+            instance_id: {**prediction, "model_patch": "\n"}
+            if prediction.get("model_patch") == "" else prediction
+            for instance_id, prediction in predictions.items()
+        }
+        return original(*bound.args, **bound.kwargs)
+
+    harness.get_dataset_from_preds = select_with_empty
+    harness.GIT_APPLY_CMDS = [
+        command.replace("git apply ", "git apply --allow-empty ", 1)
+        if command.startswith("git apply ") else command
+        for command in harness.GIT_APPLY_CMDS
+    ]
+
+
 def main() -> int:
     args = _parse_args()
     try:
@@ -81,6 +116,8 @@ def main() -> int:
         return 2
 
     test_spec.USE_X86.update(args.instance_ids)
+    if args.evaluate_empty:
+        enable_empty_prediction_scoring(run_evaluation)
     if args.fail_fast or args.targeted:
         original = create_scripts.make_eval_script_list_common
 

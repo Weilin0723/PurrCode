@@ -1,0 +1,168 @@
+{
+  "alpha": 0.05,
+  "analysis_population": "valid_paired_evaluable",
+  "arms": [
+    "B",
+    "C"
+  ],
+  "attrition_definition": "terminal_failure_or_oracle_unknown",
+  "attrition_limit": 0.1,
+  "bootstrap_samples": 100000,
+  "bootstrap_seed": 20261013,
+  "dataset_manifest_sha256": "f65372d024a98100da5f9ef24b5490053c94f04fd121cd4e08f019402d676564",
+  "dataset_revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
+  "guardrail_margin": 0.05,
+  "interaction_estimand": "repository_average_revision_specific_difference_in_differences",
+  "minimum_baseline_correct_delivery_risk": 0.1,
+  "minimum_method_correct_delivery_risk": 0.1,
+  "minimum_valid_correction_pairs": 24,
+  "minimum_valid_repository_clusters": 8,
+  "model_freeze_sha256": "47055357f097243eb2a7b5deb99be9ec7730852206c1cce93142853e2a0b606c",
+  "primary_estimand": "repository_average_correction_c_minus_b_valid_paired_risk_difference",
+  "primary_model": "deepseek/deepseek-flash",
+  "primary_variant": "correction",
+  "qualification_sha256": "4bb61b4d39789d20b480d11eade1e23975eea68de8178de68ac81adaaebc85ac",
+  "repeats": [
+    0
+  ],
+  "repositories": {
+    "Delgan/loguru": [
+      "delgan__loguru-1236",
+      "delgan__loguru-1240",
+      "delgan__loguru-1297"
+    ],
+    "deepset-ai/haystack": [
+      "deepset-ai__haystack-8609",
+      "deepset-ai__haystack-8708",
+      "deepset-ai__haystack-8725"
+    ],
+    "koxudaxi/datamodel-code-generator": [
+      "koxudaxi__datamodel-code-generator-2257",
+      "koxudaxi__datamodel-code-generator-2259",
+      "koxudaxi__datamodel-code-generator-2260"
+    ],
+    "pdm-project/pdm": [
+      "pdm-project__pdm-3170",
+      "pdm-project__pdm-3255",
+      "pdm-project__pdm-3374"
+    ],
+    "privacyidea/privacyidea": [
+      "privacyidea__privacyidea-4206",
+      "privacyidea__privacyidea-4226",
+      "privacyidea__privacyidea-4233"
+    ],
+    "projectmesa/mesa": [
+      "projectmesa__mesa-2463",
+      "projectmesa__mesa-2523",
+      "projectmesa__mesa-2632"
+    ],
+    "python-control/python-control": [
+      "python-control__python-control-1065",
+      "python-control__python-control-1096",
+      "python-control__python-control-1099"
+    ],
+    "pytorch/torchtune": [
+      "pytorch__torchtune-1697",
+      "pytorch__torchtune-1806",
+      "pytorch__torchtune-1832"
+    ],
+    "run-llama/llama_deploy": [
+      "run-llama__llama_deploy-356",
+      "run-llama__llama_deploy-384",
+      "run-llama__llama_deploy-457"
+    ],
+    "yt-dlp/yt-dlp": [
+      "yt-dlp__yt-dlp-11425",
+      "yt-dlp__yt-dlp-11880",
+      "yt-dlp__yt-dlp-12714"
+    ]
+  },
+  "request_variants": [
+    "static",
+    "correction"
+  ],
+  "requested_model": "deepseek/deepseek-flash",
+  "requirement_revision": {
+    "p0_hashes_sha256": "47ac5af4f4f3582911b80e75b0137f3a55be362515dca29e91d1ce2f70cf7dc6",
+    "p0_sha256": {
+      "deepset-ai__haystack-8609": "3e01f44673ea2ecf05b5010f832f7ad3dba5a2db64564dc9366b9380e9534c3e",
+      "deepset-ai__haystack-8708": "b26e6e8167bcddedc1c6796f282994183b78e8f46f3e007d719497d3acebeebe",
+      "deepset-ai__haystack-8725": "fa091bdf66349b411f42a49eeb6d38355e848916ad8aea77df1448b4ebae6d88",
+      "delgan__loguru-1236": "37c3f3320c82d45d87d36a3ebfc67ef96cf72cf9fca02cfe50fe913257461ff8",
+      "delgan__loguru-1240": "5064639ee12b0a036947734839495a51f42c2eddd76f9cf508093ed413702e90",
+      "delgan__loguru-1297": "9c3461665f48c293b59c72441405bf71b5d6c84dcc680223eb231119c3c6f14a",
+      "koxudaxi__datamodel-code-generator-2257": "e41dfe304939dbb8a561af8fc9950aca4505c3e3dc30c816ecefbc960ae4d1de",
+      "koxudaxi__datamodel-code-generator-2259": "02b708a63287afab08dc9494cb7aa12f0dbdd2f2f0a2fa1bed71ad43e6216727",
+      "koxudaxi__datamodel-code-generator-2260": "f9d69cb1b2a6367d9e7ca3663cd942bca550268457cd0101954a584c8a6970fc",
+      "pdm-project__pdm-3170": "4ee665c542c445f167280c91e3fa3e645d6c8cb83a563330b4738ba3a350a4a7",
+      "pdm-project__pdm-3255": "52c984983a3f23fb53642c4d50815c1a864c3b7ff697b9c0d6b07f812bcbe50a",
+      "pdm-project__pdm-3374": "8a43cce55f41df0e8c451f2947eec464265b70ddc9663da11acd176eb089506f",
+      "privacyidea__privacyidea-4206": "3d0a73ef4095c3d547729377ba44cfcc05a945997f191eee9c6f533f81f35621",
+      "privacyidea__privacyidea-4226": "dfd26b7f7279194544f4335bfe1d6f998670a74cbb7c837f588f98cf1c5d9052",
+      "privacyidea__privacyidea-4233": "ee576ce83e3265376281f83dbbfe83b99dcc3877d13508557453dfc7dd0c9820",
+      "projectmesa__mesa-2463": "a00450d1b687a6c0c4aa8b8e56dd34a93c6e64816999247db10f1659a280fa3c",
+      "projectmesa__mesa-2523": "c360175a77f2086e562b3e5539103b05571173330031845d5ee568e11e57fc49",
+      "projectmesa__mesa-2632": "628678d9e0891a8594f821a5fb76bc33239948a4128ef873f42ab56e219ea7d6",
+      "python-control__python-control-1065": "9e0c7fd76b381e36ebe25d53a5f46d2a3ed0574f5f4ca2451b9e5acd31a9ba1d",
+      "python-control__python-control-1096": "cdc86ed4820f50cb15ac5ee41b6034db8f58f2e58235b930cd44ec21e96990a4",
+      "python-control__python-control-1099": "09c3da98759b1dfe3a691884d2a98a624c4e13f624847591fd8f7809d6e55823",
+      "pytorch__torchtune-1697": "69a294d6c6d158ecb00cc181f44b52354c9ab71047a9ff27a231d55b52e11227",
+      "pytorch__torchtune-1806": "db243b21ea54274cbdd1dbd5f66c4dbc677e98a58e10032bb589bc564734a884",
+      "pytorch__torchtune-1832": "e4ce109fd8f6f3d6a1b82a921eb6e267ba2d355c5fd94b95abab5cd09ae77cf6",
+      "run-llama__llama_deploy-356": "91f47774b4384e391b73a40eed85408796637b444ad9db28f3906b94cb223b98",
+      "run-llama__llama_deploy-384": "57e331b672b3fe4cccd88e988762d6596ecf881ccd826c1eb0a8c54a18820d8b",
+      "run-llama__llama_deploy-457": "a5e3dad16e6c327f685f26a30e36ed710f5219ab9d6b421345f2e3488864cda2",
+      "yt-dlp__yt-dlp-11425": "4fb7d60db1ef7387a7f40d7131c34908ed566023c90a7b06ba3d10634999e982",
+      "yt-dlp__yt-dlp-11880": "d6e4631431d4c23bb7ccc0a812d273191cc0f1777d10c4bab9d0e84faa5c78a2",
+      "yt-dlp__yt-dlp-12714": "ed21d6697878d31280f2265454f6eb5a19d6c8661f7598e67a427a25d25e3523"
+    },
+    "p1_hashes_sha256": "c5980c97bdd9c385aef462b1bfd5ed9eb7c944b471660d09ee5dd1daf23180c7",
+    "p1_sha256": {
+      "deepset-ai__haystack-8609": "6b8573f6a4126b79b139ff7cbc21a947857b32ef9c3a805c8f55bddfc4d84bf5",
+      "deepset-ai__haystack-8708": "3415ff38ed965b01b2c0c8d952ed810641a1068d3fd0dfe477c930eda0277300",
+      "deepset-ai__haystack-8725": "e86233f72efcf0c043fec8290d43f2a18d41cd785d59f905f09b4295f76704b4",
+      "delgan__loguru-1236": "6b38fce6ce18b7f13fdc3089de6383de4746a8b747082c90441cf3822f7d3b84",
+      "delgan__loguru-1240": "181560763b3175aaf69901fe02dbf96db7752b567f4b702e390c9d28a1ee9c76",
+      "delgan__loguru-1297": "34099d96366b67cee2fac63eed7d95dc6dfaf80a9253b2dcf82c2298692bfa06",
+      "koxudaxi__datamodel-code-generator-2257": "3f9371140a111213650350920167fe719c687fb00d633cc12824eb5684988433",
+      "koxudaxi__datamodel-code-generator-2259": "2a59bb76bef3bfdb897ebe6754687c9ed5ff14cb4549fd4b42a48d3a10919ac6",
+      "koxudaxi__datamodel-code-generator-2260": "e2ff8184e3833f6c26bedee13bb8d0f9e58ddadf17f5168904ed61af9f075f9a",
+      "pdm-project__pdm-3170": "b2904947178b2277c64716f79dc08bf87db718e531a7e9aacb1dd3960b7c3f38",
+      "pdm-project__pdm-3255": "fc0a017517e89d9b3384111f354d191da9405aae2774bca1fe88325e87905b4d",
+      "pdm-project__pdm-3374": "1cfcd852b03fa120d6631f006075e65234d258a0696b9a92dbccd3b2b00cd569",
+      "privacyidea__privacyidea-4206": "1f10fadb448b9d4209df3a46c37ef027462db8ae44a74bb825513c2abd7c9e7b",
+      "privacyidea__privacyidea-4226": "a4bb07af70d11a003780e2da5970b8994fc691423ea516bacd3d36b8c1ad52be",
+      "privacyidea__privacyidea-4233": "fd6a1b662226b5e2fa59a25d1ed96e90e112aba98c3e99e6a8d21a29ecd0fca6",
+      "projectmesa__mesa-2463": "1e62b9c53d4b271afd0dfd13869811a869593f64eb02c95ffd81f39166586716",
+      "projectmesa__mesa-2523": "4fa21ffe74446455bb2acb2b2d192a5b62c6b428e4e05e6a9665e432870b7d31",
+      "projectmesa__mesa-2632": "fb329c3e32a4212fc9951f25d6bc63e246adba1d5fce42135ac23b1a1f15300c",
+      "python-control__python-control-1065": "64631fef6421c68e9761d92c0e1f6de8b10c032f6d4eeee01179c313365cfbca",
+      "python-control__python-control-1096": "11dbf22ee487e784e0512657ac967a417cdab95f5f7e3190f6184a4c5b0ab793",
+      "python-control__python-control-1099": "131c620bd4354dd966510ef192a00bf57c3294c0c62db452380530d6ef1104c1",
+      "pytorch__torchtune-1697": "0c9797f2bab7a18c9549ed61c72f11c87a474304f218faaf296cfe10c96dc7ff",
+      "pytorch__torchtune-1806": "c68be938a5b014247a2fddaeeb3e9480bde6623294fe45b61f889c2ea8f2ecf6",
+      "pytorch__torchtune-1832": "dd3c29b45ed440e8fa77282af9b521153984a487862ab11ec44b4f97c3f3f055",
+      "run-llama__llama_deploy-356": "00fc6e208d0d9e27155252a0acec84b69992272f5f43bebba861336b8f04f8b3",
+      "run-llama__llama_deploy-384": "dab64a75ce2840c048e9659984946a3c161f2f4a1d88b885c7ce7fe683c82eeb",
+      "run-llama__llama_deploy-457": "6dd51f2b976287f5ad27be6c52e90de0e569561bd58f123bccc529239d87a06c",
+      "yt-dlp__yt-dlp-11425": "6d75e07650c1a3785d2ba948d3c1481773ac08825953ea8d147e83c94f38c319",
+      "yt-dlp__yt-dlp-11880": "80fab7145a8b3afb1259501060bad58bb2ca260fb97b1e5f71e6e6e8e693c489",
+      "yt-dlp__yt-dlp-12714": "ff5c0f38dbf1ece0d9bad5d0bb14430fc72e01eb9656e9e2501c9556b6169b09"
+    },
+    "trigger_policy": {
+      "acknowledgement_event": "requirement_revision_ack",
+      "acknowledgement_required": true,
+      "event": "ExecutionFinished",
+      "requires_nonempty_affected_paths": true,
+      "success_exit_code": 0,
+      "undelivered_policy": "retain_itt"
+    },
+    "trigger_policy_sha256": "e5d6a92b68fccad2cd3ee3cfbc330bccb7e508048745bea5c8dee22684272792"
+  },
+  "runs_per_model": 120,
+  "schedule_sha256": "fe26e90f81d8fb7da3c97f1ffa50d813394fe68d2a8a7a806d3a46fdec6de45f",
+  "scheduled_runs_per_model": 120,
+  "schema_version": 1,
+  "session_token_budget": 1000000,
+  "study_id": "ase-flash-e2e-v3-valid-paired"
+}
