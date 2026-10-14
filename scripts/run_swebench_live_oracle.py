@@ -27,6 +27,7 @@ import os
 import shlex
 import sys
 import tempfile
+from datetime import date, datetime
 from pathlib import Path
 
 
@@ -53,6 +54,12 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def dataset_json_value(value):
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    raise TypeError(f"unsupported dataset value type: {type(value).__name__}")
+
+
 def materialize_pinned_dataset(args: argparse.Namespace, target: Path) -> None:
     from datasets import load_dataset
 
@@ -61,7 +68,7 @@ def materialize_pinned_dataset(args: argparse.Namespace, target: Path) -> None:
     rows = [dict(row) for row in dataset if row["instance_id"] in selected]
     if {row["instance_id"] for row in rows} != selected:
         raise ValueError("pinned oracle dataset omits selected instances")
-    target.write_text(json.dumps(rows), encoding="utf-8")
+    target.write_text(json.dumps(rows, default=dataset_json_value), encoding="utf-8")
 
 
 def main() -> int:
