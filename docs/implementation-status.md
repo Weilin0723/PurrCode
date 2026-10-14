@@ -106,9 +106,23 @@ Environment repair commit 7225a3f installs public dev/examples dependencies, fol
 Ruff pins, and blocks model execution when base-revision pytest collection fails. Workflow
 38626695048 passed public collection and gold qualification for all three Mesa tasks with
 zero model calls. The complete 30-task collection qualification, workflow 38627233895,
-is still running and has exposed additional public dependency/configuration gaps. These
-must be repaired before resuming scientific generation; normal incorrect outcomes remain
-preserved rather than replaced.
+finished with 13 passing and 17 failing environments; all original receipts are archived.
+The subsequent public Poetry/Hatch/lockfile repair qualification 38629418041 passed eight
+of eleven previously failing tasks; the three remaining Haystack tasks exposed the removal
+of `ddtrace.Tracer` in a newer dependency. Public test requirement files repair privacyIDEA's
+missing test dependencies. Qualified reference-image metadata supplies actual compatibility
+versions and registry digests without reading repository or hidden-test contents. The
+legacy `image_digest` field is explicitly identified as a Docker image configuration ID;
+registry digests are now captured separately.
+
+Per-task public profiles preserve observed Torch/tracing versions, with CPU Torch wheels
+and the host Python version explicitly distinguished from the reference environment.
+Workflow 38630602416 passed torchtune-1806; torchtune-1697 failed on a NumPy/PyArrow
+version mismatch, with its observed reference PyArrow version now pinned for a separate
+qualification. Other compatibility checks remain running. Current Python regressions pass
+109 tests. Scientific generation remains stopped until environment qualification completes
+and updated runner/dependency artifacts are frozen; the old v3 runner lock is not reused.
+Normal incorrect outcomes remain preserved rather than replaced.
 
 
 Full design in [`v1.5-architecture.md`](v1.5-architecture.md).
