@@ -61,8 +61,8 @@ jobs:
         task: ${{ fromJSON(needs.prepare.outputs.tasks) }}
     env:
       TASK_ID: ${{ matrix.task }}
-      HF_HOME: ${{ runner.temp }}/huggingface
-      RESEARCH_ROOT: ${{ runner.temp }}/purrcode-swebench-live
+      HF_HOME: ${{ github.workspace }}/.research-cache/huggingface
+      RESEARCH_ROOT: ${{ github.workspace }}/.research-cache/purrcode-swebench-live
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -156,8 +156,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           path: |
-            ${{ runner.temp }}/purrcode-swebench-live/e2e/results.jsonl
-            ${{ runner.temp }}/purrcode-swebench-live/oracle/gold-oracle-results.jsonl
+            ${{ github.workspace }}/.research-cache/purrcode-swebench-live/e2e/results.jsonl
+            ${{ github.workspace }}/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl
             benchmarks/research/swebench-live-v1/run-bundle.json
 
   analysis:
