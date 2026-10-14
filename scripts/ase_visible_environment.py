@@ -11,6 +11,26 @@ import tomllib
 from swebench_live_e2e import clean_environment, verify_checkout
 
 
+def public_test_dependencies(metadata):
+    dependencies = []
+    tables = [metadata.get("dependency-groups", {}),
+              metadata.get("tool", {}).get("pdm", {}).get("dev-dependencies", {})]
+    for table in tables:
+        def expand(name, ancestors):
+            if name in ancestors or len(ancestors) >= 32:
+                raise ValueError("cyclic or excessive public test dependency groups")
+            for item in table[name]:
+                if isinstance(item, str) and item and not item.startswith("-"):
+                    dependencies.append(item)
+                elif isinstance(item, dict) and set(item) == {"include-group"}:
+                    expand(item["include-group"], ancestors + [name])
+                else:
+                    raise ValueError("unsupported public test dependency declaration")
+        for name in sorted(set(table) & {"test", "tests", "testing"}):
+            expand(name, [])
+    return list(dict.fromkeys(dependencies))
+
+
 def provision(manifest, instance_id, cache, root):
     row = next(row for row in manifest["tasks"] if row["instance_id"] == instance_id)
     task = {**row, "checkout": instance_id, "base_task_id": instance_id}
@@ -38,7 +58,11 @@ def provision(manifest, instance_id, cache, root):
             if project.exists() or (checkout / "setup.py").exists():
                 package = str(checkout) + ("[" + ",".join(selected) + "]" if selected else "")
                 execute([python, "-m", "pip", "install", package])
+            test_dependencies = public_test_dependencies(metadata)
+            if test_dependencies:
+                execute([python, "-m", "pip", "install", *test_dependencies])
             receipt["public_test_extras"] = selected
+            receipt["public_test_group_dependencies"] = test_dependencies
             receipt["installed_packages"] = subprocess.check_output(
                 [python, "-m", "pip", "freeze", "--all"], env=environment, text=True).splitlines()
             receipt["status"] = "passed"

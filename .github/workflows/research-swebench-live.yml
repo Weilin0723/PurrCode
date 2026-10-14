@@ -48,6 +48,11 @@ on:
         required: true
         default: static correction
         type: string
+      qualify_visible_environment:
+        description: Also provision public agent dependencies during oracle-only qualification
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -132,7 +137,7 @@ jobs:
         if: ${{ !inputs.oracle_only }}
         run: cargo build --release -p purrcode-cli -p purrcode-daemon -j 4
       - name: Provision visible public dependency environment
-        if: ${{ !inputs.oracle_only }}
+        if: ${{ !inputs.oracle_only || inputs.qualify_visible_environment }}
         run: |
           python scripts/ase_visible_environment.py \
             --manifest "$DATASET_MANIFEST" \

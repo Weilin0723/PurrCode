@@ -8,6 +8,15 @@ import ase_visible_environment as module
 
 
 class VisibleEnvironmentTests(unittest.TestCase):
+    def test_public_test_groups_are_resolved_and_cyclic_or_option_inputs_fail(self):
+        metadata = {"dependency-groups": {"test": ["pytest", {"include-group": "fixtures"}],
+                                          "fixtures": ["pytest-mock", "pytest"]}}
+        self.assertEqual(module.public_test_dependencies(metadata), ["pytest", "pytest-mock"])
+        with self.assertRaises(ValueError):
+            module.public_test_dependencies({"dependency-groups": {"test": [{"include-group": "test"}]}})
+        with self.assertRaises(ValueError):
+            module.public_test_dependencies({"dependency-groups": {"test": ["--index-url=untrusted"]}})
+
     def test_only_public_test_extras_are_installed_without_provider_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
