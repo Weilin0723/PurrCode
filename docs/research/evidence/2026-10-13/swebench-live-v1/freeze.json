@@ -2,14 +2,14 @@
   "analysis_plan_sha256": "2a361e30ae2bbf2ed200006c19fa3443552458aaee6a4a494b6c6d48b2675d49",
   "artifact_sha256": {
     "analysis_script": "d60cbd768ea66abbf349ba7876735a3319e8fa8438e20316bec1c4485d662bac",
-    "dependency_lock": "2f77fdd79f0f663de0b2e3cf12e067ade52f4b4b22fd4c316b1d6d157e784aae",
+    "dependency_lock": "ed6cfa22dbc07afc8795f53c28a1fb49a04436a54f602f1407b61fa820fa9b07",
     "model_freeze": "2f978fbdabf18ea08bc98906e6ae82ea5a4149f19acac10435b211f2bf7543e3",
     "qualification": "5ba5d7c6a0475c5319dcb666848cd7f6af8991e96ea776318b786b03546732c8",
-    "runner": "be03359447ed688442de9c59403a3e9f3e7769279dae2c0985d36e94249e3a5d"
+    "runner": "decb60eaecbfcbd204af92681eab9ac4c5ddd7a1954e5f10883a3398ebbdbfe1"
   },
   "dataset_manifest_sha256": "1c1311dc826eb04855af08658c3daebf52601768fb58740544d467ebf67b8a4a",
   "dataset_revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
-  "frozen_at": "2026-10-14T01:12:25.181848Z",
+  "frozen_at": "2026-10-14T03:24:07.315095Z",
   "model_freeze_sha256": "2f978fbdabf18ea08bc98906e6ae82ea5a4149f19acac10435b211f2bf7543e3",
   "p0_hashes_sha256": "a2e50b96b82168ee3ae9c1d86c4fc8e222d7f845abd19122c2c8974dbc96a518",
   "p1_hashes_sha256": "db2e38984bc210b96abc8ce2d01e2c53584232411b3634f5f082f47443eb94f0",

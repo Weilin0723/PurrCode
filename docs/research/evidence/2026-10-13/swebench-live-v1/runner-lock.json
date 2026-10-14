@@ -3,7 +3,7 @@
     {
       "path": "scripts/swebench_live_e2e.py",
       "role": "runner",
-      "sha256": "47b0584e77b183dc0ec1f84dc9f30cc3ebf457b635235b7b159bc1229c3c617e"
+      "sha256": "0893668e2e4d97eabc631503a7fc04f04c61542c9eba02b755a453e735e68d06"
     },
     {
       "path": "scripts/freeze_fse_confirmatory_study.py",
@@ -18,7 +18,7 @@
     {
       "path": "scripts/swebench_live_oracle_preflight.py",
       "role": "oracle_preflight",
-      "sha256": "dc4309c89cba1824a7726ef6884cd856faf335812052a174ce2bf668aa96fa20"
+      "sha256": "d015a6f96159dc2cce4592ded26073b74ad37f29af7a530ad55e176a7029eaa5"
     },
     {
       "path": "scripts/fse_confirmatory_analysis.py",

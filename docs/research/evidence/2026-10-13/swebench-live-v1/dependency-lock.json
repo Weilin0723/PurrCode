@@ -6,9 +6,9 @@
   },
   "kind": "swebench-live-e2e-dependency-lock",
   "notes": [
-    "The selected public instance images expose x86_64; arm64/Rosetta is not accepted as final oracle evidence.",
-    "The wrapper calls the pinned official harness and executes the declared F2P/P2P node IDs directly.",
-    "No credential value is stored in this lock; provider credentials are resolved by the daemon via an adjacent credentials.toml reference."
+    "The official SWE-bench-Live harness runs unmodified; only x86_64 architecture selection and an empty Docker config are host accommodations.",
+    "No credential value is stored in this lock; provider credentials are resolved by the daemon via an adjacent credentials.toml reference.",
+    "Oracle outputs and hidden test material remain outside model-visible prompts, tool environments, event logs, and result artifacts."
   ],
   "python": {
     "ci": "3.11",
@@ -45,7 +45,7 @@
     },
     {
       "path": "scripts/swebench_live_e2e.py",
-      "sha256": "47b0584e77b183dc0ec1f84dc9f30cc3ebf457b635235b7b159bc1229c3c617e"
+      "sha256": "0893668e2e4d97eabc631503a7fc04f04c61542c9eba02b755a453e735e68d06"
     },
     {
       "path": "scripts/run_swebench_live_oracle.py",
