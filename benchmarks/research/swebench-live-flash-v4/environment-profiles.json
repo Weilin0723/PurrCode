@@ -49,7 +49,8 @@
         "torchao==0.5.0",
         "bitsandbytes==0.44.0",
         "datasets==3.0.1",
-        "huggingface-hub==0.25.1"
+        "huggingface-hub==0.25.1",
+        "pyarrow==17.0.0"
       ],
       "execution_variant": "CPU wheels of the observed Torch/torchvision releases replace CUDA builds; GPU execution is outside this experiment.",
       "prerequisites": [

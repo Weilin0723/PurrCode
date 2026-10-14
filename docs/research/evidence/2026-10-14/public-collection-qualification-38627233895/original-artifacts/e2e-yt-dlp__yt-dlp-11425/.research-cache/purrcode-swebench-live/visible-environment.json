@@ -1,0 +1,35 @@
+{
+  "instance_id": "yt-dlp__yt-dlp-11425",
+  "base_commit": "a6783a3b9905e547f6c1d4df9d7c7999feda8afa",
+  "status": "failed",
+  "commands": [
+    [
+      "/opt/hostedtoolcache/Python/3.11.17/x64/bin/python",
+      "-m",
+      "venv",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv"
+    ],
+    [
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "-c",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/public-tool-constraints.txt",
+      "pytest==8.3.5",
+      "ruff==0.11.5",
+      "hypothesis==6.131.9",
+      "pytest-mock==3.14.0"
+    ],
+    [
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "-c",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/public-tool-constraints.txt",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/yt-dlp__yt-dlp-11425[dev,test]"
+    ]
+  ],
+  "ruff_version": "0.11.5"
+}

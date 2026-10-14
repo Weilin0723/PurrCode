@@ -1,0 +1,130 @@
+{
+  "workflow_run_id": 38629418041,
+  "source_commit": "6abe7a8",
+  "model_calls": 0,
+  "collection_passed": 8,
+  "collection_failed": 3,
+  "failure_scope": "Three Haystack tasks fail on missing legacy ddtrace.Tracer API after public dependency provisioning.",
+  "files": [
+    {
+      "path": "original-artifacts/e2e-deepset-ai__haystack-8609/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "d19731e7cbd080b7c61395b83ecef47e14595e4318f422a0c10efeb783e6e333"
+    },
+    {
+      "path": "original-artifacts/e2e-deepset-ai__haystack-8609/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-deepset-ai__haystack-8708/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "06558d6b7f820ab000099c22161f594890f68ac574db61f7f2fe4413df5fb620"
+    },
+    {
+      "path": "original-artifacts/e2e-deepset-ai__haystack-8708/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-deepset-ai__haystack-8725/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "829abffc64c800ec4ab8042a9e7bd171bef24d9d36336a181380298e831b84b6"
+    },
+    {
+      "path": "original-artifacts/e2e-deepset-ai__haystack-8725/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-koxudaxi__datamodel-code-generator-2257/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "7ae62b3b53e862f83a3db1da16cbd4a03e1d372c977c7f3f91bfb31e01457390"
+    },
+    {
+      "path": "original-artifacts/e2e-koxudaxi__datamodel-code-generator-2257/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "a269e0464d8450956a58506a5a098e297f9be93419ed9bba7bfa6079a874edd9"
+    },
+    {
+      "path": "original-artifacts/e2e-koxudaxi__datamodel-code-generator-2257/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-koxudaxi__datamodel-code-generator-2259/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "7af0528ec2eb9d3faa858d485f3ee50bf5bd82c516df6e5b7849347e58f24eca"
+    },
+    {
+      "path": "original-artifacts/e2e-koxudaxi__datamodel-code-generator-2259/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "f554554d6133d8b4342efbc528377b86947a1fbb3f750e7a098e8516503baa80"
+    },
+    {
+      "path": "original-artifacts/e2e-koxudaxi__datamodel-code-generator-2259/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-koxudaxi__datamodel-code-generator-2260/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "f1c51d743d35a373b06a54fb8b11a6e7dc128673fffdd8d08ebc51c5dfbbe54c"
+    },
+    {
+      "path": "original-artifacts/e2e-koxudaxi__datamodel-code-generator-2260/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "cc826655da9d39302707cd18b8ee9305f44d59daa1552a0161ad4fb2d8266242"
+    },
+    {
+      "path": "original-artifacts/e2e-koxudaxi__datamodel-code-generator-2260/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-pdm-project__pdm-3374/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "a6282672ba917f57c3900b8837301c919f59ab479fa2ec003335798e05d11089"
+    },
+    {
+      "path": "original-artifacts/e2e-pdm-project__pdm-3374/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "f57ef23dc9d77bd90b83390091c52c0f47cdc37174070560182f713bea348435"
+    },
+    {
+      "path": "original-artifacts/e2e-pdm-project__pdm-3374/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-run-llama__llama_deploy-384/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "092003fb665f2e476f30151688feeb0151f59d992514c4a54810ad32d9d8dff0"
+    },
+    {
+      "path": "original-artifacts/e2e-run-llama__llama_deploy-384/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "05451a3441643fb4bb5b95ff35030eb4005a1a9bbdbd6f985643dea0e1f18503"
+    },
+    {
+      "path": "original-artifacts/e2e-run-llama__llama_deploy-384/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-run-llama__llama_deploy-457/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "ce328dfd33b2fb3424cfaf0409efc8bc45969bf5773af3a12e24aa69ecfbbba8"
+    },
+    {
+      "path": "original-artifacts/e2e-run-llama__llama_deploy-457/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "4c3170edb62aee215280f8784ac95b4780e8972a3c8708e3a97150e81a781272"
+    },
+    {
+      "path": "original-artifacts/e2e-run-llama__llama_deploy-457/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-yt-dlp__yt-dlp-11425/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "94d80fc58f9d9e520d5836c9b68ed972fe8ec07aaa388948052a66395abe1021"
+    },
+    {
+      "path": "original-artifacts/e2e-yt-dlp__yt-dlp-11425/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "fd3d705ccf3512b1a85c48faaca1cddc1ce2660ff8a64a4548cd6d7fd5f71a6b"
+    },
+    {
+      "path": "original-artifacts/e2e-yt-dlp__yt-dlp-11425/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-yt-dlp__yt-dlp-11880/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "3483ac42e3cc3a664f8b7a3a830e67c7e71ea5b043d8b49fde6728aaec4f55b1"
+    },
+    {
+      "path": "original-artifacts/e2e-yt-dlp__yt-dlp-11880/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "3e5bc9c6aece34455b0ebcde07cf6e7a2f0c2df797658359939153bd3740c3ba"
+    },
+    {
+      "path": "original-artifacts/e2e-yt-dlp__yt-dlp-11880/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}
