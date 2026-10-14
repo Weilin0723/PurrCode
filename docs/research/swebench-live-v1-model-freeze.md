@@ -29,7 +29,7 @@ the E2E pre-call freeze. The provider alias is dated service state, not a weight
 | Field | Frozen value |
 | --- | --- |
 | scheduled E2E runs | 120 (`30 tasks x B/C x static/correction x repeat 0`) |
-| session token budget | 120,000 cumulative input+output tokens per run |
+| session token budget | 1,000,000 cumulative input+output tokens per run |
 | autonomous iteration bound | 32 |
 | maximum task wall time | 20 minutes |
 | hidden oracle timeout | 30 minutes per scored run |
@@ -39,8 +39,18 @@ the E2E pre-call freeze. The provider alias is dated service state, not a weight
 
 The earlier `8,192`-token draft budget was replaced before any E2E model call because it is below
 the cost of a normal plan/implementation/validation/review cycle and would turn the usefulness
-guardrail into an operational error study. The 120,000-token value is the frozen protocol input,
+guardrail into an operational error study. The 1,000,000-token value is the frozen protocol input,
 not an observed result.
+
+
+## Operational repair before the final run
+
+An earlier candidate budget of 120,000 cumulative tokens was tested and cancelled: sessions reached
+roughly 95,000 input tokens after six model calls and then failed with `output-token budget
+exhausted` before they could complete the work. The 120,000-token run (`38506083747`) is retained
+as an operational pilot and none of its rows are pooled with the final study. The frozen final
+budget is 1,000,000 cumulative input+output tokens per run. This changes only the resource ceiling,
+not the tasks, arms, prompts, oracle, estimand, guardrail, or schedule.
 
 ## Stop, retry, and resume rules
 

@@ -20,14 +20,14 @@ The detailed reproducible statement lives in
 | qualification | 7/7 cases, 1,035 ms mean latency, all tested roles recommended |
 | measured reliable context | 16,384 tokens |
 | scheduled E2E runs | 120 (`30 tasks x B/C x static/correction x repeat 0`) |
-| session token budget | 120,000 cumulative input+output tokens per run |
+| session token budget | 1,000,000 cumulative input+output tokens per run |
 | autonomous iteration bound | 32 |
 | maximum task wall time | 20 minutes |
 | hidden oracle | pinned SWE-bench-Live harness commit `a145aa87c62361532dacaa243398978164b234b7` |
 | architecture accommodation | selected public instance images run as `x86_64` |
 | Docker credential handling | temporary empty Docker config; no credential helper or keychain is consulted |
 
-The 120,000-token session budget was selected before any E2E model call from the runtime's
+The 1,000,000-token session budget was selected before any E2E model call from the runtime's
 standard Direct lane budget. The earlier 8,192-token draft was below a normal
 plan/implementation/validation/review cycle and would have made the usefulness guardrail an
 operational-error study rather than a method comparison.

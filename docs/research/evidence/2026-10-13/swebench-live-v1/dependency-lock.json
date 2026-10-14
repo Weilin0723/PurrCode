@@ -8,7 +8,8 @@
   "notes": [
     "The official SWE-bench-Live harness runs unmodified; only x86_64 architecture selection and an empty Docker config are host accommodations.",
     "No credential value is stored in this lock; provider credentials are resolved by the daemon via an adjacent credentials.toml reference.",
-    "Oracle outputs and hidden test material remain outside model-visible prompts, tool environments, event logs, and result artifacts."
+    "Oracle outputs and hidden test material remain outside model-visible prompts, tool environments, event logs, and result artifacts.",
+    "The 120,000-token pilot was cancelled after cumulative-input exhaustion; the final run budget is 1,000,000 tokens per session."
   ],
   "python": {
     "ci": "3.11",

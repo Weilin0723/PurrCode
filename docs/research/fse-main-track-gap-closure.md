@@ -26,7 +26,7 @@ preflight before any scheduled E2E cell.
 - public dataset revision and all 30 base commits;
 - the controlled P0/P1 revision and its hashes;
 - the 120-cell B/C x static/correction schedule;
-- the model/resource freeze, including the 120,000-token session budget;
+- the model/resource freeze, including the 1,000,000-token session budget;
 - the runner/oracle source hashes and run-bundle hash;
 - the analysis plan, freeze, and independent receipt digest.
 

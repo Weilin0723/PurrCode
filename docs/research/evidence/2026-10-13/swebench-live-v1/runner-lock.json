@@ -23,16 +23,16 @@
     {
       "path": "scripts/fse_confirmatory_analysis.py",
       "role": "analysis",
-      "sha256": "d60cbd768ea66abbf349ba7876735a3319e8fa8438e20316bec1c4485d662bac"
+      "sha256": "d74606c538e29fca5fc584535290b5b481f1fbf4dcf26d5911b199f1901a1cc2"
     },
     {
       "path": "benchmarks/research/swebench-live-v1/run-bundle.json",
       "role": "bundle",
-      "sha256": "dbe8609192a16ea082a0b6afae610a4e16a30fb1ce64c3120753aec6afd3cc03"
+      "sha256": "63220cd40302ceab75f52e97bcdd7a1106ef4ff5f422d8d68882a952880be414"
     }
   ],
   "bundle_path": "benchmarks/research/swebench-live-v1/run-bundle.json",
-  "bundle_sha256": "dbe8609192a16ea082a0b6afae610a4e16a30fb1ce64c3120753aec6afd3cc03",
+  "bundle_sha256": "63220cd40302ceab75f52e97bcdd7a1106ef4ff5f422d8d68882a952880be414",
   "kind": "swebench-live-e2e-runner-lock",
   "model": "deepseek/deepseek-v4-pro",
   "schema_version": 1,

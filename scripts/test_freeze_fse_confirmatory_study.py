@@ -57,7 +57,7 @@ class FreezeStudyTests(unittest.TestCase):
         self.assertEqual(plan["request_variants"], ["static", "correction"])
         self.assertEqual(plan["repeats"], [0])
         self.assertEqual(plan["scheduled_runs_per_model"], 120)
-        self.assertEqual(plan["session_token_budget"], 120_000)
+        self.assertEqual(plan["session_token_budget"], 1_000_000)
         self.assertEqual(
             set(frozen["artifact_sha256"]),
             {"analysis_script", "runner", "dependency_lock", "qualification", "model_freeze"},
