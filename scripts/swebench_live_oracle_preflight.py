@@ -125,7 +125,7 @@ def run_gold(task: Mapping[str, Any], *, out: Path, args: argparse.Namespace) ->
         if test_output.is_file():
             excerpt = test_output.read_text(encoding="utf-8", errors="replace")
             print("ORACLE_DEBUG_BEGIN", instance_id, flush=True)
-            print(excerpt[:12000], flush=True)
+            print(excerpt[-20000:], flush=True)
             print("ORACLE_DEBUG_END", instance_id, flush=True)
     return {
         "selection_index": index,
