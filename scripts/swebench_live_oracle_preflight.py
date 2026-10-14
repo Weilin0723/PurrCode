@@ -82,7 +82,6 @@ def run_gold(task: Mapping[str, Any], *, out: Path, args: argparse.Namespace) ->
         str(args.timeout),
         "--cache-level",
         "instance",
-        "--targeted",
         "--run-id",
         run_id,
         "--report-dir",

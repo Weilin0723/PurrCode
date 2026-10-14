@@ -552,7 +552,6 @@ def run_oracle(
         str(timeout_seconds),
         "--cache-level",
         "instance",
-        "--targeted",
         "--run-id",
         run_id,
         "--report-dir",
