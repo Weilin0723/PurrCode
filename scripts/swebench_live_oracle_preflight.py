@@ -120,6 +120,13 @@ def run_gold(task: Mapping[str, Any], *, out: Path, args: argparse.Namespace) ->
     image, digest = image_digest(instance_id)
     resolved = report.get("resolved") if isinstance(report, Mapping) else None
     passed = completed.returncode == 0 and resolved is True
+    if not passed and report_path.is_file():
+        test_output = report_path.parent / "test_output.txt"
+        if test_output.is_file():
+            excerpt = test_output.read_text(encoding="utf-8", errors="replace")
+            print("ORACLE_DEBUG_BEGIN", instance_id, flush=True)
+            print(excerpt[:12000], flush=True)
+            print("ORACLE_DEBUG_END", instance_id, flush=True)
     return {
         "selection_index": index,
         "instance_id": instance_id,
