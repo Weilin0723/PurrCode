@@ -1,0 +1,202 @@
+{
+  "audit_kind": "local_review_v3_reproducibility_audit",
+  "cluster_comparison": {
+    "losses": 0,
+    "p_value": 3.0517578125e-05,
+    "ties": 0,
+    "wins": 16
+  },
+  "cluster_effect": {
+    "bootstrap": {
+      "method": "paired cluster percentile bootstrap",
+      "replicates": 10000,
+      "seed": 20261012
+    },
+    "bootstrap95": [
+      0.5,
+      0.5
+    ],
+    "clusters": 16,
+    "estimand": "model error rate minus deterministic-gate error rate; positive favors the gate",
+    "risk_difference": 0.5
+  },
+  "dependencies": {
+    "checked": true,
+    "files": [
+      {
+        "exists": true,
+        "path": "scripts/local_review_probe_v3.py",
+        "sha256": "d9d1be797928af136ab8f488a4e0b816f2883cd57181f7f8d7e5fb761806e68f"
+      },
+      {
+        "exists": true,
+        "path": "scripts/local_review_probe_v2.py",
+        "sha256": "b7064ae994025f4e7e7f4995421d22462c6303d5a7e4d5499aa9043f7ee1fd57"
+      },
+      {
+        "exists": true,
+        "path": "scripts/deterministic_review_gate_v2.py",
+        "sha256": "f7b70ccbd065064dba26d1d0ec60d3695d927adfa2b79f472b44c01b98cdf2b2"
+      },
+      {
+        "exists": true,
+        "path": "scripts/local_review_probe.py",
+        "sha256": "20267619cdb7ea71fdd5e2356b726087bd6229282cb1efc8ac15dd7f8239d752"
+      }
+    ]
+  },
+  "errors": [],
+  "events": {
+    "complete": true,
+    "records": 128,
+    "requests": 64,
+    "responses": 64
+  },
+  "fixture": {
+    "manifest_sha256": "344c13bcf0175a072b7437de4c2788422129355cd952013d3655b32cba122111",
+    "matches_manifest": true,
+    "path": "benchmarks/research/review-traces-v3.json",
+    "sha256": "344c13bcf0175a072b7437de4c2788422129355cd952013d3655b32cba122111"
+  },
+  "integrity_pass": true,
+  "metrics": {
+    "balanced_accuracy": {
+      "bootstrap95": [
+        0.5,
+        0.5
+      ],
+      "rate": 0.5
+    },
+    "blocked_recall": {
+      "bootstrap95": [
+        0.8125,
+        1.0
+      ],
+      "rate": 0.9375,
+      "successes": 30,
+      "trials": 32,
+      "wilson95": [
+        0.7985287685584542,
+        0.982689432968359
+      ]
+    },
+    "false_ready": {
+      "bootstrap95": [
+        0.0,
+        0.1875
+      ],
+      "rate": 0.0625,
+      "successes": 2,
+      "trials": 32,
+      "wilson95": [
+        0.017310567031640967,
+        0.2014712314415458
+      ]
+    },
+    "ready_recall": {
+      "bootstrap95": [
+        0.0,
+        0.1875
+      ],
+      "rate": 0.0625,
+      "successes": 2,
+      "trials": 32,
+      "wilson95": [
+        0.017310567031640967,
+        0.2014712314415458
+      ]
+    },
+    "scheduled_accuracy": {
+      "rate": 0.5,
+      "successes": 32,
+      "trials": 64,
+      "wilson95": [
+        0.3810209474394701,
+        0.6189790525605299
+      ]
+    },
+    "scheduled_calls": 64,
+    "valid_responses": 64,
+    "wrong_block": {
+      "bootstrap95": [
+        0.8125,
+        1.0
+      ],
+      "rate": 0.9375,
+      "successes": 30,
+      "trials": 32,
+      "wilson95": [
+        0.7985287685584542,
+        0.982689432968359
+      ]
+    }
+  },
+  "provenance": {
+    "missing": [
+      "manifest.base_url",
+      "manifest.dependency_hashes",
+      "manifest.dependency_hashes.scripts/deterministic_review_gate_v2.py",
+      "manifest.dependency_hashes.scripts/local_review_probe.py",
+      "manifest.dependency_hashes.scripts/local_review_probe_v2.py",
+      "manifest.dependency_hashes.scripts/local_review_probe_v3.py",
+      "manifest.environment.architecture",
+      "manifest.environment.cpu_count",
+      "manifest.environment.git_head",
+      "manifest.environment.local_only",
+      "manifest.environment.memory_bytes",
+      "manifest.environment.ollama_binary_sha256",
+      "manifest.environment.os",
+      "manifest.environment.python_version",
+      "manifest.model_info.parameter_size",
+      "manifest.model_info.quantization_level"
+    ],
+    "present": {
+      "fixture_sha256": "344c13bcf0175a072b7437de4c2788422129355cd952013d3655b32cba122111",
+      "model": "llama3.2:1b",
+      "model_digest": "baf6a787fdffd633537aa2eb51cfd54cb93ff08e28040095462bb63daf552878",
+      "script_sha256": "d9d1be797928af136ab8f488a4e0b816f2883cd57181f7f8d7e5fb761806e68f",
+      "server_version": "0.4.2"
+    },
+    "required": [
+      "model",
+      "model_digest",
+      "server_version",
+      "base_url",
+      "fixture_sha256",
+      "script_sha256",
+      "environment.os",
+      "environment.architecture",
+      "environment.cpu_count",
+      "environment.memory_bytes",
+      "environment.python_version",
+      "environment.git_head",
+      "environment.ollama_binary_sha256",
+      "environment.local_only",
+      "model_info.parameter_size",
+      "model_info.quantization_level",
+      "dependency_hashes"
+    ]
+  },
+  "provenance_complete": false,
+  "results": {
+    "complete": true,
+    "records": 64
+  },
+  "schedule": {
+    "complete": true,
+    "expected_calls": 64,
+    "scheduled_calls": 64
+  },
+  "schema_version": 1,
+  "summary_recomputation": {
+    "cluster_comparison": {
+      "losses": 0,
+      "p_value": 3.0517578125e-05,
+      "ties": 0,
+      "wins": 16
+    },
+    "matches_summary": true,
+    "scheduled_accuracy": 0.5
+  },
+  "valid": false
+}

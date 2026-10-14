@@ -69,6 +69,21 @@ pub struct AlignmentEvidence {
     /// cited, so the citation can be checked against something written down
     /// before anyone needed the requirement to pass.
     pub requirement_id: RequirementId,
+    /// The requirement-scoped revision this observation was made against.
+    ///
+    /// Optional for read-back compatibility with v1 event logs. New strict
+    /// sessions must bind evidence to the revision of the requirement itself;
+    /// the contract's global revision is not sufficient because unrelated
+    /// changes advance it too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirement_revision: Option<u64>,
+    /// The artifact snapshot this observation actually inspected.
+    ///
+    /// Optional for read-back compatibility with v1 event logs. A strict
+    /// citation rejects evidence without this binding before it can settle a
+    /// requirement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_digest: Option<String>,
     /// Where it came from, in terms a user can follow back: `cargo test`,
     /// `settings.rs:221`, `alignment review 3`.
     pub source: String,
@@ -88,16 +103,76 @@ impl AlignmentEvidence {
             id: EvidenceId::new(),
             kind,
             requirement_id,
+            requirement_revision: None,
+            artifact_digest: None,
             source: source.into(),
             detail: detail.into(),
             recorded_at: Utc::now(),
         }
     }
 
+    /// Construct evidence bound to one requirement revision and artifact
+    /// snapshot.
+    ///
+    /// The legacy [`Self::new`] constructor remains available for replaying
+    /// v1 records. Callers creating evidence for a strict session should use
+    /// this constructor so the binding cannot be forgotten at the call site.
+    pub fn new_bound(
+        kind: AlignmentEvidenceKind,
+        requirement_id: RequirementId,
+        requirement_revision: u64,
+        artifact_digest: impl Into<String>,
+        source: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            requirement_revision: Some(requirement_revision),
+            artifact_digest: Some(artifact_digest.into()),
+            ..Self::new(kind, requirement_id, source, detail)
+        }
+    }
+
     pub fn validate(&self) -> Result<(), ExpectationError> {
+        self.validate_with(false)
+    }
+
+    /// Validate the record, optionally requiring the v2 requirement/artifact
+    /// bindings. Optional fields remain accepted in compatibility mode so old
+    /// event logs can still be replayed.
+    pub fn validate_with(&self, strict: bool) -> Result<(), ExpectationError> {
         require_text("evidence source", &self.source)?;
         require_text("evidence detail", &self.detail)?;
+        if let Some(revision) = self.requirement_revision {
+            if revision == 0 {
+                return Err(ExpectationError::Invalid(
+                    "evidence requirement revision starts at one".into(),
+                ));
+            }
+        } else if strict {
+            return Err(ExpectationError::Invalid(
+                "strict evidence must bind a requirement revision".into(),
+            ));
+        }
+
+        match self.artifact_digest.as_deref() {
+            Some(digest) if digest.trim().is_empty() => {
+                return Err(ExpectationError::Invalid(
+                    "evidence artifact digest cannot be empty".into(),
+                ));
+            }
+            Some(_) => {}
+            None if strict => {
+                return Err(ExpectationError::Invalid(
+                    "strict evidence must bind an artifact digest".into(),
+                ));
+            }
+            None => {}
+        }
         Ok(())
+    }
+
+    pub fn is_bound(&self) -> bool {
+        self.requirement_revision.is_some() && self.artifact_digest.is_some()
     }
 }
 
@@ -120,6 +195,21 @@ pub enum CitationFault {
         recorded_for: RequirementId,
         cited_for: RequirementId,
     },
+    /// The record predates requirement/artifact binding, or one of the
+    /// required bindings was omitted from a strict record.
+    Unbound(EvidenceId),
+    /// The evidence was gathered for an older meaning of this requirement.
+    StaleRequirementRevision {
+        evidence: EvidenceId,
+        expected: u64,
+        recorded: u64,
+    },
+    /// The evidence was gathered from a different artifact snapshot.
+    ArtifactMismatch {
+        evidence: EvidenceId,
+        expected: String,
+        recorded: String,
+    },
 }
 
 impl std::fmt::Display for CitationFault {
@@ -138,6 +228,28 @@ impl std::fmt::Display for CitationFault {
                 "evidence {evidence:?} was recorded for requirement {recorded_for:?} \
                  and cannot settle {cited_for:?}"
             ),
+            Self::Unbound(id) => write!(
+                formatter,
+                "evidence {id:?} is not bound to a requirement revision and artifact snapshot"
+            ),
+            Self::StaleRequirementRevision {
+                evidence,
+                expected,
+                recorded,
+            } => write!(
+                formatter,
+                "evidence {evidence:?} was recorded for requirement revision {recorded}, \
+                 but revision {expected} is current"
+            ),
+            Self::ArtifactMismatch {
+                evidence,
+                expected,
+                recorded,
+            } => write!(
+                formatter,
+                "evidence {evidence:?} was recorded for artifact {recorded:?}, \
+                 but artifact {expected:?} is current"
+            ),
         }
     }
 }
@@ -151,6 +263,9 @@ pub fn check_citations(
     ledger: &EvidenceLedger,
     requirement: RequirementId,
     cited: &[EvidenceId],
+    expected_requirement_revision: Option<u64>,
+    expected_artifact_digest: Option<&str>,
+    strict: bool,
 ) -> Result<(), CitationFault> {
     for id in cited {
         let Some(evidence) = ledger.get(id) else {
@@ -161,6 +276,33 @@ pub fn check_citations(
                 evidence: *id,
                 recorded_for: evidence.requirement_id,
                 cited_for: requirement,
+            });
+        }
+
+        if strict && !evidence.is_bound() {
+            return Err(CitationFault::Unbound(*id));
+        }
+
+        if let (Some(expected), Some(recorded)) =
+            (expected_requirement_revision, evidence.requirement_revision)
+            && recorded != expected
+        {
+            return Err(CitationFault::StaleRequirementRevision {
+                evidence: *id,
+                expected,
+                recorded,
+            });
+        }
+
+        if let (Some(expected), Some(recorded)) = (
+            expected_artifact_digest,
+            evidence.artifact_digest.as_deref(),
+        ) && recorded != expected
+        {
+            return Err(CitationFault::ArtifactMismatch {
+                evidence: *id,
+                expected: expected.to_owned(),
+                recorded: recorded.to_owned(),
             });
         }
     }
@@ -190,8 +332,15 @@ mod tests {
         // "the list is non-empty" and establishes nothing.
         let requirement = RequirementId::new();
         let (ledger, _) = ledger_with(requirement);
-        let fault =
-            check_citations(&ledger, requirement, &[EvidenceId::new()]).expect_err("must refuse");
+        let fault = check_citations(
+            &ledger,
+            requirement,
+            &[EvidenceId::new()],
+            None,
+            None,
+            false,
+        )
+        .expect_err("must refuse");
         assert!(matches!(fault, CitationFault::Unresolved(_)), "{fault:?}");
     }
 
@@ -202,7 +351,8 @@ mod tests {
         let mcp = RequirementId::new();
         let settings = RequirementId::new();
         let (ledger, id) = ledger_with(settings);
-        let fault = check_citations(&ledger, mcp, &[id]).expect_err("must refuse");
+        let fault =
+            check_citations(&ledger, mcp, &[id], None, None, false).expect_err("must refuse");
         assert!(
             matches!(fault, CitationFault::Misattributed { .. }),
             "{fault:?}"
@@ -214,7 +364,8 @@ mod tests {
     fn evidence_recorded_for_this_requirement_settles_it() {
         let requirement = RequirementId::new();
         let (ledger, id) = ledger_with(requirement);
-        check_citations(&ledger, requirement, &[id]).expect("this is what evidence is for");
+        check_citations(&ledger, requirement, &[id], None, None, false)
+            .expect("this is what evidence is for");
     }
 
     #[test]
@@ -232,5 +383,96 @@ mod tests {
             evidence.validate().is_err(),
             "evidence with no finding behind it is a citation to nothing"
         );
+    }
+
+    #[test]
+    fn strict_evidence_binds_the_requirement_revision_and_artifact() {
+        let requirement = RequirementId::new();
+        let evidence = AlignmentEvidence::new_bound(
+            AlignmentEvidenceKind::Validation,
+            requirement,
+            2,
+            "tree-b",
+            "cargo test",
+            "the current behavior passed",
+        );
+        assert_eq!(evidence.requirement_revision, Some(2));
+        assert_eq!(evidence.artifact_digest.as_deref(), Some("tree-b"));
+        evidence
+            .validate_with(true)
+            .expect("strictly constructed evidence is bound");
+    }
+
+    #[test]
+    fn strict_citations_reject_unbound_evidence() {
+        let requirement = RequirementId::new();
+        let (ledger, id) = ledger_with(requirement);
+        let fault = check_citations(&ledger, requirement, &[id], Some(1), Some("tree-a"), true)
+            .expect_err("strict sessions cannot cite v1 unbound evidence");
+        assert!(matches!(fault, CitationFault::Unbound(_)), "{fault:?}");
+    }
+
+    #[test]
+    fn citations_reject_stale_requirement_revisions() {
+        let requirement = RequirementId::new();
+        let evidence = AlignmentEvidence::new_bound(
+            AlignmentEvidenceKind::Validation,
+            requirement,
+            1,
+            "tree-a",
+            "cargo test",
+            "the old behavior passed",
+        );
+        let id = evidence.id;
+        let mut ledger = EvidenceLedger::new();
+        ledger.insert(id, evidence);
+
+        let fault = check_citations(&ledger, requirement, &[id], Some(2), Some("tree-a"), true)
+            .expect_err("old requirement evidence must not prove the new wording");
+        assert!(
+            matches!(fault, CitationFault::StaleRequirementRevision { .. }),
+            "{fault:?}"
+        );
+    }
+
+    #[test]
+    fn citations_reject_a_different_artifact_snapshot() {
+        let requirement = RequirementId::new();
+        let evidence = AlignmentEvidence::new_bound(
+            AlignmentEvidenceKind::Validation,
+            requirement,
+            1,
+            "tree-a",
+            "cargo test",
+            "the previous artifact passed",
+        );
+        let id = evidence.id;
+        let mut ledger = EvidenceLedger::new();
+        ledger.insert(id, evidence);
+
+        let fault = check_citations(&ledger, requirement, &[id], Some(1), Some("tree-b"), true)
+            .expect_err("evidence from an edited artifact must not settle the requirement");
+        assert!(
+            matches!(fault, CitationFault::ArtifactMismatch { .. }),
+            "{fault:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_evidence_is_still_deserializable() {
+        let requirement = RequirementId::new();
+        let evidence = AlignmentEvidence::new(
+            AlignmentEvidenceKind::Review,
+            requirement,
+            "review",
+            "the old record is readable",
+        );
+        let mut value = serde_json::to_value(&evidence).expect("evidence serializes");
+        let object = value.as_object_mut().expect("evidence is an object");
+        object.remove("requirement_revision");
+        object.remove("artifact_digest");
+        let decoded: AlignmentEvidence = serde_json::from_value(value).expect("v1 is readable");
+        assert!(decoded.requirement_revision.is_none());
+        assert!(decoded.artifact_digest.is_none());
     }
 }

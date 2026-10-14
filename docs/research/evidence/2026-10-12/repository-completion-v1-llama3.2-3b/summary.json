@@ -1,0 +1,2311 @@
+{
+  "analysis_role": "primary",
+  "attrition": {
+    "failed_or_invalid": 80,
+    "rate": {
+      "rate": 0.5555555555555556,
+      "successes": 80,
+      "trials": 144
+    },
+    "status_counts": {
+      "error": 80,
+      "ok": 64
+    }
+  },
+  "benchmark_kind": "repository-completion-pilot",
+  "candidate_snapshots": 36,
+  "completed_records": 144,
+  "conditions": [
+    "revision_rubric_json",
+    "plain_json"
+  ],
+  "d_evaluations": 36,
+  "d_metrics": {
+    "claim_coverage": {
+      "rate": 0.5,
+      "successes": 6,
+      "trials": 12
+    },
+    "completion_claim_rate": {
+      "rate": 0.5,
+      "successes": 18,
+      "trials": 36
+    },
+    "completion_claims": 18,
+    "correct_delivery": {
+      "rate": 0.16666666666666666,
+      "successes": 6,
+      "trials": 36
+    },
+    "coverage": {
+      "rate": 0.5,
+      "successes": 6,
+      "trials": 12
+    },
+    "external_accepted": 12,
+    "external_incorrect": 24,
+    "false_ready": {
+      "among_external_incorrect": {
+        "rate": 0.5,
+        "successes": 12,
+        "trials": 24
+      },
+      "among_ready": {
+        "rate": 0.6666666666666666,
+        "successes": 12,
+        "trials": 18
+      },
+      "among_scheduled": {
+        "rate": 0.3333333333333333,
+        "successes": 12,
+        "trials": 36
+      },
+      "count": 12,
+      "external_incorrect_denominator": 24
+    },
+    "scheduled_calls": 36,
+    "valid_responses": 19
+  },
+  "guardrail_note": "Correct delivery and coverage are reported for B, C, and gate-only D; they are not part of the primary p-value.",
+  "model": "llama3.2:3b",
+  "no_conclusion_if_incomplete": false,
+  "primary_analysis": true,
+  "primary_comparison": {
+    "aggregate": {
+      "B": {
+        "claim_coverage": {
+          "rate": 0.4166666666666667,
+          "successes": 10,
+          "trials": 24
+        },
+        "completion_claim_rate": {
+          "rate": 0.4583333333333333,
+          "successes": 33,
+          "trials": 72
+        },
+        "completion_claims": 33,
+        "correct_delivery": {
+          "rate": 0.1388888888888889,
+          "successes": 10,
+          "trials": 72
+        },
+        "coverage": {
+          "rate": 0.4166666666666667,
+          "successes": 10,
+          "trials": 24
+        },
+        "external_accepted": 24,
+        "external_incorrect": 48,
+        "false_ready": {
+          "among_external_incorrect": {
+            "rate": 0.4791666666666667,
+            "successes": 23,
+            "trials": 48
+          },
+          "among_ready": {
+            "rate": 0.696969696969697,
+            "successes": 23,
+            "trials": 33
+          },
+          "among_scheduled": {
+            "rate": 0.3194444444444444,
+            "successes": 23,
+            "trials": 72
+          },
+          "count": 23,
+          "external_incorrect_denominator": 48
+        },
+        "scheduled_calls": 72,
+        "valid_responses": 33
+      },
+      "C": {
+        "claim_coverage": {
+          "rate": 0.20833333333333334,
+          "successes": 5,
+          "trials": 24
+        },
+        "completion_claim_rate": {
+          "rate": 0.25,
+          "successes": 18,
+          "trials": 72
+        },
+        "completion_claims": 18,
+        "correct_delivery": {
+          "rate": 0.06944444444444445,
+          "successes": 5,
+          "trials": 72
+        },
+        "coverage": {
+          "rate": 0.20833333333333334,
+          "successes": 5,
+          "trials": 24
+        },
+        "external_accepted": 24,
+        "external_incorrect": 48,
+        "false_ready": {
+          "among_external_incorrect": {
+            "rate": 0.2708333333333333,
+            "successes": 13,
+            "trials": 48
+          },
+          "among_ready": {
+            "rate": 0.7222222222222222,
+            "successes": 13,
+            "trials": 18
+          },
+          "among_scheduled": {
+            "rate": 0.18055555555555555,
+            "successes": 13,
+            "trials": 72
+          },
+          "count": 13,
+          "external_incorrect_denominator": 48
+        },
+        "scheduled_calls": 72,
+        "valid_responses": 33
+      },
+      "D": {
+        "claim_coverage": {
+          "rate": 0.5,
+          "successes": 6,
+          "trials": 12
+        },
+        "completion_claim_rate": {
+          "rate": 0.5,
+          "successes": 18,
+          "trials": 36
+        },
+        "completion_claims": 18,
+        "correct_delivery": {
+          "rate": 0.16666666666666666,
+          "successes": 6,
+          "trials": 36
+        },
+        "coverage": {
+          "rate": 0.5,
+          "successes": 6,
+          "trials": 12
+        },
+        "external_accepted": 12,
+        "external_incorrect": 24,
+        "false_ready": {
+          "among_external_incorrect": {
+            "rate": 0.5,
+            "successes": 12,
+            "trials": 24
+          },
+          "among_ready": {
+            "rate": 0.6666666666666666,
+            "successes": 12,
+            "trials": 18
+          },
+          "among_scheduled": {
+            "rate": 0.3333333333333333,
+            "successes": 12,
+            "trials": 36
+          },
+          "count": 12,
+          "external_incorrect_denominator": 24
+        },
+        "scheduled_calls": 36,
+        "valid_responses": 19
+      }
+    },
+    "bootstrap": {
+      "clusters": 6,
+      "method": "paired base-task cluster percentile bootstrap",
+      "replicates": 10000,
+      "seed": 20261012
+    },
+    "bootstrap95": [
+      -0.2916666666666667,
+      -0.14583333333333334
+    ],
+    "clusters": [
+      {
+        "B": {
+          "claim_coverage": {
+            "rate": 0.75,
+            "successes": 3,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.4166666666666667,
+            "successes": 5,
+            "trials": 12
+          },
+          "completion_claims": 5,
+          "correct_delivery": {
+            "rate": 0.25,
+            "successes": 3,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.75,
+            "successes": 3,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.25,
+              "successes": 2,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 0.4,
+              "successes": 2,
+              "trials": 5
+            },
+            "among_scheduled": {
+              "rate": 0.16666666666666666,
+              "successes": 2,
+              "trials": 12
+            },
+            "count": 2,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 5
+        },
+        "C": {
+          "claim_coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.16666666666666666,
+            "successes": 2,
+            "trials": 12
+          },
+          "completion_claims": 2,
+          "correct_delivery": {
+            "rate": 0.08333333333333333,
+            "successes": 1,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.125,
+              "successes": 1,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "among_scheduled": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "count": 1,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 5
+        },
+        "D": {
+          "claim_coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 3,
+            "trials": 6
+          },
+          "completion_claims": 3,
+          "correct_delivery": {
+            "rate": 0.16666666666666666,
+            "successes": 1,
+            "trials": 6
+          },
+          "coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "external_accepted": 2,
+          "external_incorrect": 4,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "among_ready": {
+              "rate": 0.6666666666666666,
+              "successes": 2,
+              "trials": 3
+            },
+            "among_scheduled": {
+              "rate": 0.3333333333333333,
+              "successes": 2,
+              "trials": 6
+            },
+            "count": 2,
+            "external_incorrect_denominator": 4
+          },
+          "scheduled_calls": 6,
+          "valid_responses": 1
+        },
+        "risk_difference_C_minus_B": -0.125,
+        "task_id": "century-leap-year"
+      },
+      {
+        "B": {
+          "claim_coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 6,
+            "trials": 12
+          },
+          "completion_claims": 6,
+          "correct_delivery": {
+            "rate": 0.08333333333333333,
+            "successes": 1,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.625,
+              "successes": 5,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 0.8333333333333334,
+              "successes": 5,
+              "trials": 6
+            },
+            "among_scheduled": {
+              "rate": 0.4166666666666667,
+              "successes": 5,
+              "trials": 12
+            },
+            "count": 5,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 6
+        },
+        "C": {
+          "claim_coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.3333333333333333,
+            "successes": 4,
+            "trials": 12
+          },
+          "completion_claims": 4,
+          "correct_delivery": {
+            "rate": 0.08333333333333333,
+            "successes": 1,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.375,
+              "successes": 3,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 0.75,
+              "successes": 3,
+              "trials": 4
+            },
+            "among_scheduled": {
+              "rate": 0.25,
+              "successes": 3,
+              "trials": 12
+            },
+            "count": 3,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 6
+        },
+        "D": {
+          "claim_coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 3,
+            "trials": 6
+          },
+          "completion_claims": 3,
+          "correct_delivery": {
+            "rate": 0.16666666666666666,
+            "successes": 1,
+            "trials": 6
+          },
+          "coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "external_accepted": 2,
+          "external_incorrect": 4,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "among_ready": {
+              "rate": 0.6666666666666666,
+              "successes": 2,
+              "trials": 3
+            },
+            "among_scheduled": {
+              "rate": 0.3333333333333333,
+              "successes": 2,
+              "trials": 6
+            },
+            "count": 2,
+            "external_incorrect_denominator": 4
+          },
+          "scheduled_calls": 6,
+          "valid_responses": 4
+        },
+        "risk_difference_C_minus_B": -0.25,
+        "task_id": "http-client-retry-parity"
+      },
+      {
+        "B": {
+          "claim_coverage": {
+            "rate": 0.0,
+            "successes": 0,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.4166666666666667,
+            "successes": 5,
+            "trials": 12
+          },
+          "completion_claims": 5,
+          "correct_delivery": {
+            "rate": 0.0,
+            "successes": 0,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.0,
+            "successes": 0,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.625,
+              "successes": 5,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 1.0,
+              "successes": 5,
+              "trials": 5
+            },
+            "among_scheduled": {
+              "rate": 0.4166666666666667,
+              "successes": 5,
+              "trials": 12
+            },
+            "count": 5,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 5
+        },
+        "C": {
+          "claim_coverage": {
+            "rate": 0.0,
+            "successes": 0,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.3333333333333333,
+            "successes": 4,
+            "trials": 12
+          },
+          "completion_claims": 4,
+          "correct_delivery": {
+            "rate": 0.0,
+            "successes": 0,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.0,
+            "successes": 0,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.5,
+              "successes": 4,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 1.0,
+              "successes": 4,
+              "trials": 4
+            },
+            "among_scheduled": {
+              "rate": 0.3333333333333333,
+              "successes": 4,
+              "trials": 12
+            },
+            "count": 4,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 5
+        },
+        "D": {
+          "claim_coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 3,
+            "trials": 6
+          },
+          "completion_claims": 3,
+          "correct_delivery": {
+            "rate": 0.16666666666666666,
+            "successes": 1,
+            "trials": 6
+          },
+          "coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "external_accepted": 2,
+          "external_incorrect": 4,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "among_ready": {
+              "rate": 0.6666666666666666,
+              "successes": 2,
+              "trials": 3
+            },
+            "among_scheduled": {
+              "rate": 0.3333333333333333,
+              "successes": 2,
+              "trials": 6
+            },
+            "count": 2,
+            "external_incorrect_denominator": 4
+          },
+          "scheduled_calls": 6,
+          "valid_responses": 3
+        },
+        "risk_difference_C_minus_B": -0.125,
+        "task_id": "pagination-tail"
+      },
+      {
+        "B": {
+          "claim_coverage": {
+            "rate": 0.5,
+            "successes": 2,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.4166666666666667,
+            "successes": 5,
+            "trials": 12
+          },
+          "completion_claims": 5,
+          "correct_delivery": {
+            "rate": 0.16666666666666666,
+            "successes": 2,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.5,
+            "successes": 2,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.375,
+              "successes": 3,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 0.6,
+              "successes": 3,
+              "trials": 5
+            },
+            "among_scheduled": {
+              "rate": 0.25,
+              "successes": 3,
+              "trials": 12
+            },
+            "count": 3,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 5
+        },
+        "C": {
+          "claim_coverage": {
+            "rate": 0.5,
+            "successes": 2,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.25,
+            "successes": 3,
+            "trials": 12
+          },
+          "completion_claims": 3,
+          "correct_delivery": {
+            "rate": 0.16666666666666666,
+            "successes": 2,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.5,
+            "successes": 2,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.125,
+              "successes": 1,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 0.3333333333333333,
+              "successes": 1,
+              "trials": 3
+            },
+            "among_scheduled": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "count": 1,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 5
+        },
+        "D": {
+          "claim_coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 3,
+            "trials": 6
+          },
+          "completion_claims": 3,
+          "correct_delivery": {
+            "rate": 0.16666666666666666,
+            "successes": 1,
+            "trials": 6
+          },
+          "coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "external_accepted": 2,
+          "external_incorrect": 4,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "among_ready": {
+              "rate": 0.6666666666666666,
+              "successes": 2,
+              "trials": 3
+            },
+            "among_scheduled": {
+              "rate": 0.3333333333333333,
+              "successes": 2,
+              "trials": 6
+            },
+            "count": 2,
+            "external_incorrect_denominator": 4
+          },
+          "scheduled_calls": 6,
+          "valid_responses": 3
+        },
+        "risk_difference_C_minus_B": -0.25,
+        "task_id": "retry-exponential-delay"
+      },
+      {
+        "B": {
+          "claim_coverage": {
+            "rate": 0.75,
+            "successes": 3,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 6,
+            "trials": 12
+          },
+          "completion_claims": 6,
+          "correct_delivery": {
+            "rate": 0.25,
+            "successes": 3,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.75,
+            "successes": 3,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.375,
+              "successes": 3,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 0.5,
+              "successes": 3,
+              "trials": 6
+            },
+            "among_scheduled": {
+              "rate": 0.25,
+              "successes": 3,
+              "trials": 12
+            },
+            "count": 3,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 6
+        },
+        "C": {
+          "claim_coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.25,
+            "successes": 3,
+            "trials": 12
+          },
+          "completion_claims": 3,
+          "correct_delivery": {
+            "rate": 0.08333333333333333,
+            "successes": 1,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.25,
+              "successes": 2,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 0.6666666666666666,
+              "successes": 2,
+              "trials": 3
+            },
+            "among_scheduled": {
+              "rate": 0.16666666666666666,
+              "successes": 2,
+              "trials": 12
+            },
+            "count": 2,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 6
+        },
+        "D": {
+          "claim_coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 3,
+            "trials": 6
+          },
+          "completion_claims": 3,
+          "correct_delivery": {
+            "rate": 0.16666666666666666,
+            "successes": 1,
+            "trials": 6
+          },
+          "coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "external_accepted": 2,
+          "external_incorrect": 4,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "among_ready": {
+              "rate": 0.6666666666666666,
+              "successes": 2,
+              "trials": 3
+            },
+            "among_scheduled": {
+              "rate": 0.3333333333333333,
+              "successes": 2,
+              "trials": 6
+            },
+            "count": 2,
+            "external_incorrect_denominator": 4
+          },
+          "scheduled_calls": 6,
+          "valid_responses": 3
+        },
+        "risk_difference_C_minus_B": -0.125,
+        "task_id": "scheduler-reporter-ids"
+      },
+      {
+        "B": {
+          "claim_coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 6,
+            "trials": 12
+          },
+          "completion_claims": 6,
+          "correct_delivery": {
+            "rate": 0.08333333333333333,
+            "successes": 1,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.25,
+            "successes": 1,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.625,
+              "successes": 5,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 0.8333333333333334,
+              "successes": 5,
+              "trials": 6
+            },
+            "among_scheduled": {
+              "rate": 0.4166666666666667,
+              "successes": 5,
+              "trials": 12
+            },
+            "count": 5,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 6
+        },
+        "C": {
+          "claim_coverage": {
+            "rate": 0.0,
+            "successes": 0,
+            "trials": 4
+          },
+          "completion_claim_rate": {
+            "rate": 0.16666666666666666,
+            "successes": 2,
+            "trials": 12
+          },
+          "completion_claims": 2,
+          "correct_delivery": {
+            "rate": 0.0,
+            "successes": 0,
+            "trials": 12
+          },
+          "coverage": {
+            "rate": 0.0,
+            "successes": 0,
+            "trials": 4
+          },
+          "external_accepted": 4,
+          "external_incorrect": 8,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.25,
+              "successes": 2,
+              "trials": 8
+            },
+            "among_ready": {
+              "rate": 1.0,
+              "successes": 2,
+              "trials": 2
+            },
+            "among_scheduled": {
+              "rate": 0.16666666666666666,
+              "successes": 2,
+              "trials": 12
+            },
+            "count": 2,
+            "external_incorrect_denominator": 8
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 6
+        },
+        "D": {
+          "claim_coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 3,
+            "trials": 6
+          },
+          "completion_claims": 3,
+          "correct_delivery": {
+            "rate": 0.16666666666666666,
+            "successes": 1,
+            "trials": 6
+          },
+          "coverage": {
+            "rate": 0.5,
+            "successes": 1,
+            "trials": 2
+          },
+          "external_accepted": 2,
+          "external_incorrect": 4,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "among_ready": {
+              "rate": 0.6666666666666666,
+              "successes": 2,
+              "trials": 3
+            },
+            "among_scheduled": {
+              "rate": 0.3333333333333333,
+              "successes": 2,
+              "trials": 6
+            },
+            "count": 2,
+            "external_incorrect_denominator": 4
+          },
+          "scheduled_calls": 6,
+          "valid_responses": 5
+        },
+        "risk_difference_C_minus_B": -0.375,
+        "task_id": "settings-label-preservation"
+      }
+    ],
+    "condition": "revision_rubric_json",
+    "estimand": "C minus B external false-ready risk among externally incorrect calls; negative favors C",
+    "exact_sign_flip": {
+      "assignments": 64,
+      "interval95": [
+        -0.16666666666666666,
+        0.16666666666666666
+      ],
+      "method": "exact 2^6 paired-cluster sign-flip descriptive null-reference interval (not a confidence interval)",
+      "reference_interval95": [
+        -0.16666666666666666,
+        0.16666666666666666
+      ]
+    },
+    "exact_sign_flip95": [
+      -0.16666666666666666,
+      0.16666666666666666
+    ],
+    "exact_sign_flip_reference95": [
+      -0.16666666666666666,
+      0.16666666666666666
+    ],
+    "exploratory": false,
+    "inference_eligible": true,
+    "risk_difference_C_minus_B": -0.20833333333333337,
+    "sign_test": {
+      "losses_C": 0,
+      "method": "two-sided exact sign test over six base-task clusters",
+      "p_value": 0.03125,
+      "ties": 0,
+      "wins_C": 6
+    },
+    "significant": true
+  },
+  "primary_condition": "revision_rubric_json",
+  "primary_model": "llama3.2:3b",
+  "schedule_complete": true,
+  "scheduled_calls": 144,
+  "schema_version": 1,
+  "secondary_prompt_sensitivity": {
+    "comparison": {
+      "aggregate": {
+        "B": {
+          "claim_coverage": {
+            "rate": 0.3333333333333333,
+            "successes": 8,
+            "trials": 24
+          },
+          "completion_claim_rate": {
+            "rate": 0.4305555555555556,
+            "successes": 31,
+            "trials": 72
+          },
+          "completion_claims": 31,
+          "correct_delivery": {
+            "rate": 0.1111111111111111,
+            "successes": 8,
+            "trials": 72
+          },
+          "coverage": {
+            "rate": 0.3333333333333333,
+            "successes": 8,
+            "trials": 24
+          },
+          "external_accepted": 24,
+          "external_incorrect": 48,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.4791666666666667,
+              "successes": 23,
+              "trials": 48
+            },
+            "among_ready": {
+              "rate": 0.7419354838709677,
+              "successes": 23,
+              "trials": 31
+            },
+            "among_scheduled": {
+              "rate": 0.3194444444444444,
+              "successes": 23,
+              "trials": 72
+            },
+            "count": 23,
+            "external_incorrect_denominator": 48
+          },
+          "scheduled_calls": 72,
+          "valid_responses": 31
+        },
+        "C": {
+          "claim_coverage": {
+            "rate": 0.125,
+            "successes": 3,
+            "trials": 24
+          },
+          "completion_claim_rate": {
+            "rate": 0.2222222222222222,
+            "successes": 16,
+            "trials": 72
+          },
+          "completion_claims": 16,
+          "correct_delivery": {
+            "rate": 0.041666666666666664,
+            "successes": 3,
+            "trials": 72
+          },
+          "coverage": {
+            "rate": 0.125,
+            "successes": 3,
+            "trials": 24
+          },
+          "external_accepted": 24,
+          "external_incorrect": 48,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.2708333333333333,
+              "successes": 13,
+              "trials": 48
+            },
+            "among_ready": {
+              "rate": 0.8125,
+              "successes": 13,
+              "trials": 16
+            },
+            "among_scheduled": {
+              "rate": 0.18055555555555555,
+              "successes": 13,
+              "trials": 72
+            },
+            "count": 13,
+            "external_incorrect_denominator": 48
+          },
+          "scheduled_calls": 72,
+          "valid_responses": 31
+        },
+        "D": {
+          "claim_coverage": {
+            "rate": 0.5,
+            "successes": 6,
+            "trials": 12
+          },
+          "completion_claim_rate": {
+            "rate": 0.5,
+            "successes": 18,
+            "trials": 36
+          },
+          "completion_claims": 18,
+          "correct_delivery": {
+            "rate": 0.16666666666666666,
+            "successes": 6,
+            "trials": 36
+          },
+          "coverage": {
+            "rate": 0.5,
+            "successes": 6,
+            "trials": 12
+          },
+          "external_accepted": 12,
+          "external_incorrect": 24,
+          "false_ready": {
+            "among_external_incorrect": {
+              "rate": 0.5,
+              "successes": 12,
+              "trials": 24
+            },
+            "among_ready": {
+              "rate": 0.6666666666666666,
+              "successes": 12,
+              "trials": 18
+            },
+            "among_scheduled": {
+              "rate": 0.3333333333333333,
+              "successes": 12,
+              "trials": 36
+            },
+            "count": 12,
+            "external_incorrect_denominator": 24
+          },
+          "scheduled_calls": 36,
+          "valid_responses": 12
+        }
+      },
+      "bootstrap": {
+        "clusters": 6,
+        "method": "paired base-task cluster percentile bootstrap",
+        "replicates": 10000,
+        "seed": 20261012
+      },
+      "bootstrap95": [
+        -0.3541666666666667,
+        -0.0625
+      ],
+      "clusters": [
+        {
+          "B": {
+            "claim_coverage": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.5833333333333334,
+              "successes": 7,
+              "trials": 12
+            },
+            "completion_claims": 7,
+            "correct_delivery": {
+              "rate": 0.16666666666666666,
+              "successes": 2,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.625,
+                "successes": 5,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 0.7142857142857143,
+                "successes": 5,
+                "trials": 7
+              },
+              "among_scheduled": {
+                "rate": 0.4166666666666667,
+                "successes": 5,
+                "trials": 12
+              },
+              "count": 5,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 7
+          },
+          "C": {
+            "claim_coverage": {
+              "rate": 0.0,
+              "successes": 0,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.16666666666666666,
+              "successes": 2,
+              "trials": 12
+            },
+            "completion_claims": 2,
+            "correct_delivery": {
+              "rate": 0.0,
+              "successes": 0,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.0,
+              "successes": 0,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.25,
+                "successes": 2,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 1.0,
+                "successes": 2,
+                "trials": 2
+              },
+              "among_scheduled": {
+                "rate": 0.16666666666666666,
+                "successes": 2,
+                "trials": 12
+              },
+              "count": 2,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 7
+          },
+          "D": {
+            "claim_coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "completion_claim_rate": {
+              "rate": 0.5,
+              "successes": 3,
+              "trials": 6
+            },
+            "completion_claims": 3,
+            "correct_delivery": {
+              "rate": 0.16666666666666666,
+              "successes": 1,
+              "trials": 6
+            },
+            "coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "external_accepted": 2,
+            "external_incorrect": 4,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.5,
+                "successes": 2,
+                "trials": 4
+              },
+              "among_ready": {
+                "rate": 0.6666666666666666,
+                "successes": 2,
+                "trials": 3
+              },
+              "among_scheduled": {
+                "rate": 0.3333333333333333,
+                "successes": 2,
+                "trials": 6
+              },
+              "count": 2,
+              "external_incorrect_denominator": 4
+            },
+            "scheduled_calls": 6,
+            "valid_responses": 3
+          },
+          "risk_difference_C_minus_B": -0.375,
+          "task_id": "century-leap-year"
+        },
+        {
+          "B": {
+            "claim_coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.4166666666666667,
+              "successes": 5,
+              "trials": 12
+            },
+            "completion_claims": 5,
+            "correct_delivery": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.5,
+                "successes": 4,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 0.8,
+                "successes": 4,
+                "trials": 5
+              },
+              "among_scheduled": {
+                "rate": 0.3333333333333333,
+                "successes": 4,
+                "trials": 12
+              },
+              "count": 4,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 5
+          },
+          "C": {
+            "claim_coverage": {
+              "rate": 0.0,
+              "successes": 0,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.16666666666666666,
+              "successes": 2,
+              "trials": 12
+            },
+            "completion_claims": 2,
+            "correct_delivery": {
+              "rate": 0.0,
+              "successes": 0,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.0,
+              "successes": 0,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.25,
+                "successes": 2,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 1.0,
+                "successes": 2,
+                "trials": 2
+              },
+              "among_scheduled": {
+                "rate": 0.16666666666666666,
+                "successes": 2,
+                "trials": 12
+              },
+              "count": 2,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 5
+          },
+          "D": {
+            "claim_coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "completion_claim_rate": {
+              "rate": 0.5,
+              "successes": 3,
+              "trials": 6
+            },
+            "completion_claims": 3,
+            "correct_delivery": {
+              "rate": 0.16666666666666666,
+              "successes": 1,
+              "trials": 6
+            },
+            "coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "external_accepted": 2,
+            "external_incorrect": 4,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.5,
+                "successes": 2,
+                "trials": 4
+              },
+              "among_ready": {
+                "rate": 0.6666666666666666,
+                "successes": 2,
+                "trials": 3
+              },
+              "among_scheduled": {
+                "rate": 0.3333333333333333,
+                "successes": 2,
+                "trials": 6
+              },
+              "count": 2,
+              "external_incorrect_denominator": 4
+            },
+            "scheduled_calls": 6,
+            "valid_responses": 3
+          },
+          "risk_difference_C_minus_B": -0.25,
+          "task_id": "http-client-retry-parity"
+        },
+        {
+          "B": {
+            "claim_coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.5833333333333334,
+              "successes": 7,
+              "trials": 12
+            },
+            "completion_claims": 7,
+            "correct_delivery": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.75,
+                "successes": 6,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 0.8571428571428571,
+                "successes": 6,
+                "trials": 7
+              },
+              "among_scheduled": {
+                "rate": 0.5,
+                "successes": 6,
+                "trials": 12
+              },
+              "count": 6,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 7
+          },
+          "C": {
+            "claim_coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.25,
+              "successes": 3,
+              "trials": 12
+            },
+            "completion_claims": 3,
+            "correct_delivery": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.25,
+                "successes": 2,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 0.6666666666666666,
+                "successes": 2,
+                "trials": 3
+              },
+              "among_scheduled": {
+                "rate": 0.16666666666666666,
+                "successes": 2,
+                "trials": 12
+              },
+              "count": 2,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 7
+          },
+          "D": {
+            "claim_coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "completion_claim_rate": {
+              "rate": 0.5,
+              "successes": 3,
+              "trials": 6
+            },
+            "completion_claims": 3,
+            "correct_delivery": {
+              "rate": 0.16666666666666666,
+              "successes": 1,
+              "trials": 6
+            },
+            "coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "external_accepted": 2,
+            "external_incorrect": 4,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.5,
+                "successes": 2,
+                "trials": 4
+              },
+              "among_ready": {
+                "rate": 0.6666666666666666,
+                "successes": 2,
+                "trials": 3
+              },
+              "among_scheduled": {
+                "rate": 0.3333333333333333,
+                "successes": 2,
+                "trials": 6
+              },
+              "count": 2,
+              "external_incorrect_denominator": 4
+            },
+            "scheduled_calls": 6,
+            "valid_responses": 4
+          },
+          "risk_difference_C_minus_B": -0.5,
+          "task_id": "pagination-tail"
+        },
+        {
+          "B": {
+            "claim_coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.3333333333333333,
+              "successes": 4,
+              "trials": 12
+            },
+            "completion_claims": 4,
+            "correct_delivery": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.375,
+                "successes": 3,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 0.75,
+                "successes": 3,
+                "trials": 4
+              },
+              "among_scheduled": {
+                "rate": 0.25,
+                "successes": 3,
+                "trials": 12
+              },
+              "count": 3,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 4
+          },
+          "C": {
+            "claim_coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.3333333333333333,
+              "successes": 4,
+              "trials": 12
+            },
+            "completion_claims": 4,
+            "correct_delivery": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.375,
+                "successes": 3,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 0.75,
+                "successes": 3,
+                "trials": 4
+              },
+              "among_scheduled": {
+                "rate": 0.25,
+                "successes": 3,
+                "trials": 12
+              },
+              "count": 3,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 4
+          },
+          "D": {
+            "claim_coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "completion_claim_rate": {
+              "rate": 0.5,
+              "successes": 3,
+              "trials": 6
+            },
+            "completion_claims": 3,
+            "correct_delivery": {
+              "rate": 0.16666666666666666,
+              "successes": 1,
+              "trials": 6
+            },
+            "coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "external_accepted": 2,
+            "external_incorrect": 4,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.5,
+                "successes": 2,
+                "trials": 4
+              },
+              "among_ready": {
+                "rate": 0.6666666666666666,
+                "successes": 2,
+                "trials": 3
+              },
+              "among_scheduled": {
+                "rate": 0.3333333333333333,
+                "successes": 2,
+                "trials": 6
+              },
+              "count": 2,
+              "external_incorrect_denominator": 4
+            },
+            "scheduled_calls": 6,
+            "valid_responses": 1
+          },
+          "risk_difference_C_minus_B": 0.0,
+          "task_id": "retry-exponential-delay"
+        },
+        {
+          "B": {
+            "claim_coverage": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.4166666666666667,
+              "successes": 5,
+              "trials": 12
+            },
+            "completion_claims": 5,
+            "correct_delivery": {
+              "rate": 0.16666666666666666,
+              "successes": 2,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.5,
+              "successes": 2,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.375,
+                "successes": 3,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 0.6,
+                "successes": 3,
+                "trials": 5
+              },
+              "among_scheduled": {
+                "rate": 0.25,
+                "successes": 3,
+                "trials": 12
+              },
+              "count": 3,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 5
+          },
+          "C": {
+            "claim_coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.3333333333333333,
+              "successes": 4,
+              "trials": 12
+            },
+            "completion_claims": 4,
+            "correct_delivery": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.375,
+                "successes": 3,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 0.75,
+                "successes": 3,
+                "trials": 4
+              },
+              "among_scheduled": {
+                "rate": 0.25,
+                "successes": 3,
+                "trials": 12
+              },
+              "count": 3,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 5
+          },
+          "D": {
+            "claim_coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "completion_claim_rate": {
+              "rate": 0.5,
+              "successes": 3,
+              "trials": 6
+            },
+            "completion_claims": 3,
+            "correct_delivery": {
+              "rate": 0.16666666666666666,
+              "successes": 1,
+              "trials": 6
+            },
+            "coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "external_accepted": 2,
+            "external_incorrect": 4,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.5,
+                "successes": 2,
+                "trials": 4
+              },
+              "among_ready": {
+                "rate": 0.6666666666666666,
+                "successes": 2,
+                "trials": 3
+              },
+              "among_scheduled": {
+                "rate": 0.3333333333333333,
+                "successes": 2,
+                "trials": 6
+              },
+              "count": 2,
+              "external_incorrect_denominator": 4
+            },
+            "scheduled_calls": 6,
+            "valid_responses": 1
+          },
+          "risk_difference_C_minus_B": 0.0,
+          "task_id": "scheduler-reporter-ids"
+        },
+        {
+          "B": {
+            "claim_coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.25,
+              "successes": 3,
+              "trials": 12
+            },
+            "completion_claims": 3,
+            "correct_delivery": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.25,
+              "successes": 1,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.25,
+                "successes": 2,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 0.6666666666666666,
+                "successes": 2,
+                "trials": 3
+              },
+              "among_scheduled": {
+                "rate": 0.16666666666666666,
+                "successes": 2,
+                "trials": 12
+              },
+              "count": 2,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 3
+          },
+          "C": {
+            "claim_coverage": {
+              "rate": 0.0,
+              "successes": 0,
+              "trials": 4
+            },
+            "completion_claim_rate": {
+              "rate": 0.08333333333333333,
+              "successes": 1,
+              "trials": 12
+            },
+            "completion_claims": 1,
+            "correct_delivery": {
+              "rate": 0.0,
+              "successes": 0,
+              "trials": 12
+            },
+            "coverage": {
+              "rate": 0.0,
+              "successes": 0,
+              "trials": 4
+            },
+            "external_accepted": 4,
+            "external_incorrect": 8,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.125,
+                "successes": 1,
+                "trials": 8
+              },
+              "among_ready": {
+                "rate": 1.0,
+                "successes": 1,
+                "trials": 1
+              },
+              "among_scheduled": {
+                "rate": 0.08333333333333333,
+                "successes": 1,
+                "trials": 12
+              },
+              "count": 1,
+              "external_incorrect_denominator": 8
+            },
+            "scheduled_calls": 12,
+            "valid_responses": 3
+          },
+          "D": {
+            "claim_coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "completion_claim_rate": {
+              "rate": 0.5,
+              "successes": 3,
+              "trials": 6
+            },
+            "completion_claims": 3,
+            "correct_delivery": {
+              "rate": 0.16666666666666666,
+              "successes": 1,
+              "trials": 6
+            },
+            "coverage": {
+              "rate": 0.5,
+              "successes": 1,
+              "trials": 2
+            },
+            "external_accepted": 2,
+            "external_incorrect": 4,
+            "false_ready": {
+              "among_external_incorrect": {
+                "rate": 0.5,
+                "successes": 2,
+                "trials": 4
+              },
+              "among_ready": {
+                "rate": 0.6666666666666666,
+                "successes": 2,
+                "trials": 3
+              },
+              "among_scheduled": {
+                "rate": 0.3333333333333333,
+                "successes": 2,
+                "trials": 6
+              },
+              "count": 2,
+              "external_incorrect_denominator": 4
+            },
+            "scheduled_calls": 6,
+            "valid_responses": 0
+          },
+          "risk_difference_C_minus_B": -0.125,
+          "task_id": "settings-label-preservation"
+        }
+      ],
+      "condition": "plain_json",
+      "estimand": "C minus B external false-ready risk among externally incorrect calls; negative favors C",
+      "exact_sign_flip": {
+        "assignments": 64,
+        "interval95": [
+          -0.20833333333333334,
+          0.20833333333333334
+        ],
+        "method": "exact 2^6 paired-cluster sign-flip descriptive null-reference interval (not a confidence interval)",
+        "reference_interval95": [
+          -0.20833333333333334,
+          0.20833333333333334
+        ]
+      },
+      "exact_sign_flip95": [
+        -0.20833333333333334,
+        0.20833333333333334
+      ],
+      "exact_sign_flip_reference95": [
+        -0.20833333333333334,
+        0.20833333333333334
+      ],
+      "exploratory": true,
+      "inference_eligible": true,
+      "risk_difference_C_minus_B": -0.20833333333333337,
+      "sign_test": {
+        "losses_C": 0,
+        "method": "two-sided exact sign test over six base-task clusters",
+        "p_value": 0.125,
+        "ties": 2,
+        "wins_C": 4
+      },
+      "significant": false
+    },
+    "condition": "plain_json",
+    "exploratory": true,
+    "metrics": {
+      "B": {
+        "claim_coverage": {
+          "rate": 0.3333333333333333,
+          "successes": 8,
+          "trials": 24
+        },
+        "completion_claim_rate": {
+          "rate": 0.4305555555555556,
+          "successes": 31,
+          "trials": 72
+        },
+        "completion_claims": 31,
+        "correct_delivery": {
+          "rate": 0.1111111111111111,
+          "successes": 8,
+          "trials": 72
+        },
+        "coverage": {
+          "rate": 0.3333333333333333,
+          "successes": 8,
+          "trials": 24
+        },
+        "external_accepted": 24,
+        "external_incorrect": 48,
+        "false_ready": {
+          "among_external_incorrect": {
+            "rate": 0.4791666666666667,
+            "successes": 23,
+            "trials": 48
+          },
+          "among_ready": {
+            "rate": 0.7419354838709677,
+            "successes": 23,
+            "trials": 31
+          },
+          "among_scheduled": {
+            "rate": 0.3194444444444444,
+            "successes": 23,
+            "trials": 72
+          },
+          "count": 23,
+          "external_incorrect_denominator": 48
+        },
+        "scheduled_calls": 72,
+        "valid_responses": 31
+      },
+      "C": {
+        "claim_coverage": {
+          "rate": 0.125,
+          "successes": 3,
+          "trials": 24
+        },
+        "completion_claim_rate": {
+          "rate": 0.2222222222222222,
+          "successes": 16,
+          "trials": 72
+        },
+        "completion_claims": 16,
+        "correct_delivery": {
+          "rate": 0.041666666666666664,
+          "successes": 3,
+          "trials": 72
+        },
+        "coverage": {
+          "rate": 0.125,
+          "successes": 3,
+          "trials": 24
+        },
+        "external_accepted": 24,
+        "external_incorrect": 48,
+        "false_ready": {
+          "among_external_incorrect": {
+            "rate": 0.2708333333333333,
+            "successes": 13,
+            "trials": 48
+          },
+          "among_ready": {
+            "rate": 0.8125,
+            "successes": 13,
+            "trials": 16
+          },
+          "among_scheduled": {
+            "rate": 0.18055555555555555,
+            "successes": 13,
+            "trials": 72
+          },
+          "count": 13,
+          "external_incorrect_denominator": 48
+        },
+        "scheduled_calls": 72,
+        "valid_responses": 31
+      },
+      "D": {
+        "claim_coverage": {
+          "rate": 0.5,
+          "successes": 6,
+          "trials": 12
+        },
+        "completion_claim_rate": {
+          "rate": 0.5,
+          "successes": 18,
+          "trials": 36
+        },
+        "completion_claims": 18,
+        "correct_delivery": {
+          "rate": 0.16666666666666666,
+          "successes": 6,
+          "trials": 36
+        },
+        "coverage": {
+          "rate": 0.5,
+          "successes": 6,
+          "trials": 12
+        },
+        "external_accepted": 12,
+        "external_incorrect": 24,
+        "false_ready": {
+          "among_external_incorrect": {
+            "rate": 0.5,
+            "successes": 12,
+            "trials": 24
+          },
+          "among_ready": {
+            "rate": 0.6666666666666666,
+            "successes": 12,
+            "trials": 18
+          },
+          "among_scheduled": {
+            "rate": 0.3333333333333333,
+            "successes": 12,
+            "trials": 36
+          },
+          "count": 12,
+          "external_incorrect_denominator": 24
+        },
+        "scheduled_calls": 36,
+        "valid_responses": 12
+      }
+    }
+  },
+  "seeds": [
+    17,
+    29
+  ],
+  "status": "complete",
+  "status_counts": {
+    "error": 80,
+    "ok": 64
+  },
+  "tasks": 6,
+  "valid_responses": 64
+}

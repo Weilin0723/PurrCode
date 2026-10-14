@@ -1020,6 +1020,20 @@ impl ResearchDecision {
 
 // ── Session controls (PRD §9.7, §10.5, §11.1, §12.3) ───────────────────
 
+/// Whether the v1.5 alignment loop is attached to a session.
+///
+/// Enabled is the safe default, including when replaying controls written by
+/// an older build. Disabled is reserved for explicitly gated research runs;
+/// the daemon persists the choice in `SessionControlsUpdated` before starting
+/// the agent, so a client cannot silently lower the protection level.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlignmentMode {
+    #[default]
+    Enabled,
+    Disabled,
+}
+
 /// The adaptive controls a user sets per session.
 ///
 /// These live on the session, not in a client, so the TUI and the IDE cannot
@@ -1041,6 +1055,10 @@ pub struct SessionControls {
     /// permission modes existed keep `Ask`; new code defaults to `Auto`.
     #[serde(default = "legacy_permission_mode")]
     pub permission_mode: PermissionMode,
+    /// Whether the alignment-first delivery gate is attached. Missing values
+    /// in legacy records deserialize to the safe enabled mode.
+    #[serde(default)]
+    pub alignment: AlignmentMode,
     /// `None` means "follow the workflow profile's default" (PRD §11.2). An
     /// explicit value is a user override and always wins.
     #[serde(default)]
@@ -1095,6 +1113,7 @@ impl Default for SessionControls {
             execution_style: ExecutionStyle::default(),
             task_mode: TaskMode::Ask,
             permission_mode: PermissionMode::Ask,
+            alignment: AlignmentMode::Enabled,
             search_policy: None,
             auto_context: true,
             custom_budget: None,
@@ -2038,6 +2057,7 @@ mod tests {
             execution_style: ExecutionStyle::Collaborative,
             task_mode: TaskMode::Review,
             permission_mode: PermissionMode::FullAccess,
+            alignment: AlignmentMode::Enabled,
             search_policy: Some(SearchPolicy::Off),
             auto_context: true,
             custom_budget: None,
@@ -2057,6 +2077,7 @@ mod tests {
         let controls: SessionControls = serde_json::from_str(older).unwrap();
         assert_eq!(controls.task_mode, TaskMode::Build);
         assert_eq!(controls.permission_mode, PermissionMode::Ask);
+        assert_eq!(controls.alignment, AlignmentMode::Enabled);
     }
 
     #[test]

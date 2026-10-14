@@ -1,0 +1,823 @@
+{
+  "artifact_kind": "deepseek-repository-completion-replication",
+  "attrition": {
+    "error": 26,
+    "event_errors": [],
+    "failed_or_invalid_or_missing": 26,
+    "invalid": 0,
+    "missing_terminal": 0,
+    "rate": 0.18055555555555555,
+    "threshold": 0.1
+  },
+  "candidate_snapshots": 36,
+  "completed_records": 144,
+  "d_evaluations": 36,
+  "d_metrics": {
+    "accepted_terminal": 12,
+    "completion_claim_rate_scheduled": 0.5,
+    "completion_claim_rate_valid": 0.5625,
+    "completion_claims": 18,
+    "correct_delivery": 0.5,
+    "coverage": 0.5,
+    "coverage_among_valid": 0.5,
+    "external_accepted_scheduled": 12,
+    "external_accepted_valid": 12,
+    "external_incorrect_scheduled": 24,
+    "external_incorrect_valid": 20,
+    "false_ready": {
+      "among_valid_external_incorrect": 0.6,
+      "count": 12,
+      "denominator_scheduled_external_incorrect": 24,
+      "denominator_terminal_external_incorrect": 24,
+      "denominator_valid_external_incorrect": 20,
+      "intent_to_treat": 0.5
+    },
+    "scheduled_calls": 36,
+    "valid_responses": 32
+  },
+  "guardrail": {
+    "B_correct_coverage": 0.9583333333333334,
+    "C_correct_coverage": 0.5,
+    "C_minus_B": -0.45833333333333337,
+    "definition": "C correct-delivery coverage must not fall by more than 5pp versus B",
+    "maximum_allowed_loss": 0.05,
+    "pass": false
+  },
+  "inference_eligible": false,
+  "latency_ms": {
+    "mean": 2172.1319444444443,
+    "measured_calls": 144,
+    "median": 2137.5,
+    "missing_calls": 0,
+    "p95": 2984.65
+  },
+  "model": "deepseek-v4-pro",
+  "no_conclusion_if_inconclusive": true,
+  "operationally_inconclusive": true,
+  "plain_secondary": {
+    "aggregate": {
+      "B": {
+        "accepted_terminal": 24,
+        "completion_claim_rate_scheduled": 0.4722222222222222,
+        "completion_claim_rate_valid": 0.6296296296296297,
+        "completion_claims": 34,
+        "correct_delivery": 0.5833333333333334,
+        "coverage": 0.5833333333333334,
+        "coverage_among_valid": 0.8235294117647058,
+        "external_accepted_scheduled": 24,
+        "external_accepted_valid": 17,
+        "external_incorrect_scheduled": 48,
+        "external_incorrect_valid": 37,
+        "false_ready": {
+          "among_valid_external_incorrect": 0.5405405405405406,
+          "count": 20,
+          "denominator_scheduled_external_incorrect": 48,
+          "denominator_terminal_external_incorrect": 48,
+          "denominator_valid_external_incorrect": 37,
+          "intent_to_treat": 0.4166666666666667
+        },
+        "scheduled_calls": 72,
+        "valid_responses": 54
+      },
+      "C": {
+        "accepted_terminal": 24,
+        "completion_claim_rate_scheduled": 0.18055555555555555,
+        "completion_claim_rate_valid": 0.24074074074074073,
+        "completion_claims": 13,
+        "correct_delivery": 0.2916666666666667,
+        "coverage": 0.2916666666666667,
+        "coverage_among_valid": 0.4117647058823529,
+        "external_accepted_scheduled": 24,
+        "external_accepted_valid": 17,
+        "external_incorrect_scheduled": 48,
+        "external_incorrect_valid": 37,
+        "false_ready": {
+          "among_valid_external_incorrect": 0.16216216216216217,
+          "count": 6,
+          "denominator_scheduled_external_incorrect": 48,
+          "denominator_terminal_external_incorrect": 48,
+          "denominator_valid_external_incorrect": 37,
+          "intent_to_treat": 0.125
+        },
+        "scheduled_calls": 72,
+        "valid_responses": 54
+      }
+    },
+    "bootstrap95": null,
+    "clusters": [
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.5,
+          "completion_claim_rate_valid": 0.75,
+          "completion_claims": 6,
+          "correct_delivery": 0.25,
+          "coverage": 0.25,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 1,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 7,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.7142857142857143,
+            "count": 5,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 7,
+            "intent_to_treat": 0.625
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 8
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.16666666666666666,
+          "completion_claim_rate_valid": 0.25,
+          "completion_claims": 2,
+          "correct_delivery": 0.0,
+          "coverage": 0.0,
+          "coverage_among_valid": 0.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 1,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 7,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.2857142857142857,
+            "count": 2,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 7,
+            "intent_to_treat": 0.25
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 8
+        },
+        "risk_difference_C_minus_B": -0.375,
+        "task_id": "century-leap-year"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.3333333333333333,
+          "completion_claim_rate_valid": 0.4,
+          "completion_claims": 4,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 0.5,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.3333333333333333,
+            "count": 2,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.25
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 10
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.08333333333333333,
+          "completion_claim_rate_valid": 0.1,
+          "completion_claims": 1,
+          "correct_delivery": 0.25,
+          "coverage": 0.25,
+          "coverage_among_valid": 0.25,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.0,
+            "count": 0,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.0
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 10
+        },
+        "risk_difference_C_minus_B": -0.25,
+        "task_id": "http-client-retry-parity"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.5833333333333334,
+          "completion_claim_rate_valid": 0.7,
+          "completion_claims": 7,
+          "correct_delivery": 1.0,
+          "coverage": 1.0,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.5,
+            "count": 3,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.375
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 10
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.25,
+          "completion_claim_rate_valid": 0.3,
+          "completion_claims": 3,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 0.5,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.16666666666666666,
+            "count": 1,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.125
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 10
+        },
+        "risk_difference_C_minus_B": -0.25,
+        "task_id": "pagination-tail"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.5833333333333334,
+          "completion_claim_rate_valid": 1.0,
+          "completion_claims": 7,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 2,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 5,
+          "false_ready": {
+            "among_valid_external_incorrect": 1.0,
+            "count": 5,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 5,
+            "intent_to_treat": 0.625
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 7
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.3333333333333333,
+          "completion_claim_rate_valid": 0.5714285714285714,
+          "completion_claims": 4,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 2,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 5,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.4,
+            "count": 2,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 5,
+            "intent_to_treat": 0.25
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 7
+        },
+        "risk_difference_C_minus_B": -0.375,
+        "task_id": "retry-exponential-delay"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.25,
+          "completion_claim_rate_valid": 0.375,
+          "completion_claims": 3,
+          "correct_delivery": 0.25,
+          "coverage": 0.25,
+          "coverage_among_valid": 0.5,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 2,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.3333333333333333,
+            "count": 2,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.25
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 8
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.0,
+          "completion_claim_rate_valid": 0.0,
+          "completion_claims": 0,
+          "correct_delivery": 0.0,
+          "coverage": 0.0,
+          "coverage_among_valid": 0.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 2,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.0,
+            "count": 0,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.0
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 8
+        },
+        "risk_difference_C_minus_B": -0.25,
+        "task_id": "scheduler-reporter-ids"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.5833333333333334,
+          "completion_claim_rate_valid": 0.6363636363636364,
+          "completion_claims": 7,
+          "correct_delivery": 1.0,
+          "coverage": 1.0,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 7,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.42857142857142855,
+            "count": 3,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 7,
+            "intent_to_treat": 0.375
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 11
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.25,
+          "completion_claim_rate_valid": 0.2727272727272727,
+          "completion_claims": 3,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 0.5,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 7,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.14285714285714285,
+            "count": 1,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 7,
+            "intent_to_treat": 0.125
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 11
+        },
+        "risk_difference_C_minus_B": -0.25,
+        "task_id": "settings-label-preservation"
+      }
+    ],
+    "condition": "plain_json",
+    "estimand": "rubric-condition C minus B false-ready risk among externally rejected candidates, clustered by base task",
+    "exact_sign_flip": {
+      "assignments": 64,
+      "method": "exact paired-cluster sign-flip descriptive null-reference interval (not a confidence interval)",
+      "reference_interval95": null
+    },
+    "exact_sign_flip_reference95": null,
+    "exploratory": true,
+    "inference_eligible": false,
+    "risk_difference_C_minus_B": -0.2916666666666667,
+    "sign_test": {
+      "losses_C": 0,
+      "method": "two-sided exact sign test over six base-task clusters",
+      "p_value": null,
+      "ties": 0,
+      "wins_C": 6
+    },
+    "significant": false
+  },
+  "primary_comparison": {
+    "aggregate": {
+      "B": {
+        "accepted_terminal": 24,
+        "completion_claim_rate_scheduled": 0.6944444444444444,
+        "completion_claim_rate_valid": 0.78125,
+        "completion_claims": 50,
+        "correct_delivery": 0.9583333333333334,
+        "coverage": 0.9583333333333334,
+        "coverage_among_valid": 1.0,
+        "external_accepted_scheduled": 24,
+        "external_accepted_valid": 23,
+        "external_incorrect_scheduled": 48,
+        "external_incorrect_valid": 41,
+        "false_ready": {
+          "among_valid_external_incorrect": 0.6585365853658537,
+          "count": 27,
+          "denominator_scheduled_external_incorrect": 48,
+          "denominator_terminal_external_incorrect": 48,
+          "denominator_valid_external_incorrect": 41,
+          "intent_to_treat": 0.5625
+        },
+        "scheduled_calls": 72,
+        "valid_responses": 64
+      },
+      "C": {
+        "accepted_terminal": 24,
+        "completion_claim_rate_scheduled": 0.3055555555555556,
+        "completion_claim_rate_valid": 0.34375,
+        "completion_claims": 22,
+        "correct_delivery": 0.5,
+        "coverage": 0.5,
+        "coverage_among_valid": 0.5217391304347826,
+        "external_accepted_scheduled": 24,
+        "external_accepted_valid": 23,
+        "external_incorrect_scheduled": 48,
+        "external_incorrect_valid": 41,
+        "false_ready": {
+          "among_valid_external_incorrect": 0.24390243902439024,
+          "count": 10,
+          "denominator_scheduled_external_incorrect": 48,
+          "denominator_terminal_external_incorrect": 48,
+          "denominator_valid_external_incorrect": 41,
+          "intent_to_treat": 0.20833333333333334
+        },
+        "scheduled_calls": 72,
+        "valid_responses": 64
+      }
+    },
+    "bootstrap95": null,
+    "clusters": [
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.75,
+          "completion_claim_rate_valid": 0.9,
+          "completion_claims": 9,
+          "correct_delivery": 1.0,
+          "coverage": 1.0,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.8333333333333334,
+            "count": 5,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.625
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 10
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.4166666666666667,
+          "completion_claim_rate_valid": 0.5,
+          "completion_claims": 5,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 0.5,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.5,
+            "count": 3,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.375
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 10
+        },
+        "risk_difference_C_minus_B": -0.25,
+        "task_id": "century-leap-year"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.5833333333333334,
+          "completion_claim_rate_valid": 0.6363636363636364,
+          "completion_claims": 7,
+          "correct_delivery": 1.0,
+          "coverage": 1.0,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 7,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.42857142857142855,
+            "count": 3,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 7,
+            "intent_to_treat": 0.375
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 11
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.25,
+          "completion_claim_rate_valid": 0.2727272727272727,
+          "completion_claims": 3,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 0.5,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 7,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.14285714285714285,
+            "count": 1,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 7,
+            "intent_to_treat": 0.125
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 11
+        },
+        "risk_difference_C_minus_B": -0.25,
+        "task_id": "http-client-retry-parity"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.75,
+          "completion_claim_rate_valid": 0.9,
+          "completion_claims": 9,
+          "correct_delivery": 1.0,
+          "coverage": 1.0,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.8333333333333334,
+            "count": 5,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.625
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 10
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.25,
+          "completion_claim_rate_valid": 0.3,
+          "completion_claims": 3,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 0.5,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.16666666666666666,
+            "count": 1,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.125
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 10
+        },
+        "risk_difference_C_minus_B": -0.5,
+        "task_id": "pagination-tail"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.5833333333333334,
+          "completion_claim_rate_valid": 0.7777777777777778,
+          "completion_claims": 7,
+          "correct_delivery": 0.75,
+          "coverage": 0.75,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 3,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.6666666666666666,
+            "count": 4,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.5
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 9
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.25,
+          "completion_claim_rate_valid": 0.3333333333333333,
+          "completion_claims": 3,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 0.6666666666666666,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 3,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 6,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.16666666666666666,
+            "count": 1,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 6,
+            "intent_to_treat": 0.125
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 9
+        },
+        "risk_difference_C_minus_B": -0.375,
+        "task_id": "retry-exponential-delay"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.8333333333333334,
+          "completion_claim_rate_valid": 0.8333333333333334,
+          "completion_claims": 10,
+          "correct_delivery": 1.0,
+          "coverage": 1.0,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 8,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.75,
+            "count": 6,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 8,
+            "intent_to_treat": 0.75
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 12
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.3333333333333333,
+          "completion_claim_rate_valid": 0.3333333333333333,
+          "completion_claims": 4,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 0.5,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 8,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.25,
+            "count": 2,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 8,
+            "intent_to_treat": 0.25
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 12
+        },
+        "risk_difference_C_minus_B": -0.5,
+        "task_id": "scheduler-reporter-ids"
+      },
+      {
+        "B": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.6666666666666666,
+          "completion_claim_rate_valid": 0.6666666666666666,
+          "completion_claims": 8,
+          "correct_delivery": 1.0,
+          "coverage": 1.0,
+          "coverage_among_valid": 1.0,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 8,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.5,
+            "count": 4,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 8,
+            "intent_to_treat": 0.5
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 12
+        },
+        "C": {
+          "accepted_terminal": 4,
+          "completion_claim_rate_scheduled": 0.3333333333333333,
+          "completion_claim_rate_valid": 0.3333333333333333,
+          "completion_claims": 4,
+          "correct_delivery": 0.5,
+          "coverage": 0.5,
+          "coverage_among_valid": 0.5,
+          "external_accepted_scheduled": 4,
+          "external_accepted_valid": 4,
+          "external_incorrect_scheduled": 8,
+          "external_incorrect_valid": 8,
+          "false_ready": {
+            "among_valid_external_incorrect": 0.25,
+            "count": 2,
+            "denominator_scheduled_external_incorrect": 8,
+            "denominator_terminal_external_incorrect": 8,
+            "denominator_valid_external_incorrect": 8,
+            "intent_to_treat": 0.25
+          },
+          "scheduled_calls": 12,
+          "valid_responses": 12
+        },
+        "risk_difference_C_minus_B": -0.25,
+        "task_id": "settings-label-preservation"
+      }
+    ],
+    "condition": "revision_rubric_json",
+    "estimand": "rubric-condition C minus B false-ready risk among externally rejected candidates, clustered by base task",
+    "exact_sign_flip": {
+      "assignments": 64,
+      "method": "exact paired-cluster sign-flip descriptive null-reference interval (not a confidence interval)",
+      "reference_interval95": null
+    },
+    "exact_sign_flip_reference95": null,
+    "exploratory": false,
+    "inference_eligible": false,
+    "risk_difference_C_minus_B": -0.35416666666666663,
+    "sign_test": {
+      "losses_C": 0,
+      "method": "two-sided exact sign test over six base-task clusters",
+      "p_value": null,
+      "ties": 0,
+      "wins_C": 6
+    },
+    "significant": false
+  },
+  "primary_condition": "revision_rubric_json",
+  "schedule_complete": true,
+  "scheduled_calls": 144,
+  "schema_version": 1,
+  "status": "inconclusive",
+  "status_counts": {
+    "error": 26,
+    "invalid": 0,
+    "missing_terminal": 0,
+    "ok": 118
+  },
+  "tasks": 6,
+  "usage": {
+    "completion_tokens": 12114,
+    "measured_completion_calls": 144,
+    "measured_prompt_calls": 144,
+    "measured_total_calls": 144,
+    "missing_total_calls": 0,
+    "prompt_tokens": 93468,
+    "total_tokens": 105582
+  },
+  "valid_responses": 118
+}

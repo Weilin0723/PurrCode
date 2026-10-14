@@ -25,6 +25,8 @@ PurrCode is a terminal coding agent that works in isolated Git worktrees. It is 
 
 PurrCode v1.0 adds its own **native desktop IDE** — a pure-Rust desktop application, not a browser portal and not an extension inside somebody else's editor. `purrcode ide` opens a real window on the same session the terminal TUI is running, so you can move between them without losing anything.
 
+PurrCode v1.5 adds an **alignment loop** that runs on every task: an intent compiler turns your request into an expectation contract whose requirements quote you verbatim, three independent reviews (requirement coverage, code, and user-alignment) check the work against it without ever seeing the implementer's own transcript, and a delivery gate — a trusted reducer over the durable session log, not the model's own claim — decides whether the task is actually done. A build that compiles and a settings page that is still unusable are not the same thing, and this is the mechanism that tells them apart. See [`docs/v1.5-architecture.md`](docs/v1.5-architecture.md) for the full design.
+
 ## Screens
 
 - **Terminal Workbench** — the default interface. `purrcode` opens it on every platform and never an unexpected browser.
@@ -46,7 +48,7 @@ The easiest way to try the native desktop IDE: download **PurrCode.app**, drag i
 ### macOS and Linux (terminal)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v1.0.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v1.5.0/scripts/install.sh | sh
 ```
 
 The installer detects the host platform, downloads the release archive, verifies it against the release `SHA256SUMS`, and installs into `~/.local/bin`. Set `PURRCODE_INSTALL_DIR` to choose another destination.
@@ -60,7 +62,7 @@ npm install --global @minaovo/purrcode
 Node.js 18 or newer. The package selects the correct macOS, Linux, or Windows binary, verifies its pinned SHA-256 digest, and exposes both `purrcode` and `purrcoded`. You can also install the signed-release launcher directly from GitHub:
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/latest/download/purrcode-1.0.0.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/latest/download/purrcode-1.5.0.tgz
 ```
 
 ### Windows

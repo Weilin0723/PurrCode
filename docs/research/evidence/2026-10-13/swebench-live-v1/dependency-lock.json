@@ -1,0 +1,65 @@
+{
+  "docker": {
+    "credential_policy": "temporary_empty_docker_config",
+    "platform": "linux/amd64",
+    "required": true
+  },
+  "kind": "swebench-live-e2e-dependency-lock",
+  "notes": [
+    "The selected public instance images expose x86_64; arm64/Rosetta is not accepted as final oracle evidence.",
+    "The wrapper calls the pinned official harness and executes the declared F2P/P2P node IDs directly.",
+    "No credential value is stored in this lock; provider credentials are resolved by the daemon via an adjacent credentials.toml reference."
+  ],
+  "python": {
+    "ci": "3.11",
+    "minimum": "3.10"
+  },
+  "repo_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "8facaf8a4d5cce717fe473898a9bb11cc2873efb2cc606c867fb92cbfb39028e"
+    },
+    {
+      "path": "crates/runtime-core/src/expectation/evidence.rs",
+      "sha256": "13b6f469c5f6ede578046d6622017e8259af11228ea882f485513d8800fed9b1"
+    },
+    {
+      "path": "crates/runtime-core/src/expectation/revision.rs",
+      "sha256": "1ebd6f197384717e7f86f1d30f311ba81cd82f7bf5fb22ca589380d19fd8c449"
+    },
+    {
+      "path": "crates/agent-runtime/src/alignment.rs",
+      "sha256": "e320d800f30e9ed1938599adbee00d0c243849fe49e8985591445dcc7102bc12"
+    },
+    {
+      "path": "crates/purrcode-daemon/src/lib.rs",
+      "sha256": "17dec64cc82773a34107f160fe5b46db18937de5b3b6adc250baced355f1fab7"
+    },
+    {
+      "path": "crates/evaluation-runtime/src/bin/repository_completion_e2e.rs",
+      "sha256": "9a01702711aadbc7ae78900907e424c52ab499a4f70517ffb713bee5478e48ad"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-v1/acquisition_preflight.py",
+      "sha256": "06213c8e8742783cdb1b4bc4291d78d38d45e83e4a0f64cf8701799918cc657d"
+    },
+    {
+      "path": "scripts/swebench_live_e2e.py",
+      "sha256": "47b0584e77b183dc0ec1f84dc9f30cc3ebf457b635235b7b159bc1229c3c617e"
+    },
+    {
+      "path": "scripts/run_swebench_live_oracle.py",
+      "sha256": "2cc0320c676c7b9f8bd6f0acc03986a68fad79be7694d54740f0bf0f966bbc4a"
+    }
+  ],
+  "schema_version": 1,
+  "status": "preflight_pending",
+  "swebench_live": {
+    "config": "default",
+    "dataset": "SWE-bench-Live/SWE-bench-Live",
+    "harness_commit": "a145aa87c62361532dacaa243398978164b234b7",
+    "harness_repository": "SWE-bench-Live/SWE-bench-Live",
+    "revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
+    "split": "verified"
+  }
+}

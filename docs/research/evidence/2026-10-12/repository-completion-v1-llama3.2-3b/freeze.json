@@ -1,0 +1,143 @@
+{
+  "analysis_role": "primary",
+  "base_url": "http://127.0.0.1:11434",
+  "candidate_preflight_sha256": "ca9947f48f3105bd2efb245cbe11e4aabb7bb15eee21809edf20490557f7b30e",
+  "conditions": [
+    "revision_rubric_json",
+    "plain_json"
+  ],
+  "d_evaluations_sha256": "bd820b142a54259a8f8b317360a87a33b1ab856c5c8ed8a763161b892607c969",
+  "dataset": "/Users/jackzhang/Documents/GitHub/PurrCode/benchmarks/research/small-model-pilot/dataset.json",
+  "dataset_sha256": "7fb370c3f7ab675a66e9999f0c0703ec699d885560539b19c599b14c931a8eb8",
+  "dependency_hashes": {
+    "benchmarks/research/small-model-pilot/dataset.json": "7fb370c3f7ab675a66e9999f0c0703ec699d885560539b19c599b14c931a8eb8",
+    "benchmarks/research/small-model-pilot/oracles/century_leap_year.rs": "b1f9acf0aff51fedae129d952f77b386965e140f4285be423114848805f0281c",
+    "benchmarks/research/small-model-pilot/oracles/http_client_retry_parity.rs": "03a6c370cb976beefdbe7066496bd0dc204b1342b80380feadefe5b35ba5e336",
+    "benchmarks/research/small-model-pilot/oracles/pagination.rs": "5462081f50109bf51c1857c36c054f307986fa947f3b1cf8dfb1c3df53cd90c4",
+    "benchmarks/research/small-model-pilot/oracles/retry_exponential_delay.rs": "1656cd12c65c1a7c69411c966e05cc613a36fa307ef774a5c62418b665c5a138",
+    "benchmarks/research/small-model-pilot/oracles/run_rust_oracle.py": "5eafd48bf8e80762d04aac49af942409eb74e49b9521f4e7baae35d9db637818",
+    "benchmarks/research/small-model-pilot/oracles/scheduler_reporter_ids.rs": "25dddd7a7f08e6a0c511230c3ed91029afac68602827bc7c887db28920ee723d",
+    "benchmarks/research/small-model-pilot/oracles/settings_label_preservation.rs": "ef429e9ad1a7509cd7268ad94dc223b4f1e287f37ea3acd8ff2fca8defdd9aea",
+    "docs/research/repository-completion-v1-plan.md": "56ea0f313cf449116f439e0514761d145d384c2353dc3011576ccbffa549483d",
+    "scripts/local_review_probe.py": "20267619cdb7ea71fdd5e2356b726087bd6229282cb1efc8ac15dd7f8239d752",
+    "scripts/repository_completion_probe.py": "c8cd72402c5b667058a91988368222c99110b20930ec15c5b08999227f0f3a16",
+    "scripts/small_model_pilot_preflight.py": "445020708cad841d8deb7100429e25fac4d8988b105edadc9585a44d13981d7f"
+  },
+  "events_storage": {
+    "mode": "append-only",
+    "path": "events.jsonl"
+  },
+  "fixture": "/Users/jackzhang/Documents/GitHub/PurrCode/benchmarks/alignment-fixture",
+  "fixture_files": {
+    "Cargo.toml": "2b7684196b39400571b8afb11be27dc838aa06f270858f1b00032ff89dc5d0b3",
+    "migrations/0001_initial.sql": "232dad914e89cb6570b8cf2f30a8dc2bed2f80309a76f912474271041c607d47",
+    "src/accounts.rs": "b5967379b91652569dc3fbfbeb13e34e43e68cf0223c33a828e9f0acaf5677c8",
+    "src/config.rs": "3778c74472ef5369c571d68fdd5a338e896fcfddd89350a31ffb7078e8d2b77f",
+    "src/dates.rs": "41011ff6004d6aa7f64406a58bb4aee4786ceb5275057b1569ac8dfe2bf0052a",
+    "src/health.rs": "d8033f3f07948d92cb606369d904be25e2f26fa7ae3620d2b812f5eaf8cab48b",
+    "src/http.rs": "84977ffd5f5826858e9ab0023cdca5b9240be2a4ccf69787fd600c8e41749ddb",
+    "src/items.rs": "c39bc16d402dd221c13cb15b053211c4d78c3e60c71d9f66741b77565a41fb30",
+    "src/lib.rs": "e51831d0de8022f86c984ce4d57b6bfab1659ae121c5a1c68929a429e750e766",
+    "src/pagination.rs": "84ee6a73be3d1fbe1f88d1d2c00f3c50e6dff9f670cc940410d10197756a31d2",
+    "src/parser.rs": "661b30f792daa425207766b5df0160dddf48670b3a896248824744cc2050306f",
+    "src/reporter.rs": "6b72c27b61712ee1a537bed0873176be53128aee9544892967f30d5c23312f71",
+    "src/retry.rs": "8f3dd7cab75523240878a4a0d4066618a034bd3e17a637aa4ba4a52aca5645be",
+    "src/scheduler.rs": "d322121a3f8a404ba7ef7da5cfb5dcf151e7343e63afc6645f4764013f4b58e9",
+    "src/ui/mod.rs": "46ee5f0d4e6306351586dcc52255a4ef89c7f1ad77dbdd6f0515f9c82bb4faf8",
+    "src/ui/settings.rs": "508059ffd71256b8b7ab8687f7fb27831a9933b77ffca82d0c40dc7b16f9a9e1",
+    "tests/timeout.rs": "5354e9071d24e7d7d08519c8702442fe4cb514905116e412e463e11d63987352"
+  },
+  "fixture_tree_sha256": "54e4981cb6df978b14d03c1891028d3b7592af45782ccd0cd40502576cb3de4a",
+  "freeze_kind": "repository-completion-pre-call-freeze",
+  "manifest_storage": {
+    "append_only": false,
+    "mode": "versioned_snapshot"
+  },
+  "model": "llama3.2:3b",
+  "model_digest": "a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72",
+  "model_info": {
+    "family": "llama",
+    "format": "gguf",
+    "model_info": {
+      "general.architecture": "llama",
+      "general.basename": "Llama-3.2",
+      "general.file_type": 15,
+      "general.finetune": "Instruct",
+      "general.languages": [
+        "en",
+        "de",
+        "fr",
+        "it",
+        "pt",
+        "hi",
+        "es",
+        "th"
+      ],
+      "general.parameter_count": 3212749888,
+      "general.quantization_version": 2,
+      "general.size_label": "3B",
+      "general.tags": [
+        "facebook",
+        "meta",
+        "pytorch",
+        "llama",
+        "llama-3",
+        "text-generation"
+      ],
+      "general.type": "model",
+      "llama.attention.head_count": 24,
+      "llama.attention.head_count_kv": 8,
+      "llama.attention.key_length": 128,
+      "llama.attention.layer_norm_rms_epsilon": 1e-05,
+      "llama.attention.value_length": 128,
+      "llama.block_count": 28,
+      "llama.context_length": 131072,
+      "llama.embedding_length": 3072,
+      "llama.feed_forward_length": 8192,
+      "llama.rope.dimension_count": 128,
+      "llama.rope.freq_base": 500000,
+      "llama.vocab_size": 128256,
+      "tokenizer.ggml.bos_token_id": 128000,
+      "tokenizer.ggml.eos_token_id": 128009,
+      "tokenizer.ggml.merges": null,
+      "tokenizer.ggml.model": "gpt2",
+      "tokenizer.ggml.pre": "llama-bpe",
+      "tokenizer.ggml.token_type": null,
+      "tokenizer.ggml.tokens": null
+    },
+    "modified_at": "2026-07-25T11:51:48.24022714-04:00",
+    "parameter_size": "3.2B",
+    "quantization_level": "Q4_K_M"
+  },
+  "plan": "docs/research/repository-completion-v1-plan.md",
+  "plan_sha256": "56ea0f313cf449116f439e0514761d145d384c2353dc3011576ccbffa549483d",
+  "primary_condition": "revision_rubric_json",
+  "request_parameters": {
+    "format": "json",
+    "keep_alive": "2m",
+    "num_ctx": 4096,
+    "num_predict": 32,
+    "stop": [
+      "\n\n"
+    ],
+    "temperature": 0.0,
+    "timeout_seconds": 30.0,
+    "top_p": 1.0
+  },
+  "resume_supported": false,
+  "schedule_order": "condition block, then task,candidate,seed",
+  "schedule_sha256": "323497807cc1b561108dc5359759bca2e190da92ae01db1d36a7bed82564de07",
+  "schema_version": 1,
+  "script": "/Users/jackzhang/Documents/GitHub/PurrCode/scripts/repository_completion_probe.py",
+  "script_sha256": "c8cd72402c5b667058a91988368222c99110b20930ec15c5b08999227f0f3a16",
+  "seeds": [
+    17,
+    29
+  ],
+  "server_version": "0.4.2",
+  "smoke_sha256": "be5302481ea6e9e52138ffca130d12806de0b4fda94029751b2c6f82b6fd8508",
+  "study_freeze": {
+    "path": "study-freeze.json",
+    "sha256": "72cec0f2c78f5103319f301f3a153ff1113edd2ee20571e34f9aca6d26020c49"
+  }
+}

@@ -6,31 +6,31 @@ license.workspace = true
 
 [dependencies]
 purrcode-runtime-core = { path = "../runtime-core" }
+purrcode-provider-gateway = { path = "../provider-gateway" }
+futures.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 # The benchmark runner drives a live daemon over HTTP. Kept optional so the
 # schema crate itself stays dependency-light for every other consumer.
 reqwest = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"], optional = true }
 
 [dev-dependencies]
 async-trait.workspace = true
-futures.workspace = true
 purrcode-agent-runtime = { path = "../agent-runtime" }
 purrcode-ninelives = { path = "../ninelives-recovery" }
 purrcode-pawgate = { path = "../pawgate-runtime" }
-purrcode-provider-gateway = { path = "../provider-gateway" }
-schemars.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["full"] }
 
 [features]
 # Off by default: `cargo build --workspace` should not pull an HTTP client in
 # for a crate most callers use only for its schemas.
-benchmark = ["dep:reqwest", "dep:tokio"]
+benchmark = ["dep:reqwest"]
 
 [[bin]]
 name = "purrcode-collaboration-benchmark"
@@ -40,4 +40,9 @@ required-features = ["benchmark"]
 [[bin]]
 name = "purrcode-alignment-benchmark"
 path = "src/bin/alignment_benchmark.rs"
+required-features = ["benchmark"]
+
+[[bin]]
+name = "purrcode-repository-completion-e2e"
+path = "src/bin/repository_completion_e2e.rs"
 required-features = ["benchmark"]

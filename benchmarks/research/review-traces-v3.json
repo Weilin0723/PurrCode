@@ -1,0 +1,1834 @@
+{
+  "schema_version": 3,
+  "description": "Frozen v3 synthetic component fixture: 16 new paired base-task clusters. Scorer labels and rationales are excluded from model prompts.",
+  "cases": [
+    {
+      "id": "retry-budget-fresh",
+      "pair_id": "retry-budget",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: allow four completed attempts and keep the retry function public.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "retry(3) is true and retry(4) is false."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "retry remains a public function."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-retry-budget-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "retry threshold is four"
+            },
+            {
+              "kind": "code_fact",
+              "value": "retry is public"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "public retry symbol retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-retry-budget-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "retry-budget-adverse",
+      "pair_id": "retry-budget",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: allow four completed attempts and keep the retry function public.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "retry(3) is true and retry(4) is false."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "retry remains a public function."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-retry-budget-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "retry threshold is four"
+            },
+            {
+              "kind": "code_fact",
+              "value": "retry is public"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "public retry symbol retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 1,
+          "artifact_digest": "tree-retry-budget-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "Evidence is bound to a different requirement revision."
+    },
+    {
+      "id": "timeout-unit-fresh",
+      "pair_id": "timeout-unit",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 3,
+          "text": "Revision 3: store the timeout in milliseconds and preserve the timeout key.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "A 2 second timeout is stored as 2000 milliseconds."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The serialized key remains timeout."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 3,
+          "digest": "tree-timeout-unit-r3",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "timeout value is 2000"
+            },
+            {
+              "kind": "code_fact",
+              "value": "serialized key is timeout"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "timeout key retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 3,
+          "artifact_digest": "tree-timeout-unit-r3",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "timeout-unit-adverse",
+      "pair_id": "timeout-unit",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 3,
+          "text": "Revision 3: store the timeout in milliseconds and preserve the timeout key.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "A 2 second timeout is stored as 2000 milliseconds."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The serialized key remains timeout."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 3,
+          "digest": "tree-timeout-unit-r3",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "timeout value is 2000"
+            },
+            {
+              "kind": "code_fact",
+              "value": "serialized key is timeout"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "timeout key retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 3,
+          "artifact_digest": "sha256:2db91cb8d2f24e0782190ddf1c244ffb",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "Evidence is bound to a different artifact digest."
+    },
+    {
+      "id": "missing-item-fresh",
+      "pair_id": "missing-item",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: missing items return 404 with the existing error field.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Missing items return HTTP 404."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The JSON payload retains the error field."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-missing-item-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "status is 404"
+            },
+            {
+              "kind": "code_fact",
+              "value": "payload has error"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "error field retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-missing-item-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "missing-item-adverse",
+      "pair_id": "missing-item",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: missing items return 404 with the existing error field.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Missing items return HTTP 404."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The JSON payload retains the error field."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-missing-item-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "status is 404"
+            },
+            {
+              "kind": "code_fact",
+              "value": "payload has error"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "error field retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-missing-item-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "At least one declared requirement lacks an observation."
+    },
+    {
+      "id": "stable-sort-fresh",
+      "pair_id": "stable-sort",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 1,
+          "text": "Sort records by score descending while preserving input order for equal scores.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Records are ordered by descending score."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "Equal-score records preserve input order."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 1,
+          "digest": "tree-stable-sort-r1",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "scores descend"
+            },
+            {
+              "kind": "code_fact",
+              "value": "ties are stable"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "stable tie order"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 1,
+          "artifact_digest": "tree-stable-sort-r1",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "stable-sort-adverse",
+      "pair_id": "stable-sort",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 1,
+          "text": "Sort records by score descending while preserving input order for equal scores.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Records are ordered by descending score."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "Equal-score records preserve input order."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 1,
+          "digest": "tree-stable-sort-r1",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "scores descend"
+            },
+            {
+              "kind": "code_fact",
+              "value": "ties are stable"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "stable tie order"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 1,
+          "artifact_digest": "tree-stable-sort-r1",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "FAIL",
+              "detail": "independent check failed"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "At least one declared requirement has failing evidence."
+    },
+    {
+      "id": "cursor-empty-fresh",
+      "pair_id": "cursor-empty",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 4,
+          "text": "Revision 4: an empty page returns no next cursor and keeps the items array.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Empty pages have no next cursor."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The response keeps an items array."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 4,
+          "digest": "tree-cursor-empty-r4",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "next cursor is absent"
+            },
+            {
+              "kind": "code_fact",
+              "value": "items is an empty array"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "items array retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 4,
+          "artifact_digest": "tree-cursor-empty-r4",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "cursor-empty-adverse",
+      "pair_id": "cursor-empty",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 4,
+          "text": "Revision 4: an empty page returns no next cursor and keeps the items array.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Empty pages have no next cursor."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The response keeps an items array."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 4,
+          "digest": "tree-cursor-empty-r4",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "next cursor is absent"
+            },
+            {
+              "kind": "code_fact",
+              "value": "items is an empty array"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "items array retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 4,
+          "artifact_digest": "tree-cursor-empty-r4",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "UNKNOWN",
+              "detail": "no conclusive observation is available"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "At least one declared requirement has unknown evidence."
+    },
+    {
+      "id": "config-precedence-fresh",
+      "pair_id": "config-precedence",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: command-line flags override environment values; defaults remain the final fallback.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Command-line flags override environment values."
+            },
+            {
+              "id": "r2",
+              "kind": "behavior",
+              "text": "Defaults apply only when neither flag nor environment value exists."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-config-precedence-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "precedence is flag then environment then default"
+            }
+          ],
+          "preservation": []
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-config-precedence-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "config-precedence-adverse",
+      "pair_id": "config-precedence",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: command-line flags override environment values; defaults remain the final fallback.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Command-line flags override environment values."
+            },
+            {
+              "id": "r2",
+              "kind": "behavior",
+              "text": "Defaults apply only when neither flag nor environment value exists."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-config-precedence-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "precedence is flag then environment then default"
+            }
+          ],
+          "preservation": []
+        },
+        "evidence": {
+          "revision": 1,
+          "artifact_digest": "tree-config-precedence-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "Evidence is bound to a different requirement revision."
+    },
+    {
+      "id": "atomic-save-fresh",
+      "pair_id": "atomic-save",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 1,
+          "text": "Save through a temporary file and atomically replace the destination without changing its permissions.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "The destination is replaced atomically."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "Existing destination permissions are retained."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 1,
+          "digest": "tree-atomic-save-r1",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "temporary file is renamed atomically"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "mode bits retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 1,
+          "artifact_digest": "tree-atomic-save-r1",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "atomic-save-adverse",
+      "pair_id": "atomic-save",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 1,
+          "text": "Save through a temporary file and atomically replace the destination without changing its permissions.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "The destination is replaced atomically."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "Existing destination permissions are retained."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 1,
+          "digest": "tree-atomic-save-r1",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "temporary file is renamed atomically"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "mode bits retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 1,
+          "artifact_digest": "sha256:950f19fd2af94a81bc5d817f21367db6",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "Evidence is bound to a different artifact digest."
+    },
+    {
+      "id": "deprecated-alias-fresh",
+      "pair_id": "deprecated-alias",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 3,
+          "text": "Revision 3: rename fetch_one to get_one but keep fetch_one as a deprecated alias.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "get_one exposes the lookup behavior."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "fetch_one remains as a deprecated alias."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 3,
+          "digest": "tree-deprecated-alias-r3",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "get_one works"
+            },
+            {
+              "kind": "code_fact",
+              "value": "fetch_one delegates with a warning"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "fetch_one alias retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 3,
+          "artifact_digest": "tree-deprecated-alias-r3",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "deprecated-alias-adverse",
+      "pair_id": "deprecated-alias",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 3,
+          "text": "Revision 3: rename fetch_one to get_one but keep fetch_one as a deprecated alias.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "get_one exposes the lookup behavior."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "fetch_one remains as a deprecated alias."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 3,
+          "digest": "tree-deprecated-alias-r3",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "get_one works"
+            },
+            {
+              "kind": "code_fact",
+              "value": "fetch_one delegates with a warning"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "fetch_one alias retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 3,
+          "artifact_digest": "tree-deprecated-alias-r3",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "At least one declared requirement lacks an observation."
+    },
+    {
+      "id": "header-case-fresh",
+      "pair_id": "header-case",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: compare HTTP header names case-insensitively and preserve their original values.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Header-name lookup is case-insensitive."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "Header values are not normalized or rewritten."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-header-case-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "header keys use case-folded lookup"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "header values unchanged"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-header-case-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "header-case-adverse",
+      "pair_id": "header-case",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: compare HTTP header names case-insensitively and preserve their original values.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Header-name lookup is case-insensitive."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "Header values are not normalized or rewritten."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-header-case-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "header keys use case-folded lookup"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "header values unchanged"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-header-case-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "FAIL",
+              "detail": "independent check failed"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "At least one declared requirement has failing evidence."
+    },
+    {
+      "id": "path-root-fresh",
+      "pair_id": "path-root",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 5,
+          "text": "Revision 5: normalize dot segments but reject paths that escape the workspace root.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Dot segments inside the workspace are normalized."
+            },
+            {
+              "id": "r2",
+              "kind": "safety",
+              "text": "Parent traversal outside the workspace is rejected."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 5,
+          "digest": "tree-path-root-r5",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "internal dot segments normalize"
+            },
+            {
+              "kind": "code_fact",
+              "value": "escaping traversal is rejected"
+            }
+          ],
+          "preservation": []
+        },
+        "evidence": {
+          "revision": 5,
+          "artifact_digest": "tree-path-root-r5",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "path-root-adverse",
+      "pair_id": "path-root",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 5,
+          "text": "Revision 5: normalize dot segments but reject paths that escape the workspace root.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Dot segments inside the workspace are normalized."
+            },
+            {
+              "id": "r2",
+              "kind": "safety",
+              "text": "Parent traversal outside the workspace is rejected."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 5,
+          "digest": "tree-path-root-r5",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "internal dot segments normalize"
+            },
+            {
+              "kind": "code_fact",
+              "value": "escaping traversal is rejected"
+            }
+          ],
+          "preservation": []
+        },
+        "evidence": {
+          "revision": 5,
+          "artifact_digest": "tree-path-root-r5",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "UNKNOWN",
+              "detail": "no conclusive observation is available"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "At least one declared requirement has unknown evidence."
+    },
+    {
+      "id": "cache-zero-fresh",
+      "pair_id": "cache-zero",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: a zero cache TTL disables caching; positive TTL behavior stays unchanged.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "TTL zero bypasses both cache reads and writes."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "Positive TTL entries still expire normally."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-cache-zero-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "zero bypasses cache"
+            },
+            {
+              "kind": "code_fact",
+              "value": "positive TTL expires"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "positive TTL semantics retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-cache-zero-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "cache-zero-adverse",
+      "pair_id": "cache-zero",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: a zero cache TTL disables caching; positive TTL behavior stays unchanged.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "TTL zero bypasses both cache reads and writes."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "Positive TTL entries still expire normally."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-cache-zero-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "zero bypasses cache"
+            },
+            {
+              "kind": "code_fact",
+              "value": "positive TTL expires"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "positive TTL semantics retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 3,
+          "artifact_digest": "tree-cache-zero-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "Evidence is bound to a different requirement revision."
+    },
+    {
+      "id": "csv-newline-fresh",
+      "pair_id": "csv-newline",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 1,
+          "text": "Parse quoted CSV fields containing newlines and keep empty trailing columns.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Quoted embedded newlines remain in one field."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "A trailing delimiter produces an empty final column."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 1,
+          "digest": "tree-csv-newline-r1",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "quoted newline parsed"
+            },
+            {
+              "kind": "code_fact",
+              "value": "trailing empty column retained"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "empty trailing column retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 1,
+          "artifact_digest": "tree-csv-newline-r1",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "csv-newline-adverse",
+      "pair_id": "csv-newline",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 1,
+          "text": "Parse quoted CSV fields containing newlines and keep empty trailing columns.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Quoted embedded newlines remain in one field."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "A trailing delimiter produces an empty final column."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 1,
+          "digest": "tree-csv-newline-r1",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "quoted newline parsed"
+            },
+            {
+              "kind": "code_fact",
+              "value": "trailing empty column retained"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "empty trailing column retained"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 1,
+          "artifact_digest": "sha256:4efab9a27da547899385940846c503c1",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "Evidence is bound to a different artifact digest."
+    },
+    {
+      "id": "idempotency-key-fresh",
+      "pair_id": "idempotency-key",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 3,
+          "text": "Revision 3: repeated requests with the same idempotency key reuse the first result.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "The first result is reused for a repeated idempotency key."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 3,
+          "digest": "tree-idempotency-key-r3",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "duplicate key returns stored result"
+            }
+          ],
+          "preservation": []
+        },
+        "evidence": {
+          "revision": 3,
+          "artifact_digest": "tree-idempotency-key-r3",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "idempotency-key-adverse",
+      "pair_id": "idempotency-key",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 3,
+          "text": "Revision 3: repeated requests with the same idempotency key reuse the first result.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "The first result is reused for a repeated idempotency key."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 3,
+          "digest": "tree-idempotency-key-r3",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "duplicate key returns stored result"
+            }
+          ],
+          "preservation": []
+        },
+        "evidence": {
+          "revision": 3,
+          "artifact_digest": "tree-idempotency-key-r3",
+          "observations": []
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "At least one declared requirement lacks an observation."
+    },
+    {
+      "id": "backoff-cap-fresh",
+      "pair_id": "backoff-cap",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: exponential backoff is capped at 30 seconds.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Backoff never exceeds 30 seconds."
+            },
+            {
+              "id": "r2",
+              "kind": "behavior",
+              "text": "Delays below the cap remain exponential."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-backoff-cap-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "delay uses min(exponential, 30)"
+            }
+          ],
+          "preservation": []
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-backoff-cap-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "backoff-cap-adverse",
+      "pair_id": "backoff-cap",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: exponential backoff is capped at 30 seconds.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Backoff never exceeds 30 seconds."
+            },
+            {
+              "id": "r2",
+              "kind": "behavior",
+              "text": "Delays below the cap remain exponential."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-backoff-cap-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "delay uses min(exponential, 30)"
+            }
+          ],
+          "preservation": []
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-backoff-cap-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "FAIL",
+              "detail": "independent check failed"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "At least one declared requirement has failing evidence."
+    },
+    {
+      "id": "schema-extra-fresh",
+      "pair_id": "schema-extra",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 4,
+          "text": "Revision 4: reject unknown top-level fields but preserve optional metadata.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Unknown top-level fields are rejected."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The optional metadata field remains accepted."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 4,
+          "digest": "tree-schema-extra-r4",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "unknown keys fail validation"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "metadata remains optional"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 4,
+          "artifact_digest": "tree-schema-extra-r4",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "schema-extra-adverse",
+      "pair_id": "schema-extra",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 4,
+          "text": "Revision 4: reject unknown top-level fields but preserve optional metadata.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Unknown top-level fields are rejected."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The optional metadata field remains accepted."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 4,
+          "digest": "tree-schema-extra-r4",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "unknown keys fail validation"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "metadata remains optional"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 4,
+          "artifact_digest": "tree-schema-extra-r4",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "UNKNOWN",
+              "detail": "no conclusive observation is available"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "At least one declared requirement has unknown evidence."
+    },
+    {
+      "id": "unicode-length-fresh",
+      "pair_id": "unicode-length",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: enforce the name limit by Unicode scalar count, not UTF-8 bytes.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Name length uses Unicode scalar count."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The existing maximum of 32 is unchanged."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 2,
+          "digest": "tree-unicode-length-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "length counts characters"
+            },
+            {
+              "kind": "code_fact",
+              "value": "limit remains 32"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "maximum remains 32"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-unicode-length-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Every declared requirement has current PASS evidence bound to the current artifact."
+    },
+    {
+      "id": "unicode-length-adverse",
+      "pair_id": "unicode-length",
+      "data_kind": "held_out_authored_synthetic_review_trace",
+      "prompt_data": {
+        "request": {
+          "revision": 2,
+          "text": "Revision 2: enforce the name limit by Unicode scalar count, not UTF-8 bytes.",
+          "requirements": [
+            {
+              "id": "r1",
+              "kind": "behavior",
+              "text": "Name length uses Unicode scalar count."
+            },
+            {
+              "id": "r2",
+              "kind": "preservation",
+              "text": "The existing maximum of 32 is unchanged."
+            }
+          ]
+        },
+        "artifact": {
+          "revision": 1,
+          "digest": "tree-unicode-length-r2",
+          "facts": [
+            {
+              "kind": "code_fact",
+              "value": "length counts characters"
+            },
+            {
+              "kind": "code_fact",
+              "value": "limit remains 32"
+            }
+          ],
+          "preservation": [
+            {
+              "kind": "preservation_fact",
+              "value": "maximum remains 32"
+            }
+          ]
+        },
+        "evidence": {
+          "revision": 2,
+          "artifact_digest": "tree-unicode-length-r2",
+          "observations": [
+            {
+              "requirement_id": "r1",
+              "status": "PASS",
+              "detail": "independent check passed for r1"
+            },
+            {
+              "requirement_id": "r2",
+              "status": "PASS",
+              "detail": "independent check passed for r2"
+            }
+          ]
+        }
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "The artifact is bound to a different requirement revision."
+    }
+  ]
+}

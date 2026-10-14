@@ -509,7 +509,7 @@ pub async fn qualify_model(
             messages: vec![
                 ModelMessage {
                     role: "system".into(),
-                    content: "This is a deterministic model qualification. Follow the requested output exactly and place it in the `answer` field.".into(),
+                    content: "This is a deterministic model qualification. Respond with exactly one JSON object matching {\"answer\":\"<requested answer>\"}; replace the placeholder with the requested output, keep `answer` as the only key, and emit no other text.".into(),
                 },
                 ModelMessage {
                     role: "user".into(),
@@ -1917,6 +1917,19 @@ impl HttpProvider {
                     "messages": messages,
                     "stream": stream,
                 });
+                // DeepSeek V4 defaults to thinking mode. Its reasoning lives
+                // in `reasoning_content`, while a schema-constrained PurrCode
+                // turn must put one complete JSON object in `content`.
+                // Complex qualification cases can otherwise exhaust their
+                // output budget in reasoning and return an empty content
+                // field, which looks like invalid JSON. Structured turns do
+                // not need hidden chain-of-thought, so select the provider's
+                // documented non-thinking mode explicitly. Scope this to the
+                // official endpoint: `thinking` is not part of the generic
+                // OpenAI chat-completions contract.
+                if schema.is_some() && self.base_url.host_str() == Some("api.deepseek.com") {
+                    body["thinking"] = json!({"type": "disabled"});
+                }
                 if let Some(maximum) = request.max_output_tokens {
                     body["max_tokens"] = json!(maximum);
                 }
@@ -3414,6 +3427,33 @@ router = "ollama/old:1b"
         assert_eq!(body["stream"], false);
         assert_eq!(body["response_format"]["type"], "json_object");
         assert!(body.get("format").is_none());
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn deepseek_structured_requests_disable_default_thinking_mode() {
+        let provider = HttpProvider::from_config(
+            "deepseek".into(),
+            ProviderConfig::OpenaiCompatible {
+                base_url: Url::parse("https://api.deepseek.com/").unwrap(),
+                api_key_env: None,
+                local: false,
+                headers: BTreeMap::new(),
+                capabilities: BTreeMap::new(),
+            },
+            None,
+        )
+        .unwrap();
+
+        let structured = provider.response_body(
+            &test_request("deepseek"),
+            false,
+            Some(schemars::schema_for!(QualificationAnswer)),
+        );
+        assert_eq!(structured["thinking"]["type"], "disabled");
+
+        let streamed = provider.response_body(&test_request("deepseek"), true, None);
+        assert!(streamed.get("thinking").is_none());
     }
 
     #[tokio::test]

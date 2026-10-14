@@ -1,5 +1,73 @@
 # Implementation status
 
+Updated: 2026-10-13 (v1.5 alignment-first autonomous development on
+`feature/v1.5-alignment-first-autonomous-development`)
+
+## v1.5 — Alignment-first autonomous development
+
+Full design in [`v1.5-architecture.md`](v1.5-architecture.md).
+
+**Implemented and under release-candidate qualification.** User intent is compiled into a
+quotation-backed expectation contract; required clauses are independently reviewed for coverage,
+code quality, and user alignment; and a deterministic delivery reducer evaluates durable
+requirements, review findings, validation evidence, scope, and unanswered explicitly ambiguous
+questions. Repository reads, mutations, validation commands, and review evidence retain the
+PawGate → durable authorization → Claw recheck boundary.
+
+Alignment evidence now binds to the last revision that changed its requirement and to the exact
+repository patch digest reviewed. The delivery reducer re-checks both bindings against the current
+snapshot, post-gate execution forces a fresh gate, review results are discarded if the repository
+changes while review is running, and same-text corrections preserve valid evidence. The local
+mechanism benchmark passes all six supported revision/freshness scenarios; the frozen 12-trace v2
+development probe is recorded in [`research/benchmark-results-2026-10-11.md`](research/benchmark-results-2026-10-11.md).
+
+The 20-task live alignment benchmark, machine-readable JSON output, deterministic fixture checks,
+and focused regressions are implemented. Remote-only DeepSeek dogfooding on 2026-08-12 qualified
+both configured models at 7/7 and produced focused passing results, then exposed several runtime
+recovery defects that were fixed with regression coverage. A coherent catalog run reached four
+consecutive `gate=ready` tasks before a fifth lifecycle defect was found and fixed. The provider
+account then returned HTTP 402 `Insufficient Balance` before that fix and the remaining catalog
+could be rerun. The full live benchmark and manual native-IDE walkthrough therefore remain open
+release gates; partial or interrupted runs are not represented as release qualification. See
+[`reports/benchmark.md`](reports/benchmark.md) and
+[`reports/provider-qualification.md`](reports/provider-qualification.md).
+
+The legacy Ollama JSON-mode qualification prompt now states the exact `answer` object shape. A
+fresh local-only `llama3.2:3b` run improved from schema-wide failure to 5/7 but still failed two
+exact-output cases, so it remains unqualified for coding or high-risk judgment. A subsequent
+preregistered repository-snapshot component study completed its full 288-call frozen schedule
+across 3B primary and 1B secondary models. In the sole confirmatory 3B/rubric comparison, the
+revision/artifact conjunction reduced external false-ready decisions from 23/48 to 13/48 across
+six consistently directional task clusters (`p=0.03125`, exact two-sided sign test), but correct
+coverage fell from 10/24 to 5/24 and failed the predeclared 5-point usefulness guardrail. Both run
+audits are valid; this is evidence of a safety–availability trade-off in completion decisions, not
+end-to-end coding-agent efficacy. See [`research/paper-draft.md`](research/paper-draft.md) and
+[`research/repository-completion-v1-plan.md`](research/repository-completion-v1-plan.md).
+
+The model-external DeepSeek V4 Pro follow-up is also complete. Its first frozen 144-call run was
+operationally inconclusive because 26 responses hit the 128-token JSON ceiling. A separately
+frozen outcome-aware repair changed only the cap to 256 and reran all calls: 143/144 were valid,
+and false-ready fell from 30/48 to 12/48 across six directional clusters (`p=0.03125`; bootstrap
+95% CI [−45.8, −29.2] points). Correct coverage fell from 24/24 to 12/24, so the five-point
+guardrail again failed. This strengthens the component-level safety–availability finding but does
+not satisfy the open cross-repository or end-to-end evidence gate. The post-run anonymization scan
+also caused a credential-shaped unit-test literal to be replaced with a synthetic token; the
+original runner hash remains in both freezes and a declared-redaction audit verifies that no
+request, event, result, or analysis artifact changed. See
+[`research/repository-completion-deepseek-results.md`](research/repository-completion-deepseek-results.md).
+
+The repository-disjoint follow-up is now implemented and frozen for the 30-task SWE-bench-Live study:
+30 tasks across 10 public repositories, with B/C alignment arms crossed with static/correction
+requirements, a deterministic 120-cell run bundle, a two-phase P1 delivery after the first write
+phase settles, and a pinned official hidden oracle. The C arm exercises the live review-and-gate
+loop rather than reusing stale component labels; the runner records only sanitized outcome rows
+(no hidden test bodies or test lists). Because the selected public images are x86_64-only and
+Rosetta can terminate native extension tests with `Illegal instruction`, final oracle/e2e evidence
+is gated to the new x86_64 GitHub Actions matrix in `.github/workflows/research-swebench-live.yml`.
+No E2E outcome is claimed until that workflow completes and the frozen analysis passes.
+
+---
+
 Updated: 2026-08-11 (v1.4 collaborative agent development on
 `feature/v1.4-collaborative-agent-development`)
 

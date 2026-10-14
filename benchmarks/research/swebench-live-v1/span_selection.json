@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "selection_rule": "One unique original sentence or concise behavioral span that states the task's observable constraint; no generated wording, solution metadata, or oracle data.",
+  "tasks": [
+    {
+      "instance_id": "pylint-dev__pylint-9771",
+      "span": "Annotated module level constant not checked for `invalid-name`",
+      "rationale": "The issue's opening behavioral statement identifies the missing diagnostic and its exact rule name."
+    },
+    {
+      "instance_id": "aws-cloudformation__cfn-lint-3475",
+      "span": "!GetAtt on dynamic `Outputs` values should work and not cause E1010 errors.",
+      "rationale": "The explicit expected-behavior sentence names both the supported construct and the prohibited diagnostic."
+    },
+    {
+      "instance_id": "keras-team__keras-19973",
+      "span": "The last dimension of `query_shape` and `value_shape` must be equal, but are 16, 8.",
+      "rationale": "The reported assertion sentence is a concrete shape constraint for the affected layer call."
+    },
+    {
+      "instance_id": "falconry__falcon-2248",
+      "span": "We need support for [the 'Partitioned' attribute](https://developers.google.com/privacy-sandbox/3pcd/chips) in cookies.",
+      "rationale": "The issue states the requested cookie behavior directly and identifies the exact standards attribute."
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-28577",
+      "span": "Zero spacing between the axes, deterministically.",
+      "rationale": "The expected-outcome span gives the observable layout requirement and deterministic condition."
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-12598",
+      "span": "Presumably due to #12508, nesting a `figure` directive in a `seealso` admonitions now fails LaTeX builds:",
+      "rationale": "This original sentence identifies the concrete nested-directive behavior that must be handled by the LaTeX builder."
+    },
+    {
+      "instance_id": "instructlab__instructlab-1762",
+      "span": "Downloaded models are by definition transient data that should live in `XDG_CACHE_HOME`.",
+      "rationale": "The statement gives a clear storage-location constraint for the download operation."
+    },
+    {
+      "instance_id": "python-babel__babel-1104",
+      "span": "Either raise a babel error or allow for a reasonable default (e.g. the .dat file without the modifier).",
+      "rationale": "The explicit expected-results sentence defines the acceptable behavior for an unavailable modified locale."
+    },
+    {
+      "instance_id": "bridgecrewio__checkov-6612",
+      "span": "Crashing when 2 dynamic WAF \"rule\" blocks are defined.",
+      "rationale": "The issue heading is a concise, task-specific failure condition tied to the dynamic-rule configuration."
+    },
+    {
+      "instance_id": "pylint-dev__pylint-9772",
+      "span": "In the past, pylint had this behavior - it did not complain about `invalid-name` here.",
+      "rationale": "The original expected-behavior discussion states the regression and exact diagnostic that should be absent."
+    },
+    {
+      "instance_id": "pylint-dev__pylint-9785",
+      "span": "No error should be raised.",
+      "rationale": "The expected-behavior sentence is unambiguous in the surrounding TypeVar-default task context."
+    },
+    {
+      "instance_id": "aws-cloudformation__cfn-lint-3498",
+      "span": "**cfn-lint** honors the condition while checking the resource availability.",
+      "rationale": "The expected-behavior sentence states the conditional resource-availability rule directly."
+    },
+    {
+      "instance_id": "aws-cloudformation__cfn-lint-3501",
+      "span": "W2001 \"Parameter not used\" false positive when using Fn::Transform in AWS::ApiGateway::RestApi",
+      "rationale": "The title uniquely identifies the false-positive constraint and the exact transform/resource combination."
+    },
+    {
+      "instance_id": "keras-team__keras-20079",
+      "span": "My error occurs only when performing load_model and then doing inference (I can load the model fine but errors pop up during inference).",
+      "rationale": "This original sentence isolates the observable failure phase after model deserialization."
+    },
+    {
+      "instance_id": "keras-team__keras-20120",
+      "span": "When model have multiple outputs formed as a tuple and we are doing something like this `model2 = models.Model.from_config(model1.get_config())` the output of new model is a list (not tuple).",
+      "rationale": "The opening behavior sentence names the tuple/list preservation requirement and the exact reconstruction path."
+    },
+    {
+      "instance_id": "falconry__falcon-2254",
+      "span": "Emit a deprecation warning in a 4.x release, remove in 5.0.",
+      "rationale": "The original compatibility plan gives a concrete, versioned deprecation constraint."
+    },
+    {
+      "instance_id": "falconry__falcon-2366",
+      "span": "It seems that appending `CRLF` after the closing `--`  is not strictly required by [RFC 2046](https://www.rfc-editor.org/rfc/rfc2046) if the client does not include any trailing epilogue, although it is a common convention that nearly all clients follow.",
+      "rationale": "This original standards-based sentence specifies the parser's tolerated wire-format condition."
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-28584",
+      "span": "It seems like `ax.xaxis.set_label(...)` does not label the axis however.",
+      "rationale": "The issue's behavioral description names the exact API call and its observable failure."
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-28734",
+      "span": "I would expect the extra spacing to be added at the bottom, not be inserted between the suptitle and the plots.",
+      "rationale": "The expected-outcome sentence precisely constrains where excess layout space belongs."
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-12615",
+      "span": "The label of concern exists twice and varies only by case, which is a meaningful distinction in HTML labels.",
+      "rationale": "This original sentence states the case-sensitive label identity that the inventory must preserve."
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-12737",
+      "span": "The 7.4.0 HTML build is ok (like PDF from 7.0.1).",
+      "rationale": "The sentence supplies a concrete output-format compatibility constraint for the reported directive."
+    },
+    {
+      "instance_id": "instructlab__instructlab-2004",
+      "span": "Default `samples_per_save == #samples` so that a checkpoint is saved per-epoch, at minimum.",
+      "rationale": "The final requirement sentence defines both the default threshold and the minimum save cadence."
+    },
+    {
+      "instance_id": "instructlab__instructlab-2789",
+      "span": "To accommodate this, we need the option to override with legacy template in the config, otherwise some models will always auto-select the new template.",
+      "rationale": "The original sentence states the required configuration override and why automatic selection is insufficient."
+    },
+    {
+      "instance_id": "python-babel__babel-1120",
+      "span": "Long path with space lead to wrong PO file.",
+      "rationale": "The issue heading is the only concise behavioral statement and names the path/serialization failure."
+    },
+    {
+      "instance_id": "python-babel__babel-1126",
+      "span": "It should be either 1 or 2 (depending on whether you expect the lineno of gettext or the lineno of the value), but not 3.",
+      "rationale": "The expected-results sentence provides an exact acceptable line-number range and rejects the observed value."
+    },
+    {
+      "instance_id": "bridgecrewio__checkov-6630",
+      "span": "CKV2_AWS_5: SG attached not recognized in DMS serverless",
+      "rationale": "The title identifies the exact check and resource context for the recognition failure."
+    },
+    {
+      "instance_id": "bridgecrewio__checkov-6687",
+      "span": "Check CKV2_AWS_5 is failing when you try to create an Elastic DocumentDB cluster using Terraform because the Security Group attached to the cluster is not recognized.",
+      "rationale": "The issue sentence states the exact check, resource, and relationship that must be recognized."
+    },
+    {
+      "instance_id": "patroni__patroni-3112",
+      "span": "Patroni is not supposed to update synchronous_standby_names with current leader node name.",
+      "rationale": "The expected-behavior sentence gives a direct replication-state invariant."
+    },
+    {
+      "instance_id": "patroni__patroni-3119",
+      "span": "Patroni operates normalli",
+      "rationale": "The original expected-behavior field is terse but is the only explicit requirement for this compatibility regression."
+    },
+    {
+      "instance_id": "patroni__patroni-3152",
+      "span": "Tests pass, as they did with 3.2.2",
+      "rationale": "The expected-behavior sentence specifies the compatibility outcome and reference version."
+    }
+  ]
+}

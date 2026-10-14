@@ -1,0 +1,267 @@
+{
+  "schema_version": 1,
+  "description": "Human-authored synthetic completion-review traces, not repository coding tasks, executed tests, or recorded live executions. Labels are fixture annotations; no independent human adjudication yet.",
+  "cases": [
+    {
+      "id": "changed-behavior-current",
+      "pair_id": "changed-behavior",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 2: retry(attempts_so_far) receives the number of attempts already completed, starting at 0; return True only when attempts_so_far < 4. Replace revision 1's limit of 3.",
+      "artifact": {
+        "revision": 2,
+        "digest": "tree-b",
+        "code": "def retry(attempts_so_far): return attempts_so_far < 4"
+      },
+      "observed_evidence": {
+        "requirement_revision": 2,
+        "artifact_digest": "tree-b",
+        "checks": [
+          "attempts_so_far=3 returns True",
+          "attempts_so_far=4 returns False"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Latest behavior must be implemented and evidence must cover the current requirement and tree."
+    },
+    {
+      "id": "changed-behavior-adverse",
+      "pair_id": "changed-behavior",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 2: retry(attempts_so_far) receives the number of attempts already completed, starting at 0; return True only when attempts_so_far < 4. Replace revision 1's limit of 3.",
+      "artifact": {
+        "revision": 2,
+        "digest": "tree-b",
+        "code": "def retry(attempts_so_far): return attempts_so_far < 3"
+      },
+      "observed_evidence": {
+        "requirement_revision": 1,
+        "artifact_digest": "tree-a",
+        "checks": [
+          "attempts_so_far=3 returns False"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "Latest behavior must be implemented and evidence must cover the current requirement and tree."
+    },
+    {
+      "id": "artifact-freshness-current",
+      "pair_id": "artifact-freshness",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 1: timeout() must return 30.",
+      "artifact": {
+        "revision": 1,
+        "digest": "tree-b",
+        "code": "def timeout(): return 30"
+      },
+      "observed_evidence": {
+        "requirement_revision": 1,
+        "artifact_digest": "tree-b",
+        "checks": [
+          "timeout() == 30"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "A test of tree-a does not establish the behavior of edited tree-b."
+    },
+    {
+      "id": "artifact-freshness-adverse",
+      "pair_id": "artifact-freshness",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 1: timeout() must return 30.",
+      "artifact": {
+        "revision": 1,
+        "digest": "tree-b",
+        "code": "def timeout(): return 3"
+      },
+      "observed_evidence": {
+        "requirement_revision": 1,
+        "artifact_digest": "tree-a",
+        "checks": [
+          "timeout() == 30"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "A test of tree-a does not establish the behavior of edited tree-b."
+    },
+    {
+      "id": "scope-preservation-current",
+      "pair_id": "scope-preservation",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 2: set page_size to 50. Do not change auth.py.",
+      "artifact": {
+        "revision": 2,
+        "digest": "tree-b",
+        "code": "page_size = 50",
+        "changed_paths": [
+          "config.py"
+        ],
+        "protected_paths_unchanged": true
+      },
+      "observed_evidence": {
+        "requirement_revision": 2,
+        "artifact_digest": "tree-b",
+        "checks": [
+          "page_size == 50"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "Passing functional tests does not waive an explicit preservation constraint."
+    },
+    {
+      "id": "scope-preservation-adverse",
+      "pair_id": "scope-preservation",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 2: set page_size to 50. Do not change auth.py.",
+      "artifact": {
+        "revision": 2,
+        "digest": "tree-b",
+        "code": "page_size = 50",
+        "changed_paths": [
+          "config.py",
+          "auth.py"
+        ],
+        "protected_paths_unchanged": false
+      },
+      "observed_evidence": {
+        "requirement_revision": 2,
+        "artifact_digest": "tree-b",
+        "checks": [
+          "page_size == 50"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "Passing functional tests does not waive an explicit preservation constraint."
+    },
+    {
+      "id": "api-compatibility-current",
+      "pair_id": "api-compatibility",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 2: return 404 for missing items, keep the error JSON key as error.",
+      "artifact": {
+        "revision": 2,
+        "digest": "tree-b",
+        "code": "return 404, {\"error\": \"missing\"}"
+      },
+      "observed_evidence": {
+        "requirement_revision": 2,
+        "artifact_digest": "tree-b",
+        "checks": [
+          "status == 404",
+          "payload has error key"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "The requested status and preserved response schema must both hold."
+    },
+    {
+      "id": "api-compatibility-adverse",
+      "pair_id": "api-compatibility",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 2: return 404 for missing items, keep the error JSON key as error.",
+      "artifact": {
+        "revision": 2,
+        "digest": "tree-b",
+        "code": "return 404, {\"message\": \"missing\"}"
+      },
+      "observed_evidence": {
+        "requirement_revision": 2,
+        "artifact_digest": "tree-b",
+        "checks": [
+          "status == 404"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "The requested status and preserved response schema must both hold."
+    },
+    {
+      "id": "redundant-correction-current",
+      "pair_id": "redundant-correction",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 1: page_size is 20. User repeats: keep page_size at 20. This is a no-op clarification; the requirement revision stays 1.",
+      "artifact": {
+        "revision": 1,
+        "digest": "tree-a",
+        "code": "page_size = 20"
+      },
+      "observed_evidence": {
+        "requirement_revision": 1,
+        "artifact_digest": "tree-a",
+        "checks": [
+          "page_size == 20"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "A redundant clarification needs no invalidation; absent validation still cannot establish readiness."
+    },
+    {
+      "id": "redundant-correction-adverse",
+      "pair_id": "redundant-correction",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 1: page_size is 20. User repeats: keep page_size at 20. This is a no-op clarification; the requirement revision stays 1.",
+      "artifact": {
+        "revision": 1,
+        "digest": "tree-a",
+        "code": "page_size = 20"
+      },
+      "observed_evidence": {
+        "requirement_revision": 1,
+        "artifact_digest": "tree-a",
+        "checks": [],
+        "all_passed": null
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "A redundant clarification needs no invalidation; absent validation still cannot establish readiness."
+    },
+    {
+      "id": "static-control-current",
+      "pair_id": "static-control",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 1: add(x, y) returns the sum; no user correction.",
+      "artifact": {
+        "revision": 1,
+        "digest": "tree-a",
+        "code": "def add(x, y): return x + y"
+      },
+      "observed_evidence": {
+        "requirement_revision": 1,
+        "artifact_digest": "tree-a",
+        "checks": [
+          "add(2, 3) == 5"
+        ],
+        "all_passed": true
+      },
+      "expected_verdict": "ready",
+      "label_rationale": "A fresh passing observation supports readiness; fresh failing evidence blocks it."
+    },
+    {
+      "id": "static-control-adverse",
+      "pair_id": "static-control",
+      "data_kind": "authored_synthetic_review_trace",
+      "current_request": "Revision 1: add(x, y) returns the sum; no user correction.",
+      "artifact": {
+        "revision": 1,
+        "digest": "tree-a",
+        "code": "def add(x, y): return x - y"
+      },
+      "observed_evidence": {
+        "requirement_revision": 1,
+        "artifact_digest": "tree-a",
+        "checks": [
+          "add(2, 3) == 5"
+        ],
+        "all_passed": false
+      },
+      "expected_verdict": "blocked",
+      "label_rationale": "A fresh passing observation supports readiness; fresh failing evidence blocks it."
+    }
+  ]
+}

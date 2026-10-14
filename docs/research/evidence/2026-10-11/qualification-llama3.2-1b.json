@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "benchmark_kind": "purrcode-provider-qualification",
+  "provider": "ollama",
+  "model": "llama3.2:1b",
+  "model_digest": "baf6a787fdffd633537aa2eb51cfd54cb93ff08e28040095462bb63daf552878",
+  "model_parameter_size": "1.2B",
+  "model_quantization": "Q8_0",
+  "ollama_version": "0.4.2",
+  "repository_head": "5d7ed0d0b3c752a6f7d84caf15ead5fe9d201c25",
+  "command": "target/debug/purrcode --config target/research/20261010T151754Z/config.toml --database target/research/qualification-llama1b.db model qualify ollama/llama3.2:1b",
+  "binary": {
+    "path": "target/debug/purrcode",
+    "sha256": "94b32ec69516748f2d81f6ccac570f03ee16180b84e80769cf0afad7c48fd4f4",
+    "size_bytes": 186757240,
+    "modified_at": "2026-08-13T07:04:35-0400",
+    "freshly_built_from_repository_head": false
+  },
+  "config": {
+    "path": "target/research/20261010T151754Z/config.toml",
+    "sha256": "a04f7e2547bd77ccbba65aa65c9c2f531b6fce6131f33c89bc996ee0d5ffc3dd"
+  },
+  "exit_code": 1,
+  "elapsed_seconds": 38.216,
+  "passed": false,
+  "accuracy": 0.0,
+  "mean_latency_ms": 1273.7142857142858,
+  "estimated_tokens_per_second": 0.0,
+  "maximum_reliable_context_tokens": 4096,
+  "recommended_roles": [],
+  "not_recommended_roles": [
+    "router",
+    "summarizer",
+    "simple-coding",
+    "planner",
+    "high-risk-judge"
+  ],
+  "cases": [
+    {
+      "name": "structured-output",
+      "passed": false,
+      "latency_ms": 5457,
+      "detail": "schema violation: missing field answer"
+    },
+    {
+      "name": "tool-schema",
+      "passed": false,
+      "latency_ms": 942,
+      "detail": "schema violation: missing field answer"
+    },
+    {
+      "name": "multi-file-reasoning",
+      "passed": false,
+      "latency_ms": 209,
+      "detail": "schema violation: missing field answer"
+    },
+    {
+      "name": "patch-generation",
+      "passed": false,
+      "latency_ms": 798,
+      "detail": "schema violation: missing field answer"
+    },
+    {
+      "name": "context-retention",
+      "passed": false,
+      "latency_ms": 153,
+      "detail": "schema violation: missing field answer"
+    },
+    {
+      "name": "test-failure-interpretation",
+      "passed": false,
+      "latency_ms": 382,
+      "detail": "schema violation: missing field answer"
+    },
+    {
+      "name": "judgment-calibration",
+      "passed": false,
+      "latency_ms": 975,
+      "detail": "schema violation: missing field answer"
+    }
+  ],
+  "stderr": "Error: model did not pass every qualification case",
+  "interpretation": "The local model failed all seven provider-qualification cases. Under the repository qualification gate it was not used for a live coding-agent benchmark. The separate local-review artifact is a synthetic component probe only."
+}

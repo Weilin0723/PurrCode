@@ -204,7 +204,23 @@ impl ToolRuntime {
         ];
         let joined = futures::future::join_all(futures).await;
         for (i, result) in joined {
-            results[i] = result?;
+            results[i] = match result {
+                Ok(result) => result,
+                // Authorization and constraint matching happen above and
+                // remain fatal. A read itself can legitimately miss (for
+                // example, a model probing for `src/main.rs` in a library),
+                // and that is tool output the next model turn can recover
+                // from, not a reason to fail the entire agent session.
+                Err(error) => ExecutionResult {
+                    exit_code: Some(1),
+                    stdout: Vec::new(),
+                    stderr: error.to_string().into_bytes(),
+                    truncated: false,
+                    affected_paths: Vec::new(),
+                    sandbox_level: SandboxLevel::WorktreeWriteNoShell,
+                    sandbox_backend: "cap-std".into(),
+                },
+            };
         }
         Ok(results)
     }
@@ -1389,6 +1405,56 @@ mod tests {
             .unwrap();
         let stdout = String::from_utf8_lossy(&result.stdout);
         assert_eq!(stdout, content);
+    }
+
+    #[tokio::test]
+    async fn one_missing_file_does_not_abort_a_batch_of_repository_reads() {
+        let temporary = tempfile::tempdir().unwrap();
+        std::fs::write(temporary.path().join("present.txt"), "present").unwrap();
+        let constraints = ActionConstraints {
+            working_directory: temporary.path().to_path_buf(),
+            network: false,
+            timeout_seconds: 10,
+            maximum_output_bytes: 4096,
+            allowed_write_globs: Vec::new(),
+            maximum_changed_files: 0,
+        };
+        let actions = ["missing.txt", "present.txt"].map(|path| {
+            ProposedAction::RepositoryRead(RepositoryReadAction::ReadFile {
+                path: PathBuf::from(path),
+                max_bytes: 1024,
+            })
+        });
+        let mut store = SessionStore::in_memory().unwrap();
+        let mut batch = Vec::new();
+        for action in actions {
+            let action_id = ActionId::new();
+            store
+                .authorize(&Authorization {
+                    action_id,
+                    session_id: SessionId::new(),
+                    action_digest: action.digest(&constraints).unwrap(),
+                    constraints: constraints.clone(),
+                    authorized_at: Utc::now(),
+                    approved_by: ApprovalAuthority::DeterministicPolicy,
+                })
+                .unwrap();
+            batch.push(AuthorizedRead {
+                action_id,
+                action,
+                constraints: constraints.clone(),
+            });
+        }
+
+        let results = ToolRuntime::execute_batch(&mut store, &batch)
+            .await
+            .expect("a missing read target is an individual tool failure");
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].exit_code, Some(1));
+        assert!(String::from_utf8_lossy(&results[0].stderr).contains("No such file or directory"));
+        assert_eq!(results[1].exit_code, Some(0));
+        assert_eq!(String::from_utf8_lossy(&results[1].stdout), "present");
     }
 
     #[tokio::test]

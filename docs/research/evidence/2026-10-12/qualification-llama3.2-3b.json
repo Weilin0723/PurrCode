@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "purpose": "local provider qualification after clarifying the legacy JSON-mode answer schema",
+  "model": "ollama/llama3.2:3b",
+  "model_digest": "a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72",
+  "ollama_version": "0.4.2",
+  "git_head": "5d7ed0d0b3c752a6f7d84caf15ead5fe9d201c25",
+  "binary_sha256": "8fa2104a9184219148c99f1c05abe530f69b9224e98aad3db4221d7850b097ec",
+  "provider_gateway_source_sha256": "6e1b044d57f413896185b144a41da50bf2553a0fbffdd64a8bb50c3625db9d02",
+  "local_only_config_sha256": "a04f7e2547bd77ccbba65aa65c9c2f531b6fce6131f33c89bc996ee0d5ffc3dd",
+  "credential_environment": "empty environment except PATH; local-only config; no remote fallback",
+  "exit_code": 1,
+  "passed_all": false,
+  "accuracy": 0.7142857142857143,
+  "mean_latency_ms": 6011.428571428572,
+  "estimated_tokens_per_second": 0.49837120867996526,
+  "maximum_reliable_context_tokens": 4096,
+  "recommended_roles": ["router", "summarizer"],
+  "not_recommended_roles": ["simple-coding", "planner", "high-risk-judge"],
+  "cases": [
+    {"name": "structured-output", "passed": true, "latency_ms": 8381, "detail": "exact match"},
+    {"name": "tool-schema", "passed": true, "latency_ms": 13244, "detail": "exact match"},
+    {"name": "multi-file-reasoning", "passed": false, "latency_ms": 4154, "detail": "schema violation: invalid type: integer `42`, expected a string"},
+    {"name": "patch-generation", "passed": false, "latency_ms": 4057, "detail": "expected `let enabled = true;`, received `let enabled = true;}`"},
+    {"name": "context-retention", "passed": true, "latency_ms": 3510, "detail": "exact match"},
+    {"name": "test-failure-interpretation", "passed": true, "latency_ms": 4744, "detail": "exact match"},
+    {"name": "judgment-calibration", "passed": true, "latency_ms": 3990, "detail": "exact match"}
+  ],
+  "interpretation": "This model did not qualify as a coding or high-risk judge model. Its v3 use is limited to an explicitly labeled weak-model synthetic component baseline."
+}

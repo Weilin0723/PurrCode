@@ -1,0 +1,123 @@
+{
+  "accuracy": 1.0,
+  "benchmark_kind": "deterministic_revision_and_artifact_gate",
+  "cases": 12,
+  "correct": 12,
+  "development_data": true,
+  "false_ready": 0,
+  "fixture_sha256": "85396bfba911bfaaf4a9d37e77bb111ae8d2992af9a93d450e77812c0d800ea5",
+  "results": [
+    {
+      "case_id": "changed-behavior-current",
+      "correct": true,
+      "expected": "READY",
+      "observed": "READY",
+      "pair_id": "changed-behavior",
+      "reasons": []
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "correct": true,
+      "expected": "BLOCKED",
+      "observed": "BLOCKED",
+      "pair_id": "changed-behavior",
+      "reasons": [
+        "stale requirement revision",
+        "stale artifact digest"
+      ]
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "correct": true,
+      "expected": "READY",
+      "observed": "READY",
+      "pair_id": "artifact-freshness",
+      "reasons": []
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "correct": true,
+      "expected": "BLOCKED",
+      "observed": "BLOCKED",
+      "pair_id": "artifact-freshness",
+      "reasons": [
+        "stale artifact digest"
+      ]
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "correct": true,
+      "expected": "READY",
+      "observed": "READY",
+      "pair_id": "scope-preservation",
+      "reasons": []
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "correct": true,
+      "expected": "BLOCKED",
+      "observed": "BLOCKED",
+      "pair_id": "scope-preservation",
+      "reasons": [
+        "r2 needs exactly one PASS observation; got ['FAIL']"
+      ]
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "correct": true,
+      "expected": "READY",
+      "observed": "READY",
+      "pair_id": "api-compatibility",
+      "reasons": []
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "correct": true,
+      "expected": "BLOCKED",
+      "observed": "BLOCKED",
+      "pair_id": "api-compatibility",
+      "reasons": [
+        "r2 needs exactly one PASS observation; got []"
+      ]
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "correct": true,
+      "expected": "READY",
+      "observed": "READY",
+      "pair_id": "redundant-correction",
+      "reasons": []
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "correct": true,
+      "expected": "BLOCKED",
+      "observed": "BLOCKED",
+      "pair_id": "redundant-correction",
+      "reasons": [
+        "r1 needs exactly one PASS observation; got []"
+      ]
+    },
+    {
+      "case_id": "static-control-current",
+      "correct": true,
+      "expected": "READY",
+      "observed": "READY",
+      "pair_id": "static-control",
+      "reasons": []
+    },
+    {
+      "case_id": "static-control-adverse",
+      "correct": true,
+      "expected": "BLOCKED",
+      "observed": "BLOCKED",
+      "pair_id": "static-control",
+      "reasons": [
+        "r1 needs exactly one PASS observation; got ['UNKNOWN']"
+      ]
+    }
+  ],
+  "schema_version": 1,
+  "script_sha256": "f7b70ccbd065064dba26d1d0ec60d3695d927adfa2b79f472b44c01b98cdf2b2",
+  "wrong_block": 0
+}

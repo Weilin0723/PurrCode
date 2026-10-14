@@ -1,0 +1,17 @@
+{
+  "freeze_sha256": "a4a5cde3974c37f40d9222abde029898b706e7dd2b5548c51b939e09a02a208b",
+  "model_freeze_sha256": "2f978fbdabf18ea08bc98906e6ae82ea5a4149f19acac10435b211f2bf7543e3",
+  "p0_hashes_sha256": "a2e50b96b82168ee3ae9c1d86c4fc8e222d7f845abd19122c2c8974dbc96a518",
+  "p1_hashes_sha256": "db2e38984bc210b96abc8ce2d01e2c53584232411b3634f5f082f47443eb94f0",
+  "primary_model": "deepseek/deepseek-v4-pro",
+  "publication_status": "must_be_published_before_scheduled_run_0",
+  "qualification_sha256": "5ba5d7c6a0475c5319dcb666848cd7f6af8991e96ea776318b786b03546732c8",
+  "requested_model": "deepseek/deepseek-v4-pro",
+  "runs_per_model": 120,
+  "schedule_sha256": "53a1ac648fb5c12ca305c829978f8e4c1dbb900ab1244f3215d173b0dd0bb25a",
+  "scheduled_runs_per_model": 120,
+  "schema_version": 1,
+  "session_token_budget": 120000,
+  "study_id": "repository-completion-swebench-live-v1",
+  "trigger_policy_sha256": "e5d6a92b68fccad2cd3ee3cfbc330bccb7e508048745bea5c8dee22684272792"
+}

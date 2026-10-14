@@ -1,0 +1,892 @@
+{
+  "schema_version": 1,
+  "status": "acquisition_pending",
+  "outcomes": "unrun",
+  "source": {
+    "dataset": "SWE-bench-Live/SWE-bench-Live",
+    "config": "default",
+    "split": "verified",
+    "revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
+    "rows_endpoint": "https://datasets-server.huggingface.co/rows",
+    "license": "mit"
+  },
+  "selection": {
+    "algorithm": "Scan all verified rows in row_idx order; group eligible rows by repository, order groups by their first eligible row_idx, retain the first ten groups with at least three eligible rows, and retain each group's first three rows.",
+    "task_count": 30,
+    "distinct_repository_count": 10,
+    "tasks_per_repository": 3,
+    "difficulty_lines_max": 50,
+    "requires_fail_to_pass": true,
+    "requires_pass_to_pass": true,
+    "source_rows_scanned": 500,
+    "eligible_row_count": 370,
+    "eligible_repository_count": 87,
+    "repository_order": [
+      "pylint-dev/pylint",
+      "aws-cloudformation/cfn-lint",
+      "keras-team/keras",
+      "falconry/falcon",
+      "matplotlib/matplotlib",
+      "sphinx-doc/sphinx",
+      "instructlab/instructlab",
+      "python-babel/babel",
+      "bridgecrewio/checkov",
+      "patroni/patroni"
+    ]
+  },
+  "visibility": {
+    "agent_fields": [
+      "repo",
+      "instance_id",
+      "base_commit",
+      "problem_statement"
+    ],
+    "auditor_only_fields": [
+      "patch",
+      "test_patch",
+      "hints_text",
+      "all_hints_text",
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "difficulty",
+      "test_cmds",
+      "log_parser"
+    ],
+    "forbidden_agent_fields": [
+      "patch",
+      "test_patch",
+      "hints_text",
+      "all_hints_text",
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "gold_patch",
+      "reference_solution"
+    ]
+  },
+  "run_plan": {
+    "repositories": 10,
+    "tasks": 30,
+    "arms": [
+      "B",
+      "C"
+    ],
+    "request_variants": [
+      "static",
+      "correction"
+    ],
+    "repeat_labels": [
+      0
+    ],
+    "runs_per_model": 120,
+    "arm_definitions": {
+      "B": "alignment disabled",
+      "C": "alignment enabled with automatic evidence refresh"
+    },
+    "requirement_phases": [
+      "P0",
+      "P1"
+    ],
+    "requirement_revision": {
+      "status": "verified",
+      "per_task": true,
+      "P0": "controlled abridged problem_statement with one withheld original constraint span in the correction variant",
+      "P1": "the exact original constraint span selected from the complete problem_statement",
+      "static_delivery": "complete original problem_statement delivered from call 0",
+      "correction_delivery": "abridged P0 at call 0; the identical P1 span after the first phase settles with a qualifying successful mutation",
+      "injection_trigger": "first qualifying ExecutionFinished; identical P1 delivered after the first phase settles",
+      "production_path_filter": false,
+      "acknowledgement_event": "requirement_revision_ack",
+      "acknowledgement_required": true,
+      "correction_text_stored": true,
+      "authoring_asset": "requirement_revision.json",
+      "span_selection": "one unique original behavior-related sentence or concise span; reject non-unique or non-specific spans",
+      "span_offsets_unit": "unicode_codepoints",
+      "final_requirement": "reconstructing abridged P0 with P1 at the recorded offset equals the complete original statement",
+      "shared_final_requirement_hash": true
+    },
+    "status": "blocked_until_environment_oracle_audit"
+  },
+  "tasks": [
+    {
+      "dataset_row": 0,
+      "instance_id": "pylint-dev__pylint-9771",
+      "repo": "pylint-dev/pylint",
+      "repo_url": "https://github.com/pylint-dev/pylint.git",
+      "pull_number": "9771",
+      "base_commit": "c66868215665ec107b16a7a6a0b4bd52eaaaec16",
+      "commit_url": "https://github.com/pylint-dev/pylint/tree/c66868215665ec107b16a7a6a0b4bd52eaaaec16",
+      "created_at": "2024-07-07T15:20:53Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 4,
+        "lines": 25
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "180346a78fcbfbe4683038c0250cd62dadf25c19eeec9819d1c5beb1b2319176",
+      "patch_sha256": "8f787795352bee8a84190cb8d29c076eb25464ff273f9b3b7b2ca51530eb4047",
+      "test_patch_sha256": "ec57f29985f7e4299292eb8420fa49dfc836a10092d9e4fac0b2d5ca2d2b2649",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1921,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 3,
+      "instance_id": "aws-cloudformation__cfn-lint-3475",
+      "repo": "aws-cloudformation/cfn-lint",
+      "repo_url": "https://github.com/aws-cloudformation/cfn-lint.git",
+      "pull_number": "3475",
+      "base_commit": "78e9fa96152d186ec7086d741f5f8ddaba1315e8",
+      "commit_url": "https://github.com/aws-cloudformation/cfn-lint/tree/78e9fa96152d186ec7086d741f5f8ddaba1315e8",
+      "created_at": "2024-07-08T17:04:23Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 3,
+        "lines": 13
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "1264d868d3c397965336f43d6aab0db76536fa697fbff1453db40d492555808d",
+      "patch_sha256": "e6504f9c0a924d2d4e39472620da505dd6d56c33e33f7798c98483371370feef",
+      "test_patch_sha256": "95a37d69c86cb914c88f6a0f4f153d02a869677cc58c940df9d4775b00f60d47",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1008,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 5,
+      "instance_id": "keras-team__keras-19973",
+      "repo": "keras-team/keras",
+      "repo_url": "https://github.com/keras-team/keras.git",
+      "pull_number": "19973",
+      "base_commit": "10a008fac10e2eb7dd343c128cbf2e0f971fa993",
+      "commit_url": "https://github.com/keras-team/keras/tree/10a008fac10e2eb7dd343c128cbf2e0f971fa993",
+      "created_at": "2024-07-11T01:00:28Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 15
+      },
+      "test_cmds": [
+        "SKIP_APPLICATIONS_TESTS=True pytest keras -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "1283ec9a83d47b33e8b8c06cb095a3567dac498c30b31b1322b05916507755ca",
+      "patch_sha256": "52dbf3972404ff35e965b2868549a2c95147c3f7cdbc521461c09967caa79aaa",
+      "test_patch_sha256": "e04c313add2f3541466d3d4b7080229dd9281a8b931b04206e40a7b8087614ca",
+      "fail_to_pass_count": 3,
+      "pass_to_pass_count": 7371,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 7,
+      "instance_id": "falconry__falcon-2248",
+      "repo": "falconry/falcon",
+      "repo_url": "https://github.com/falconry/falcon.git",
+      "pull_number": "2248",
+      "base_commit": "cd707961898e7012159b7205dabc4a2824eb3a68",
+      "commit_url": "https://github.com/falconry/falcon/tree/cd707961898e7012159b7205dabc4a2824eb3a68",
+      "created_at": "2024-07-13T14:51:11Z",
+      "difficulty": {
+        "files": 4,
+        "hunks": 8,
+        "lines": 42
+      },
+      "test_cmds": [
+        "pytest -rA tests"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "c232d3141ae7050a9bbc3d73017549468d02a678f0578e3cbda0092194a35451",
+      "patch_sha256": "fbc4747a48615ecbe7e934511c01a8f78f2536e8ae1951a20c942a6dea83838c",
+      "test_patch_sha256": "6fd2f6be49639287e2ac28d054058efa018d7610053860270fbfd1093e572e07",
+      "fail_to_pass_count": 31,
+      "pass_to_pass_count": 3332,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 9,
+      "instance_id": "matplotlib__matplotlib-28577",
+      "repo": "matplotlib/matplotlib",
+      "repo_url": "https://github.com/matplotlib/matplotlib.git",
+      "pull_number": "28577",
+      "base_commit": "c51103a068db018bad1152f78141d6c7360c29ff",
+      "commit_url": "https://github.com/matplotlib/matplotlib/tree/c51103a068db018bad1152f78141d6c7360c29ff",
+      "created_at": "2024-07-15T03:28:04Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 4,
+        "lines": 33
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "e0fa06f5658eea51ca160ebe4d32fe7bb3fe3c938363eb3f83de45a53fd7ed2e",
+      "patch_sha256": "867e5ea613d17edfe2a896c48d9567ca621c1e0d2345ba154f1004d1031f7079",
+      "test_patch_sha256": "3f2db0285a78d29f24ea76cd9e6b2c3f75ee6081b4ff89ecb20182ed93863a72",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 8083,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 10,
+      "instance_id": "sphinx-doc__sphinx-12598",
+      "repo": "sphinx-doc/sphinx",
+      "repo_url": "https://github.com/sphinx-doc/sphinx.git",
+      "pull_number": "12598",
+      "base_commit": "5edca97a2ef091d969fcd550aa436bb7fedad71a",
+      "commit_url": "https://github.com/sphinx-doc/sphinx/tree/5edca97a2ef091d969fcd550aa436bb7fedad71a",
+      "created_at": "2024-07-16T15:25:37Z",
+      "difficulty": {
+        "files": 4,
+        "hunks": 10,
+        "lines": 24
+      },
+      "test_cmds": [
+        "pytest -rA -v"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "921ff0de27b22cc20679a535c512e318dada8ae76ecc424f0235dc471665b1fa",
+      "patch_sha256": "6b635ca66c40431b699af9a61bb7d8296ad6191334e81065038d5ff5765d42b1",
+      "test_patch_sha256": "8c8dc5b8f07b8eac7855cf182c991a115b013f784350c5e5a6b05e8effafd36e",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 2006,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 12,
+      "instance_id": "instructlab__instructlab-1762",
+      "repo": "instructlab/instructlab",
+      "repo_url": "https://github.com/instructlab/instructlab.git",
+      "pull_number": "1762",
+      "base_commit": "81c69513b447656f0ba03a7ef6debfa505e0c22a",
+      "commit_url": "https://github.com/instructlab/instructlab/tree/81c69513b447656f0ba03a7ef6debfa505e0c22a",
+      "created_at": "2024-07-17T18:00:06Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 3,
+        "lines": 11
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "7ce000ce9728e85c044ef4738ec17a55bab6c132c5fadeadbf170d1229b314ee",
+      "patch_sha256": "3e4fc7fc941aa17c7a08902a9dc4fadaa77a41c786529a4e947163cc0e884c22",
+      "test_patch_sha256": "45047d25105c860dc0b560ce772c7bfcadc4a382d21e0b13d1f306b19e8da673",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 124,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 13,
+      "instance_id": "python-babel__babel-1104",
+      "repo": "python-babel/babel",
+      "repo_url": "https://github.com/python-babel/babel.git",
+      "pull_number": "1104",
+      "base_commit": "2f87363410f3c904e107e85ca10b9f84902db93f",
+      "commit_url": "https://github.com/python-babel/babel/tree/2f87363410f3c904e107e85ca10b9f84902db93f",
+      "created_at": "2024-07-18T09:19:16Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 2,
+        "lines": 8
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "f912ec7c32f28a0986708987e14b4973606bc5ccdc06e7430a468c61006869e5",
+      "patch_sha256": "f11a62b5c3df529060ce43421adaa498f579d49a13b02ca874560a79cec540d9",
+      "test_patch_sha256": "6d62ffd523ad437ffcc8fa3d5de670c5ab4ff9818431b20aa2dd4f8484b34667",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 7052,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 19,
+      "instance_id": "bridgecrewio__checkov-6612",
+      "repo": "bridgecrewio/checkov",
+      "repo_url": "https://github.com/bridgecrewio/checkov.git",
+      "pull_number": "6612",
+      "base_commit": "f73de91a10c4c02bbd6b3238fd2c2184ec4786af",
+      "commit_url": "https://github.com/bridgecrewio/checkov/tree/f73de91a10c4c02bbd6b3238fd2c2184ec4786af",
+      "created_at": "2024-07-27T07:17:29Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 4
+      },
+      "test_cmds": [
+        "pipenv run pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "9618290c0b079a21f96b33553650389a4aa857396de418296e3036328cf6eafd",
+      "patch_sha256": "c20e660391aa10f2ecd9a0651cabee792d4676dab85739ca9116c84840ab4d6e",
+      "test_patch_sha256": "d78eef371d551ed9d50fafc185efd56ddc45fe757d03546d6ed86d6a8c478c2a",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 4597,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 1,
+      "instance_id": "pylint-dev__pylint-9772",
+      "repo": "pylint-dev/pylint",
+      "repo_url": "https://github.com/pylint-dev/pylint.git",
+      "pull_number": "9772",
+      "base_commit": "52955ba4d867d2f4c78de8e2bf3c1df1f945a1d6",
+      "commit_url": "https://github.com/pylint-dev/pylint/tree/52955ba4d867d2f4c78de8e2bf3c1df1f945a1d6",
+      "created_at": "2024-07-07T17:07:39Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 8
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "0c39b5a2ca10312298ce4e1800645b292d542f4a451875a6f57dffe61f349e8c",
+      "patch_sha256": "9d8a7eb451c7be7872208df3667b578f918f863128981eefac107d061376a210",
+      "test_patch_sha256": "a6836894ff538f2a32783b4ec5846445fe0bb0d92d76c3d96c9ae7ef14d1daa1",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1850,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 4,
+      "instance_id": "pylint-dev__pylint-9785",
+      "repo": "pylint-dev/pylint",
+      "repo_url": "https://github.com/pylint-dev/pylint.git",
+      "pull_number": "9785",
+      "base_commit": "52fe657ef65e4bf808ea4667b130bc177385a773",
+      "commit_url": "https://github.com/pylint-dev/pylint/tree/52fe657ef65e4bf808ea4667b130bc177385a773",
+      "created_at": "2024-07-10T01:43:07Z",
+      "difficulty": {
+        "files": 3,
+        "hunks": 6,
+        "lines": 32
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "840c08b801ec8869c2d18a8ff6dbcadcc101beaf01aeaad621a9a59b3ac5e99d",
+      "patch_sha256": "2178ef8d38c80d978309b82128be1a1fb48b9607c702bd1c288cc1f33175dd0b",
+      "test_patch_sha256": "b9b21cabe4120f2b9cd41a5421330abe7bee8873b386db37f43d867eb3b123c3",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1854,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 6,
+      "instance_id": "aws-cloudformation__cfn-lint-3498",
+      "repo": "aws-cloudformation/cfn-lint",
+      "repo_url": "https://github.com/aws-cloudformation/cfn-lint.git",
+      "pull_number": "3498",
+      "base_commit": "a896807eac70aa5723f0bba07ede9302f35f3fac",
+      "commit_url": "https://github.com/aws-cloudformation/cfn-lint/tree/a896807eac70aa5723f0bba07ede9302f35f3fac",
+      "created_at": "2024-07-12T14:54:40Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 3,
+        "lines": 25
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "ded8c7dbd1531f2953a1430774de7562dd2552d173aaf3e7cf29c08ed286299f",
+      "patch_sha256": "c839a8d5e7933556e689c6f0dc181492124907824e09f3e54e58c286c3416910",
+      "test_patch_sha256": "767af07007a5c87c304ad3057a0b571654bdcd3fda94ace513db5723432f34af",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1014,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 8,
+      "instance_id": "aws-cloudformation__cfn-lint-3501",
+      "repo": "aws-cloudformation/cfn-lint",
+      "repo_url": "https://github.com/aws-cloudformation/cfn-lint.git",
+      "pull_number": "3501",
+      "base_commit": "ee6271f76b681e64a97f02e28af4c514e1006a41",
+      "commit_url": "https://github.com/aws-cloudformation/cfn-lint/tree/ee6271f76b681e64a97f02e28af4c514e1006a41",
+      "created_at": "2024-07-13T15:17:54Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 4
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "98725fb5f956ef86dc2761f452bf84a2a669cf38ecfee3ede6929c0261403724",
+      "patch_sha256": "b3e0838a0c7233d2c1963fce5c4dcacba63c1269d5e376ac6740faa44f53a512",
+      "test_patch_sha256": "0cb4ca41e5e69a48b397c7ae189ccab033a223e16946ec0d194f9713500147e3",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1013,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 23,
+      "instance_id": "keras-team__keras-20079",
+      "repo": "keras-team/keras",
+      "repo_url": "https://github.com/keras-team/keras.git",
+      "pull_number": "20079",
+      "base_commit": "d8b331412a89cbeaf07cc94fa5b55b9e5b6bf626",
+      "commit_url": "https://github.com/keras-team/keras/tree/d8b331412a89cbeaf07cc94fa5b55b9e5b6bf626",
+      "created_at": "2024-08-01T15:15:58Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 2,
+        "lines": 27
+      },
+      "test_cmds": [
+        "SKIP_APPLICATIONS_TESTS=True pytest -rA keras"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "24772522cba3111da62228deb5caa40fbd1c746252cd6a7fed1ce62218ca8e78",
+      "patch_sha256": "c12d9a4ffc06f53cf7f57a065e915022778d8964a57b8c0e818703ee11f211af",
+      "test_patch_sha256": "dbc3c9980cbc0aa9cc994bec9abb38896d9a5aa038591458cc5067732b9dcebc",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 7420,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 45,
+      "instance_id": "keras-team__keras-20120",
+      "repo": "keras-team/keras",
+      "repo_url": "https://github.com/keras-team/keras.git",
+      "pull_number": "20120",
+      "base_commit": "816d219c04b2bdb7de81081fa14eac63000dac30",
+      "commit_url": "https://github.com/keras-team/keras/tree/816d219c04b2bdb7de81081fa14eac63000dac30",
+      "created_at": "2024-08-14T10:31:44Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 2
+      },
+      "test_cmds": [
+        "SKIP_APPLICATIONS_TESTS=True pytest -rA keras"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "2e63194131f5727b95e912bb797228b75d3ebe0b639eab87176819014b31f7c5",
+      "patch_sha256": "5b30db8e1bbf56c8350b9b867d9395c6d4c77783f14ba6cb60bfd705884a9df3",
+      "test_patch_sha256": "52b9c368b2a4efec3bd4c5c7520a7746d8b887f1ebe975f2cbc1c83819522a07",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 7424,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 16,
+      "instance_id": "falconry__falcon-2254",
+      "repo": "falconry/falcon",
+      "repo_url": "https://github.com/falconry/falcon.git",
+      "pull_number": "2254",
+      "base_commit": "cbca63dc7739720eab856f48b32f9e782438be7a",
+      "commit_url": "https://github.com/falconry/falcon/tree/cbca63dc7739720eab856f48b32f9e782438be7a",
+      "created_at": "2024-07-21T21:21:34Z",
+      "difficulty": {
+        "files": 5,
+        "hunks": 13,
+        "lines": 30
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "edb6180ab57edcd81e397157407441970629375e933c4077a3fe224982d618e0",
+      "patch_sha256": "acdfd7f566b0a80fa15fc601b4a98d2dcdaa7b20713eb45dfba0560a442c3ccb",
+      "test_patch_sha256": "eaeaed8f924d5d6e7be16ea9816a4d4bb0803b33319832b0c64f6461c5fde02a",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 3365,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 130,
+      "instance_id": "falconry__falcon-2366",
+      "repo": "falconry/falcon",
+      "repo_url": "https://github.com/falconry/falcon.git",
+      "pull_number": "2366",
+      "base_commit": "06fdf2885d70149803dbc47324ae8c951b7e58b3",
+      "commit_url": "https://github.com/falconry/falcon/tree/06fdf2885d70149803dbc47324ae8c951b7e58b3",
+      "created_at": "2024-10-10T15:34:20Z",
+      "difficulty": {
+        "files": 3,
+        "hunks": 3,
+        "lines": 45
+      },
+      "test_cmds": [
+        "pytest -rA tests"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "b089154c0b87564ba967b7197357544ac575fefa2f3c9690e744ac239b8b1c63",
+      "patch_sha256": "0d6ecf5b8dcfe8645c64b349810af4780bae218998e5d4132b15aea8560646e6",
+      "test_patch_sha256": "5e4d63c8bc741a724b2d2a382e31b1164bbb85878355a1cbc0f4b1448eb84593",
+      "fail_to_pass_count": 14,
+      "pass_to_pass_count": 3553,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 11,
+      "instance_id": "matplotlib__matplotlib-28584",
+      "repo": "matplotlib/matplotlib",
+      "repo_url": "https://github.com/matplotlib/matplotlib.git",
+      "pull_number": "28584",
+      "base_commit": "8552c7a7f3dcca4ecb3ca4e3e61b7629a6b3a18c",
+      "commit_url": "https://github.com/matplotlib/matplotlib/tree/8552c7a7f3dcca4ecb3ca4e3e61b7629a6b3a18c",
+      "created_at": "2024-07-17T12:24:39Z",
+      "difficulty": {
+        "files": 6,
+        "hunks": 8,
+        "lines": 35
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "e6e199828b83ee506ad97c1b766c4ef8e63f742c1b7ab9fc9eaf01b8bb1725d5",
+      "patch_sha256": "7dfb899795864b805044a05c935b84b477b6d38793d843905c3f807cbe269e94",
+      "test_patch_sha256": "b343571f9286b67db67432a94424362126942f78592a379a2b5eb5a3a24426a1",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 8218,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 57,
+      "instance_id": "matplotlib__matplotlib-28734",
+      "repo": "matplotlib/matplotlib",
+      "repo_url": "https://github.com/matplotlib/matplotlib.git",
+      "pull_number": "28734",
+      "base_commit": "1c892c20334185294fa06ee5bf7a91ec843bbaa7",
+      "commit_url": "https://github.com/matplotlib/matplotlib/tree/1c892c20334185294fa06ee5bf7a91ec843bbaa7",
+      "created_at": "2024-08-16T19:08:40Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 14
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "fc45bdfed4e6d16ba1877a6efde211a36b3c81110ec0b548052cc1829aec0a24",
+      "patch_sha256": "f4f5e36484fac7aa1bc0069bbc65c134c14b7b82684ca2ceb848cec44c64b84d",
+      "test_patch_sha256": "c1a553eb050760f2244dec87f8a1e6ce6efef1ebbb32ea5a03fc29bce19dc568",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 8146,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 14,
+      "instance_id": "sphinx-doc__sphinx-12615",
+      "repo": "sphinx-doc/sphinx",
+      "repo_url": "https://github.com/sphinx-doc/sphinx.git",
+      "pull_number": "12615",
+      "base_commit": "e61f56950d624f5fa540a1c8d4e3baedd2889bd0",
+      "commit_url": "https://github.com/sphinx-doc/sphinx/tree/e61f56950d624f5fa540a1c8d4e3baedd2889bd0",
+      "created_at": "2024-07-18T11:42:12Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 6
+      },
+      "test_cmds": [
+        "pytest -v -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "d50a8c73a0879e0f3ecc087ab5b17f31d88feaf48194c7f131c6bbe6976e0bc0",
+      "patch_sha256": "5b0b8011605443792ecb1db6bfa379b62d9011250e5aeca961833a09838b5b1f",
+      "test_patch_sha256": "8f34aa76638b06ebde49bd174ad0e184b97784545b231531b88dd6257512ba32",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 2007,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 34,
+      "instance_id": "sphinx-doc__sphinx-12737",
+      "repo": "sphinx-doc/sphinx",
+      "repo_url": "https://github.com/sphinx-doc/sphinx.git",
+      "pull_number": "12737",
+      "base_commit": "3d49941484ef4dbceb155be0aedb09e49b896cd6",
+      "commit_url": "https://github.com/sphinx-doc/sphinx/tree/3d49941484ef4dbceb155be0aedb09e49b896cd6",
+      "created_at": "2024-08-05T15:32:24Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 3,
+        "lines": 38
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "9a4b0f0560ff73fc86830e2c6204a5f00e6ce3e6ef74efef913e1869e1723129",
+      "patch_sha256": "e17c30aa057b8e8651267f598bdba17b47508e9d916ba841555f1784220c03f5",
+      "test_patch_sha256": "225eae34a987db9c2128c5c52ce7406d02520f2ac6af86baacd803aabdd45a2a",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 2033,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 35,
+      "instance_id": "instructlab__instructlab-2004",
+      "repo": "instructlab/instructlab",
+      "repo_url": "https://github.com/instructlab/instructlab.git",
+      "pull_number": "2004",
+      "base_commit": "e8097167e0f70e887cc7aa8b9eaeabacbff6ed6a",
+      "commit_url": "https://github.com/instructlab/instructlab/tree/e8097167e0f70e887cc7aa8b9eaeabacbff6ed6a",
+      "created_at": "2024-08-06T23:19:35Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 3,
+        "lines": 9
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "bd5b895a76a04ab0cd47a8ed1514d9d991784a0e73477f38b20c935c7fbf7f5e",
+      "patch_sha256": "ab2ad51b9ee888e85bd6873f22f4a3e5308bad8f87770817ab90be3c24108b9c",
+      "test_patch_sha256": "7dcb34ec09e99e05b9aaf220b8a4e7cc5c622637557e0c8b803d70b534fe65eb",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 178,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 231,
+      "instance_id": "instructlab__instructlab-2789",
+      "repo": "instructlab/instructlab",
+      "repo_url": "https://github.com/instructlab/instructlab.git",
+      "pull_number": "2789",
+      "base_commit": "ed2c941a8ee3dafb884746d03bcdc0cae57fd8a0",
+      "commit_url": "https://github.com/instructlab/instructlab/tree/ed2c941a8ee3dafb884746d03bcdc0cae57fd8a0",
+      "created_at": "2024-12-12T19:40:28Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 3,
+        "lines": 23
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "d5dd5558fe6034eceb8c213efd5d7b52d4ce4f6120d3fdefa2dae5fbcbf73ba6",
+      "patch_sha256": "a4db65054be911b3bc0516170455565d3855371932623462b083b798c8cfaec3",
+      "test_patch_sha256": "aa95def7d11c9096bc95cbd2b6977416fbc7cf3f5053d70c471643ca5e1bcbdb",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 214,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 59,
+      "instance_id": "python-babel__babel-1120",
+      "repo": "python-babel/babel",
+      "repo_url": "https://github.com/python-babel/babel.git",
+      "pull_number": "1120",
+      "base_commit": "0005c85fccccb491930f064ea8d064e87ce7ee79",
+      "commit_url": "https://github.com/python-babel/babel/tree/0005c85fccccb491930f064ea8d064e87ce7ee79",
+      "created_at": "2024-08-18T10:59:58Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 27
+      },
+      "test_cmds": [
+        "make test",
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "80f851a2e2b77b9b2a6daee1998fe610531b67a4f0249c39b489c24bc7e88611",
+      "patch_sha256": "7b5d59f257e1a1d5f1902f3ebb4c0c3325b2394983ae18561260181d4f849fc9",
+      "test_patch_sha256": "024a7b367720e3e10317c0347e648b9d4c6174a8b606e41adb4801c5aa7d7872",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 7104,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 103,
+      "instance_id": "python-babel__babel-1126",
+      "repo": "python-babel/babel",
+      "repo_url": "https://github.com/python-babel/babel.git",
+      "pull_number": "1126",
+      "base_commit": "ea84d9d5f0bd2859f3281e4dac812ae05d33f466",
+      "commit_url": "https://github.com/python-babel/babel/tree/ea84d9d5f0bd2859f3281e4dac812ae05d33f466",
+      "created_at": "2024-09-18T13:27:54Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 4,
+        "lines": 10
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "eda87f1cef89839ce51fafc2910c31d49e930f57631e6cf267c4b7a15863579a",
+      "patch_sha256": "dd7305d9541269c6e73513998d7126f6ecb7282d44ff67eb2e794b0a4c8cc1de",
+      "test_patch_sha256": "f9667494494f6dba42dd20a521f5f4b87a22fe5623153ae7ae5eb05a6dd11e39",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 7097,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 28,
+      "instance_id": "bridgecrewio__checkov-6630",
+      "repo": "bridgecrewio/checkov",
+      "repo_url": "https://github.com/bridgecrewio/checkov.git",
+      "pull_number": "6630",
+      "base_commit": "e1a17d5af24185b8bc1952c8c46af130fce90794",
+      "commit_url": "https://github.com/bridgecrewio/checkov/tree/e1a17d5af24185b8bc1952c8c46af130fce90794",
+      "created_at": "2024-08-02T10:23:49Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 1
+      },
+      "test_cmds": [
+        "pipenv run pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "49af9752377ddf965c01174e7781353d77f6564eb091ebd62ea4fa60cc9528be",
+      "patch_sha256": "3270bcb9a9e0dd53f0861410f2729474c4a827c7983e3cd4c52e98b297d14c05",
+      "test_patch_sha256": "e77fde31b85e8d26ab743e2684453bf0fc8757fc5f968f0fec5bde90ae981fdd",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 4635,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 72,
+      "instance_id": "bridgecrewio__checkov-6687",
+      "repo": "bridgecrewio/checkov",
+      "repo_url": "https://github.com/bridgecrewio/checkov.git",
+      "pull_number": "6687",
+      "base_commit": "5146610eff1e7400d425c7e8b8efbb3fafee98bd",
+      "commit_url": "https://github.com/bridgecrewio/checkov/tree/5146610eff1e7400d425c7e8b8efbb3fafee98bd",
+      "created_at": "2024-08-27T14:02:16Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 1
+      },
+      "test_cmds": [
+        "pipenv run pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "c59e7f6c2c30c52e3528442a32cd1cd95bbb9f6093702161998e1e2124a7553e",
+      "patch_sha256": "ba8c595ac7e6c42425359b4dd55f35573c8e9bff1877679b82685daef498abfe",
+      "test_patch_sha256": "e4b13ef0ae95b19fc2d9ebcf218c8540b971e39bf6824580e6c776885a294537",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 4615,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 21,
+      "instance_id": "patroni__patroni-3112",
+      "repo": "patroni/patroni",
+      "repo_url": "https://github.com/patroni/patroni.git",
+      "pull_number": "3112",
+      "base_commit": "4456e267ebecdbc27f7c7ddc174b1997355a496e",
+      "commit_url": "https://github.com/patroni/patroni/tree/4456e267ebecdbc27f7c7ddc174b1997355a496e",
+      "created_at": "2024-07-29T07:23:27Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 23
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "07e2ddbdea030c93d9db71462e22da70bf887f7f537369b93ae627f693bf5702",
+      "patch_sha256": "16cada59219fbcc8c05fdc21f8326be7c8af32277c7c0255cfe6000b8efcdbce",
+      "test_patch_sha256": "f2b40accd5cca1b96558a4b3e11288a2e4d3c58e0af56accbd591fdd82f0fca6",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 601,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 38,
+      "instance_id": "patroni__patroni-3119",
+      "repo": "patroni/patroni",
+      "repo_url": "https://github.com/patroni/patroni.git",
+      "pull_number": "3119",
+      "base_commit": "ab9faf9471035f29c1cc83bbe77b4b9e7220af6c",
+      "commit_url": "https://github.com/patroni/patroni/tree/ab9faf9471035f29c1cc83bbe77b4b9e7220af6c",
+      "created_at": "2024-08-08T12:24:00Z",
+      "difficulty": {
+        "files": 2,
+        "hunks": 3,
+        "lines": 24
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "d31c58246425e876f66a1c0df74228f52bd4a8e203e2a066a09cda0da0e07124",
+      "patch_sha256": "485302014d1f7110488c1033309d8fff3db6cb31e8716af4f6b23e751071ecfb",
+      "test_patch_sha256": "a8bbff422de3cd896c67f0fe432dcab9f538560ff6db9b98cfbc11a213c098d8",
+      "fail_to_pass_count": 3,
+      "pass_to_pass_count": 599,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    },
+    {
+      "dataset_row": 90,
+      "instance_id": "patroni__patroni-3152",
+      "repo": "patroni/patroni",
+      "repo_url": "https://github.com/patroni/patroni.git",
+      "pull_number": "3152",
+      "base_commit": "db82a83eb4a3f2ec8f2489e1a01f8ad94deaecd1",
+      "commit_url": "https://github.com/patroni/patroni/tree/db82a83eb4a3f2ec8f2489e1a01f8ad94deaecd1",
+      "created_at": "2024-09-09T10:04:20Z",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 5
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "problem_statement_sha256": "62688ef5f564707e5827ed3f7326b4eae0aaacd9038ca4b2ba47d6a6f8a2ae86",
+      "patch_sha256": "be7841abd3007f28712afe5570768f4cb38da1d03c7c6e0c8d5338d57f13cc58",
+      "test_patch_sha256": "0016a547d12cf98910223011a5979b14884e997ab3b85a87892f79f2124fd3ee",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 643,
+      "candidate_status": "pending",
+      "oracle_status": "pending"
+    }
+  ]
+}

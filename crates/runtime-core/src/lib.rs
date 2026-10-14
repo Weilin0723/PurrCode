@@ -1310,6 +1310,12 @@ pub enum SessionEvent {
     /// check the record shows failing cannot be left off the list.
     DeliveryGateEvaluated {
         validations: Vec<expectation::RequiredValidation>,
+        /// Digest of the repository snapshot the gate evaluated.
+        ///
+        /// Optional only so v1 event logs remain deserializable. Contracts
+        /// using the current expectation schema must provide it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact_digest: Option<String>,
     },
     /// A durable, reviewable statement of intent. Direct sessions may omit it;
     /// Standard and Rigorous sessions use it as the source for their task graph.
@@ -1890,6 +1896,12 @@ pub struct SessionState {
     /// non-emptiness, so `EvidenceId::new()` — which is a valid identifier and
     /// establishes nothing — cannot settle a requirement.
     pub alignment_evidence: expectation::EvidenceLedger,
+    /// Last contract revision that changed each requirement's meaning.
+    ///
+    /// This is requirement-scoped rather than the contract's global revision:
+    /// adding an unrelated non-goal must not stale evidence for a clause whose
+    /// wording and acceptance criteria did not change.
+    pub requirement_revisions: BTreeMap<work::RequirementId, u64>,
     /// The latest outcome of each deterministic check, keyed by stage.
     ///
     /// Derived from `ValidationRecorded` so the delivery gate reads what the
@@ -1908,6 +1920,9 @@ pub struct SessionState {
     /// cleared, followed by a blocking finding, followed by `SessionCompleted`
     /// would otherwise ship on a verdict that was true a moment ago.
     pub delivery_validations: Vec<expectation::RequiredValidation>,
+    /// Repository snapshot used by the latest gate. Any later execution clears
+    /// it, forcing the gate to observe the repository again before completion.
+    pub delivery_artifact_digest: Option<String>,
     /// The most recent delivery-gate result (v1.5 §12), computed here rather
     /// than accepted from the event.
     pub delivery: Option<expectation::DeliveryAssessment>,
@@ -1951,9 +1966,11 @@ impl SessionState {
             findings: BTreeMap::new(),
             correction_ledger: correction::CorrectionLedger::default(),
             alignment_evidence: expectation::EvidenceLedger::new(),
+            requirement_revisions: BTreeMap::new(),
             validation_record: BTreeMap::new(),
             changed_paths: BTreeSet::new(),
             delivery_validations: Vec::new(),
+            delivery_artifact_digest: None,
             delivery: None,
         }
     }
@@ -2013,8 +2030,34 @@ impl SessionState {
     pub fn evaluate_delivery(
         &self,
         validations: &[expectation::RequiredValidation],
+        artifact_digest: Option<&str>,
     ) -> Option<expectation::DeliveryAssessment> {
-        let contract = self.expectation_contract.as_ref()?;
+        let mut contract = self.expectation_contract.as_ref()?.clone();
+        let strict = contract.schema_version >= 2;
+        for clause in contract
+            .clauses
+            .iter_mut()
+            .filter(|clause| clause.is_required())
+        {
+            let cited = match &clause.status {
+                expectation::RequirementStatus::Verified { evidence }
+                | expectation::RequirementStatus::Violated { evidence, .. } => evidence,
+                _ => continue,
+            };
+            let fresh = (!strict || artifact_digest.is_some())
+                && expectation::check_citations(
+                    &self.alignment_evidence,
+                    clause.id,
+                    cited,
+                    self.requirement_revisions.get(&clause.id).copied(),
+                    artifact_digest,
+                    strict,
+                )
+                .is_ok();
+            if !fresh {
+                clause.status = expectation::RequirementStatus::Unverified;
+            }
+        }
         let findings: Vec<review::ReviewFinding> = self
             .outstanding_findings()
             .into_iter()
@@ -2025,7 +2068,7 @@ impl SessionState {
         let conflicts = self.unresolved_integrations();
         Some(expectation::delivery::evaluate(
             expectation::DeliveryInputs {
-                contract,
+                contract: &contract,
                 findings: &findings,
                 validations,
                 changed_paths: &changed,
@@ -2174,13 +2217,6 @@ impl SessionState {
                 }
             }
             SessionEvent::AlignmentEvidenceRecorded { evidence } => {
-                evidence
-                    .validate()
-                    .map_err(|error| DomainError::InvalidStateTransition {
-                        session: self.id,
-                        event: format!("{event:?}"),
-                        reason: error.to_string(),
-                    })?;
                 let contract = self.expectation_contract.as_ref().ok_or_else(|| {
                     DomainError::InvalidStateTransition {
                         session: self.id,
@@ -2188,6 +2224,13 @@ impl SessionState {
                         reason: "evidence needs a contract to be evidence about".into(),
                     }
                 })?;
+                evidence
+                    .validate_with(contract.schema_version >= 2)
+                    .map_err(|error| DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: error.to_string(),
+                    })?;
                 if contract.clause(evidence.requirement_id).is_none() {
                     return Err(DomainError::InvalidStateTransition {
                         session: self.id,
@@ -2278,12 +2321,19 @@ impl SessionState {
                     }
                     _ => &[],
                 };
-                expectation::check_citations(&self.alignment_evidence, *requirement_id, cited)
-                    .map_err(|fault| DomainError::InvalidStateTransition {
-                        session: self.id,
-                        event: format!("{event:?}"),
-                        reason: fault.to_string(),
-                    })?;
+                expectation::check_citations(
+                    &self.alignment_evidence,
+                    *requirement_id,
+                    cited,
+                    self.requirement_revisions.get(requirement_id).copied(),
+                    None,
+                    contract.schema_version >= 2,
+                )
+                .map_err(|fault| DomainError::InvalidStateTransition {
+                    session: self.id,
+                    event: format!("{event:?}"),
+                    reason: fault.to_string(),
+                })?;
             }
             SessionEvent::ReviewStarted { record } => {
                 // Refuses a "fresh-context" review that was handed the
@@ -2366,7 +2416,10 @@ impl SessionState {
                     });
                 }
             }
-            SessionEvent::DeliveryGateEvaluated { validations } => {
+            SessionEvent::DeliveryGateEvaluated {
+                validations,
+                artifact_digest,
+            } => {
                 // The event brings no verdict, so there is no `Ready` to refuse.
                 // What is checked here is the one input the log cannot derive:
                 // the list of checks the task required.
@@ -2375,6 +2428,22 @@ impl SessionState {
                         session: self.id,
                         event: format!("{event:?}"),
                         reason: "there is no contract to deliver against".into(),
+                    });
+                }
+                let contract = self
+                    .expectation_contract
+                    .as_ref()
+                    .expect("the contract presence was checked above");
+                if contract.schema_version >= 2
+                    && artifact_digest
+                        .as_deref()
+                        .is_none_or(|digest| digest.trim().is_empty())
+                {
+                    return Err(DomainError::InvalidStateTransition {
+                        session: self.id,
+                        event: format!("{event:?}"),
+                        reason: "the delivery gate needs the exact artifact digest it evaluated"
+                            .into(),
                     });
                 }
                 for validation in validations {
@@ -2639,8 +2708,24 @@ impl SessionState {
                 // finding recorded a second later, and then a completion, is
                 // exactly the sequence a stale read would let through.
                 if self.expectation_contract.is_some() {
+                    if self.delivery.is_none()
+                        && self.expectation_contract.as_ref().is_some_and(|contract| {
+                            contract
+                                .required()
+                                .all(|clause| clause.status.clears_delivery())
+                        })
+                    {
+                        return Err(DomainError::InvalidStateTransition {
+                            session: self.id,
+                            event: format!("{event:?}"),
+                            reason: "completion requires the delivery gate to have run".into(),
+                        });
+                    }
                     let assessment = self
-                        .evaluate_delivery(&self.delivery_validations)
+                        .evaluate_delivery(
+                            &self.delivery_validations,
+                            self.delivery_artifact_digest.as_deref(),
+                        )
                         .expect("a contract is present");
                     if !assessment.may_report_done() {
                         return Err(DomainError::InvalidStateTransition {
@@ -3000,6 +3085,11 @@ impl SessionState {
             }
             SessionEvent::ExpectationContractCreated { contract } => {
                 self.expectation_contract = Some((**contract).clone());
+                self.requirement_revisions = contract
+                    .clauses
+                    .iter()
+                    .map(|clause| (clause.id, contract.revision))
+                    .collect();
             }
             SessionEvent::ExpectationContractRevised { revision } => {
                 // Re-derived rather than restored: replay reaches the contract
@@ -3008,6 +3098,28 @@ impl SessionState {
                 if let Some(current) = self.expectation_contract.as_ref()
                     && let Ok(revised) = current.revise((**revision).clone())
                 {
+                    for change in &revision.changes {
+                        use expectation::ContractChange;
+                        match change {
+                            ContractChange::ClauseAdded { clause } => {
+                                self.requirement_revisions
+                                    .insert(clause.id, revision.revision);
+                            }
+                            ContractChange::ClauseWithdrawn { id, .. } => {
+                                self.requirement_revisions.remove(id);
+                            }
+                            ContractChange::ClauseRestated { id, from, to } if from != to => {
+                                self.requirement_revisions.insert(*id, revision.revision);
+                            }
+                            ContractChange::StrengthChanged { id, from, to } if from != to => {
+                                self.requirement_revisions.insert(*id, revision.revision);
+                            }
+                            ContractChange::AcceptanceCriteriaSet { id, .. } => {
+                                self.requirement_revisions.insert(*id, revision.revision);
+                            }
+                            _ => {}
+                        }
+                    }
                     self.expectation_contract = Some(revised.contract);
                 }
             }
@@ -3049,10 +3161,14 @@ impl SessionState {
                 self.correction_ledger
                     .record_cycle(repaired.clone(), still_open.clone());
             }
-            SessionEvent::DeliveryGateEvaluated { validations } => {
+            SessionEvent::DeliveryGateEvaluated {
+                validations,
+                artifact_digest,
+            } => {
                 // The reducer's own reading of the log, not the caller's.
                 self.delivery_validations = validations.clone();
-                self.delivery = self.evaluate_delivery(validations);
+                self.delivery_artifact_digest = artifact_digest.clone();
+                self.delivery = self.evaluate_delivery(validations, artifact_digest.as_deref());
             }
             SessionEvent::SpecBundleRecorded { bundle, .. } => {
                 self.spec_bundle = Some(bundle.clone());
@@ -3167,6 +3283,11 @@ impl SessionState {
                 ..
             } => {
                 self.status = SessionStatus::Active;
+                // Any execution may have changed bytes after the last review.
+                // The next delivery attempt must take a fresh repository
+                // snapshot instead of reusing the previous gate's digest.
+                self.delivery_artifact_digest = None;
+                self.delivery = None;
                 // The scope check reads what the session actually touched. An
                 // agent that quietly edited the editor while working on
                 // settings does not mention having done so, which is precisely
@@ -5334,9 +5455,11 @@ mod expectation_replay_tests {
         let id = clause.id;
         contract.clauses.push(clause);
 
-        let evidence = crate::expectation::AlignmentEvidence::new(
+        let evidence = crate::expectation::AlignmentEvidence::new_bound(
             crate::expectation::AlignmentEvidenceKind::Execution,
             id,
+            1,
+            "test-artifact",
             "settings.rs",
             "the sidebar element and its module were deleted",
         );
@@ -5366,6 +5489,51 @@ mod expectation_replay_tests {
         assert_eq!(state.expectation_contract, replayed.expectation_contract);
         let contract = replayed.expectation_contract.expect("the contract replays");
         assert!(contract.clause(id).unwrap().status.clears_delivery());
+    }
+
+    #[test]
+    fn a_v1_unbound_evidence_log_remains_replayable() {
+        let mut contract = ExpectationContract::new("legacy task");
+        contract.schema_version = 1;
+        let clause = ExpectationClause::required(
+            "keep the old session readable",
+            vec![criterion("replay succeeds")],
+            IntentSource::new(0, "keep the old session readable"),
+        );
+        let requirement_id = clause.id;
+        contract.clauses.push(clause);
+        let evidence = crate::expectation::AlignmentEvidence::new(
+            crate::expectation::AlignmentEvidenceKind::Validation,
+            requirement_id,
+            "legacy validation",
+            "the old check passed",
+        );
+        let evidence_id = evidence.id;
+        let events = vec![
+            SessionEvent::ExpectationContractCreated {
+                contract: Box::new(contract),
+            },
+            SessionEvent::AlignmentEvidenceRecorded {
+                evidence: Box::new(evidence),
+            },
+            SessionEvent::RequirementStatusChanged {
+                requirement_id,
+                status: RequirementStatus::Verified {
+                    evidence: vec![evidence_id],
+                },
+                source: "legacy replay".into(),
+            },
+        ];
+        let replayed = replay(&events);
+        assert!(
+            replayed
+                .expectation_contract
+                .as_ref()
+                .and_then(|contract| contract.clause(requirement_id))
+                .expect("legacy requirement replays")
+                .status
+                .clears_delivery()
+        );
     }
 
     #[test]
@@ -5491,9 +5659,11 @@ mod expectation_replay_tests {
                 }),
             })
             .unwrap();
-        let evidence = crate::expectation::AlignmentEvidence::new(
+        let evidence = crate::expectation::AlignmentEvidence::new_bound(
             crate::expectation::AlignmentEvidenceKind::Validation,
             sidebar,
+            1,
+            "test-artifact",
             "cargo test",
             "sidebar_removed passed",
         );
@@ -5520,9 +5690,11 @@ mod expectation_replay_tests {
         let (mut state, _, _) = sidebar_session();
         let error = state
             .reduce_event(&SessionEvent::AlignmentEvidenceRecorded {
-                evidence: Box::new(crate::expectation::AlignmentEvidence::new(
+                evidence: Box::new(crate::expectation::AlignmentEvidence::new_bound(
                     crate::expectation::AlignmentEvidenceKind::Review,
                     work::RequirementId::new(),
+                    1,
+                    "test-artifact",
                     "alignment review 1",
                     "looks fine",
                 )),
@@ -5680,6 +5852,7 @@ mod delivery_replay_tests {
         state
             .reduce_event(&SessionEvent::DeliveryGateEvaluated {
                 validations: vec![],
+                artifact_digest: Some("test-artifact".into()),
             })
             .expect("running the gate is always allowed");
         let assessment = state.delivery.clone().expect("the gate ran");
@@ -5720,6 +5893,7 @@ mod delivery_replay_tests {
                     name: "FullUnitTests".into(),
                     status: ValidationStatus::Passed,
                 }],
+                artifact_digest: Some("test-artifact".into()),
             })
             .unwrap_err();
         assert!(
@@ -5743,6 +5917,7 @@ mod delivery_replay_tests {
         let error = state
             .reduce_event(&SessionEvent::DeliveryGateEvaluated {
                 validations: vec![],
+                artifact_digest: Some("test-artifact".into()),
             })
             .unwrap_err();
         assert!(
@@ -5949,9 +6124,14 @@ mod delivery_replay_tests {
     /// Move the session's one requirement to verified, the only way it can be
     /// moved: record the evidence, then cite it.
     fn verify(state: &mut SessionState, id: work::RequirementId) {
-        let evidence = crate::expectation::AlignmentEvidence::new(
+        let evidence = crate::expectation::AlignmentEvidence::new_bound(
             crate::expectation::AlignmentEvidenceKind::Validation,
             id,
+            *state
+                .requirement_revisions
+                .get(&id)
+                .expect("the requirement has a revision"),
+            "test-artifact",
             "cargo test",
             "mcp_config_roundtrip passed",
         );
@@ -5979,6 +6159,7 @@ mod delivery_replay_tests {
         state
             .reduce_event(&SessionEvent::DeliveryGateEvaluated {
                 validations: vec![],
+                artifact_digest: Some("test-artifact".into()),
             })
             .unwrap();
         assert_eq!(state.delivery.unwrap().state(), DeliveryState::Ready);
@@ -6010,6 +6191,7 @@ mod delivery_replay_tests {
         state
             .reduce_event(&SessionEvent::DeliveryGateEvaluated {
                 validations: vec![],
+                artifact_digest: Some("test-artifact".into()),
             })
             .unwrap();
         state
@@ -6027,6 +6209,7 @@ mod delivery_replay_tests {
         state
             .reduce_event(&SessionEvent::DeliveryGateEvaluated {
                 validations: vec![],
+                artifact_digest: Some("test-artifact".into()),
             })
             .unwrap();
         assert_eq!(
@@ -6130,6 +6313,7 @@ mod delivery_replay_tests {
         state
             .reduce_event(&SessionEvent::DeliveryGateEvaluated {
                 validations: vec![],
+                artifact_digest: Some("test-artifact".into()),
             })
             .unwrap();
         let assessment = state.delivery.clone().expect("the gate ran");
@@ -6171,9 +6355,11 @@ mod gate_wiring_tests {
                 contract: Box::new(contract),
             })
             .unwrap();
-        let evidence = crate::expectation::AlignmentEvidence::new(
+        let evidence = crate::expectation::AlignmentEvidence::new_bound(
             crate::expectation::AlignmentEvidenceKind::Validation,
             requirement_id,
+            1,
+            "test-artifact",
             "cargo test",
             "mcp_config_roundtrip passed",
         );
@@ -6251,6 +6437,7 @@ mod gate_wiring_tests {
         state
             .reduce_event(&SessionEvent::DeliveryGateEvaluated {
                 validations: vec![],
+                artifact_digest: Some("test-artifact".into()),
             })
             .unwrap();
         let assessment = state.delivery.clone().expect("the gate ran");

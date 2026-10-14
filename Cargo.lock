@@ -3880,7 +3880,7 @@ checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
 name = "purrcode-agent-runtime"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -3907,7 +3907,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-alignment-runtime"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3922,7 +3922,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-authority-contracts"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -3936,7 +3936,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-claw"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "cap-std",
@@ -3954,7 +3954,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-cli"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -4001,7 +4001,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-codex-bridge"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "purrcode-repository-engine",
  "purrcode-runtime-core",
@@ -4014,7 +4014,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-contextual-judgment"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -4028,7 +4028,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-daemon"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4080,7 +4080,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-delegation-runtime"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -4096,7 +4096,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-environment-runtime"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "purrcode-workspace-contracts",
@@ -4112,7 +4112,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-evaluation-runtime"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4126,6 +4126,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
@@ -4133,7 +4134,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-evidence-bundle"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -4149,7 +4150,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-extension-config"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "purrcode-pawgate",
  "purrcode-runtime-core",
@@ -4161,7 +4162,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-golden-suite"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "purrcode-pawgate",
  "purrcode-runtime-core",
@@ -4175,7 +4176,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-ide"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -4199,7 +4200,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-lsp"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "futures",
  "serde",
@@ -4211,7 +4212,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-mcp-host"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -4234,7 +4235,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-model-selection"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "schemars",
@@ -4246,7 +4247,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-ninelives"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "purrcode-runtime-core",
@@ -4260,7 +4261,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-pawgate"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "base64",
  "blake3",
@@ -4276,7 +4277,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-project-graph"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "purrcode-runtime-core",
@@ -4289,7 +4290,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-provider-gateway"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4311,7 +4312,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-provider-import"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "purrcode-provider-gateway",
  "regex",
@@ -4329,7 +4330,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-reference-resolver"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "serde",
  "thiserror 2.0.19",
@@ -4337,7 +4338,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-repository-engine"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "globset",
@@ -4349,7 +4350,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-runtime-core"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -4365,7 +4366,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-skill-registry"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -4382,7 +4383,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-skill-store"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -4398,7 +4399,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-studio-shell"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -4420,7 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-supervisor-runtime"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -4434,7 +4435,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-terminal-runtime"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "libc",
@@ -4451,7 +4452,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-tui"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4477,7 +4478,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-tui-e2e"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -4495,7 +4496,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-ui-contracts"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "schemars",
  "serde",
@@ -4504,7 +4505,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-validation-runtime"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "purrcode-claw",
@@ -4519,7 +4520,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-web-research"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4535,7 +4536,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-whisker"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "ignore",
@@ -4553,7 +4554,7 @@ dependencies = [
 
 [[package]]
 name = "purrcode-workspace-contracts"
-version = "1.0.0"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "schemars",

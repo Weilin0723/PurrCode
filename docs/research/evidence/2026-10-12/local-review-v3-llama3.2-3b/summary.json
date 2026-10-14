@@ -1,0 +1,125 @@
+{
+  "benchmark_kind": "held-out-synthetic-review-gate-component-v3",
+  "cluster_comparison": {
+    "alpha": 0.05,
+    "losses": 0,
+    "p_value": 0.0009765625,
+    "significant": true,
+    "test": "two-sided exact sign test; repeated seeds and paired traces collapsed within base task",
+    "ties": 5,
+    "wins": 11
+  },
+  "clusters": [
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "atomic-save"
+    },
+    {
+      "comparison": "tie",
+      "gate_score": 1.0,
+      "model_score": 1.0,
+      "pair_id": "backoff-cap"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "cache-zero"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "config-precedence"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "csv-newline"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "cursor-empty"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "deprecated-alias"
+    },
+    {
+      "comparison": "tie",
+      "gate_score": 1.0,
+      "model_score": 1.0,
+      "pair_id": "header-case"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "idempotency-key"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "missing-item"
+    },
+    {
+      "comparison": "tie",
+      "gate_score": 1.0,
+      "model_score": 1.0,
+      "pair_id": "path-root"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "retry-budget"
+    },
+    {
+      "comparison": "tie",
+      "gate_score": 1.0,
+      "model_score": 1.0,
+      "pair_id": "schema-extra"
+    },
+    {
+      "comparison": "tie",
+      "gate_score": 1.0,
+      "model_score": 1.0,
+      "pair_id": "stable-sort"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "timeout-unit"
+    },
+    {
+      "comparison": "win",
+      "gate_score": 1.0,
+      "model_score": 0.5,
+      "pair_id": "unicode-length"
+    }
+  ],
+  "independent_base_task_clusters": 16,
+  "limits": [
+    "Synthetic component evidence only; no repository code was executed.",
+    "Statistical significance does not establish coding-agent efficacy or external validity."
+  ],
+  "live_coding": false,
+  "model": "llama3.2:3b",
+  "primary_analysis": true,
+  "primary_model": "llama3.2:3b",
+  "repository_execution": false,
+  "scheduled_accuracy": 0.65625,
+  "scheduled_calls": 64,
+  "schema_version": 3,
+  "unique_traces": 32,
+  "valid_responses": 64
+}

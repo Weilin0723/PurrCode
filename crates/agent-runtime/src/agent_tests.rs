@@ -12,6 +12,136 @@ fn rejected_response_preview_is_bounded_and_removes_terminal_controls() {
     assert!(preview.contains("output truncated"));
 }
 
+#[test]
+fn a_successful_write_makes_a_later_plan_retrospective() {
+    let action_id = ActionId::new();
+    let events = vec![
+        SessionEvent::ActionProposed {
+            action_id,
+            action: ProposedAction::WriteFile(WriteFileAction {
+                path: PathBuf::from("src/lib.rs"),
+                content: "done\n".into(),
+                expected_digest: None,
+            }),
+            turn_id: None,
+        },
+        SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code: Some(0),
+            truncated: false,
+            sandbox_level: None,
+            sandbox_backend: None,
+            affected_paths: vec![PathBuf::from("src/lib.rs")],
+        },
+    ];
+
+    assert!(successful_mutation_exists(&events));
+    assert!(!successful_mutation_exists(&[
+        SessionEvent::ActionProposed {
+            action_id,
+            action: ProposedAction::WriteFile(WriteFileAction {
+                path: PathBuf::from("src/lib.rs"),
+                content: "done\n".into(),
+                expected_digest: None,
+            }),
+            turn_id: None,
+        }
+    ]));
+}
+
+#[test]
+fn replacing_a_file_requires_a_read_newer_than_the_last_write() {
+    let read_id = ActionId::new();
+    let write_id = ActionId::new();
+    let path = PathBuf::from("src/lib.rs");
+    let read_proposed = SessionEvent::ActionProposed {
+        action_id: read_id,
+        action: ProposedAction::RepositoryRead(RepositoryReadAction::ReadFile {
+            path: path.clone(),
+            max_bytes: 8192,
+        }),
+        turn_id: None,
+    };
+    let write_proposed = SessionEvent::ActionProposed {
+        action_id: write_id,
+        action: ProposedAction::WriteFile(WriteFileAction {
+            path: path.clone(),
+            content: "updated\n".into(),
+            expected_digest: None,
+        }),
+        turn_id: None,
+    };
+    let succeeded = |action_id| SessionEvent::ExecutionFinished {
+        action_id,
+        exit_code: Some(0),
+        truncated: false,
+        sandbox_level: None,
+        sandbox_backend: None,
+        affected_paths: Vec::new(),
+    };
+
+    assert!(has_fresh_file_read(
+        &[read_proposed.clone(), succeeded(read_id)],
+        &path
+    ));
+    assert!(!has_fresh_file_read(
+        &[
+            read_proposed.clone(),
+            succeeded(read_id),
+            write_proposed.clone(),
+            succeeded(write_id),
+        ],
+        &path
+    ));
+    assert!(has_fresh_file_read(
+        &[
+            write_proposed,
+            succeeded(write_id),
+            read_proposed,
+            succeeded(read_id),
+        ],
+        &path
+    ));
+}
+
+#[test]
+fn action_paths_override_a_stale_plan_step_index() {
+    assert!(task_mentions_path(
+        "Update items::list to return the total",
+        "src/items.rs",
+        "items.rs",
+        "items",
+    ));
+    assert!(!task_mentions_path(
+        "Modify pagination::page",
+        "src/items.rs",
+        "items.rs",
+        "items",
+    ));
+    assert!(!task_is_validation_only(
+        "Update existing test and add pagination tests"
+    ));
+}
+
+#[test]
+fn direct_mode_ignores_a_post_work_plan_restatement() {
+    use purrcode_runtime_core::adaptation::WorkflowProfile;
+
+    assert!(!plan_revision_requires_review(
+        WorkflowProfile::Direct,
+        true
+    ));
+    assert!(plan_revision_requires_review(
+        WorkflowProfile::Standard,
+        true
+    ));
+    assert!(plan_revision_requires_review(WorkflowProfile::Ultra, true));
+    assert!(!plan_revision_requires_review(
+        WorkflowProfile::Ultra,
+        false
+    ));
+}
+
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream;
@@ -26,8 +156,8 @@ use purrcode_runtime_core::adaptation::{
     BudgetConstraints, BudgetProfileKind, ExecutionStyle, SessionControls, TaskMode,
 };
 use purrcode_runtime_core::{
-    ActionId, ApprovalAuthority, ConversationMessage, ProposedAction, SessionEvent, SessionId,
-    SessionStatus, ValidationStatus, WriteFileAction,
+    ActionId, ApprovalAuthority, ConversationMessage, ProposedAction, RepositoryReadAction,
+    SessionEvent, SessionId, SessionStatus, ValidationStatus, WriteFileAction,
 };
 use purrcode_whisker::{
     IndexLifecycleStage, IndexPauseReason, IndexStopReason, IndexingSignals, MemoryPressure,
@@ -199,6 +329,24 @@ fn only_explicit_validation_steps_are_closed_by_the_validation_runtime() {
     }
     for objective in ["implement feature", "fix tests", "write validation code"] {
         assert!(!task_is_validation_only(objective));
+    }
+}
+
+#[test]
+fn only_discovery_steps_are_closed_by_prior_repository_read_evidence() {
+    for objective in [
+        "Locate the misspelled label constant",
+        "Inspect the parser implementation",
+        "Search for timeout uses",
+    ] {
+        assert!(task_is_repository_read_only(objective));
+    }
+    for objective in [
+        "Locate and fix the misspelled label",
+        "Inspect then update the parser",
+        "Implement repository search",
+    ] {
+        assert!(!task_is_repository_read_only(objective));
     }
 }
 
@@ -745,7 +893,7 @@ async fn partial_provider_cancellation_preserves_delta_without_completed_or_repa
 }
 
 #[tokio::test]
-async fn invalid_streamed_json_fails_closed_after_one_repair_without_completed() {
+async fn invalid_streamed_json_fails_closed_after_bounded_repairs_without_completed() {
     let invalid_stream = || {
         vec![
             Ok(ProviderStreamEvent::Connected),
@@ -757,7 +905,7 @@ async fn invalid_streamed_json_fails_closed_after_one_repair_without_completed()
         ]
     };
     let provider = StreamingProvider {
-        streams: Mutex::new(vec![invalid_stream(), invalid_stream()]),
+        streams: Mutex::new(vec![invalid_stream(), invalid_stream(), invalid_stream()]),
         remain_pending: false,
     };
     let (observer, mut receiver) = bounded_agent_stream_channel(32).unwrap();
@@ -779,7 +927,7 @@ async fn invalid_streamed_json_fails_closed_after_one_repair_without_completed()
         .unwrap_err();
     assert!(matches!(error, AgentError::Structured(_)));
     let observations = drain_observer(&mut receiver);
-    for attempt in [1, 2] {
+    for attempt in [1, 2, 3] {
         assert!(observations.iter().any(|event| matches!(
             event,
             AgentStreamEvent::Phase {
@@ -807,6 +955,43 @@ async fn invalid_streamed_json_fails_closed_after_one_repair_without_completed()
             .iter()
             .any(|event| matches!(event, SessionEvent::ConversationMessageAdded { .. }))
     );
+}
+
+#[tokio::test]
+async fn a_second_schema_repair_can_recover_a_valid_turn() {
+    let invalid_stream = || {
+        vec![
+            Ok(ProviderStreamEvent::Connected),
+            Ok(ProviderStreamEvent::Model(ModelEvent::TextDelta(
+                "not-json".into(),
+            ))),
+            Ok(ProviderStreamEvent::Model(ModelEvent::Finished)),
+        ]
+    };
+    let valid = serde_json::json!({
+        "rationale": "Two plus two equals four.",
+        "complete": true
+    })
+    .to_string();
+    // Streams are popped: the two malformed responses arrive before `valid`.
+    let provider = StreamingProvider {
+        streams: Mutex::new(vec![
+            successful_observed_stream(&valid),
+            invalid_stream(),
+            invalid_stream(),
+        ]),
+        remain_pending: false,
+    };
+    let agent = NativeAgent::new(role_map(provider), Policy::default());
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+
+    let outcome = agent
+        .start(&mut store, repository.path(), "What is two plus two?")
+        .await
+        .expect("the second bounded schema repair should recover");
+
+    assert!(matches!(outcome, AgentOutcome::Completed { .. }));
 }
 
 #[tokio::test]
@@ -1249,6 +1434,14 @@ async fn repeated_deterministic_denials_pause_before_more_provider_calls() {
             SessionEvent::SessionPaused { reason }
                 if reason.contains("rejected 3 consecutive proposed actions")
         )
+    }));
+    assert!(state.conversation_messages.iter().any(|message| {
+        message.role == "system"
+            && message.content.contains("Do not retry that same action")
+            && message
+                .content
+                .contains("very next action must perform that prerequisite")
+            && message.content.contains("automatic completion validation")
     }));
     assert!(
         provider.responses.lock().unwrap().is_empty(),

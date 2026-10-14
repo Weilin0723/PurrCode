@@ -30,6 +30,12 @@ PurrCode v1.0 让纯 Rust native IDE 成为图形产品本身：直接运行 `pu
 `purrcode experimental portal` 用于开发和维护，不会被 native IDE 自动打开，也不依赖
 VS Code/Electron/Tauri。
 
+PurrCode v1.5 为每个任务加入了**对齐闭环**：意图编译器把你的请求编译成一份逐字引用你原话的
+期望契约（expectation contract），三路独立评审——需求覆盖、代码质量、用户对齐——在完全看不到
+实现者对话记录的前提下逐条核对实现是否满足契约，最终由交付门禁（一个读取持久会话日志的可信
+归约器，而不是模型自己的说法）判定任务是否真正完成。编译通过、测试全绿，不代表设置页面依然
+好用——这正是让两者区分开的机制。完整设计见 [`docs/v1.5-architecture.md`](docs/v1.5-architecture.md)（英文）。
+
 ## 界面
 
 - **终端 Workbench** — 默认界面。直接运行 `purrcode` 在所有平台上都会打开它，绝不会意外弹出
@@ -55,7 +61,7 @@ VS Code/Electron/Tauri。
 ### macOS 和 Linux（终端）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v1.0.0/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Weilin0723/PurrCode/v1.5.0/scripts/install.sh | sh
 ```
 
 脚本会检测主机平台、下载发布归档，使用 `SHA256SUMS` 校验归档，并默认安装到 `~/.local/bin`。
@@ -71,7 +77,7 @@ npm install --global @minaovo/purrcode
 SHA-256 摘要，并提供 `purrcode` 和 `purrcoded` 两个命令。也可以直接从 GitHub 安装已签名 launcher：
 
 ```bash
-npm install --global https://github.com/Weilin0723/PurrCode/releases/latest/download/purrcode-1.0.0.tgz
+npm install --global https://github.com/Weilin0723/PurrCode/releases/latest/download/purrcode-1.5.0.tgz
 ```
 
 ### Windows

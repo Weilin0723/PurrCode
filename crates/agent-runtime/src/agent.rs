@@ -113,6 +113,7 @@ const COMPACTION_INPUT_TOKEN_THRESHOLD_RATIO: f64 = 0.7;
 const MAX_REJECTED_RESPONSE_PREVIEW_CHARS: usize = 4_096;
 const MAX_VALIDATION_REPAIR_CYCLES: usize = 3;
 const MAX_COMPLETION_REPAIR_ATTEMPTS: usize = 2;
+const MAX_SCHEMA_REPAIR_ATTEMPTS: u8 = 2;
 const MAX_ACTION_REPAIR_ATTEMPTS: usize = 1;
 /// Bounded reject+repair opportunities when a Scout turn requests more actions
 /// than the remaining exploration budget. One repair is enough for a compliant
@@ -2943,26 +2944,43 @@ impl<'a> NativeAgent<'a> {
                         )
                         .await?
                     } else {
-                        let mut repair = active_request.clone();
-                        repair.messages.push(ModelMessage {
-                            role: "user".into(),
-                            content: format!(
-                                "Your previous response was rejected: {first_error}\n\n\
-                                Return EXACTLY ONE corrected response matching the JSON schema. \
-                                No markdown, no extra text outside the JSON. \
-                                This is the only schema repair attempt."
-                            ),
-                        });
-                        self.structured_observed(
-                            store,
-                            session_id,
-                            "coding_worker",
-                            2,
-                            repair,
-                            schema_for!(AgentTurn),
-                            validate_turn,
-                        )
-                        .await?
+                        let mut last_error = first_error;
+                        let mut repaired = None;
+                        for repair_attempt in 1..=MAX_SCHEMA_REPAIR_ATTEMPTS {
+                            let mut repair = active_request.clone();
+                            repair.messages.push(ModelMessage {
+                                role: "user".into(),
+                                content: format!(
+                                    "Your previous response was rejected: {last_error}\n\n\
+                                    Return EXACTLY ONE corrected response matching the JSON schema. \
+                                    No markdown, no extra text outside the JSON. \
+                                    If your rejected `actions` array mixed reads with a write or \
+                                    delete, keep the mutation and remove every other action: a \
+                                    mutating turn must have `actions` length exactly 1. Schema repair \
+                                    attempt {repair_attempt} of {MAX_SCHEMA_REPAIR_ATTEMPTS}."
+                                ),
+                            });
+                            match self
+                                .structured_observed(
+                                    store,
+                                    session_id,
+                                    "coding_worker",
+                                    repair_attempt + 1,
+                                    repair,
+                                    schema_for!(AgentTurn),
+                                    validate_turn,
+                                )
+                                .await
+                            {
+                                Ok(result) => {
+                                    repaired = Some(result);
+                                    break;
+                                }
+                                Err(error) if error.is_cancelled() => return Err(error),
+                                Err(error) => last_error = error,
+                            }
+                        }
+                        repaired.ok_or(last_error)?
                     }
                 }
             };
@@ -3226,9 +3244,60 @@ impl<'a> NativeAgent<'a> {
                         constraints: constraints.clone(),
                     })
                     .collect();
+                let batch_started_at = Utc::now();
+                // The durable projection has one `Executing(action_id)` slot,
+                // while Claw deliberately runs batch reads concurrently.
+                // Start the first before dispatch, then serialize the remaining
+                // start/finish pairs when their concurrent results return.
+                if let Some((action_id, _, _)) = authorized_reads.first() {
+                    store.append(
+                        session_id,
+                        &SessionEvent::ExecutionStarted {
+                            action_id: *action_id,
+                        },
+                    )?;
+                }
                 let results = purrcode_claw::ToolRuntime::execute_batch(store, &batch).await?;
                 for (i, result) in results.iter().enumerate() {
-                    if let Some((action_id, _, _)) = authorized_reads.get(i) {
+                    if let Some((action_id, action, constraints)) = authorized_reads.get(i) {
+                        if i > 0 {
+                            store.append(
+                                session_id,
+                                &SessionEvent::ExecutionStarted {
+                                    action_id: *action_id,
+                                },
+                            )?;
+                        }
+                        finalize_tool_evidence(
+                            store,
+                            session_id,
+                            native_evidence_draft(
+                                session_id,
+                                Some(turn_id),
+                                *action_id,
+                                action,
+                                constraints,
+                                &ToolExecutionContext::model(turn_id),
+                                self.tool_registry.as_deref(),
+                                batch_started_at,
+                            ),
+                            purrcode_runtime_core::ExecutionOutcome::from_execution(
+                                result.exit_code,
+                                result.truncated,
+                                result.affected_paths.clone(),
+                            ),
+                        )?;
+                        store.append(
+                            session_id,
+                            &SessionEvent::ExecutionFinished {
+                                action_id: *action_id,
+                                exit_code: result.exit_code,
+                                truncated: result.truncated,
+                                sandbox_level: Some(format!("{:?}", result.sandbox_level)),
+                                sandbox_backend: Some(result.sandbox_backend.clone()),
+                                affected_paths: result.affected_paths.clone(),
+                            },
+                        )?;
                         store.append(
                             session_id,
                             &SessionEvent::ActionOutputRecorded {
@@ -3237,6 +3306,21 @@ impl<'a> NativeAgent<'a> {
                                 stderr: bounded_terminal_text(&result.stderr),
                                 truncated: result.truncated,
                                 turn_id: Some(turn_id),
+                            },
+                        )?;
+                        store.append(
+                            session_id,
+                            &SessionEvent::ValidationRecorded {
+                                action_id: *action_id,
+                                status: if result.exit_code == Some(0) {
+                                    ValidationStatus::Passed
+                                } else {
+                                    ValidationStatus::Failed
+                                },
+                                evidence: format!(
+                                    "exit={:?}; affected_paths={:?}",
+                                    result.exit_code, result.affected_paths
+                                ),
                             },
                         )?;
                     }
@@ -3390,21 +3474,30 @@ impl<'a> NativeAgent<'a> {
             let mut plan_changed = false;
             if let Some(plan) = turn.plan.clone() {
                 if state.plan_steps.is_empty() {
-                    store.append(session_id, &SessionEvent::PlanCreated { steps: plan })?;
-                    plan_changed = true;
-                    if matches!(
-                        self.controls.task_mode,
-                        purrcode_runtime_core::adaptation::TaskMode::Plan
-                            | purrcode_runtime_core::adaptation::TaskMode::Build
-                    ) {
-                        let current = store.load(session_id)?;
-                        record_plan_work(
-                            store,
-                            session_id,
-                            &objective,
-                            &current.plan_steps,
-                            &turn.expected_postconditions,
-                        )?;
+                    // Direct-mode providers sometimes emit a retrospective
+                    // checklist after they have already changed the tree. It
+                    // cannot safely become a durable task graph: its fresh
+                    // tasks have no links to the earlier action evidence and
+                    // would make a fully validated run fail the plan-integrity
+                    // gate. A real plan must precede its first mutation (and
+                    // Standard/Ultra already enforce that invariant).
+                    if !successful_mutation_exists(&session_events) {
+                        store.append(session_id, &SessionEvent::PlanCreated { steps: plan })?;
+                        plan_changed = true;
+                        if matches!(
+                            self.controls.task_mode,
+                            purrcode_runtime_core::adaptation::TaskMode::Plan
+                                | purrcode_runtime_core::adaptation::TaskMode::Build
+                        ) {
+                            let current = store.load(session_id)?;
+                            record_plan_work(
+                                store,
+                                session_id,
+                                &objective,
+                                &current.plan_steps,
+                                &turn.expected_postconditions,
+                            )?;
+                        }
                     }
                 } else if state.plan_steps != plan {
                     let material_work_exists = state.task_graph.as_ref().is_some_and(|graph| {
@@ -3412,7 +3505,21 @@ impl<'a> NativeAgent<'a> {
                             !matches!(task.status, WorkTaskStatus::Pending | WorkTaskStatus::Ready)
                         })
                     }) || !state.evidence_links.is_empty();
-                    if material_work_exists {
+                    let workflow_profile = state
+                        .workflow_plan
+                        .as_ref()
+                        .map(|workflow| workflow.profile)
+                        .unwrap_or_default();
+                    if material_work_exists
+                        && !plan_revision_requires_review(workflow_profile, material_work_exists)
+                    {
+                        // Direct mode has no explicit plan-review boundary. A
+                        // model often restates its checklist after PawGate asks
+                        // for a safer read or a corrected action; replacing the
+                        // durable graph would orphan evidence, but pausing the
+                        // entire task is equally wrong. Keep the accepted plan
+                        // and continue with the corrected action.
+                    } else if material_work_exists {
                         store.append(
                             session_id,
                             &SessionEvent::SessionPaused {
@@ -3420,29 +3527,30 @@ impl<'a> NativeAgent<'a> {
                             },
                         )?;
                         return Ok(AgentOutcome::IterationLimit { session_id });
-                    }
-                    store.append(
-                        session_id,
-                        &SessionEvent::PlanRevised {
-                            revision: state.plan_revision + 1,
-                            reason: turn.rationale.clone(),
-                            steps: plan,
-                        },
-                    )?;
-                    plan_changed = true;
-                    if matches!(
-                        self.controls.task_mode,
-                        purrcode_runtime_core::adaptation::TaskMode::Plan
-                            | purrcode_runtime_core::adaptation::TaskMode::Build
-                    ) {
-                        let current = store.load(session_id)?;
-                        record_plan_work(
-                            store,
+                    } else {
+                        store.append(
                             session_id,
-                            &objective,
-                            &current.plan_steps,
-                            &turn.expected_postconditions,
+                            &SessionEvent::PlanRevised {
+                                revision: state.plan_revision + 1,
+                                reason: turn.rationale.clone(),
+                                steps: plan,
+                            },
                         )?;
+                        plan_changed = true;
+                        if matches!(
+                            self.controls.task_mode,
+                            purrcode_runtime_core::adaptation::TaskMode::Plan
+                                | purrcode_runtime_core::adaptation::TaskMode::Build
+                        ) {
+                            let current = store.load(session_id)?;
+                            record_plan_work(
+                                store,
+                                session_id,
+                                &objective,
+                                &current.plan_steps,
+                                &turn.expected_postconditions,
+                            )?;
+                        }
                     }
                 }
             }
@@ -3540,7 +3648,17 @@ impl<'a> NativeAgent<'a> {
                         )?;
                         return Ok(AgentOutcome::IterationLimit { session_id });
                     }
-                    if let Some(judge) = self.contextual_judge.as_ref() {
+                    // The v1.5 delivery gate supersedes the legacy outcome
+                    // judge. That judge sees only a diff summary, while the
+                    // alignment reviewers see the actual patch, touched files,
+                    // repository-read evidence, and validations. Running both
+                    // lets the weaker, evidence-poor check block a correct
+                    // change before the stronger gate can inspect it.
+                    if let Some(judge) = self
+                        .contextual_judge
+                        .as_ref()
+                        .filter(|_| self.alignment.is_none())
+                    {
                         let outcome_request = build_outcome_request(
                             &objective,
                             turn.plan.as_deref().unwrap_or(&state.plan_steps),
@@ -3696,6 +3814,17 @@ impl<'a> NativeAgent<'a> {
             // NOT the conservative `evaluate` arm that always requires
             // approval. Legacy actions keep the generic path.
             let deterministic = match (&proposed, self.tool_registry.as_deref()) {
+                (ProposedAction::WriteFile(write), _)
+                    if worktree.join(&write.path).is_file()
+                        && !has_fresh_file_read(&session_events, &write.path) =>
+                {
+                    JudgmentDecision::Replan {
+                        reason: format!(
+                            "read the complete current contents of {} with read_file before replacing it; grep snippets and retrieved context are not a safe basis for a whole-file write",
+                            write.path.display()
+                        ),
+                    }
+                }
                 (ProposedAction::Tool(invocation), Some(registry)) => {
                     match registry.tool(&invocation.tool_id) {
                         Some(descriptor) => {
@@ -3862,7 +3991,12 @@ impl<'a> NativeAgent<'a> {
                         authorized_at: Utc::now(),
                         approved_by: ApprovalAuthority::DeterministicPolicy,
                     })?;
-                    let task_id = current_plan_task_id(store, session_id, turn.current_step_index)?;
+                    let task_id = current_plan_task_id(
+                        store,
+                        session_id,
+                        turn.current_step_index,
+                        &proposed,
+                    )?;
                     start_task(
                         store,
                         session_id,
@@ -3969,7 +4103,12 @@ impl<'a> NativeAgent<'a> {
                     reason,
                     constraints: _,
                 } => {
-                    let task_id = current_plan_task_id(store, session_id, turn.current_step_index)?;
+                    let task_id = current_plan_task_id(
+                        store,
+                        session_id,
+                        turn.current_step_index,
+                        &proposed,
+                    )?;
                     start_task(
                         store,
                         session_id,
@@ -3983,10 +4122,32 @@ impl<'a> NativeAgent<'a> {
                         action: proposed,
                     });
                 }
-                JudgmentDecision::Deny { .. }
-                | JudgmentDecision::ModifyAction { .. }
-                | JudgmentDecision::Replan { .. } => {
+                JudgmentDecision::Deny { reason }
+                | JudgmentDecision::ModifyAction { reason }
+                | JudgmentDecision::Replan { reason } => {
                     consecutive_policy_rejections += 1;
+                    store.append(
+                        session_id,
+                        &SessionEvent::ConversationMessageAdded {
+                            message: ConversationMessage {
+                                id: ActionId::new().0.to_string(),
+                                role: "system".into(),
+                                content: format!(
+                                    "The proposed action was not executed: {reason}. Do not retry \
+                                     that same action. If the reason prescribes a prerequisite, your \
+                                     very next action must perform that prerequisite before you try \
+                                     the blocked action again. Choose a permitted way to make progress, or \
+                                     if the implementation is ready, return complete=true so the \
+                                     runtime can run its automatic completion validation."
+                                ),
+                                timestamp: Utc::now(),
+                                tool_calls: Vec::new(),
+                                tool_results: Vec::new(),
+                                model: None,
+                                turn_id: Some(turn_id),
+                            },
+                        },
+                    )?;
                     if consecutive_policy_rejections >= MAX_CONSECUTIVE_POLICY_REJECTIONS {
                         store.append(
                             session_id,
@@ -4753,12 +4914,50 @@ fn current_plan_task_id(
     store: &SessionStore,
     session_id: SessionId,
     current_step_index: Option<usize>,
+    action: &ProposedAction,
 ) -> Result<Option<WorkTaskId>, AgentError> {
     let index = current_step_index.unwrap_or(0);
-    Ok(store
-        .load(session_id)?
-        .task_graph
-        .and_then(|graph| graph.tasks.get(index).map(|task| task.id)))
+    let Some(graph) = store.load(session_id)?.task_graph else {
+        return Ok(None);
+    };
+    let action_path = match action {
+        ProposedAction::WriteFile(write) => Some(write.path.as_path()),
+        ProposedAction::DeleteFile(delete) => Some(delete.path.as_path()),
+        _ => None,
+    };
+    if let Some(path) = action_path {
+        let path = path.to_string_lossy().to_ascii_lowercase();
+        let file_name = Path::new(path.as_str())
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let stem = Path::new(file_name)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if let Some(task) = graph
+            .tasks
+            .iter()
+            .find(|task| task_mentions_path(&task.objective, path.as_str(), file_name, stem))
+        {
+            return Ok(Some(task.id));
+        }
+    }
+    Ok(graph.tasks.get(index).map(|task| task.id))
+}
+
+fn task_mentions_path(objective: &str, path: &str, file_name: &str, stem: &str) -> bool {
+    let objective = objective.to_ascii_lowercase();
+    objective.contains(path)
+        || (!file_name.is_empty() && objective.contains(file_name))
+        || (!stem.is_empty() && objective.contains(stem))
+}
+
+fn plan_revision_requires_review(
+    profile: purrcode_runtime_core::adaptation::WorkflowProfile,
+    material_work_exists: bool,
+) -> bool {
+    material_work_exists && profile != purrcode_runtime_core::adaptation::WorkflowProfile::Direct
 }
 
 fn append_task_status(
@@ -4897,6 +5096,8 @@ fn close_validated_plan_tasks(
     let Some(graph) = state.task_graph else {
         return Ok(());
     };
+    let events = store.events(session_id)?;
+    let repository_read_observed = successful_repository_read_exists(&events);
     let report_summary = report
         .evidence
         .iter()
@@ -4911,21 +5112,28 @@ fn close_validated_plan_tasks(
     for task in graph.tasks {
         let validation_task =
             task.status == WorkTaskStatus::Ready && task_is_validation_only(&task.objective);
+        let repository_read_task = task.status == WorkTaskStatus::Ready
+            && task_is_repository_read_only(&task.objective)
+            && repository_read_observed;
         let executed_task = task.status == WorkTaskStatus::Running
             && state.evidence_links.iter().any(|evidence| {
                 evidence.task_id == task.id
                     && evidence.validation_status == Some(ValidationStatus::Passed)
             });
-        if !validation_task && !executed_task {
+        if !validation_task && !repository_read_task && !executed_task {
             continue;
         }
-        if validation_task {
+        if validation_task || repository_read_task {
             append_task_status(
                 store,
                 session_id,
                 Some(task.id),
                 WorkTaskStatus::Running,
-                "the validation runtime started this validation-only plan task",
+                if validation_task {
+                    "the validation runtime started this validation-only plan task"
+                } else {
+                    "durable repository-read evidence satisfied this discovery-only plan task"
+                },
             )?;
         }
         append_task_evidence(
@@ -4948,16 +5156,145 @@ fn close_validated_plan_tasks(
     Ok(())
 }
 
+fn successful_mutation_exists(events: &[SessionEvent]) -> bool {
+    let mutations = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::ActionProposed {
+                action_id,
+                action: ProposedAction::WriteFile(_) | ProposedAction::DeleteFile(_),
+                ..
+            } => Some(*action_id),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    events.iter().any(|event| {
+        let SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code: Some(0),
+            ..
+        } = event
+        else {
+            return false;
+        };
+        mutations.contains(action_id)
+    })
+}
+
+fn successful_repository_read_exists(events: &[SessionEvent]) -> bool {
+    let reads = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::ActionProposed {
+                action_id,
+                action: ProposedAction::RepositoryRead(_),
+                ..
+            } => Some(*action_id),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    events.iter().any(|event| {
+        let SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code: Some(0),
+            ..
+        } = event
+        else {
+            return false;
+        };
+        reads.contains(action_id)
+    })
+}
+
+fn has_fresh_file_read(events: &[SessionEvent], path: &Path) -> bool {
+    let actions = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::ActionProposed {
+                action_id, action, ..
+            } => Some((*action_id, action)),
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut fresh = false;
+    for event in events {
+        let SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code: Some(0),
+            ..
+        } = event
+        else {
+            continue;
+        };
+        match actions.get(action_id).copied() {
+            Some(ProposedAction::RepositoryRead(
+                purrcode_runtime_core::RepositoryReadAction::ReadFile {
+                    path: read_path, ..
+                },
+            )) if read_path == path => fresh = true,
+            Some(ProposedAction::WriteFile(write)) if write.path == path => fresh = false,
+            Some(ProposedAction::DeleteFile(delete)) if delete.path == path => fresh = false,
+            _ => {}
+        }
+    }
+    fresh
+}
+
 fn task_is_validation_only(objective: &str) -> bool {
     let objective = objective.trim().to_ascii_lowercase();
-    objective == "validate"
+    let validation = objective == "validate"
         || objective == "verify"
         || objective == "test"
         || objective.starts_with("validate ")
         || objective.starts_with("verify ")
         || objective.starts_with("test ")
         || objective.starts_with("run test")
-        || objective.starts_with("run check")
+        || objective.starts_with("run check");
+    let mutation = [
+        "add ",
+        "change ",
+        "correct ",
+        "delete ",
+        "edit ",
+        "fix ",
+        "implement ",
+        "modify ",
+        "remove ",
+        "rename ",
+        "replace ",
+        "update ",
+        "write ",
+    ]
+    .iter()
+    .any(|marker| objective.starts_with(marker));
+    validation && !mutation
+}
+
+fn task_is_repository_read_only(objective: &str) -> bool {
+    let objective = objective.trim().to_ascii_lowercase();
+    let starts_with_discovery = [
+        "find ", "inspect ", "list ", "locate ", "map ", "read ", "search ",
+    ]
+    .iter()
+    .any(|prefix| objective.starts_with(prefix));
+    let requests_mutation = [
+        " add ",
+        " change ",
+        " correct ",
+        " delete ",
+        " edit ",
+        " fix ",
+        " implement ",
+        " modify ",
+        " remove ",
+        " rename ",
+        " replace ",
+        " update ",
+        " write ",
+    ]
+    .iter()
+    .any(|marker| format!(" {objective} ").contains(marker));
+    starts_with_discovery && !requests_mutation
 }
 
 fn required_tasks_passed(store: &SessionStore, session_id: SessionId) -> Result<bool, AgentError> {

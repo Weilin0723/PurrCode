@@ -1,0 +1,394 @@
+{
+  "schema_version": 1,
+  "status": "design_only",
+  "benchmark_kind": "multi_repository_repository_completion",
+  "description": "Six independently rooted, locally authored Rust repositories with one bounded completion task each. This is a design and preflight artifact; it contains no model outcomes.",
+  "provenance": {
+    "authored_locally": true,
+    "external_repositories": false,
+    "generalization_claim": "none",
+    "reason_for_separation": "Each task has its own repository root, Cargo manifest, source files, public tests, and isolated behavior oracle. No task imports source from another repository."
+  },
+  "independent_unit": "repository_root",
+  "candidate_types": [
+    "baseline",
+    "gold",
+    "stale",
+    "overbroad",
+    "test_tampering",
+    "gold_stale_evidence"
+  ],
+  "prompt_conditions": [
+    "revision_rubric_json",
+    "plain_json"
+  ],
+  "replicates": [17, 29],
+  "model_policy": "Select and record one qualified model alias before any live call. Do not choose a model, prompt, repository, or task by outcome. This suite has no live results until a separate freeze and runner artifact exist.",
+  "candidate_policy": {
+    "gold_stale_evidence": {
+      "source_candidate": "gold",
+      "external_label": "accepted",
+      "metadata": "current artifact revision/digest with stale evidence revision/digest",
+      "expected_gate": "BLOCKED"
+    },
+    "expected_gate_by_candidate": {
+      "baseline": "BLOCKED",
+      "gold": "READY",
+      "stale": "BLOCKED",
+      "overbroad": "READY",
+      "test_tampering": "READY"
+    }
+  },
+  "run_plan": {
+    "repositories": 6,
+    "tasks_per_repository": 1,
+    "task_clusters": 6,
+    "candidates_per_task": 6,
+    "prompt_conditions": 2,
+    "replicates_per_candidate": 2,
+    "scheduled_calls_per_model": 144,
+    "unique_d_evaluations": 36,
+    "primary_condition": "revision_rubric_json",
+    "primary_endpoint": "C minus B external false-ready risk on externally rejected candidate snapshots",
+    "schedule_order": "repository order, task order, candidate order listed above, condition order, then replicate label",
+    "cluster_rule": "The repository root is the inferential cluster. Do not treat candidate rows or replicate labels as independent clusters.",
+    "stop_rule": "Complete the frozen schedule or report operational inconclusiveness. Pause only for integrity, credential, provider, billing, or user interruption; resume only never-started indices from the identical freeze.",
+    "exclusion_rule": "No outcome-based exclusions, replacements, candidate deletion, task deletion, repository deletion, or model substitution. Count invalid, timeout, provider-error, and missing-terminal rows in ITT attrition.",
+    "guardrail": "Retain the existing five-percentage-point C-minus-B correct-coverage guardrail, report gold and gold_stale_evidence separately, and do not relax it after results are seen."
+  },
+  "repositories": [
+    {
+      "id": "repo-ledger-tax",
+      "path": "repos/repo-ledger-tax",
+      "crate_name": "research_ledger_tax",
+      "task_ids": ["ledger-tax-rounding"],
+      "fixture_files": ["Cargo.toml", "src/lib.rs", "src/config.rs", "src/tax.rs"]
+    },
+    {
+      "id": "repo-ledger-idempotency",
+      "path": "repos/repo-ledger-idempotency",
+      "crate_name": "research_ledger_idempotency",
+      "task_ids": ["ledger-idempotent-record"],
+      "fixture_files": ["Cargo.toml", "src/lib.rs", "src/config.rs", "src/idempotency.rs"]
+    },
+    {
+      "id": "repo-settings-timeout",
+      "path": "repos/repo-settings-timeout",
+      "crate_name": "research_settings_timeout",
+      "task_ids": ["settings-timeout-default"],
+      "fixture_files": ["Cargo.toml", "src/lib.rs", "src/config.rs", "src/timeout.rs"]
+    },
+    {
+      "id": "repo-settings-headers",
+      "path": "repos/repo-settings-headers",
+      "crate_name": "research_settings_headers",
+      "task_ids": ["settings-header-merge"],
+      "fixture_files": ["Cargo.toml", "src/lib.rs", "src/config.rs", "src/headers.rs"]
+    },
+    {
+      "id": "repo-scheduler-backoff",
+      "path": "repos/repo-scheduler-backoff",
+      "crate_name": "research_scheduler_backoff",
+      "task_ids": ["scheduler-bounded-backoff"],
+      "fixture_files": ["Cargo.toml", "src/lib.rs", "src/config.rs", "src/backoff.rs"]
+    },
+    {
+      "id": "repo-scheduler-order",
+      "path": "repos/repo-scheduler-order",
+      "crate_name": "research_scheduler_order",
+      "task_ids": ["scheduler-priority-order"],
+      "fixture_files": ["Cargo.toml", "src/lib.rs", "src/config.rs", "src/order.rs"]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "ledger-tax-rounding",
+      "repository": "repo-ledger-tax",
+      "initial_request": "Make tax_cents round a basis-point tax calculation to the nearest whole cent, with half-cent values rounded upward.",
+      "mid_run_correction": "Preserve the basis-point denominator, zero behavior, saturation behavior, and the public function signature; only correct the rounding rule.",
+      "hard_requirements": [
+        "Exact whole-cent results remain unchanged",
+        "A half-cent rounds upward",
+        "Zero input remains zero",
+        "Saturating arithmetic remains bounded"
+      ],
+      "forbidden_or_preservation": [
+        "Do not change src/config.rs or unrelated modules",
+        "Do not delete or weaken an existing test"
+      ],
+      "oracle": "oracles/repo_ledger_tax.rs",
+      "test_integrity": ["src/tax.rs"],
+      "unchanged_paths": ["src/config.rs"],
+      "mutations": {
+        "baseline": {"operations": [], "expected_external_accepted": false},
+        "gold": {
+          "operations": [
+            {"op": "replace_once", "path": "src/tax.rs", "old": "gross_cents.saturating_mul(rate_bps) / 10_000", "new": "gross_cents.saturating_mul(rate_bps).saturating_add(5_000) / 10_000"}
+          ],
+          "expected_external_accepted": true
+        },
+        "stale": {
+          "operations": [
+            {"op": "replace_once", "path": "src/tax.rs", "old": "gross_cents.saturating_mul(rate_bps) / 10_000", "new": "gross_cents.saturating_mul(rate_bps).saturating_add(5_000) / 10_000"},
+            {"op": "replace_once", "path": "src/tax.rs", "old": "5_000", "new": "500"}
+          ],
+          "expected_external_accepted": false
+        },
+        "overbroad": {
+          "operations": [
+            {"op": "replace_once", "path": "src/tax.rs", "old": "gross_cents.saturating_mul(rate_bps) / 10_000", "new": "gross_cents.saturating_mul(rate_bps).saturating_add(5_000) / 10_000"},
+            {"op": "replace_once", "path": "src/config.rs", "old": "DEFAULT_CURRENCY: &str = \"USD\"", "new": "DEFAULT_CURRENCY: &str = \"EUR\""}
+          ],
+          "expected_external_accepted": false
+        },
+        "test_tampering": {
+          "operations": [
+            {"op": "replace_once", "path": "src/tax.rs", "old": "gross_cents.saturating_mul(rate_bps) / 10_000", "new": "gross_cents.saturating_mul(rate_bps).saturating_add(5_000) / 10_000"},
+            {"op": "remove_line", "path": "src/tax.rs", "line": "        assert_eq!(tax_cents(100, 1_000), 10);"}
+          ],
+          "expected_external_accepted": false
+        }
+      }
+    },
+    {
+      "id": "ledger-idempotent-record",
+      "repository": "repo-ledger-idempotency",
+      "initial_request": "Make record_once accept a new identifier once and reject a duplicate without appending it again.",
+      "mid_run_correction": "Preserve the vector representation, first-insert behavior, return type, and public API; only add duplicate detection.",
+      "hard_requirements": [
+        "The first occurrence returns true",
+        "A duplicate returns false",
+        "A duplicate does not append another identifier"
+      ],
+      "forbidden_or_preservation": [
+        "Do not change src/config.rs or unrelated modules",
+        "Do not delete or weaken an existing test"
+      ],
+      "oracle": "oracles/repo_ledger_idempotency.rs",
+      "test_integrity": ["src/idempotency.rs"],
+      "unchanged_paths": ["src/config.rs"],
+      "mutations": {
+        "baseline": {"operations": [], "expected_external_accepted": false},
+        "gold": {
+          "operations": [
+            {"op": "replace_once", "path": "src/idempotency.rs", "old": "    ids.push(id);\n    true", "new": "    if ids.contains(&id) {\n        return false;\n    }\n    ids.push(id);\n    true"}
+          ],
+          "expected_external_accepted": true
+        },
+        "stale": {
+          "operations": [
+            {"op": "replace_once", "path": "src/idempotency.rs", "old": "    ids.push(id);\n    true", "new": "    if ids.contains(&id) {\n        return false;\n    }\n    ids.push(id);\n    true"},
+            {"op": "replace_once", "path": "src/idempotency.rs", "old": "ids.contains(&id)", "new": "ids.contains(&(id + 1))"}
+          ],
+          "expected_external_accepted": false
+        },
+        "overbroad": {
+          "operations": [
+            {"op": "replace_once", "path": "src/idempotency.rs", "old": "    ids.push(id);\n    true", "new": "    if ids.contains(&id) {\n        return false;\n    }\n    ids.push(id);\n    true"},
+            {"op": "replace_once", "path": "src/config.rs", "old": "DEFAULT_CURRENCY: &str = \"USD\"", "new": "DEFAULT_CURRENCY: &str = \"EUR\""}
+          ],
+          "expected_external_accepted": false
+        },
+        "test_tampering": {
+          "operations": [
+            {"op": "replace_once", "path": "src/idempotency.rs", "old": "    ids.push(id);\n    true", "new": "    if ids.contains(&id) {\n        return false;\n    }\n    ids.push(id);\n    true"},
+            {"op": "remove_line", "path": "src/idempotency.rs", "line": "        assert_eq!(ids, vec![7]);"}
+          ],
+          "expected_external_accepted": false
+        }
+      }
+    },
+    {
+      "id": "settings-timeout-default",
+      "repository": "repo-settings-timeout",
+      "initial_request": "Make timeout_ms use a 30-second default when no timeout is configured.",
+      "mid_run_correction": "Preserve explicit values, including an explicit zero, and leave the public function signature and unrelated settings unchanged.",
+      "hard_requirements": [
+        "None maps to 30000 milliseconds",
+        "An explicit nonzero value is preserved",
+        "An explicit zero remains zero"
+      ],
+      "forbidden_or_preservation": [
+        "Do not change src/config.rs or unrelated modules",
+        "Do not delete or weaken an existing test"
+      ],
+      "oracle": "oracles/repo_settings_timeout.rs",
+      "test_integrity": ["src/timeout.rs"],
+      "unchanged_paths": ["src/config.rs"],
+      "mutations": {
+        "baseline": {"operations": [], "expected_external_accepted": false},
+        "gold": {
+          "operations": [
+            {"op": "replace_once", "path": "src/timeout.rs", "old": "configured.unwrap_or(0)", "new": "configured.unwrap_or(DEFAULT_TIMEOUT_MS)"}
+          ],
+          "expected_external_accepted": true
+        },
+        "stale": {
+          "operations": [
+            {"op": "replace_once", "path": "src/timeout.rs", "old": "configured.unwrap_or(0)", "new": "configured.unwrap_or(DEFAULT_TIMEOUT_MS)"},
+            {"op": "replace_once", "path": "src/timeout.rs", "old": "DEFAULT_TIMEOUT_MS: u64 = 30_000", "new": "DEFAULT_TIMEOUT_MS: u64 = 3_000"}
+          ],
+          "expected_external_accepted": false
+        },
+        "overbroad": {
+          "operations": [
+            {"op": "replace_once", "path": "src/timeout.rs", "old": "configured.unwrap_or(0)", "new": "configured.unwrap_or(DEFAULT_TIMEOUT_MS)"},
+            {"op": "replace_once", "path": "src/config.rs", "old": "DEFAULT_REGION: &str = \"us-east\"", "new": "DEFAULT_REGION: &str = \"eu-west\""}
+          ],
+          "expected_external_accepted": false
+        },
+        "test_tampering": {
+          "operations": [
+            {"op": "replace_once", "path": "src/timeout.rs", "old": "configured.unwrap_or(0)", "new": "configured.unwrap_or(DEFAULT_TIMEOUT_MS)"},
+            {"op": "remove_line", "path": "src/timeout.rs", "line": "        assert_eq!(timeout_ms(Some(5_000)), 5_000);"}
+          ],
+          "expected_external_accepted": false
+        }
+      }
+    },
+    {
+      "id": "settings-header-merge",
+      "repository": "repo-settings-headers",
+      "initial_request": "Make merge_headers retain base headers not overridden while applying replacement and new override entries.",
+      "mid_run_correction": "Preserve the BTreeMap representation, replacement precedence, and public function signature; do not discard unrelated base entries.",
+      "hard_requirements": [
+        "Unmentioned base entries remain",
+        "Override entries replace matching keys",
+        "New override keys are added"
+      ],
+      "forbidden_or_preservation": [
+        "Do not change src/config.rs or unrelated modules",
+        "Do not delete or weaken an existing test"
+      ],
+      "oracle": "oracles/repo_settings_headers.rs",
+      "test_integrity": ["src/headers.rs"],
+      "unchanged_paths": ["src/config.rs"],
+      "mutations": {
+        "baseline": {"operations": [], "expected_external_accepted": false},
+        "gold": {
+          "operations": [
+            {"op": "replace_once", "path": "src/headers.rs", "old": "    overrides.clone()", "new": "    for (key, value) in overrides {\n        base.insert(key.clone(), value.clone());\n    }\n    base"}
+          ],
+          "expected_external_accepted": true
+        },
+        "stale": {
+          "operations": [
+            {"op": "replace_once", "path": "src/headers.rs", "old": "    overrides.clone()", "new": "    for (key, value) in overrides {\n        base.insert(key.clone(), value.clone());\n    }\n    base"},
+            {"op": "replace_once", "path": "src/headers.rs", "old": "value.clone()", "new": "value.to_uppercase()"}
+          ],
+          "expected_external_accepted": false
+        },
+        "overbroad": {
+          "operations": [
+            {"op": "replace_once", "path": "src/headers.rs", "old": "    overrides.clone()", "new": "    for (key, value) in overrides {\n        base.insert(key.clone(), value.clone());\n    }\n    base"},
+            {"op": "replace_once", "path": "src/config.rs", "old": "DEFAULT_REGION: &str = \"us-east\"", "new": "DEFAULT_REGION: &str = \"eu-west\""}
+          ],
+          "expected_external_accepted": false
+        },
+        "test_tampering": {
+          "operations": [
+            {"op": "replace_once", "path": "src/headers.rs", "old": "    overrides.clone()", "new": "    for (key, value) in overrides {\n        base.insert(key.clone(), value.clone());\n    }\n    base"},
+            {"op": "remove_line", "path": "src/headers.rs", "line": "        assert_eq!(merged.get(\"shared\"), Some(&\"new\".to_string()));"}
+          ],
+          "expected_external_accepted": false
+        }
+      }
+    },
+    {
+      "id": "scheduler-bounded-backoff",
+      "repository": "repo-scheduler-backoff",
+      "initial_request": "Make backoff_ms use exponential retry delays starting at the base delay and cap the result at 30000 milliseconds.",
+      "mid_run_correction": "Preserve the base delay, attempt-zero semantics, cap, return type, and public function signature; only correct the retry schedule.",
+      "hard_requirements": [
+        "Attempt zero returns the base delay",
+        "Each attempt doubles the delay",
+        "The result never exceeds 30000 milliseconds"
+      ],
+      "forbidden_or_preservation": [
+        "Do not change src/config.rs or unrelated modules",
+        "Do not delete or weaken an existing test"
+      ],
+      "oracle": "oracles/repo_scheduler_backoff.rs",
+      "test_integrity": ["src/backoff.rs"],
+      "unchanged_paths": ["src/config.rs"],
+      "mutations": {
+        "baseline": {"operations": [], "expected_external_accepted": false},
+        "gold": {
+          "operations": [
+            {"op": "replace_once", "path": "src/backoff.rs", "old": "base_ms.saturating_mul(attempt as u64)", "new": "base_ms.saturating_mul(1u64 << attempt.min(4)).min(MAX_BACKOFF_MS)"}
+          ],
+          "expected_external_accepted": true
+        },
+        "stale": {
+          "operations": [
+            {"op": "replace_once", "path": "src/backoff.rs", "old": "base_ms.saturating_mul(attempt as u64)", "new": "base_ms.saturating_mul(1u64 << attempt.min(4)).min(MAX_BACKOFF_MS)"},
+            {"op": "replace_once", "path": "src/backoff.rs", "old": "attempt.min(4)", "new": "attempt.min(3)"}
+          ],
+          "expected_external_accepted": false
+        },
+        "overbroad": {
+          "operations": [
+            {"op": "replace_once", "path": "src/backoff.rs", "old": "base_ms.saturating_mul(attempt as u64)", "new": "base_ms.saturating_mul(1u64 << attempt.min(4)).min(MAX_BACKOFF_MS)"},
+            {"op": "replace_once", "path": "src/config.rs", "old": "DEFAULT_QUEUE: &str = \"default\"", "new": "DEFAULT_QUEUE: &str = \"priority\""}
+          ],
+          "expected_external_accepted": false
+        },
+        "test_tampering": {
+          "operations": [
+            {"op": "replace_once", "path": "src/backoff.rs", "old": "base_ms.saturating_mul(attempt as u64)", "new": "base_ms.saturating_mul(1u64 << attempt.min(4)).min(MAX_BACKOFF_MS)"},
+            {"op": "remove_line", "path": "src/backoff.rs", "line": "        assert!(backoff_ms(10, 2) <= MAX_BACKOFF_MS);"}
+          ],
+          "expected_external_accepted": false
+        }
+      }
+    },
+    {
+      "id": "scheduler-priority-order",
+      "repository": "repo-scheduler-order",
+      "initial_request": "Make ready_order prioritize larger priority values and use the identifier as a stable ascending tie-breaker.",
+      "mid_run_correction": "Preserve every queued item and the public function signature; change only the priority direction and tie-break behavior.",
+      "hard_requirements": [
+        "Higher priority values come first",
+        "Equal priorities are ordered by identifier ascending",
+        "No item is removed"
+      ],
+      "forbidden_or_preservation": [
+        "Do not change src/config.rs or unrelated modules",
+        "Do not delete or weaken an existing test"
+      ],
+      "oracle": "oracles/repo_scheduler_order.rs",
+      "test_integrity": ["src/order.rs"],
+      "unchanged_paths": ["src/config.rs"],
+      "mutations": {
+        "baseline": {"operations": [], "expected_external_accepted": false},
+        "gold": {
+          "operations": [
+            {"op": "replace_once", "path": "src/order.rs", "old": "    items.sort_by_key(|(priority, id)| (*priority, id.clone()));", "new": "    items.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));"}
+          ],
+          "expected_external_accepted": true
+        },
+        "stale": {
+          "operations": [
+            {"op": "replace_once", "path": "src/order.rs", "old": "    items.sort_by_key(|(priority, id)| (*priority, id.clone()));", "new": "    items.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));"},
+            {"op": "replace_once", "path": "src/order.rs", "old": "right.0.cmp(&left.0)", "new": "left.0.cmp(&right.0)"}
+          ],
+          "expected_external_accepted": false
+        },
+        "overbroad": {
+          "operations": [
+            {"op": "replace_once", "path": "src/order.rs", "old": "    items.sort_by_key(|(priority, id)| (*priority, id.clone()));", "new": "    items.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));"},
+            {"op": "replace_once", "path": "src/config.rs", "old": "DEFAULT_QUEUE: &str = \"default\"", "new": "DEFAULT_QUEUE: &str = \"priority\""}
+          ],
+          "expected_external_accepted": false
+        },
+        "test_tampering": {
+          "operations": [
+            {"op": "replace_once", "path": "src/order.rs", "old": "    items.sort_by_key(|(priority, id)| (*priority, id.clone()));", "new": "    items.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));"},
+            {"op": "remove_line", "path": "src/order.rs", "line": "        assert_eq!(items.len(), 2);"}
+          ],
+          "expected_external_accepted": false
+        }
+      }
+    }
+  ]
+}

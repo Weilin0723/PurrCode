@@ -1,0 +1,773 @@
+{
+  "results": [
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "plain_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 6046.581,
+      "observed": "BLOCKED",
+      "schedule_index": 0,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 233,
+        "total": 245
+      }
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 577.448,
+      "observed": "BLOCKED",
+      "schedule_index": 1,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 228,
+        "total": 240
+      }
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 1154.568,
+      "observed": null,
+      "schedule_index": 2,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 243,
+        "total": 259
+      }
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 1154.272,
+      "observed": null,
+      "schedule_index": 3,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 194,
+        "total": 210
+      }
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 759.076,
+      "observed": "BLOCKED",
+      "schedule_index": 4,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 228,
+        "total": 240
+      }
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 597.18,
+      "observed": "BLOCKED",
+      "schedule_index": 5,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 290,
+        "total": 302
+      }
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "plain_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 686.794,
+      "observed": "BLOCKED",
+      "schedule_index": 6,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 241,
+        "total": 253
+      }
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 1049.211,
+      "observed": null,
+      "schedule_index": 7,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 194,
+        "total": 210
+      }
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 673.142,
+      "observed": "BLOCKED",
+      "schedule_index": 8,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 244,
+        "total": 256
+      }
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 1416.633,
+      "observed": null,
+      "schedule_index": 9,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 245,
+        "total": 261
+      }
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 781.231,
+      "observed": "BLOCKED",
+      "schedule_index": 10,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 288,
+        "total": 300
+      }
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 668.91,
+      "observed": "BLOCKED",
+      "schedule_index": 11,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 280,
+        "total": 292
+      }
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 694.473,
+      "observed": "BLOCKED",
+      "schedule_index": 12,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 244,
+        "total": 256
+      }
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 689.658,
+      "observed": "BLOCKED",
+      "schedule_index": 13,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 233,
+        "total": 245
+      }
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 1365.333,
+      "observed": null,
+      "schedule_index": 14,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 186,
+        "total": 202
+      }
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 1199.841,
+      "observed": null,
+      "schedule_index": 15,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 243,
+        "total": 259
+      }
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 725.999,
+      "observed": "BLOCKED",
+      "schedule_index": 16,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 247,
+        "total": 259
+      }
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 372.241,
+      "observed": "BLOCKED",
+      "schedule_index": 17,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 247,
+        "total": 259
+      }
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 667.449,
+      "observed": "BLOCKED",
+      "schedule_index": 18,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 290,
+        "total": 302
+      }
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 1623.354,
+      "observed": null,
+      "schedule_index": 19,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 200,
+        "total": 216
+      }
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 940.36,
+      "observed": null,
+      "schedule_index": 20,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 181,
+        "total": 197
+      }
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 874.267,
+      "observed": "BLOCKED",
+      "schedule_index": 21,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 280,
+        "total": 292
+      }
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 777.127,
+      "observed": "BLOCKED",
+      "schedule_index": 22,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 233,
+        "total": 245
+      }
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 1309.262,
+      "observed": null,
+      "schedule_index": 23,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 181,
+        "total": 197
+      }
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 738.055,
+      "observed": "BLOCKED",
+      "schedule_index": 24,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 228,
+        "total": 240
+      }
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 658.371,
+      "observed": "BLOCKED",
+      "schedule_index": 25,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 292,
+        "total": 304
+      }
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 1578.91,
+      "observed": null,
+      "schedule_index": 26,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 245,
+        "total": 261
+      }
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 1178.883,
+      "observed": null,
+      "schedule_index": 27,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 229,
+        "total": 245
+      }
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 894.974,
+      "observed": null,
+      "schedule_index": 28,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 229,
+        "total": 245
+      }
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 921.611,
+      "observed": "BLOCKED",
+      "schedule_index": 29,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 292,
+        "total": 304
+      }
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 1408.348,
+      "observed": null,
+      "schedule_index": 30,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 181,
+        "total": 197
+      }
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 1171.618,
+      "observed": null,
+      "schedule_index": 31,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 246,
+        "total": 262
+      }
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 653.978,
+      "observed": "BLOCKED",
+      "schedule_index": 32,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 228,
+        "total": 240
+      }
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 1362.96,
+      "observed": null,
+      "schedule_index": 33,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 181,
+        "total": 197
+      }
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 1388.364,
+      "observed": null,
+      "schedule_index": 34,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 200,
+        "total": 216
+      }
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "BLOCKED",
+      "latency_ms": 960.637,
+      "observed": null,
+      "schedule_index": 35,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 186,
+        "total": 202
+      }
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 1104.868,
+      "observed": null,
+      "schedule_index": 36,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 197,
+        "total": 213
+      }
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 1319.232,
+      "observed": null,
+      "schedule_index": 37,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 246,
+        "total": 262
+      }
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "plain_json",
+      "error": "response must be an object with exactly the key 'verdict'",
+      "expected": "READY",
+      "latency_ms": 1215.335,
+      "observed": null,
+      "schedule_index": 38,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 16,
+        "prompt": 197,
+        "total": 213
+      }
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 824.935,
+      "observed": "BLOCKED",
+      "schedule_index": 39,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 276,
+        "total": 288
+      }
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 685.861,
+      "observed": "BLOCKED",
+      "schedule_index": 40,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 241,
+        "total": 253
+      }
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 738.891,
+      "observed": "BLOCKED",
+      "schedule_index": 41,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 293,
+        "total": 305
+      }
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 389.109,
+      "observed": "BLOCKED",
+      "schedule_index": 42,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 293,
+        "total": 305
+      }
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "plain_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 860.859,
+      "observed": "BLOCKED",
+      "schedule_index": 43,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 233,
+        "total": 245
+      }
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "plain_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 791.336,
+      "observed": "BLOCKED",
+      "schedule_index": 44,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 241,
+        "total": 253
+      }
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 857.929,
+      "observed": "BLOCKED",
+      "schedule_index": 45,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 241,
+        "total": 253
+      }
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 777.611,
+      "observed": "BLOCKED",
+      "schedule_index": 46,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 288,
+        "total": 300
+      }
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 830.263,
+      "observed": "BLOCKED",
+      "schedule_index": 47,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 276,
+        "total": 288
+      }
+    }
+  ],
+  "schema_version": 2
+}

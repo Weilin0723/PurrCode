@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "post-run-security-redaction",
+  "recorded_at": "2026-10-13",
+  "path": "crates/evaluation-runtime/src/bin/repository_completion_remote.rs",
+  "frozen_sha256": "4a864da7322395bc7ffcd09f3e153e5ff6eb8aa43ef573e1388591cb87b0edb9",
+  "redacted_sha256": "ae1225333fc156a16ab7caeee8db9f9e4303da4449d2673b3edc47aab1c505a6",
+  "scope": "test fixture literal only; production runner behavior unchanged",
+  "reason": "A credential-shaped test literal was replaced with a synthetic opaque token after all calls and the original integrity audit. The pre-call freeze and its original hash are retained rather than rewritten.",
+  "study_data_changed": false,
+  "requests_changed": false,
+  "events_changed": false,
+  "results_changed": false
+}

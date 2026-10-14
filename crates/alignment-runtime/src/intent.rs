@@ -40,7 +40,7 @@ use crate::{AlignmentError, ModelRoute, normalise};
 ///
 /// Below this a "quotation" matches by accident — "the", "it should" — and the
 /// provenance check becomes a formality that always passes.
-const MINIMUM_QUOTATION_CHARACTERS: usize = 8;
+const MINIMUM_QUOTATION_CHARACTERS: usize = 7;
 
 const SYSTEM_PROMPT: &str = "\
 You compile a user's request into a checkable task contract. You are not \
@@ -68,8 +68,11 @@ Rules, in order of importance:
    into settings.rs\", which is a plan, and plans change without the \
    requirement changing.
 6. Raise an open question only when proceeding might do the wrong work. Mark \
-   it blocking only when every reading is a risk. A competent colleague picks \
-   the obvious reading and says which one they picked.";
+   it blocking only when every reading is a risk, and then include `quotation` \
+   copied verbatim from the user's words that make the ambiguity blocking. \
+   Questions answerable by inspecting repository behavior or conventions are \
+   never blocking. A competent colleague picks the obvious reading and says \
+   which one they picked.";
 
 /// One requirement as the model returns it, before it has an identity.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -99,6 +102,10 @@ struct DraftQuestion {
     question: String,
     /// Whether proceeding without an answer risks doing the wrong work.
     blocking: bool,
+    /// User words that make this a blocking ambiguity. Questions without
+    /// provenance remain visible but cannot stop delivery.
+    #[serde(default)]
+    quotation: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -434,7 +441,13 @@ fn assemble(
         .open_questions
         .into_iter()
         .filter(|question| !question.question.trim().is_empty())
-        .map(|question| OpenQuestion::new(question.question.trim(), question.blocking))
+        .map(|question| {
+            let blocking = question.blocking
+                && question.quotation.as_deref().is_some_and(|quotation| {
+                    request.locate(quotation).is_some() && quotation_expresses_ambiguity(quotation)
+                });
+            OpenQuestion::new(question.question.trim(), blocking)
+        })
         .collect();
 
     contract
@@ -450,6 +463,29 @@ fn assemble(
         contract,
         usage,
     })
+}
+
+/// A matching phrase is provenance for a question, but it is not by itself
+/// provenance for *blocking* the task. The user must have explicitly expressed
+/// uncertainty, a choice, or a request to clarify. This prevents a planner from
+/// turning an ordinary noun phrase such as "empty input" into an invented stop.
+fn quotation_expresses_ambiguity(quotation: &str) -> bool {
+    let quotation = normalise(quotation);
+    quotation.contains('?')
+        || [
+            " either ",
+            " or ",
+            "whether ",
+            "which ",
+            "not sure",
+            "unsure",
+            "undecided",
+            "ask me",
+            "confirm with me",
+            "clarify",
+        ]
+        .iter()
+        .any(|marker| quotation.contains(marker))
 }
 
 fn assemble_revision(
@@ -487,7 +523,7 @@ fn assemble_revision(
                 let Some(to) = change.statement.as_deref().map(str::trim) else {
                     continue;
                 };
-                if to.is_empty() {
+                if to.is_empty() || to == clause.statement {
                     continue;
                 }
                 changes.push(ContractChange::ClauseRestated {
@@ -720,6 +756,124 @@ mod tests {
             matches!(error, AlignmentError::Unfaithful(_)),
             "got {error:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_distinctive_seven_character_word_is_valid_provenance() {
+        let messages = IntentRequest::from_messages(vec![
+            "Add offset/limit pagination to the item list endpoint, bounded, with a total count."
+                .into(),
+        ]);
+        let provider = ScriptedProvider::new(vec![json!({
+            "objective": "Add bounded pagination",
+            "understanding": "The item list needs bounded pagination and a total count.",
+            "clauses": [{
+                "statement": "The pagination parameters are bounded",
+                "strength": "required",
+                "acceptance_criteria": ["an excessive limit is reduced to the maximum"],
+                "quotation": "bounded"
+            }],
+            "non_goals": [], "assumptions": [], "open_questions": []
+        })]);
+
+        let compiled = IntentCompiler::new(route(provider))
+            .compile(&messages)
+            .await
+            .expect("a distinctive word copied from the request is valid provenance");
+
+        assert_eq!(compiled.contract.required().count(), 1);
+        assert_eq!(compiled.contract.clauses[0].source.quotation, "bounded");
+    }
+
+    #[tokio::test]
+    async fn an_unquoted_model_question_cannot_block_delivery() {
+        let messages = IntentRequest::from_messages(vec![
+            "Add a test covering the empty-input case for the parser.".into(),
+        ]);
+        let provider = ScriptedProvider::new(vec![json!({
+            "objective": "Cover empty parser input",
+            "understanding": "Add the requested empty-input test.",
+            "clauses": [{
+                "statement": "A test covers empty parser input",
+                "strength": "required",
+                "acceptance_criteria": ["the test suite runs an empty-input assertion"],
+                "quotation": "empty-input case for the parser"
+            }],
+            "non_goals": [], "assumptions": [],
+            "open_questions": [{
+                "question": "Should empty input return an empty result?",
+                "blocking": true,
+                "quotation": null
+            }]
+        })]);
+
+        let compiled = IntentCompiler::new(route(provider))
+            .compile(&messages)
+            .await
+            .expect("the question remains visible without gaining authority");
+
+        assert_eq!(compiled.contract.open_questions.len(), 1);
+        assert!(!compiled.contract.open_questions[0].blocking);
+    }
+
+    #[tokio::test]
+    async fn a_neutral_quotation_cannot_turn_an_inferable_question_into_a_blocker() {
+        let messages = IntentRequest::from_messages(vec![
+            "Add a test covering the empty-input case for the parser.".into(),
+        ]);
+        let provider = ScriptedProvider::new(vec![json!({
+            "objective": "Cover empty parser input",
+            "understanding": "Add the requested empty-input test.",
+            "clauses": [{
+                "statement": "A test covers empty parser input",
+                "strength": "required",
+                "acceptance_criteria": ["the test suite runs an empty-input assertion"],
+                "quotation": "empty-input case for the parser"
+            }],
+            "non_goals": [], "assumptions": [],
+            "open_questions": [{
+                "question": "Should empty input return an empty result?",
+                "blocking": true,
+                "quotation": "empty-input case for the parser"
+            }]
+        })]);
+
+        let compiled = IntentCompiler::new(route(provider))
+            .compile(&messages)
+            .await
+            .expect("neutral provenance keeps the question advisory");
+
+        assert!(!compiled.contract.open_questions[0].blocking);
+    }
+
+    #[tokio::test]
+    async fn explicit_user_ambiguity_can_block_delivery() {
+        let messages = IntentRequest::from_messages(vec![
+            "Use either JSON or YAML; ask me which one before changing files.".into(),
+        ]);
+        let provider = ScriptedProvider::new(vec![json!({
+            "objective": "Choose a serialization format",
+            "understanding": "The format needs user confirmation.",
+            "clauses": [{
+                "statement": "The chosen format is confirmed before files change",
+                "strength": "required",
+                "acceptance_criteria": ["the user confirms JSON or YAML"],
+                "quotation": "ask me which one before changing files"
+            }],
+            "non_goals": [], "assumptions": [],
+            "open_questions": [{
+                "question": "Should the format be JSON or YAML?",
+                "blocking": true,
+                "quotation": "either JSON or YAML; ask me which one"
+            }]
+        })]);
+
+        let compiled = IntentCompiler::new(route(provider))
+            .compile(&messages)
+            .await
+            .expect("explicit ambiguity may block");
+
+        assert!(compiled.contract.open_questions[0].blocking);
     }
 
     #[tokio::test]

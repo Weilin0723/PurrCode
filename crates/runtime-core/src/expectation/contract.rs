@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ExpectationError;
 
-pub const EXPECTATION_SCHEMA_VERSION: u32 = 1;
+pub const EXPECTATION_SCHEMA_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Provenance

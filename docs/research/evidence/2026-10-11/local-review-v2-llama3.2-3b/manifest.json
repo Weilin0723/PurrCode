@@ -1,0 +1,332 @@
+{
+  "base_url": "http://127.0.0.1:11434",
+  "benchmark_kind": "synthetic-local-review-probe-v2",
+  "completed_records": 48,
+  "conditions": [
+    "plain_json",
+    "revision_rubric_json"
+  ],
+  "development_data": true,
+  "ended_at": "2026-10-11T18:33:52.393101Z",
+  "fixture": "/Users/jackzhang/Documents/GitHub/PurrCode/benchmarks/research/review-traces-v2.json",
+  "fixture_sha256": "85396bfba911bfaaf4a9d37e77bb111ae8d2992af9a93d450e77812c0d800ea5",
+  "live_coding": false,
+  "metadata_errors": [],
+  "model": "llama3.2:3b",
+  "model_digest": "a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72",
+  "parameters": {
+    "format": "json",
+    "keep_alive": "2m",
+    "num_ctx": 2048,
+    "num_predict": 16,
+    "temperature": 0.0,
+    "timeout_seconds": 30.0
+  },
+  "purrcode_qualification": false,
+  "schedule": [
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "plain_json",
+      "schedule_index": 0,
+      "seed": 17
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 1,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "plain_json",
+      "schedule_index": 2,
+      "seed": 29
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "plain_json",
+      "schedule_index": 3,
+      "seed": 17
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 4,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 5,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "plain_json",
+      "schedule_index": 6,
+      "seed": 17
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "plain_json",
+      "schedule_index": 7,
+      "seed": 29
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 8,
+      "seed": 29
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "plain_json",
+      "schedule_index": 9,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 10,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 11,
+      "seed": 17
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 12,
+      "seed": 17
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 13,
+      "seed": 29
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "plain_json",
+      "schedule_index": 14,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "plain_json",
+      "schedule_index": 15,
+      "seed": 17
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 16,
+      "seed": 29
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 17,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 18,
+      "seed": 17
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "plain_json",
+      "schedule_index": 19,
+      "seed": 17
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "plain_json",
+      "schedule_index": 20,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 21,
+      "seed": 29
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 22,
+      "seed": 17
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "plain_json",
+      "schedule_index": 23,
+      "seed": 17
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 24,
+      "seed": 29
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 25,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "plain_json",
+      "schedule_index": 26,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "plain_json",
+      "schedule_index": 27,
+      "seed": 29
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "plain_json",
+      "schedule_index": 28,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 29,
+      "seed": 29
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "plain_json",
+      "schedule_index": 30,
+      "seed": 29
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "plain_json",
+      "schedule_index": 31,
+      "seed": 29
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 32,
+      "seed": 29
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "plain_json",
+      "schedule_index": 33,
+      "seed": 17
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "plain_json",
+      "schedule_index": 34,
+      "seed": 29
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "plain_json",
+      "schedule_index": 35,
+      "seed": 29
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "plain_json",
+      "schedule_index": 36,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "plain_json",
+      "schedule_index": 37,
+      "seed": 17
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "plain_json",
+      "schedule_index": 38,
+      "seed": 29
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 39,
+      "seed": 17
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 40,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 41,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "revision_rubric_json",
+      "schedule_index": 42,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "plain_json",
+      "schedule_index": 43,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "plain_json",
+      "schedule_index": 44,
+      "seed": 29
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 45,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 46,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 47,
+      "seed": 29
+    }
+  ],
+  "schedule_seed": 20261011,
+  "scheduled_calls": 48,
+  "schema_version": 2,
+  "script": "/Users/jackzhang/Documents/GitHub/PurrCode/scripts/local_review_probe_v2.py",
+  "script_sha256": "b7064ae994025f4e7e7f4995421d22462c6303d5a7e4d5499aa9043f7ee1fd57",
+  "seeds": [
+    17,
+    29
+  ],
+  "server_version": "0.4.2",
+  "started_at": "2026-10-11T18:31:31.622087Z",
+  "status_counts": {
+    "ok": 48
+  },
+  "v1_fixture_sha256": "7cdcff5c9063cde277dd62d2b5cb46912df27e673b4ff9af982ea4b09fc6079c",
+  "v1_script_sha256": "20267619cdb7ea71fdd5e2356b726087bd6229282cb1efc8ac15dd7f8239d752"
+}

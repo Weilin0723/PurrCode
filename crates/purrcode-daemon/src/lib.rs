@@ -71,8 +71,9 @@ use purrcode_provider_gateway::{
 use purrcode_reference_resolver::{ParsedReference, Reference, resolve_refs};
 use purrcode_repository_engine::{ChangeScope, RepositoryEngine, SessionWorktree};
 use purrcode_runtime_core::adaptation::{
-    BudgetProfileKind, ModelRoutingControl, PermissionMode, SearchPolicy, SessionControls,
-    TaskEvidence, TaskMode, UsageRecord, WorkflowControl, build_workflow_plan, classify_task,
+    AlignmentMode, BudgetProfileKind, ModelRoutingControl, PermissionMode, SearchPolicy,
+    SessionControls, TaskEvidence, TaskMode, UsageRecord, WorkflowControl, build_workflow_plan,
+    classify_task,
 };
 use purrcode_runtime_core::{
     ActionConstraints, ActionId, ApprovalAuthority, AuthorityMode, Authorization,
@@ -141,6 +142,9 @@ struct AppState {
     bearer_token: Arc<str>,
     database: PathBuf,
     app_config: PathBuf,
+    /// Startup-only opt-in for research sessions that explicitly request the
+    /// alignment-disabled arm. Ordinary clients cannot lower the default gate.
+    allow_research_alignment_disabled: bool,
     leases: Arc<Mutex<BTreeMap<SessionId, AgentLease>>>,
     lifecycle_epochs: Arc<Mutex<BTreeMap<String, u64>>>,
     lifecycle_gate: Arc<Mutex<()>>,
@@ -408,10 +412,29 @@ pub struct StartupReport {
     pub recovered_uncertain_sessions: Vec<String>,
     pub unavailable_sessions: Vec<String>,
     pub token_file: PathBuf,
+    /// Whether this daemon instance accepts the explicit research-only
+    /// alignment-disabled request arm.
+    pub research_alignment_disabled_opt_in: bool,
 }
 
 pub async fn bind_and_report(
     config: DaemonConfig,
+) -> Result<
+    (
+        StartupReport,
+        impl std::future::Future<Output = Result<(), DaemonError>>,
+    ),
+    DaemonError,
+> {
+    bind_and_report_with_research_gate(config, false).await
+}
+
+/// Start the daemon with an explicit, auditable opt-in for the research-only
+/// alignment-disabled arm. Normal startup keeps alignment enabled and is the
+/// compatibility path used by existing callers.
+pub async fn bind_and_report_with_research_gate(
+    config: DaemonConfig,
+    allow_research_alignment_disabled: bool,
 ) -> Result<
     (
         StartupReport,
@@ -439,6 +462,7 @@ pub async fn bind_and_report(
         bearer_token: token.into(),
         database: config.database.clone(),
         app_config: config.app_config.clone(),
+        allow_research_alignment_disabled,
         leases: Arc::new(Mutex::new(BTreeMap::new())),
         lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
         lifecycle_gate: Arc::new(Mutex::new(())),
@@ -713,6 +737,7 @@ pub async fn bind_and_report(
         recovered_uncertain_sessions: recovered,
         unavailable_sessions: unavailable.keys().map(|id| id.0.to_string()).collect(),
         token_file: config.token_file,
+        research_alignment_disabled_opt_in: allow_research_alignment_disabled,
     };
     let future = async move {
         let scheduler = tokio::spawn(automation_scheduler(state.clone()));
@@ -2884,9 +2909,40 @@ struct StartSessionRequest {
     /// an unknown name fails preflight before the session starts.
     #[serde(default)]
     agent: Option<String>,
+    /// Alignment is enabled when omitted. `disabled` is accepted only for an
+    /// explicit research request while the daemon was started with its
+    /// research gate enabled.
+    #[serde(default)]
+    alignment: AlignmentMode,
+    #[serde(default)]
+    research_alignment_opt_in: bool,
 }
 
 impl StartSessionRequest {
+    fn requested_alignment(
+        &self,
+        allow_research_alignment_disabled: bool,
+    ) -> Result<AlignmentMode, ApiError> {
+        if self.alignment == AlignmentMode::Disabled
+            && (!allow_research_alignment_disabled || !self.research_alignment_opt_in)
+        {
+            return Err(ApiError::BadRequest(
+                "alignment=disabled requires the daemon research gate and explicit research_alignment_opt_in=true".into(),
+            ));
+        }
+        Ok(self.alignment)
+    }
+
+    fn controls_with_requested_alignment(
+        &self,
+        allow_research_alignment_disabled: bool,
+    ) -> Result<SessionControls, ApiError> {
+        let alignment = self.requested_alignment(allow_research_alignment_disabled)?;
+        let mut controls = self.controls()?;
+        controls.alignment = alignment;
+        Ok(controls)
+    }
+
     /// Reject a mode the contract does not define instead of storing it. A
     /// permission value nobody can interpret is worse than none.
     fn authority_mode(&self) -> Result<AuthorityMode, ApiError> {
@@ -3169,7 +3225,8 @@ async fn start_session(
         .canonicalize()
         .map_err(|_| ApiError::BadRequest("repository does not exist".into()))?;
     let authority_mode = request.authority_mode()?;
-    let mut controls = request.controls()?;
+    let mut controls =
+        request.controls_with_requested_alignment(state.allow_research_alignment_disabled)?;
     if let Some(model) = request.model.as_deref() {
         let model =
             ModelId::parse(model).map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -6206,6 +6263,7 @@ async fn run_agent_operation(
         Some(profile_limit) => clamp_input_tokens(controls, profile_limit),
         None => controls,
     };
+    let alignment_enabled = controls.alignment == AlignmentMode::Enabled;
     let agent = NativeAgent::new(role_providers, policy)
         .with_controls(controls)
         .with_usage_records(existing_usage)
@@ -6216,6 +6274,11 @@ async fn run_agent_operation(
     let agent = match profile.clone() {
         Some(profile) => agent.with_profile(profile),
         None => agent,
+    };
+    let agent = if alignment_enabled {
+        agent.with_alignment()
+    } else {
+        agent
     };
     // v1.3 PR B: attach the repository's capability registry and the provider
     // dispatch executor so the model can propose registered tools
@@ -6269,14 +6332,10 @@ async fn run_agent_operation(
             state: state.clone(),
             repository: repository.clone(),
             parent_ceiling,
-        }))
-        // v1.5: compile what the user asked for, review the result against it
-        // without the implementer's transcript, and let the delivery gate
-        // decide when the session ends. Attached here and nowhere else —
-        // delegated workers run their own loop below and are not the thing
-        // being delivered, so a second gate around a fragment would only mean
-        // two places that can say "done".
-        .with_alignment();
+        }));
+    // v1.5 alignment is attached above only when the durable session
+    // controls explicitly select the safe enabled mode. The disabled
+    // research arm still uses this exact agent/PawGate/Claw chain.
     let result = match operation {
         AgentOperation::Start => agent.start_initialized(&mut store, id).await.map(|_| ()),
         AgentOperation::Plan => agent.plan_initialized(&mut store, id).await.map(|_| ()),
@@ -7802,6 +7861,11 @@ async fn update_session_controls(
     authorize(&state, &headers)?;
     let id = parse_session_id(&id)?;
     validate_supported_controls(&controls)?;
+    if controls.alignment == AlignmentMode::Disabled && !state.allow_research_alignment_disabled {
+        return Err(ApiError::BadRequest(
+            "alignment=disabled requires the daemon research gate".into(),
+        ));
+    }
     require_idle(&state, id).await?;
     let session = state.store.lock().await.load(id)?;
     // Permission mode is a per-session, human-made decision (the "bypass all"
@@ -14690,6 +14754,7 @@ mod tests {
             bearer_token: Arc::from("test-token"),
             database: temporary.path().join("sessions.db"),
             app_config: temporary.path().join("config.toml"),
+            allow_research_alignment_disabled: false,
             leases: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_gate: Arc::new(Mutex::new(())),
@@ -14778,6 +14843,7 @@ mod tests {
             bearer_token: Arc::from("test-token"),
             database: temporary.path().join("sessions.db"),
             app_config: temporary.path().join("config.toml"),
+            allow_research_alignment_disabled: false,
             leases: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_gate: Arc::new(Mutex::new(())),
@@ -14885,6 +14951,7 @@ mod tests {
             bearer_token: Arc::from("test-token"),
             database,
             app_config: temporary.path().join("config.toml"),
+            allow_research_alignment_disabled: false,
             leases: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_gate: Arc::new(Mutex::new(())),
@@ -14984,6 +15051,7 @@ mod tests {
             bearer_token: Arc::from("test-token"),
             database: temporary.path().join("sessions.db"),
             app_config: temporary.path().join("config.toml"),
+            allow_research_alignment_disabled: false,
             leases: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_gate: Arc::new(Mutex::new(())),
@@ -15069,6 +15137,8 @@ mod tests {
             permission_mode: None,
             max_tokens: None,
             agent: None,
+            alignment: AlignmentMode::Enabled,
+            research_alignment_opt_in: false,
         };
         let controls = request.controls().unwrap();
         assert_eq!(controls.task_mode, TaskMode::Ask);
@@ -15078,6 +15148,33 @@ mod tests {
         let mut unsupported = controls;
         unsupported.routing = ModelRoutingControl::Economy;
         assert!(validate_supported_controls(&unsupported).is_err());
+    }
+
+    #[test]
+    fn alignment_request_defaults_enabled_and_requires_research_opt_in() {
+        let request: StartSessionRequest = serde_json::from_value(serde_json::json!({
+            "objective": "build the fixture",
+            "repository": "."
+        }))
+        .unwrap();
+        assert_eq!(request.alignment, AlignmentMode::Enabled);
+        let enabled_controls = request.controls_with_requested_alignment(false).unwrap();
+        assert_eq!(enabled_controls.alignment, AlignmentMode::Enabled);
+
+        let mut disabled = request;
+        disabled.alignment = AlignmentMode::Disabled;
+        assert!(disabled.controls_with_requested_alignment(false).is_err());
+        assert!(disabled.controls_with_requested_alignment(true).is_err());
+        disabled.research_alignment_opt_in = true;
+        let disabled_controls = disabled.controls_with_requested_alignment(true).unwrap();
+        assert_eq!(disabled_controls.alignment, AlignmentMode::Disabled);
+        // Alignment is an explicit delivery-gate switch, not an authority or
+        // execution-adapter switch; PawGate/Claw controls remain unchanged.
+        assert_eq!(
+            disabled_controls.permission_mode,
+            enabled_controls.permission_mode
+        );
+        assert_eq!(disabled.authority_mode().unwrap(), AuthorityMode::Governed);
     }
 
     #[test]
@@ -15097,6 +15194,8 @@ mod tests {
             permission_mode: None,
             max_tokens: None,
             agent: None,
+            alignment: AlignmentMode::Enabled,
+            research_alignment_opt_in: false,
         };
 
         let greeting = request("hello");
@@ -15340,6 +15439,7 @@ mod tests {
             bearer_token: Arc::from("test-token"),
             database: temporary.path().join("sessions.db"),
             app_config: temporary.path().join("config.toml"),
+            allow_research_alignment_disabled: false,
             leases: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_gate: Arc::new(Mutex::new(())),
@@ -16555,6 +16655,7 @@ default = "ollama/small"
             bearer_token: Arc::from("test-token"),
             database: temporary.path().join("sessions.db"),
             app_config: temporary.path().join("config.toml"),
+            allow_research_alignment_disabled: false,
             leases: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_gate: Arc::new(Mutex::new(())),
@@ -16657,6 +16758,7 @@ default = "ollama/small"
             bearer_token: Arc::from("test-token"),
             database: temporary.path().join("sessions.db"),
             app_config: temporary.path().join("config.toml"),
+            allow_research_alignment_disabled: false,
             leases: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_gate: Arc::new(Mutex::new(())),
@@ -19733,6 +19835,7 @@ judge = "openai/judge-model"
             bearer_token: Arc::from("test-token"),
             database,
             app_config: temporary.path().join("config.toml"),
+            allow_research_alignment_disabled: false,
             leases: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_epochs: Arc::new(Mutex::new(BTreeMap::new())),
             lifecycle_gate: Arc::new(Mutex::new(())),

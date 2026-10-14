@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "benchmark_kind": "deterministic-mechanism",
+  "live": false,
+  "oracle": "hand-written scenario expectations in revision_benchmark.rs",
+  "cases": [
+    {
+      "case_id": "correct-fresh-evidence",
+      "expected": "ready",
+      "observed": "ready",
+      "support": "supported",
+      "outcome": "pass",
+      "pass": true,
+      "note": "Fresh evidence recorded after the requirement revision clears delivery."
+    },
+    {
+      "case_id": "stale-evidence-after-revision",
+      "expected": "partially_complete",
+      "observed": "ready",
+      "support": "supported",
+      "outcome": "observed_failure",
+      "pass": false,
+      "note": "Known gap: revision resets status, but the same old requirement-owned evidence can be cited again because evidence has no revision or artifact digest."
+    },
+    {
+      "case_id": "artifact-edited-after-verification",
+      "expected": "blocked",
+      "observed": "ready",
+      "support": "unsupported",
+      "outcome": "unsupported",
+      "pass": false,
+      "note": "The current gate does not bind alignment evidence to an artifact digest or invalidate it after a later edit; Ready is recorded as unsupported rather than as a pass."
+    },
+    {
+      "case_id": "scope-preservation-violation",
+      "expected": "blocked",
+      "observed": "blocked",
+      "support": "supported",
+      "outcome": "pass",
+      "pass": true,
+      "note": "The gate derives scope from changed paths and the contract's forbidden prefix."
+    },
+    {
+      "case_id": "redundant-correction",
+      "expected": "ready",
+      "observed": "partially_complete",
+      "support": "unsupported",
+      "outcome": "unsupported",
+      "pass": false,
+      "note": "No-op clarification is not represented; same-text ClauseRestated invalidates evidence, so this case is unsupported rather than a fabricated pass."
+    },
+    {
+      "case_id": "benign-static-control",
+      "expected": "ready",
+      "observed": "ready",
+      "support": "supported",
+      "outcome": "pass",
+      "pass": true,
+      "note": "A static request with fresh passing evidence is a clean control."
+    }
+  ]
+}

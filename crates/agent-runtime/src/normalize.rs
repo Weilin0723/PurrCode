@@ -696,6 +696,14 @@ pub(crate) fn successful_duplicate_action(
     proposed: &ProposedAction,
     constraints: &ActionConstraints,
 ) -> Result<Option<ActionId>, AgentError> {
+    // Repository reads are observations of a changing worktree, not idempotent
+    // effects. The same grep or diff after a write can produce new evidence;
+    // reusing its earlier output leaves the model reasoning about stale state
+    // and can trap it in the duplicate-action loop. Reads are already bounded,
+    // worktree-confined, and non-mutating, so execute them again.
+    if matches!(proposed, ProposedAction::RepositoryRead(_)) {
+        return Ok(None);
+    }
     let successful = session_events
         .iter()
         .filter_map(|event| match event {
@@ -1147,7 +1155,7 @@ mod action_normalization_tests {
     }
 
     #[test]
-    fn exact_successful_action_is_reused_instead_of_replayed() {
+    fn repository_reads_are_replayed_because_the_worktree_can_change() {
         let worktree = std::env::temp_dir().join("purrcode-duplicate-read-session");
         let action = normalize_action(
             AgentAction::Read(RepositoryReadAction::List {
@@ -1178,7 +1186,7 @@ mod action_normalization_tests {
 
         assert_eq!(
             successful_duplicate_action(&state, &events, &action, &constraints).unwrap(),
-            Some(prior_id)
+            None
         );
 
         let distinct = normalize_action(
@@ -1198,6 +1206,42 @@ mod action_normalization_tests {
         assert_eq!(
             successful_duplicate_action(&state, &events, &distinct, &distinct_constraints).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn exact_successful_mutation_is_reused_instead_of_replayed() {
+        let worktree = std::env::temp_dir().join("purrcode-duplicate-write-session");
+        let action = ProposedAction::WriteFile(purrcode_runtime_core::WriteFileAction {
+            path: PathBuf::from("src/lib.rs"),
+            content: "pub const READY: bool = true;\n".into(),
+            expected_digest: None,
+        });
+        let constraints = purrcode_runtime_core::ActionConstraints {
+            working_directory: worktree,
+            network: false,
+            timeout_seconds: 120,
+            maximum_output_bytes: 1_048_576,
+            allowed_write_globs: vec!["src/lib.rs".into()],
+            maximum_changed_files: 1,
+        };
+        let decision = JudgmentDecision::AllowWithConstraints(constraints.clone());
+        let prior_id = ActionId::new();
+        let mut state = SessionState::empty(SessionId::new());
+        state.proposed_actions.insert(prior_id, action.clone());
+        state.judgments.insert(prior_id, decision);
+        let events = vec![SessionEvent::ExecutionFinished {
+            action_id: prior_id,
+            exit_code: Some(0),
+            truncated: false,
+            sandbox_level: None,
+            sandbox_backend: None,
+            affected_paths: vec![PathBuf::from("src/lib.rs")],
+        }];
+
+        assert_eq!(
+            successful_duplicate_action(&state, &events, &action, &constraints).unwrap(),
+            Some(prior_id)
         );
     }
 

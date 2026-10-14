@@ -1,0 +1,773 @@
+{
+  "results": [
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 7041.509,
+      "observed": "BLOCKED",
+      "schedule_index": 0,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 198,
+        "total": 201
+      }
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"all_passed\": true does not meet'",
+      "expected": "READY",
+      "latency_ms": 1194.55,
+      "observed": null,
+      "schedule_index": 1,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 205,
+        "total": 217
+      }
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 902.724,
+      "observed": "BLOCKED",
+      "schedule_index": 2,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 186,
+        "total": 189
+      }
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 553.902,
+      "observed": "BLOCKED",
+      "schedule_index": 3,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 195,
+        "total": 198
+      }
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 464.118,
+      "observed": "BLOCKED",
+      "schedule_index": 4,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 179,
+        "total": 182
+      }
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 530.868,
+      "observed": "BLOCKED",
+      "schedule_index": 5,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 182,
+        "total": 185
+      }
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"all_passed\": false, \\n\"'",
+      "expected": "READY",
+      "latency_ms": 1284.306,
+      "observed": null,
+      "schedule_index": 6,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 208,
+        "total": 220
+      }
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 502.627,
+      "observed": "BLOCKED",
+      "schedule_index": 7,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 186,
+        "total": 189
+      }
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 670.699,
+      "observed": "BLOCKED",
+      "schedule_index": 8,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 167,
+        "total": 170
+      }
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 716.348,
+      "observed": "BLOCKED",
+      "schedule_index": 9,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 198,
+        "total": 201
+      }
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"all_passed\": false, \"obs'",
+      "expected": "READY",
+      "latency_ms": 1504.071,
+      "observed": null,
+      "schedule_index": 10,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 205,
+        "total": 217
+      }
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 286.048,
+      "observed": "BLOCKED",
+      "schedule_index": 11,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 230,
+        "total": 233
+      }
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 237.189,
+      "observed": "BLOCKED",
+      "schedule_index": 12,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 189,
+        "total": 192
+      }
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 251.927,
+      "observed": "BLOCKED",
+      "schedule_index": 13,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 198,
+        "total": 201
+      }
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 249.525,
+      "observed": "BLOCKED",
+      "schedule_index": 14,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 211,
+        "total": 214
+      }
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 181.376,
+      "observed": "BLOCKED",
+      "schedule_index": 15,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 167,
+        "total": 170
+      }
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 266.739,
+      "observed": "BLOCKED",
+      "schedule_index": 16,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 198,
+        "total": 201
+      }
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 210.031,
+      "observed": "BLOCKED",
+      "schedule_index": 17,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 167,
+        "total": 170
+      }
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 188.094,
+      "observed": "BLOCKED",
+      "schedule_index": 18,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 182,
+        "total": 185
+      }
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 213.082,
+      "observed": "BLOCKED",
+      "schedule_index": 19,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 222,
+        "total": 225
+      }
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 174.459,
+      "observed": "BLOCKED",
+      "schedule_index": 20,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 182,
+        "total": 185
+      }
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 274.092,
+      "observed": "BLOCKED",
+      "schedule_index": 21,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 241,
+        "total": 244
+      }
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"all_passed\": true does not meet'",
+      "expected": "BLOCKED",
+      "latency_ms": 435.72,
+      "observed": null,
+      "schedule_index": 22,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 219,
+        "total": 231
+      }
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 241.361,
+      "observed": "BLOCKED",
+      "schedule_index": 23,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 167,
+        "total": 170
+      }
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 227.134,
+      "observed": "BLOCKED",
+      "schedule_index": 24,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 179,
+        "total": 182
+      }
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"attempts_so_far=3 returns'",
+      "expected": "BLOCKED",
+      "latency_ms": 495.119,
+      "observed": null,
+      "schedule_index": 25,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 230,
+        "total": 242
+      }
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 290.92,
+      "observed": "BLOCKED",
+      "schedule_index": 26,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 211,
+        "total": 214
+      }
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 325.87,
+      "observed": "BLOCKED",
+      "schedule_index": 27,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 208,
+        "total": 211
+      }
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"current_request\" does not match the'",
+      "expected": "READY",
+      "latency_ms": 489.27,
+      "observed": null,
+      "schedule_index": 28,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 214,
+        "total": 226
+      }
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 267.832,
+      "observed": "BLOCKED",
+      "schedule_index": 29,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 201,
+        "total": 204
+      }
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 230.554,
+      "observed": "BLOCKED",
+      "schedule_index": 30,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 179,
+        "total": 182
+      }
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED.'",
+      "expected": "READY",
+      "latency_ms": 315.845,
+      "observed": null,
+      "schedule_index": 31,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 4,
+        "prompt": 214,
+        "total": 218
+      }
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 271.489,
+      "observed": "BLOCKED",
+      "schedule_index": 32,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 189,
+        "total": 192
+      }
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 316.438,
+      "observed": "BLOCKED",
+      "schedule_index": 33,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 222,
+        "total": 225
+      }
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 412.743,
+      "observed": "BLOCKED",
+      "schedule_index": 34,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 179,
+        "total": 182
+      }
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 365.369,
+      "observed": "BLOCKED",
+      "schedule_index": 35,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 182,
+        "total": 185
+      }
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 359.955,
+      "observed": "BLOCKED",
+      "schedule_index": 36,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 186,
+        "total": 189
+      }
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 148.727,
+      "observed": "BLOCKED",
+      "schedule_index": 37,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 186,
+        "total": 189
+      }
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"all_passed\": false, \\n\"'",
+      "expected": "READY",
+      "latency_ms": 492.626,
+      "observed": null,
+      "schedule_index": 38,
+      "seed": 29,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 201,
+        "total": 213
+      }
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 300.584,
+      "observed": "BLOCKED",
+      "schedule_index": 39,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 201,
+        "total": 204
+      }
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 367.155,
+      "observed": "BLOCKED",
+      "schedule_index": 40,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 200,
+        "total": 203
+      }
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 290.016,
+      "observed": "BLOCKED",
+      "schedule_index": 41,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 186,
+        "total": 189
+      }
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "plain",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 274.626,
+      "observed": "BLOCKED",
+      "schedule_index": 42,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 200,
+        "total": 203
+      }
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "plain",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 220.191,
+      "observed": "BLOCKED",
+      "schedule_index": 43,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 195,
+        "total": 198
+      }
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "revision_checklist",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 364.312,
+      "observed": "BLOCKED",
+      "schedule_index": 44,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 3,
+        "prompt": 241,
+        "total": 244
+      }
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"all_passed\": true does not meet'",
+      "expected": "READY",
+      "latency_ms": 763.769,
+      "observed": null,
+      "schedule_index": 45,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 201,
+        "total": 213
+      }
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"all_passed\": true does not match'",
+      "expected": "BLOCKED",
+      "latency_ms": 545.947,
+      "observed": null,
+      "schedule_index": 46,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 186,
+        "total": 198
+      }
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "revision_checklist",
+      "error": "expected exactly READY or BLOCKED, got 'BLOCKED. \\n\"all_passed\": false, \\n\"'",
+      "expected": "BLOCKED",
+      "latency_ms": 558.962,
+      "observed": null,
+      "schedule_index": 47,
+      "seed": 17,
+      "status": "invalid_response",
+      "tokens": {
+        "completion": 12,
+        "prompt": 219,
+        "total": 231
+      }
+    }
+  ],
+  "schema_version": 1
+}

@@ -1,0 +1,3926 @@
+{
+  "results": [
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2550.0,
+      "model_reasons": [
+        "All required fields are present and valid",
+        "Public fixture cargo test passed",
+        "Hard requirements and preservation requirements are met"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 0,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 47,
+        "prompt": 502,
+        "total": 549
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1776.0,
+      "model_reasons": [
+        "All required digests and revisions are present and consistent.",
+        "Final corrected request aligns with hard requirements and preserves tests."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 1,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 45,
+        "prompt": 502,
+        "total": 547
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1868.0,
+      "model_reasons": [
+        "Digests match",
+        "Revisions match",
+        "Diff addresses the requirement"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 2,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 38,
+        "prompt": 608,
+        "total": 646
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1673.0,
+      "model_reasons": [
+        "artifact and evidence digests match",
+        "request and evidence revisions match",
+        "candidate diff covers only the intended change",
+        "all tests pass"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 3,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 53,
+        "prompt": 608,
+        "total": 661
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2170.0,
+      "model_reasons": [
+        "Request revision 2 and artifact revision 1 match candidate diff.",
+        "Digests for artifact and evidence are identical.",
+        "Unified diff changes only pagination function as required.",
+        "Hard constraints and preservation rules are satisfied."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 4,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 68,
+        "prompt": 702,
+        "total": 770
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2525.0,
+      "model_reasons": [
+        "Artifact digest, evidence digest, and changed paths are consistent with the unified diff.",
+        "The diff directly addresses the off-by-one error by adjusting the end index and removing the erroneous subtraction, aligning with the hard requirement to return every item.",
+        "Revision and digest bindings match the provided evidence and tree digest.",
+        "The corrected request clearly preserves page_count and edge case semantics as specified."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 5,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 101,
+        "prompt": 702,
+        "total": 803
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2197.0,
+      "model_reasons": [
+        "Artifact digest matches evidence digest and revision 2",
+        "Changed paths include only relevant files (config.rs, pagination.rs)",
+        "Candidate diff corrects pagination slice to include final item, satisfying hard requirements"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 6,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 66,
+        "prompt": 729,
+        "total": 795
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1911.0,
+      "model_reasons": [
+        "untrusted candidate_unified_diff violates preservation requirement: changes configuration default in src/config.rs, but requirement says do not change configuration defaults",
+        "untrusted final_corrected_request likely conflicts with hard requirement 'page returns every item in the bounded slice' due to pagination off-by-one fix"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 7,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 84,
+        "prompt": 729,
+        "total": 813
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 6 column 166",
+      "external_accepted": false,
+      "latency_ms": 3084.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 8,
+      "seed": 17,
+      "status": "error",
+      "task_id": "pagination-tail",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 695,
+        "total": 823
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 6 column 115",
+      "external_accepted": false,
+      "latency_ms": 2381.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 9,
+      "seed": 29,
+      "status": "error",
+      "task_id": "pagination-tail",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 695,
+        "total": 823
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1938.0,
+      "model_reasons": [
+        "All hard requirements are met: page returns every item in the bounded slice, zero limit and end offset are empty, and page_count is unchanged.",
+        "The change only affects the slice indexing to include the final item, preserving configuration defaults and unrelated modules.",
+        "No existing tests are deleted or weakened; the CI test passed."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 10,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 76,
+        "prompt": 607,
+        "total": 683
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2622.0,
+      "model_reasons": [
+        "Artifact digest matches tree digest, and artifact revision is 2, consistent with request revision 2.",
+        "Evidence artifact digest and revision are present.",
+        "Unified diff modifies only 'src/pagination.rs' as required, correcting the off-by-one error.",
+        "Final corrected request aligns with hard requirements: only the missing final item changes, preserving page_count, zero-limit, and out-of-range semantics.",
+        "No unrelated modules or configuration defaults are modified; existing tests are not weakened."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 11,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 123,
+        "prompt": 607,
+        "total": 730
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1576.0,
+      "model_reasons": [
+        "All digests match, revisions are consistent, and hard requirements are satisfied."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 12,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 33,
+        "prompt": 524,
+        "total": 557
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1256.0,
+      "model_reasons": [
+        "Artifact digest matches evidence digest",
+        "Artifact revision matches evidence revision",
+        "Final corrected request aligns with hard requirements",
+        "No changed paths indicated"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 13,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 39,
+        "prompt": 524,
+        "total": 563
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2390.0,
+      "model_reasons": [
+        "All digests and revisions match (artifact, evidence, request, tree).",
+        "The candidate change implements the complete Gregorian rule as requested.",
+        "The hard requirements are satisfied by the change.",
+        "The tests pass and preservation requirements are upheld."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 14,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 60,
+        "prompt": 651,
+        "total": 711
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2264.0,
+      "model_reasons": [
+        "Artifact digest, evidence digest, and tree digest all match.",
+        "Artifact revision and evidence revision are both 2, matching request revision 2.",
+        "The corrected request aligns with the unified diff, which implements the complete Gregorian leap year rule while preserving month/day rejection.",
+        "Hard requirements are satisfied: 1900-02-29 rejected, 2000-02-29 and 2024-02-29 accepted, invalid month days remain rejected."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 15,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 118,
+        "prompt": 651,
+        "total": 769
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 5 column 179",
+      "external_accepted": false,
+      "latency_ms": 2467.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 16,
+      "seed": 17,
+      "status": "error",
+      "task_id": "century-leap-year",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 643,
+        "total": 771
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2245.0,
+      "model_reasons": [
+        "candidate_unified_diff incorrectly modifies is_leap_year: condition should be (year % 4 == 0 && year % 100 != 0) || year % 400 == 0, not (year % 4 == 0 || year % 400 == 0), which still treats all divisible-by-4 years as leap years",
+        "unified diff lacks corresponding test updates for required 1900/2000/2024 validation, risking hard requirement violations"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 17,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 121,
+        "prompt": 643,
+        "total": 764
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 3608.0,
+      "model_reasons": [
+        "artifact_revision and evidence_revision match request_revision (2)",
+        "artifact_digest, evidence_artifact_digest match tree_digest (082fec9...)",
+        "candidate_unified_diff correctly implements leap year fix and timeout constant",
+        "hard_requirements are satisfied by the diff",
+        "preservation_requirements are respected (unrelated files untouched)",
+        "public fixture cargo test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 18,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 109,
+        "prompt": 775,
+        "total": 884
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1868.0,
+      "model_reasons": [
+        "artifact revision and acid digest are consistent",
+        "evidence revision and digest are consistent",
+        "evidence digest matches candidate artifact digest",
+        "public fixture cargo test passed",
+        "no preservation violation detected",
+        "request revision matches artifact revision"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 19,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 70,
+        "prompt": 775,
+        "total": 845
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2113.0,
+      "model_reasons": [
+        "Candidate diff implements correct leap year logic to satisfy hard requirements.",
+        "Removed test assertion is not weakening: it remains covered by other cases and public test passes.",
+        "All revisions and digests match, indicating consistency."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 20,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 66,
+        "prompt": 726,
+        "total": 792
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a value at line 8 column 120",
+      "external_accepted": false,
+      "latency_ms": 2635.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 21,
+      "seed": 29,
+      "status": "error",
+      "task_id": "century-leap-year",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 726,
+        "total": 854
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2939.0,
+      "model_reasons": [
+        "Artifact digest, revision, and request revision are all bound to value 2 and match each other.",
+        "Evidence digest and revision bound to value 1; candidate diff correctly implements the corrected leap year rule while preserving month/day validation and unrelated behavior.",
+        "Public fixture tests pass, satisfying hard requirements and preservation constraints."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 22,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 86,
+        "prompt": 652,
+        "total": 738
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2774.0,
+      "model_reasons": [
+        "All required constraints are satisfied: leap year logic is correctly updated, tests pass, and preservation requirements are met."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 23,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 43,
+        "prompt": 652,
+        "total": 695
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1858.0,
+      "model_reasons": [
+        "artifact and evidence digests match tree digest and each other",
+        "artifact and evidence revisions match request revision plus one",
+        "candidate unified diff is empty indicating no changes or acceptable state",
+        "hard requirements and preservation requirements are satisfied by final corrected request",
+        "public fixture cargo test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 24,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 74,
+        "prompt": 515,
+        "total": 589
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1774.0,
+      "model_reasons": [
+        "Artifact and evidence digests match, revisions are aligned, and no changed paths or unified diff indicate no code modifications; request passes tests and preserves requirements."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 25,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 52,
+        "prompt": 515,
+        "total": 567
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2172.0,
+      "model_reasons": [
+        "All bindings match and requirements are satisfied."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 26,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 27,
+        "prompt": 617,
+        "total": 644
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1942.0,
+      "model_reasons": [
+        "Artifact, evidence, and tree digests match the computed digest.",
+        "Artifact and evidence revisions match the final request revision.",
+        "Candidate diff is limited to the intended reporter lookup ID change and preserves scheduler semantics.",
+        "Public fixture cargo test passed."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 27,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 74,
+        "prompt": 617,
+        "total": 691
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1541.0,
+      "model_reasons": [
+        "All binding digests match",
+        "All revisions are consistent",
+        "Cargo test passed",
+        "Changed paths align with request"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 28,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 49,
+        "prompt": 624,
+        "total": 673
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1782.0,
+      "model_reasons": [
+        "All required fields present and valid",
+        "Candidate diff matches artifact and evidence digests",
+        "Final corrected request aligns with hard and preservation requirements",
+        "Public fixture cargo test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 29,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 44,
+        "prompt": 624,
+        "total": 668
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 3161.0,
+      "model_reasons": [
+        "<redacted> is false",
+        "candidate changes conflict with preservation requirements: scheduler ID generation is modified (uppercase instead of lowercase) and reporter lookup is changed to lowercase, which may break existing scheduler tests",
+        "diff changes both scheduler and reporter, but hard requirements and preservation requirements imply only reporter should adapt to scheduler's existing lowercase IDs"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 30,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 98,
+        "prompt": 751,
+        "total": 849
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1881.0,
+      "model_reasons": [
+        "<redacted> is false",
+        "artifact_digest equals evidence_artifact_digest",
+        "artifact_revision equals evidence_revision"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 31,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 58,
+        "prompt": 751,
+        "total": 809
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2149.0,
+      "model_reasons": [
+        "All requested artifacts match revision and digest",
+        "Final corrected request includes preserved lower-case IDs, exact completion, no false positives",
+        "Unified diff aligns with requirements without deleting or weakening scheduler tests"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 32,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 62,
+        "prompt": 725,
+        "total": 787
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2185.0,
+      "model_reasons": [
+        "Unified diff is consistent with final request and hard requirements",
+        "Artifact digest, revision, and evidence bindings match tree digest",
+        "No preservation requirement violation detected"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 33,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 57,
+        "prompt": 725,
+        "total": 782
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1209.0,
+      "model_reasons": [
+        "Artifact, evidence, and request digests are consistent",
+        "Request revision matches artifact revision",
+        "Public fixture cargo test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 34,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 36,
+        "prompt": 621,
+        "total": 657
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1306.0,
+      "model_reasons": [
+        "All digests and revisions are consistent: tree_digest equals artifact_digest, evidence revision is lower, and final request aligns with preservation and test requirements."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 35,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 54,
+        "prompt": 621,
+        "total": 675
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1477.0,
+      "model_reasons": [
+        "No changed paths or diff provided",
+        "Digests and revisions match",
+        "All hard and preservation requirements are satisfied"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 36,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 46,
+        "prompt": 504,
+        "total": 550
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1883.0,
+      "model_reasons": [
+        "Artifact, evidence, and tree digests match (54e498...de4a).",
+        "Artifact and evidence revisions match (1), and request revision is 2.",
+        "Hard requirements are precise and satisfiable.",
+        "Preservation requirements are clear.",
+        "Public fixture cargo test passed.",
+        "No changed paths or unified diff, but artifact binding is consistent."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 37,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 100,
+        "prompt": 504,
+        "total": 604
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2045.0,
+      "model_reasons": [
+        "artifact and evidence digests match",
+        "artifact revision and evidence revision match request revision",
+        "candidate_unified_diff makes the retry change in src/http.rs as required"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 38,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 58,
+        "prompt": 612,
+        "total": 670
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1327.0,
+      "model_reasons": [
+        "All digests and revisions match",
+        "Corrected request aligns with hard requirements",
+        "Cargo test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 39,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 32,
+        "prompt": 612,
+        "total": 644
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1653.0,
+      "model_reasons": [
+        "candidate diff changes retries to 1, not 3 as required",
+        "hard requirement both clients have retries=3 is not satisfied"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 40,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 42,
+        "prompt": 611,
+        "total": 653
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1897.0,
+      "model_reasons": [
+        "The candidate diff changes retries from 0 to 1, but the hard requirement states both clients must have retries=3. The diff does not satisfy this requirement.",
+        "The evidence artifact digest matches the artifact digest (54e498...), but the diff content indicates a mismatch between the actual change and the stated hard requirements, so the revision/digest binding cannot be trusted."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 41,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 101,
+        "prompt": 611,
+        "total": 712
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2164.0,
+      "model_reasons": [
+        "Artifact digest, evidence digest, and tree digest match",
+        "Revisions are consistent across request, artifact, and evidence",
+        "Final corrected request aligns with hard requirements and preservation requirements",
+        "Changed path is within scope and public cargo test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 42,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 73,
+        "prompt": 656,
+        "total": 729
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1728.0,
+      "model_reasons": [
+        "The changed base_url in the diff violates the hard requirement 'accounts and reporting base URLs remain distinct'.",
+        "The change to base_url does not preserve the existing distinct base URLs as required."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 43,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 61,
+        "prompt": 656,
+        "total": 717
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 6 column 58",
+      "external_accepted": false,
+      "latency_ms": 2549.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 44,
+      "seed": 17,
+      "status": "error",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 704,
+        "total": 832
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2322.0,
+      "model_reasons": [
+        "diff deletes the only client test, violating preservation_requirements: 'Do not delete or weaken the existing client test'",
+        "the test deletion weakens coverage instead of preserving it, conflicting with the hard requirement to keep distinct base URLs and matching policies tested"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 45,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 75,
+        "prompt": 704,
+        "total": 779
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2235.0,
+      "model_reasons": [
+        "Artifact digest matches tree digest",
+        "Changed path is within allowed source file",
+        "Unified diff aligns with final corrected request via retries=3 change",
+        "Evidence and artifact revisions are consistent",
+        "Hard requirements and preservation constraints are satisfied",
+        "Public fixture cargo test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 46,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 82,
+        "prompt": 612,
+        "total": 694
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1969.0,
+      "model_reasons": [
+        "The artifact digest matches the tree digest, indicating consistency.",
+        "The unified diff applies the required retry change while preserving the default timeout and user agent.",
+        "The changed path is confined to src/http.rs, respecting preservation requirements.",
+        "The final corrected request aligns with the hard requirements and the applied diff."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 47,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 84,
+        "prompt": 612,
+        "total": 696
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1884.0,
+      "model_reasons": [
+        "Artifact digest matches tree digest and evidence artifact digest.",
+        "Candidate unified diff is empty and changed paths list is empty, indicating no modifications to the tree.",
+        "Request revision and artifact/evidence revisions are consistent.",
+        "Final corrected request aligns with hard and preservation requirements."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 48,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 77,
+        "prompt": 514,
+        "total": 591
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2242.0,
+      "model_reasons": [
+        "All required fields are present and match the expected schema.",
+        "Artifact and evidence digests match, and both revisions are 1.",
+        "The final corrected request preserves all existing options, sidebar titles, and MCP behavior, with no deletions.",
+        "The hard requirements and preservation requirements are consistent with the request.",
+        "No changed paths or unified diff indicates no modifications were attempted to the original artifact."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 49,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 104,
+        "prompt": 514,
+        "total": 618
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1792.0,
+      "model_reasons": [
+        "Digest and revision match, artifact and evidence are consistent, test passed, and request preserves all specified behavior."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 50,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 34,
+        "prompt": 627,
+        "total": 661
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2196.0,
+      "model_reasons": [
+        "All hard requirements satisfied: SAVE_BUTTON_LABEL corrected to Submit, settings options and sidebar/MCP behavior preserved.",
+        "Digest and revision bindings consistent: artifact, evidence, and tree digests match; request, artifact, and evidence revisions all 2.",
+        "Unified diff is minimal and targeted, changing only the misspelled button label."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 51,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 97,
+        "prompt": 627,
+        "total": 724
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1668.0,
+      "model_reasons": [
+        "The candidate diff removes the cursor_blink setting, violating the hard requirement that all twelve existing settings remain reachable and the preservation requirement not to remove an existing option."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 52,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 55,
+        "prompt": 732,
+        "total": 787
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1896.0,
+      "model_reasons": [
+        "Unified diff removes the cursor_blink setting, violating the preservation requirement to keep all twelve existing settings reachable.",
+        "The final corrected request explicitly forbids deleting an option, but the diff deletes cursor_blink.",
+        "Public fixture cargo test failed."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 53,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 75,
+        "prompt": 732,
+        "total": 807
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2054.0,
+      "model_reasons": [
+        "All digests match the tree digest, ensuring integrity.",
+        "Revisions align across artifact, evidence, and request.",
+        "Diff satisfies hard requirement Submit and preserves settings as required."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 54,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 58,
+        "prompt": 719,
+        "total": 777
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2204.0,
+      "model_reasons": [
+        "Artifact digest matches evidence digest and tree digest",
+        "Request revision matches artifact revision and evidence revision",
+        "Final corrected request preserves sidebar titles and MCP add/remove behavior and does not remove or rename any options",
+        "Unified diff only corrects SAVE_BUTTON_LABEL to Submit and changes General title to Preferences, which preserves all options and sidebar titles as it does not remove or rename any option"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 55,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 108,
+        "prompt": 719,
+        "total": 827
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1896.0,
+      "model_reasons": [
+        "candidate_unified_diff removes 'cursor_blink' from a list, which violates the preservation requirement 'Do not remove or rename an existing option' and may reduce the number of reachable settings."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 56,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 62,
+        "prompt": 698,
+        "total": 760
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1579.0,
+      "model_reasons": [
+        "Cannot verify artifact digest does not match tree digest",
+        "Cannot verify preservation requirements",
+        "Cannot verify hard requirements",
+        "Cannot verify revision and digest binding"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 57,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 55,
+        "prompt": 698,
+        "total": 753
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2541.0,
+      "model_reasons": [
+        "Request revision 2 and artifact revision 2 are aligned.",
+        "Candidate unified diff matches the hard requirement that SAVE_BUTTON_LABEL is exactly Submit.",
+        "Evidence digest is present and consistent with evidence revision 1.",
+        "Public fixture cargo test passed, and preservation requirements are addressed by the final corrected request."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 58,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 88,
+        "prompt": 628,
+        "total": 716
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2444.0,
+      "model_reasons": [
+        "The final corrected request explicitly preserves all existing options and MCP add/remove behavior, aligning with hard requirements.",
+        "The diff is a single-line typo fix from 'Sumbit' to 'Submit', satisfying the requirement for exact label.",
+        "Public fixture cargo test passed, indicating no test weakening or breakage.",
+        "Digest and revision bindings are internally consistent: artifact digest equals tree digest and request revision equals artifact revision."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 59,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 111,
+        "prompt": 628,
+        "total": 739
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1660.0,
+      "model_reasons": [
+        "Artifact and evidence digests match the tree digest",
+        "Revisions are consistent across artifact, evidence, and request",
+        "Final corrected request aligns with hard requirements and preserves existing behavior"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 60,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 60,
+        "prompt": 535,
+        "total": 595
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1698.0,
+      "model_reasons": [
+        "All digests and revisions match; tree, artifact, and evidence are consistent.",
+        "Final corrected request aligns with hard requirements and preservation requirements.",
+        "No changed paths or candidate diff, indicating no code modifications were submitted."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 61,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 66,
+        "prompt": 535,
+        "total": 601
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2211.0,
+      "model_reasons": [
+        "Artifact, evidence digest, revision, and request revision all match revision 2",
+        "Candidate diff and tree digest align with the reviewed artifact digest",
+        "Fixture cargo test passed with no failures"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 62,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 62,
+        "prompt": 708,
+        "total": 770
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1907.0,
+      "model_reasons": [
+        "Artifact digest matches evidence artifact digest",
+        "Artifact revision matches evidence revision",
+        "Changed path only includes src/retry.rs, respecting preservation requirements",
+        "Diff implements bounded exponential backoff with cap at 1600ms",
+        "Public fixture cargo test passed",
+        "Hard requirements and preservation requirements are satisfied"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 63,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 88,
+        "prompt": 708,
+        "total": 796
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 7 column 72",
+      "external_accepted": false,
+      "latency_ms": 2390.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 64,
+      "seed": 17,
+      "status": "error",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 690,
+        "total": 818
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1886.0,
+      "model_reasons": [
+        "Artifact digest and evidence digest match",
+        "Artifact revision and evidence revision match",
+        "Request revision is present",
+        "Candidate diff modifies only src/retry.rs",
+        "Hard requirements and preservation requirements are consistent with the diff",
+        "Public fixture cargo test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 65,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 79,
+        "prompt": 690,
+        "total": 769
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1616.0,
+      "model_reasons": [
+        "Artifact digest and revision match evidence.",
+        "Changed paths limited to src/retry.rs.",
+        "Delay schedule matches fixed bounded exponential requirement.",
+        "Retry count and preservation requirements met.",
+        "Public fixture test passed."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 66,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 68,
+        "prompt": 770,
+        "total": 838
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 4 column 420",
+      "external_accepted": false,
+      "latency_ms": 2519.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 67,
+      "seed": 29,
+      "status": "error",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 770,
+        "total": 898
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2109.0,
+      "model_reasons": [
+        "The candidate diff removes the assertion that verifies with_retries makes MAX_RETRIES + 1 attempts on repeated failure, violating the hard requirement that with_retries still makes MAX_RETRIES plus one attempts on repeated failure."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 68,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 72,
+        "prompt": 765,
+        "total": 837
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1715.0,
+      "model_reasons": [
+        "The candidate diff removes an assertion from the existing retry test, violating the preservation requirement 'Do not delete or weaken an existing retry test'.",
+        "The hard requirement 'with_retries still makes MAX_RETRIES plus one attempts on repeated failure' is not enforced by the diff, and its test assertion is removed."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 69,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 90,
+        "prompt": 765,
+        "total": 855
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2128.0,
+      "model_reasons": [
+        "Digests match: artifact_digest and tree_digest are identical.",
+        "Revisions match: artifact_revision, request_revision are both 2, evidence_revision is 1.",
+        "Candidate diff satisfies hard requirements: implements bounded exponential delay via attempt.min(4) and saturating_mul.",
+        "Preservation requirements respected: only src/retry.rs changed, no unrelated modules or retry behavior altered."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 70,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 111,
+        "prompt": 705,
+        "total": 816
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 7 column 43",
+      "external_accepted": true,
+      "latency_ms": 2689.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 71,
+      "seed": 29,
+      "status": "error",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 705,
+        "total": 833
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1327.0,
+      "model_reasons": [
+        "No unified diff or changed paths provided."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 72,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 21,
+        "prompt": 497,
+        "total": 518
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1725.0,
+      "model_reasons": [
+        "Final corrected request aligns with hard requirements and preservation constraints; no candidate diff or changed paths present."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 73,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 31,
+        "prompt": 497,
+        "total": 528
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2424.0,
+      "model_reasons": [
+        "The diff fixes the off-by-one error by using items[start..end] instead of items[start..end - 1], ensuring the final item is included.",
+        "The change does not affect page_count, configuration defaults, or unrelated modules.",
+        "The public fixture cargo test passed, indicating correctness."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 74,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 82,
+        "prompt": 603,
+        "total": 685
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2294.0,
+      "model_reasons": [
+        "The candidate patch changes only the slice end bound to include the final item, matching the hard requirement that page returns every item.",
+        "The change preserves empty and zero-limit behavior because the early return for end <= start remains.",
+        "The page_count function is untouched, so the requirement that page_count remain unchanged is satisfied.",
+        "All configured tests passed, and the diff is limited to the pagination module."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 75,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 105,
+        "prompt": 603,
+        "total": 708
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2921.0,
+      "model_reasons": [
+        "The diff only changes pagination.rs to fix the off-by-one error, no unrelated modifications.",
+        "The page function now returns the full range [start..end], ensuring every item in the bounded slice is included.",
+        "The condition [start..end] and validation ensure zero limit and end offset return empty, preserving existing behavior.",
+        "page_count is unchanged, satisfying the hard requirement.",
+        "All existing tests remain intact and pass, as indicated by <redacted>"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 76,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 124,
+        "prompt": 697,
+        "total": 821
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 4 column 500",
+      "external_accepted": false,
+      "latency_ms": 2556.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 77,
+      "seed": 29,
+      "status": "error",
+      "task_id": "pagination-tail",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 697,
+        "total": 825
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 6 column 306",
+      "external_accepted": false,
+      "latency_ms": 2846.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 78,
+      "seed": 17,
+      "status": "error",
+      "task_id": "pagination-tail",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 724,
+        "total": 852
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1418.0,
+      "model_reasons": [
+        "Diff changes DEFAULT_PAGE_SIZE from 20 to 21, violating preservation requirement 'Do not change configuration defaults or unrelated modules'."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 79,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 40,
+        "prompt": 724,
+        "total": 764
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2188.0,
+      "model_reasons": [
+        "The preservation requirement 'Do not delete or weaken an existing test' is violated: the candidate diff removes the assertion `assert_eq!(page_count(0, 10), 0);` from the existing test `an_empty_list_has_no_pages`."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 80,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 75,
+        "prompt": 690,
+        "total": 765
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2197.0,
+      "model_reasons": [
+        "Candidate diff fixes off-by-one in slice extraction to include the final item, satisfying 'page returns every item in the bounded slice'.",
+        "Zero limit and end offset behavior is unaffected by the change, still returning empty via the existing guard.",
+        "page_count is unchanged; only a redundant assertion in a test was removed, and the removed assertion does not weaken coverage because page_count is already tested elsewhere.",
+        "No unrelated modules or configuration defaults are modified.",
+        "Public fixture cargo test passes, indicating compatibility with existing tests."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 81,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 128,
+        "prompt": 690,
+        "total": 818
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2295.0,
+      "model_reasons": [
+        "Candidate change fixes the off-by-one error so page returns all items in the slice.",
+        "Zero limit and end offset remain empty because the early return for end <= start is untouched.",
+        "page_count function remains unchanged.",
+        "No configuration defaults or unrelated modules are modified.",
+        "No existing tests are deleted or weakened.",
+        "Cargo test passed."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 82,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 94,
+        "prompt": 602,
+        "total": 696
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2243.0,
+      "model_reasons": [
+        "The candidate diff only changes the slice end index from `end - 1` to `end` in `pagination.rs`, directly addressing the missing final item without altering page_count or other semantics.",
+        "The corrected request preserves zero-limit, out-of-range, ordering, and offset semantics, which the minimal diff respects.",
+        "No tests are deleted or weakened, and the change is isolated to the relevant file."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 83,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "pagination-tail",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 106,
+        "prompt": 602,
+        "total": 708
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1897.0,
+      "model_reasons": [
+        "final corrected request aligns with all hard requirements",
+        "artifact matches evidence",
+        "public fixture test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 84,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 43,
+        "prompt": 519,
+        "total": 562
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1687.0,
+      "model_reasons": [
+        "The final corrected request specifies the complete Gregorian leap year rule and preserves month/day rejection, satisfying the hard requirements. No unrelated behavior or existing tests are affected, as there are no changed paths in the candidate artifact."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 85,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 55,
+        "prompt": 519,
+        "total": 574
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 6 column 84",
+      "external_accepted": true,
+      "latency_ms": 2860.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 86,
+      "seed": 17,
+      "status": "error",
+      "task_id": "century-leap-year",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 646,
+        "total": 774
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 7 column 91",
+      "external_accepted": true,
+      "latency_ms": 2469.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 87,
+      "seed": 29,
+      "status": "error",
+      "task_id": "century-leap-year",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 646,
+        "total": 774
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2049.0,
+      "model_reasons": [
+        "The unified diff shows the condition changed to `year % 4 == 0 || year % 400 == 0`, which incorrectly treats 1900 as a leap year; it should be `(year % 4 == 0 && year % 100 != 0) || year % 400 == 0`."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 88,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 89,
+        "prompt": 638,
+        "total": 727
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2474.0,
+      "model_reasons": [
+        "The corrected request explicitly adds the Gregorian leap year rule and preserves month/day rejection.",
+        "The candidate diff modifies leap year logic to include 'year % 400 == 0' while keeping existing conditions, satisfying hard requirements for 1900, 2000, and 2024.",
+        "No changes to unrelated parser, pagination, configuration behavior, or date tests are indicated.",
+        "Public fixture cargo test passed, supporting correctness."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 89,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 111,
+        "prompt": 638,
+        "total": 749
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2421.0,
+      "model_reasons": [
+        "The final corrected request properly specifies the complete Gregorian leap year rule with century exception.",
+        "The candidate diff correctly updates is_leap_year to the specified rule and preserves other behavior.",
+        "The requirements (1900 rejected, 2000/2024 accepted, invalid dates rejected) are satisfied.",
+        "Preservation requirements are met; unrelated changes are minimal and not harmful (only a timeout constant tweak).",
+        "Public fixture cargo test passed."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 90,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 114,
+        "prompt": 770,
+        "total": 884
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 5 column 49",
+      "external_accepted": false,
+      "latency_ms": 2132.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 91,
+      "seed": 29,
+      "status": "error",
+      "task_id": "century-leap-year",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 770,
+        "total": 898
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1720.0,
+      "model_reasons": [
+        "The candidate diff deletes an existing test for 2024-04-31, violating the preservation requirement not to delete or weaken an existing date test."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 92,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 53,
+        "prompt": 721,
+        "total": 774
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2653.0,
+      "model_reasons": [
+        "The corrected leap year logic matches the complete Gregorian rule, satisfying the hard requirements for 1900, 2000, and 2024.",
+        "The change preserves month/day rejection for invalid dates and does not alter unrelated parser, pagination, or configuration behavior.",
+        "The deleted assertion in the test duplicates an existing invalid date check for the same month/day mechanism, but this may weaken test coverage for the preserved requirement that invalid month days remain rejected.",
+        "The public fixture cargo test passing indicates the implementation is functional."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 93,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 128,
+        "prompt": 721,
+        "total": 849
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 4 column 294",
+      "external_accepted": true,
+      "latency_ms": 2493.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 94,
+      "seed": 17,
+      "status": "error",
+      "task_id": "century-leap-year",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 647,
+        "total": 775
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1788.0,
+      "model_reasons": [
+        "The candidate diff fixes the leap year logic to correctly reject 1900 and accept 2000 and 2024.",
+        "Only the is_leap_year function is changed, preserving unrelated behavior.",
+        "Existing date tests remain unaffected."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 95,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "century-leap-year",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 69,
+        "prompt": 647,
+        "total": 716
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1622.0,
+      "model_reasons": [
+        "The corrected request aligns with the hard requirements and preservation constraints, and the evidence indicates the test passed."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 96,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 32,
+        "prompt": 510,
+        "total": 542
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2557.0,
+      "model_reasons": [
+        "Artifact digest, tree digest, and evidence digest all match, indicating consistency.",
+        "Public fixture cargo test passed.",
+        "No changed paths and empty diff suggest the fix is already applied and no risky modifications were made.",
+        "Final corrected request aligns with hard requirements: case-insensitive lookup, no false positives for unknown names.",
+        "Preservation requirements are respected: no indication of changing scheduler ID generation, completion semantics, or deleting/weakening existing tests."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 97,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 115,
+        "prompt": 510,
+        "total": 625
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 6 column 173",
+      "external_accepted": true,
+      "latency_ms": 2986.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 98,
+      "seed": 17,
+      "status": "error",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 612,
+        "total": 740
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1847.0,
+      "model_reasons": [
+        "The diff changes the ID format from uppercase 'JOB_' prefix to lowercase 'job-' prefix, altering scheduler ID generation semantics, which violates the preservation requirement to not change scheduler ID generation."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 99,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 51,
+        "prompt": 612,
+        "total": 663
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2121.0,
+      "model_reasons": [
+        "The diff changes job ID generation from uppercase with '_' separator to lowercase with '-' separator, which may break case-insensitive lookup semantics required by the corrected request.",
+        "The change could affect existing scheduler ID generation and completion semantics, violating preservation requirements."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 100,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 72,
+        "prompt": 619,
+        "total": 691
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 6 column 156",
+      "external_accepted": false,
+      "latency_ms": 2937.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 101,
+      "seed": 29,
+      "status": "error",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 619,
+        "total": 747
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2093.0,
+      "model_reasons": [
+        "candidate diff reverses existing job ID formatting, violating preservation requirement not to change scheduler ID generation",
+        "candidate diff does not satisfy hard requirement of case-insensitive lookup matching exact completed job"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 102,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 61,
+        "prompt": 746,
+        "total": 807
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1707.0,
+      "model_reasons": [
+        "Candidate patch alters scheduler ID generation to uppercase, violating preservation requirement 'Do not change scheduler ID generation'",
+        "Reporter lookup ID changed to lowercase, causing mismatch with scheduler IDs and breaking hard requirements"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 103,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 63,
+        "prompt": 746,
+        "total": 809
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 7 column 147",
+      "external_accepted": false,
+      "latency_ms": 2873.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 104,
+      "seed": 17,
+      "status": "error",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 720,
+        "total": 848
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2085.0,
+      "model_reasons": [
+        "Candidate diff removes an assertion in scheduler.rs test, violating preservation requirement 'Do not delete or weaken an existing scheduler test'.",
+        "Candidate diff changes reporter lookup_id generation, but final corrected request requires preserving lower-case job- IDs and exact-job completion without changing scheduler semantics; modifying lookup_id may be unnecessary or conflicting."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 105,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 86,
+        "prompt": 720,
+        "total": 806
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2513.0,
+      "model_reasons": [
+        "The candidate diff changes the job ID format from uppercase with prefix to lowercase with prefix, aligning with the case-insensitive lookup and mixed-case requirement.",
+        "The public fixture cargo test passed, indicating the change does not break existing tests.",
+        "The change affects only the lookup_id function and does not modify completion semantics or existing tests, satisfying preservation requirements."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 106,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 92,
+        "prompt": 616,
+        "total": 708
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing an object at line 8 column 3",
+      "external_accepted": true,
+      "latency_ms": 2713.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 107,
+      "seed": 29,
+      "status": "error",
+      "task_id": "scheduler-reporter-ids",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 616,
+        "total": 744
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1692.0,
+      "model_reasons": [
+        "The final corrected request is satisfied by the candidate artifact: both clients have retries=3, retain default timeout and user agent, and preserve distinct base URLs."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 108,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 44,
+        "prompt": 499,
+        "total": 543
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1720.0,
+      "model_reasons": [
+        "All hard requirements are satisfied: both clients have retries=3, retain default timeout and user agent, and maintain distinct base URLs. Preservation requirements are met: public client shape unchanged and existing test remains. Public fixture test passed."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 109,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 58,
+        "prompt": 499,
+        "total": 557
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2566.0,
+      "model_reasons": [
+        "Diff only changes retries in one location; must also update the other client constructor to retries=3."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 110,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 35,
+        "prompt": 607,
+        "total": 642
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1685.0,
+      "model_reasons": [
+        "Both client constructors use retries=3, default timeout and user agent, and distinct base URLs.",
+        "Preserves existing client tests and public shapes.",
+        "Cargo test passes."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 111,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 60,
+        "prompt": 607,
+        "total": 667
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1830.0,
+      "model_reasons": [
+        "Candidate sets retries=1, but hard requirement specifies retries=3 for both clients.",
+        "Only one client is modified in src/http.rs; the other client's retry policy remains unchanged."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 112,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 63,
+        "prompt": 606,
+        "total": 669
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2341.0,
+      "model_reasons": [
+        "Hard requirement 'both clients have retries=3' not met: diff changes retries from 0 to 1 for one client, not 3 for both.",
+        "Diff only touches src/http.rs and does not show changes to the other client constructor.",
+        "Final corrected request asks for same retry policy, but evidence shows retries=1, conflicting with required retries=3."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 113,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 103,
+        "prompt": 606,
+        "total": 709
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 4 column 596",
+      "external_accepted": false,
+      "latency_ms": 3380.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 114,
+      "seed": 17,
+      "status": "error",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 651,
+        "total": 779
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 5 column 299",
+      "external_accepted": false,
+      "latency_ms": 2730.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 115,
+      "seed": 29,
+      "status": "error",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 651,
+        "total": 779
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2617.0,
+      "model_reasons": [
+        "The diff deletes the existing client test `<redacted>`, which violates the preservation requirement 'Do not delete or weaken the existing client test'.",
+        "The diff only changes `retries` to 3 for one constructor; it does not ensure both constructors use the same retry policy because the other constructor's retry value is not shown as modified in the diff."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 116,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 106,
+        "prompt": 699,
+        "total": 805
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1955.0,
+      "model_reasons": [
+        "The diff deletes the body of the existing test '<redacted>', violating the preservation requirement 'Do not delete or weaken the existing client test'.",
+        "The final corrected request requires both clients to use the same 'user-agent policy', but the deletion of that test implies a weakening of the guarantee for that property."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 117,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 94,
+        "prompt": 699,
+        "total": 793
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2887.0,
+      "model_reasons": [
+        "Candidate diff only changes retries from 0 to 3 in one constructor; it does not ensure both clients share the same retry (the other constructor may still have a different value), nor does it address timeout/user-agent policy consistency. It may alter the public client shape inadvertently by changing default construction behavior without confirming both constructors match."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 118,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 81,
+        "prompt": 607,
+        "total": 688
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2377.0,
+      "model_reasons": [
+        "Candidate diff only changes retries from 0 to 3 in src/http.rs, satisfying hard requirement 'both clients have retries=3' for the shown constructor; other constructor presumed already retries=3 per evidence revision. No other files touched, preserving distinct base URLs, timeout, user-agent, and test coverage. cargo test passed."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 119,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "http-client-retry-parity",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 81,
+        "prompt": 607,
+        "total": 688
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1783.0,
+      "model_reasons": [
+        "Final corrected request preserves all required settings, sidebar titles, and MCP add/remove behavior",
+        "It explicitly avoids deleting or renaming options and maintains existing settings tests",
+        "Cargo test passed and artifact digest matches evidence"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 120,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 68,
+        "prompt": 509,
+        "total": 577
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1863.0,
+      "model_reasons": [
+        "The final corrected request aligns with the hard requirements and preservation requirements, ensuring no options are deleted, sidebar titles are preserved, and MCP add/remove behavior remains unchanged. The artifact digest matches the evidence digest, indicating consistency."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 121,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 66,
+        "prompt": 509,
+        "total": 575
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2470.0,
+      "model_reasons": [
+        "The diff only corrects the save button label from 'Sumbit' to 'Submit', which satisfies the hard requirement that SAVE_BUTTON_LABEL is exactly Submit.",
+        "No settings were removed or renamed; all existing options and the MCP in-session add/remove behavior are untouched.",
+        "The change is limited to a single string literal and does not affect sidebar titles or tests."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 122,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 93,
+        "prompt": 622,
+        "total": 715
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1166.0,
+      "model_reasons": [
+        "SAVE_BUTTON_LABEL corrected to Submit",
+        "all existing settings remain unchanged",
+        "sidebar titles and MCP behavior preserved"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 123,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 38,
+        "prompt": 622,
+        "total": 660
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1753.0,
+      "model_reasons": [
+        "Candidate diff removes the 'cursor_blink' setting, violating the hard requirement that all twelve existing settings remain reachable.",
+        "Removal of 'cursor_blink' also violates the preservation requirement 'Do not remove or rename an existing option'.",
+        "Candidate diff does not address the requirement to keep every existing option reachable, contrary to the final corrected request.",
+        "Public fixture cargo test failed, indicating the candidate may not satisfy the requirements."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 124,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 113,
+        "prompt": 727,
+        "total": 840
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2029.0,
+      "model_reasons": [
+        "The candidate diff removes the setting 'cursor_blink', which violates the hard requirement that all twelve existing settings remain reachable.",
+        "The final corrected request explicitly states to keep every existing option reachable and do not simplify by deleting an option, but the diff deletes an option.",
+        "The public fixture cargo test passed flag is false, indicating potential test failures."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 125,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 96,
+        "prompt": 727,
+        "total": 823
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 4 column 541",
+      "external_accepted": false,
+      "latency_ms": 3140.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 126,
+      "seed": 17,
+      "status": "error",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 714,
+        "total": 842
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2529.0,
+      "model_reasons": [
+        "The candidate diff corrects the typo 'Sumbit' to 'Submit', satisfying the requirement.",
+        "The change from 'General' to 'Preferences' is a title change that does not remove or rename an existing option or affect reachability, and it does not conflict with the hard requirements.",
+        "The diff does not show any deletion of existing settings or tests, so preservation requirements are met.",
+        "The evidence matches the artifact and revision, indicating consistency."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 127,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 116,
+        "prompt": 714,
+        "total": 830
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2143.0,
+      "model_reasons": [
+        "Diff removes \"cursor_blink\" from the list of settings keys, violating 'Do not remove or rename an existing option' and 'Keep every existing option reachable'."
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 128,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 57,
+        "prompt": 693,
+        "total": 750
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1190.0,
+      "model_reasons": [
+        "Diff removes 'cursor_blink' from a settings list, violating 'all twelve existing settings remain reachable' and 'Do not remove or rename an existing option'"
+      ],
+      "model_verdict": "BLOCKED",
+      "schedule_index": 129,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 47,
+        "prompt": 693,
+        "total": 740
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 3040.0,
+      "model_reasons": [
+        "The candidate diff changes SAVE_BUTTON_LABEL from 'Sumbit' to 'Submit', satisfying the hard requirement.",
+        "The diff is limited to a single string constant and does not remove or rename any existing options, ensuring all twelve settings remain reachable.",
+        "Sidebar titles and MCP add/remove behavior are not touched by the diff, preserving them.",
+        "No settings tests are deleted or weakened; the change is a simple typo fix and public fixture cargo test passed."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 130,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 124,
+        "prompt": 623,
+        "total": 747
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 1930.0,
+      "model_reasons": [
+        "SAVE_BUTTON_LABEL changed from Sumbit to Submit, satisfying the hard requirement",
+        "Diff touches only one line in src/ui/settings.rs, leaving reachable options, sidebar titles, and MCP behavior untouched"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 131,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "settings-label-preservation",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 70,
+        "prompt": 623,
+        "total": 693
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 1875.0,
+      "model_reasons": [
+        "Final corrected request aligns with hard requirements and preservation constraints",
+        "Artifact digest matches evidence digest, indicating consistency",
+        "Public fixture cargo test passed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 132,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 39,
+        "prompt": 530,
+        "total": 569
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2107.0,
+      "model_reasons": [
+        "Hard requirements satisfied: fixed bounded exponential schedule with retry count and first-success behavior preserved.",
+        "Preservation requirements met: no changes to MAX_RETRIES, unrelated modules, or weakening/deletion of existing retry tests.",
+        "Public fixture cargo test passed, indicating the change is tested and functional."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 133,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 84,
+        "prompt": 530,
+        "total": 614
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2076.0,
+      "model_reasons": [
+        "Delay schedule matches required 100,200,400,800,1600 then capped",
+        "Retry count and first-success behavior preserved",
+        "Cargo test passes and only retry.rs changed"
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 134,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 63,
+        "prompt": 703,
+        "total": 766
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "gold",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": true,
+      "latency_ms": 2370.0,
+      "model_reasons": [
+        "The change implements bounded exponential backoff capped at attempt.min(4), yielding 100, 200, 400, 800, 1600 ms for attempts 0-4 and later attempts capped at 1600 as required.",
+        "The retry loop and MAX_RETRIES are untouched, preserving retry count and first-success behavior.",
+        "Only src/retry.rs is modified, no unrelated changes, and no existing tests are deleted or weakened.",
+        "The provided fixture cargo test passes."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 135,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 126,
+        "prompt": 703,
+        "total": 829
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 7 column 26",
+      "external_accepted": false,
+      "latency_ms": 1923.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 136,
+      "seed": 17,
+      "status": "error",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 685,
+        "total": 813
+      }
+    },
+    {
+      "B": true,
+      "C": false,
+      "D": false,
+      "candidate": "stale",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "BLOCKED",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2977.0,
+      "model_reasons": [
+        "Candidate diff implements additive incremental delays (100, 200, 400, 800, 1600) with saturating multiplication, matching the requested bounded exponential schedule. Artifact digest matches evidence, preserving retry behavior tests and unrelated code as required."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 137,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 64,
+        "prompt": 685,
+        "total": 749
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2638.0,
+      "model_reasons": [
+        "The diff correctly implements the required exponential backoff with values 100, 200, 400, 800, 1600 for attempts 0-4 and caps at 1600 for attempts >=4.",
+        "MAX_RETRIES remains unchanged at 3, preserving the existing retry count and first-success behavior.",
+        "The change is limited to src/retry.rs, making no modifications to unrelated modules or tests.",
+        "The public fixture cargo test passed, indicating the changes do not break existing tests."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 138,
+      "seed": 17,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 128,
+        "prompt": 765,
+        "total": 893
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 6 column 85",
+      "external_accepted": false,
+      "latency_ms": 1976.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 139,
+      "seed": 29,
+      "status": "error",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 765,
+        "total": 893
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 3 column 554",
+      "external_accepted": false,
+      "latency_ms": 3137.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 140,
+      "seed": 17,
+      "status": "error",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 760,
+        "total": 888
+      }
+    },
+    {
+      "B": true,
+      "C": true,
+      "D": true,
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "dataset_expected_accepted": false,
+      "deterministic_gate": "READY",
+      "error": null,
+      "external_accepted": false,
+      "latency_ms": 2611.0,
+      "model_reasons": [
+        "Modified delay_for follows the requested schedule (100, 200, 400, 800, 1600 for attempts 0-4, capped at 1600).",
+        "The assertion counting MAX_RETRIES + 1 attempts was removed, but no test was deleted; the test still checks the result is an error.",
+        "The test for first-success remains unchanged.",
+        "Only src/retry.rs is changed, respecting the preservation of MAX_RETRIES and unrelated modules."
+      ],
+      "model_verdict": "READY",
+      "schedule_index": 141,
+      "seed": 29,
+      "status": "ok",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "response",
+      "tokens": {
+        "completion": 124,
+        "prompt": 760,
+        "total": 884
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 7 column 69",
+      "external_accepted": true,
+      "latency_ms": 2723.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 142,
+      "seed": 17,
+      "status": "error",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 700,
+        "total": 828
+      }
+    },
+    {
+      "B": false,
+      "C": false,
+      "D": false,
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "dataset_expected_accepted": true,
+      "deterministic_gate": "BLOCKED",
+      "error": "invalid verdict JSON: EOF while parsing a string at line 6 column 75",
+      "external_accepted": true,
+      "latency_ms": 2464.0,
+      "model_reasons": [],
+      "model_verdict": null,
+      "schedule_index": 143,
+      "seed": 29,
+      "status": "error",
+      "task_id": "retry-exponential-delay",
+      "terminal_event": "error",
+      "tokens": {
+        "completion": 128,
+        "prompt": 700,
+        "total": 828
+      }
+    }
+  ],
+  "schema_version": 1
+}

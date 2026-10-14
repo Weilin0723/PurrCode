@@ -1,0 +1,33 @@
+schema_version = 1
+
+[privacy]
+mode = "mixed"
+allow_remote_fallback = false
+
+[providers.deepseek]
+type = "openai-compatible"
+base_url = "https://api.deepseek.com/"
+api_key_env = "keychain:deepseek"
+local = false
+
+[providers.deepseek.headers]
+
+[providers.deepseek.capabilities.deepseek-v4-pro]
+latency_class = "unknown"
+local = false
+
+[models]
+default = "deepseek/deepseek-v4-pro"
+
+[models.roles]
+coding_worker = "deepseek/deepseek-v4-pro"
+judge = "deepseek/deepseek-v4-pro"
+planner = "deepseek/deepseek-v4-pro"
+reviewer = "deepseek/deepseek-v4-pro"
+alignment_reviewer = "deepseek/deepseek-v4-pro"
+router = "deepseek/deepseek-v4-pro"
+summarizer = "deepseek/deepseek-v4-pro"
+repair_worker = "deepseek/deepseek-v4-pro"
+
+[judgment]
+allow_same_model = true

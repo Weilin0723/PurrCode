@@ -1,0 +1,52 @@
+{
+  "benchmark_kind": "synthetic-local-review-probe-v2",
+  "by_condition": {
+    "plain_json": {
+      "balanced_accuracy_scheduled": 0.08333333333333333,
+      "blocked_recall_scheduled": 0.16666666666666666,
+      "correct_valid": 2,
+      "false_ready": 0,
+      "format_coverage": 0.16666666666666666,
+      "latency_measured_calls": 24,
+      "latency_ms_mean": 1382.6055416666666,
+      "ready_recall_scheduled": 0.0,
+      "scheduled_accuracy": 0.08333333333333333,
+      "scheduled_calls": 24,
+      "tokens_measured_calls": 24,
+      "tokens_total": 5520,
+      "valid_only_accuracy": 0.5,
+      "valid_responses": 4,
+      "wrong_block": 2
+    },
+    "revision_rubric_json": {
+      "balanced_accuracy_scheduled": 0.5,
+      "blocked_recall_scheduled": 1.0,
+      "correct_valid": 12,
+      "false_ready": 0,
+      "format_coverage": 1.0,
+      "latency_measured_calls": 24,
+      "latency_ms_mean": 705.6172916666666,
+      "meets_engineering_bar": false,
+      "ready_recall_scheduled": 0.0,
+      "scheduled_accuracy": 0.5,
+      "scheduled_calls": 24,
+      "tokens_measured_calls": 24,
+      "tokens_total": 6568,
+      "valid_only_accuracy": 0.5,
+      "valid_responses": 24,
+      "wrong_block": 12
+    }
+  },
+  "development_data": true,
+  "independence_note": "Two seeds repeat the same 12 development tasks and do not establish inferential significance.",
+  "label_provenance": "human-authored normalized synthetic trace labels; no live tests or execution",
+  "live_coding": false,
+  "purrcode_qualification": false,
+  "scheduled_calls": 48,
+  "schema_version": 2,
+  "status_counts": {
+    "invalid_response": 20,
+    "ok": 28
+  },
+  "unique_tasks": 12
+}

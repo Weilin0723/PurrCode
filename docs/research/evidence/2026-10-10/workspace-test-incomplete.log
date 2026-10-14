@@ -1,0 +1,2 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.51s
+     Running unittests src/lib.rs (target/debug/deps/purrcode_agent_runtime-1034de38c9bc50ff)

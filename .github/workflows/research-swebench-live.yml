@@ -1,0 +1,210 @@
+name: Research - SWE-bench-Live E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_ids:
+        description: Whitespace-separated instance IDs to run (empty = all frozen 30)
+        required: false
+        default: ""
+        type: string
+      run_analysis:
+        description: Run the frozen final analysis after all scheduled rows exist
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.88"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      tasks: ${{ steps.matrix.outputs.tasks }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - id: matrix
+        env:
+          REQUESTED: ${{ inputs.instance_ids }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          from pathlib import Path
+          manifest = json.loads(Path("benchmarks/research/swebench-live-v1/manifest.json").read_text())
+          selected = [row["instance_id"] for row in manifest["tasks"]]
+          requested = os.environ.get("REQUESTED", "").split()
+          if requested:
+              known = set(selected)
+              unknown = [item for item in requested if item not in known]
+              if unknown:
+                  raise SystemExit(f"unknown instance IDs: {unknown}")
+              selected = requested
+          print("tasks=" + json.dumps(selected, separators=(",", ":")))
+          PY
+
+  task:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        task: ${{ fromJSON(needs.prepare.outputs.tasks) }}
+    env:
+      TASK_ID: ${{ matrix.task }}
+      HF_HOME: ${{ runner.temp }}/huggingface
+      RESEARCH_ROOT: ${{ runner.temp }}/purrcode-swebench-live
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          cache: true
+      - name: Install pinned SWE-bench-Live harness
+        run: |
+          python -m venv "$RESEARCH_ROOT/venv"
+          "$RESEARCH_ROOT/venv/bin/python" -m pip install --upgrade pip setuptools wheel
+          git clone https://github.com/SWE-bench-Live/SWE-bench-Live.git "$RESEARCH_ROOT/swebench"
+          git -C "$RESEARCH_ROOT/swebench" checkout --detach a145aa87c62361532dacaa243398978164b234b7
+          "$RESEARCH_ROOT/venv/bin/python" -m pip install -e "$RESEARCH_ROOT/swebench"
+      - name: Build PurrCode
+        run: cargo build --release -p purrcode-cli -p purrcode-daemon -j 4
+      - name: Materialize operator-only DeepSeek credential
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          mkdir -p "$RESEARCH_ROOT/ci-config"
+          cp docs/research/evidence/2026-10-13/swebench-live-v1/config.toml "$RESEARCH_ROOT/ci-config/config.toml"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          key = os.environ["DEEPSEEK_API_KEY"]
+          if not key or any(ch in key for ch in "\r\n"):
+              raise SystemExit("DEEPSEEK_API_KEY is missing or malformed")
+          Path(os.environ["RESEARCH_ROOT"], "ci-config", "credentials.toml").write_text(
+              f'deepseek = "{key}"\n', encoding="utf-8"
+          )
+          PY
+          chmod 600 "$RESEARCH_ROOT/ci-config/credentials.toml"
+      - name: Start isolated daemon
+        run: |
+          mkdir -p "$RESEARCH_ROOT/state"
+          "$PWD/target/release/purrcoded" \
+            --bind 127.0.0.1:7477 \
+            --database "$RESEARCH_ROOT/state/research.db" \
+            --token-file "$RESEARCH_ROOT/state/daemon.token" \
+            --config "$RESEARCH_ROOT/ci-config/config.toml" \
+            --allow-research-alignment-disabled \
+            > "$RESEARCH_ROOT/state/daemon.log" 2>&1 &
+          echo $! > "$RESEARCH_ROOT/state/daemon.pid"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:7477/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RESEARCH_ROOT/state/daemon.log"
+          exit 1
+      - name: Gold hidden-oracle preflight
+        run: |
+          "$RESEARCH_ROOT/venv/bin/python" scripts/swebench_live_oracle_preflight.py \
+            --manifest benchmarks/research/swebench-live-v1/manifest.json \
+            --out "$RESEARCH_ROOT/oracle" \
+            --oracle-python "$RESEARCH_ROOT/venv/bin/python" \
+            --oracle-runner "$PWD/scripts/run_swebench_live_oracle.py" \
+            --hf-home "$HF_HOME" \
+            --instance-ids "$TASK_ID" \
+            --max-tasks 1
+      - name: Run scheduled B/C x static/correction cells
+        run: |
+          "$RESEARCH_ROOT/venv/bin/python" scripts/swebench_live_e2e.py run \
+            --bundle benchmarks/research/swebench-live-v1/run-bundle.json \
+            --runner-lock docs/research/evidence/2026-10-13/swebench-live-v1/runner-lock.json \
+            --cache-dir "$RESEARCH_ROOT/checkouts" \
+            --plan docs/research/evidence/2026-10-13/swebench-live-v1/analysis-plan.json \
+            --freeze docs/research/evidence/2026-10-13/swebench-live-v1/freeze.json \
+            --daemon http://127.0.0.1:7477 \
+            --token-file "$RESEARCH_ROOT/state/daemon.token" \
+            --output "$RESEARCH_ROOT/e2e" \
+            --oracle-python "$RESEARCH_ROOT/venv/bin/python" \
+            --oracle-runner "$PWD/scripts/run_swebench_live_oracle.py" \
+            --hf-home "$HF_HOME" \
+            --instance-ids "$TASK_ID"
+      - name: Stop daemon
+        if: always()
+        run: |
+          if test -f "$RESEARCH_ROOT/state/daemon.pid"; then
+            kill "$(cat "$RESEARCH_ROOT/state/daemon.pid")" || true
+          fi
+      - name: Upload sanitized task evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.task }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/purrcode-swebench-live/e2e/results.jsonl
+            ${{ runner.temp }}/purrcode-swebench-live/oracle/gold-oracle-results.jsonl
+            benchmarks/research/swebench-live-v1/run-bundle.json
+
+  analysis:
+    needs: task
+    if: ${{ inputs.run_analysis }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: e2e-*
+          path: "${{ runner.temp }}/artifacts"
+          merge-multiple: true
+      - name: Combine scheduled rows
+        run: |
+          python - "${{ runner.temp }}/artifacts" "${{ runner.temp }}/results.jsonl" <<'PY'
+          import json, sys
+          from pathlib import Path
+          source = Path(sys.argv[1])
+          target = Path(sys.argv[2])
+          rows = {}
+          for path in source.rglob("results.jsonl"):
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  if not line.strip():
+                      continue
+                  row = json.loads(line)
+                  rows[row["run_id"]] = row
+          target.write_text("".join(json.dumps(rows[key], sort_keys=True) + "\n" for key in sorted(rows)), encoding="utf-8")
+          print(f"combined {len(rows)} rows")
+          PY
+      - name: Analyze frozen study
+        run: |
+          python scripts/fse_confirmatory_analysis.py \
+            "${{ runner.temp }}/results.jsonl" \
+            docs/research/evidence/2026-10-13/swebench-live-v1/analysis-plan.json \
+            docs/research/evidence/2026-10-13/swebench-live-v1/freeze.json \
+            benchmarks/research/swebench-live-v1/manifest.json \
+            --runner-artifact docs/research/evidence/2026-10-13/swebench-live-v1/runner-lock.json \
+            --dependency-lock docs/research/evidence/2026-10-13/swebench-live-v1/dependency-lock.json \
+            --qualification docs/research/evidence/2026-10-13/swebench-live-v1/qualification.json \
+            --model-freeze docs/research/evidence/2026-10-13/swebench-live-v1/model-freeze.md \
+            --expected-freeze-sha256 "$(python -c 'import json; print(json.load(open("docs/research/evidence/2026-10-13/swebench-live-v1/receipt.json"))["freeze_sha256"])')" \
+            > "${{ runner.temp }}/analysis.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swebench-live-analysis
+          path: ${{ runner.temp }}/analysis.json

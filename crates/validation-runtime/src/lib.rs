@@ -119,17 +119,7 @@ impl ValidationReport {
             evidence.stage == ValidationStage::CompletionCriteria
                 && evidence.status == EvidenceStatus::Passed
         }) && self.required_stages.iter().all(|stage| {
-            self.evidence.iter().any(|evidence| {
-                evidence.stage == *stage
-                    && (evidence.status == EvidenceStatus::Passed
-                        || (self.accepted_unavailable_stages.contains(stage)
-                            && matches!(
-                                evidence.status,
-                                EvidenceStatus::Unavailable
-                                    | EvidenceStatus::NotDetected
-                                    | EvidenceStatus::SkippedByConfiguration
-                            )))
-            })
+            stage_completion_allowed(&self.evidence, *stage, &self.accepted_unavailable_stages)
         })
     }
 
@@ -444,17 +434,7 @@ impl ValidationRunner {
             evidence.push(item);
         }
         let required_passed = plan.required_stages.iter().all(|stage| {
-            evidence.iter().any(|item| {
-                item.stage == *stage
-                    && (item.status == EvidenceStatus::Passed
-                        || (plan.accepted_unavailable_stages.contains(stage)
-                            && matches!(
-                                item.status,
-                                EvidenceStatus::Unavailable
-                                    | EvidenceStatus::NotDetected
-                                    | EvidenceStatus::SkippedByConfiguration
-                            )))
-            })
+            stage_completion_allowed(&evidence, *stage, &plan.accepted_unavailable_stages)
         });
         let completion = ValidationEvidence {
             stage: ValidationStage::CompletionCriteria,
@@ -483,6 +463,30 @@ impl ValidationRunner {
             accepted_unavailable_stages: plan.accepted_unavailable_stages.clone(),
         })
     }
+}
+
+fn stage_completion_allowed(
+    evidence: &[ValidationEvidence],
+    stage: ValidationStage,
+    accepted_unavailable: &BTreeSet<ValidationStage>,
+) -> bool {
+    let matching = evidence.iter().filter(|item| item.stage == stage);
+    let mut found = false;
+    for item in matching {
+        found = true;
+        let accepted = item.status == EvidenceStatus::Passed
+            || (accepted_unavailable.contains(&stage)
+                && matches!(
+                    item.status,
+                    EvidenceStatus::Unavailable
+                        | EvidenceStatus::NotDetected
+                        | EvidenceStatus::SkippedByConfiguration
+                ));
+        if !accepted {
+            return false;
+        }
+    }
+    found
 }
 
 fn generated_write_globs(program: &str) -> Vec<String> {
@@ -543,7 +547,7 @@ impl ValidationDetector {
         if repository.join("pyproject.toml").is_file()
             || repository.join("pytest.ini").is_file()
             || repository.join("requirements.txt").is_file()
-            || is_regular_directory(&repository.join("tests"))
+            || has_python_test_files(&repository.join("tests"))?
         {
             commands.extend(python_commands(&repository));
         }
@@ -588,7 +592,7 @@ impl ValidationDetector {
             } else if project.join("pyproject.toml").is_file()
                 || project.join("pytest.ini").is_file()
                 || project.join("requirements.txt").is_file()
-                || is_regular_directory(&project.join("tests"))
+                || has_python_test_files(&project.join("tests"))?
             {
                 python_commands(&project)
             } else if has_dotnet_project(&project)? {
@@ -693,7 +697,7 @@ fn nested_project_roots(repository: &Path) -> Result<Vec<PathBuf>, ValidationErr
             .iter()
             .any(|manifest| path.join(manifest).is_file())
                 || has_dotnet_project(&path)?
-                || is_regular_directory(&path.join("tests"))
+                || has_python_test_files(&path.join("tests"))?
             {
                 projects.push(path.clone());
                 if projects.len() >= MAX_PROJECTS {
@@ -730,6 +734,10 @@ fn command(
 fn rust_commands() -> Vec<ValidationCommand> {
     let mut environment = BTreeMap::new();
     environment.insert("CARGO_NET_OFFLINE".into(), "true".into());
+    // Rustdoc creates temporary doctest crates. In a worktree-scoped sandbox,
+    // the host's global temporary directory is intentionally not writable;
+    // keep those files under Cargo's already-authorized target tree instead.
+    environment.insert("TMPDIR".into(), "target/".into());
     [
         (
             ValidationStage::SyntaxStatic,
@@ -869,7 +877,7 @@ fn python_commands(repository: &Path) -> Vec<ValidationCommand> {
             &["-m", "pytest"],
             "Python pytest configuration detected",
         ));
-    } else if is_regular_directory(&repository.join("tests")) {
+    } else if has_python_test_files(&repository.join("tests")).unwrap_or(false) {
         commands.push(command(
             ValidationStage::FullUnitTests,
             "python3",
@@ -880,10 +888,36 @@ fn python_commands(repository: &Path) -> Vec<ValidationCommand> {
     commands
 }
 
-fn is_regular_directory(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .map(|metadata| metadata.file_type().is_dir())
-        .unwrap_or(false)
+fn has_python_test_files(root: &Path) -> Result<bool, ValidationError> {
+    fn visit(directory: &Path, depth: usize) -> Result<bool, std::io::Error> {
+        if depth > 5 {
+            return Ok(false);
+        }
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if file_type.is_file()
+                && path.extension().and_then(|value| value.to_str()) == Some("py")
+            {
+                return Ok(true);
+            }
+            if file_type.is_dir() && visit(&path, depth + 1)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    Ok(visit(root, 0)?)
 }
 
 fn has_dotnet_project(repository: &Path) -> Result<bool, ValidationError> {
@@ -1114,6 +1148,11 @@ mod tests {
             .iter()
             .all(|command| command.environment.get("CARGO_NET_OFFLINE") == Some(&"true".into())));
         assert!(
+            plan.commands
+                .iter()
+                .all(|command| command.environment.get("TMPDIR") == Some(&"target/".into()))
+        );
+        assert!(
             plan.undetected_stages
                 .contains(&ValidationStage::IntegrationTests)
         );
@@ -1220,6 +1259,42 @@ mod tests {
     }
 
     #[test]
+    fn one_passing_command_cannot_hide_a_failure_in_the_same_required_stage() {
+        let evidence = vec![
+            ValidationEvidence {
+                stage: ValidationStage::FullUnitTests,
+                status: EvidenceStatus::Failed,
+                command: None,
+                exit_code: Some(1),
+                detail: "cargo test failed".into(),
+                output_truncated: false,
+            },
+            ValidationEvidence {
+                stage: ValidationStage::FullUnitTests,
+                status: EvidenceStatus::Passed,
+                command: None,
+                exit_code: Some(0),
+                detail: "another test command passed".into(),
+                output_truncated: false,
+            },
+            ValidationEvidence {
+                stage: ValidationStage::CompletionCriteria,
+                status: EvidenceStatus::Passed,
+                command: None,
+                exit_code: None,
+                detail: "stale derived gate".into(),
+                output_truncated: false,
+            },
+        ];
+        let report = ValidationReport {
+            evidence,
+            required_stages: BTreeSet::from([ValidationStage::FullUnitTests]),
+            accepted_unavailable_stages: BTreeSet::new(),
+        };
+        assert!(!report.completion_allowed());
+    }
+
+    #[test]
     fn failure_parser_routes_specialists_from_bounded_evidence() {
         let cases = [
             (
@@ -1299,6 +1374,11 @@ mod tests {
         .unwrap();
         std::fs::create_dir(repository.path().join("tests")).unwrap();
         std::fs::write(
+            repository.path().join("tests/test_example.py"),
+            "import unittest\n",
+        )
+        .unwrap();
+        std::fs::write(
             repository.path().join("Makefile"),
             "ci:\n\ttrue\nbuild:\n\ttrue\n",
         )
@@ -1321,6 +1401,27 @@ mod tests {
                 .windows(2)
                 .all(|pair| progressive_rank(pair[0].stage) <= progressive_rank(pair[1].stage))
         );
+    }
+
+    #[test]
+    fn a_rust_tests_directory_does_not_trigger_python_unittest() {
+        let repository = tempfile::tempdir().unwrap();
+        std::fs::write(
+            repository.path().join("Cargo.toml"),
+            "[package]\nname='fixture'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        std::fs::create_dir(repository.path().join("tests")).unwrap();
+        std::fs::write(
+            repository.path().join("tests/integration.rs"),
+            "#[test]\nfn works() {}\n",
+        )
+        .unwrap();
+
+        let plan = ValidationDetector::detect(repository.path()).unwrap();
+        assert!(!plan.commands.iter().any(|command| {
+            command.program == "python3" && command.arguments.contains(&"unittest".into())
+        }));
     }
 
     #[cfg(unix)]

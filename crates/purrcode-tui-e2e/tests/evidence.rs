@@ -253,9 +253,20 @@ fn skill_search_returns_bounded_candidates() {
         harness.wait_for_request("POST", "/v1/skills/search")?;
         let screen = harness.wait_for_text("candidate-0")?;
 
-        // Every scripted candidate rendered, none duplicated or dropped, and
-        // the panel stays within the terminal rather than a runaway list.
-        for index in 0..5 {
+        // Every scripted candidate is reachable, none duplicated or dropped,
+        // and the panel stays within the terminal rather than a runaway list.
+        // The richer candidate cards no longer fit five rows in the test
+        // viewport at once, so check the initial window and the scrolled tail.
+        for index in 0..3 {
+            assertions::assert_readable(&screen, &format!("candidate-{index}"));
+        }
+        assertions::assert_no_overflow(&screen);
+
+        for _ in 0..4 {
+            harness.key(Key::Down)?;
+        }
+        let screen = harness.wait_for_text("candidate-4")?;
+        for index in 2..5 {
             assertions::assert_readable(&screen, &format!("candidate-{index}"));
         }
         assertions::assert_no_overflow(&screen);

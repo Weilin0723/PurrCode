@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "small_model_feasibility_and_secondary_audit",
+  "date": "2026-10-12",
+  "classification": "sanitized; feasibility and secondary evidence only",
+  "smoke_runs": [
+    {
+      "run_id": "small-model-smoke",
+      "task_id": "config-default",
+      "model_name": "ollama/llama3.2:3b (run-family metadata; not embedded in the summary artifact)",
+      "source_digest": null,
+      "binary_digest": null,
+      "model_digest": null,
+      "provenance_status": "source, binary, and model digests were not recorded in this run's artifacts",
+      "artifact_time": "2026-10-12T14:12:15-04:00",
+      "elapsed_seconds": 313,
+      "output_cap": 16384,
+      "cap_status": "default baseline",
+      "cap_provenance": "run metadata; not embedded in the smoke summary",
+      "reported_done": false,
+      "user_visible_completion_claim": false,
+      "delivery_gate": "never ran",
+      "external_oracle": "not run or recorded",
+      "requirements_satisfied": 1,
+      "requirements_expected": 2,
+      "hard_requirement_counters": {
+        "total": 0,
+        "verified": 0,
+        "violated": 0,
+        "unknown": 0
+      },
+      "findings_raised": 0,
+      "findings_repaired": 0,
+      "key_errors": [],
+      "modification_evidence": "not recorded; no successful completion or gate evidence",
+      "terminal_state": "release bar not met",
+      "artifact_files": ["config-default.json", "config-default.md", "config-default.errors.json"]
+    },
+    {
+      "run_id": "small-model-smoke-2",
+      "task_id": "config-default",
+      "model_name": "ollama/llama3.2:3b (run-family metadata; not embedded in the summary artifact)",
+      "source_digest": null,
+      "binary_digest": null,
+      "model_digest": null,
+      "provenance_status": "source, binary, and model digests were not recorded in this run's artifacts",
+      "artifact_time": "2026-10-12T14:27:17-04:00",
+      "elapsed_seconds": 307,
+      "output_cap": 2048,
+      "cap_status": "temporary feasibility probe",
+      "cap_provenance": "run metadata; not embedded in the smoke summary",
+      "reported_done": false,
+      "user_visible_completion_claim": false,
+      "delivery_gate": "never ran",
+      "external_oracle": "not run or recorded",
+      "requirements_satisfied": 1,
+      "requirements_expected": 2,
+      "hard_requirement_counters": {
+        "total": 0,
+        "verified": 0,
+        "violated": 0,
+        "unknown": 0
+      },
+      "findings_raised": 0,
+      "findings_repaired": 0,
+      "key_errors": [],
+      "modification_evidence": "not recorded; no successful completion or gate evidence",
+      "terminal_state": "release bar not met",
+      "artifact_files": ["config-default.json", "config-default.md", "config-default.errors.json"]
+    },
+    {
+      "run_id": "small-model-smoke-3",
+      "task_id": "config-default",
+      "model_name": "ollama/llama3.2:3b (run-family metadata; not embedded in the summary artifact)",
+      "source_digest": null,
+      "binary_digest": null,
+      "model_digest": null,
+      "provenance_status": "source, binary, and model digests were not recorded in this run's artifacts",
+      "artifact_time": "2026-10-12T14:34:34-04:00",
+      "elapsed_seconds": 308,
+      "output_cap": 512,
+      "cap_status": "temporary feasibility probe",
+      "cap_provenance": "run metadata; not embedded in the smoke summary",
+      "reported_done": false,
+      "user_visible_completion_claim": false,
+      "delivery_gate": "never ran",
+      "external_oracle": "not run or recorded",
+      "requirements_satisfied": 1,
+      "requirements_expected": 2,
+      "hard_requirement_counters": {
+        "total": 0,
+        "verified": 0,
+        "violated": 0,
+        "unknown": 0
+      },
+      "findings_raised": 0,
+      "findings_repaired": 0,
+      "key_errors": [],
+      "modification_evidence": "not recorded; no successful completion or gate evidence",
+      "terminal_state": "release bar not met",
+      "artifact_files": ["config-default.json", "config-default.md", "config-default.errors.json"]
+    }
+  ],
+  "cap_policy": {
+    "sequence": [16384, 2048, 512],
+    "interpretation": "default followed by temporary output-cap probes",
+    "status": "feasibility-only and withdrawn",
+    "primary_research_use": false,
+    "statistical_claim": false
+  },
+  "one_b_qualification_snapshot": {
+    "model": "llama3.2:1b",
+    "model_variant": "1.2B Q8_0",
+    "model_digest": "baf6a787fdffd633537aa2eb51cfd54cb93ff08e28040095462bb63daf552878",
+    "server": "Ollama 0.4.2",
+    "execution_scope": "local-only qualification with an empty environment",
+    "binary_sha256": "8fa2104a9184219148c99f1c05abe530f69b9224e98aad3db4221d7850b097ec",
+    "provider_source_sha256": "6e1b044d57f413896185b144a41da50bf2553a0fbffdd64a8bb50c3625db9d02",
+    "passed_checks": 3,
+    "total_checks": 7,
+    "accuracy": 0.428571,
+    "mean_latency_ms": 1359,
+    "throughput_tokens_per_second": 1.3647,
+    "context_window": 4096,
+    "recommended_roles": [],
+    "mismatch_case_count": 4,
+    "mismatch_case_labels": ["multi-file", "patch", "context", "test-failure"],
+    "exit_code": 1,
+    "status": "not qualified",
+    "repository_state": "dirty at run; this snapshot is not a clean-release qualification"
+  },
+  "one_b_v3_secondary": {
+    "benchmark_kind": "held-out-synthetic-review-gate-component-v3",
+    "model": "llama3.2:1b",
+    "model_digest": "baf6a787fdffd633537aa2eb51cfd54cb93ff08e28040095462bb63daf552878",
+    "primary_model": "llama3.2:3b",
+    "server_version": "0.4.2",
+    "condition": "revision_rubric_json",
+    "schedule_seed": 20261012,
+    "seeds": [17, 29],
+    "fixture_sha256": "344c13bcf0175a072b7437de4c2788422129355cd952013d3655b32cba122111",
+    "script_sha256": "d9d1be797928af136ab8f488a4e0b816f2883cd57181f7f8d7e5fb761806e68f",
+    "scheduled_calls": 64,
+    "valid_responses": 64,
+    "request_events": 64,
+    "completed_response_events": 64,
+    "unique_traces": 32,
+    "independent_base_task_clusters": 16,
+    "expected_label_counts": {
+      "READY": 32,
+      "BLOCKED": 32
+    },
+    "observed_label_counts": {
+      "READY": 4,
+      "BLOCKED": 60
+    },
+    "accuracy": 0.5,
+    "balanced_accuracy": 0.5,
+    "confusion_by_expected_label": {
+      "READY": {
+        "n": 32,
+        "correct_ready": 2,
+        "wrong_block": 30
+      },
+      "BLOCKED": {
+        "n": 32,
+        "correct_block": 30,
+        "false_ready": 2
+      }
+    },
+    "cluster_comparison": {
+      "wins": 16,
+      "losses": 0,
+      "ties": 0,
+      "exact_two_sided_sign_p_unadjusted": 0.000030517578125,
+      "alpha": 0.05,
+      "summary_significant_flag": false,
+      "interpretation": "secondary diagnostic only; the numeric p is unadjusted and the comparison is degenerate"
+    },
+    "independence_and_scope": {
+      "seed_rows_are_independent": false,
+      "labels": "authored synthetic v3 fixture",
+      "live_coding": false,
+      "repository_execution": false,
+      "user_visible_completion_claim": false,
+      "gate_is_deterministic_wrapper_comparator": true
+    },
+    "manifest_provenance_gap": {
+      "present": ["model digest", "fixture hash", "script hash", "server version", "schedule seed", "seeds"],
+      "missing": ["v2 dependency/gate/probe hash binding", "independent audit record"],
+      "impact": "the old manifest cannot independently reconstruct the exact v2 dependency chain"
+    },
+    "raw_content_included": false
+  },
+  "limitations": [
+    "The three smoke artifacts do not bind source, binary, or model digests, so they are feasibility observations rather than reproducible qualification evidence.",
+    "The output-cap changes are withdrawn feasibility probes and must not be used to tune or support the primary claim.",
+    "The 1B v3 run is secondary because the designated primary model is 3B and the fixture is synthetic; it has no live coding or repository-execution evidence.",
+    "The 1B cluster p-value is unadjusted, uses repeated seeds within 16 base-task clusters, and is structurally degenerate because every cluster comparison favors the deterministic wrapper.",
+    "The 1B manifest lacks a v2 dependency/gate/probe hash binding; no raw prompts, contexts, token IDs, database contents, or credentials are included here."
+  ]
+}

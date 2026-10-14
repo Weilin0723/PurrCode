@@ -1,0 +1,330 @@
+{
+  "base_url": "http://127.0.0.1:11434",
+  "benchmark_kind": "synthetic-local-review-probe",
+  "completed_records": 48,
+  "conditions": [
+    "plain",
+    "revision_checklist"
+  ],
+  "ended_at": "2026-10-11T07:35:39.518399Z",
+  "fixture": "/Users/jackzhang/Documents/GitHub/PurrCode/benchmarks/research/review-traces.json",
+  "label_provenance": "human-authored synthetic trace labels; no live tests or execution",
+  "live_coding": false,
+  "metadata_errors": [],
+  "model": "llama3.2:1b",
+  "model_digest": "baf6a787fdffd633537aa2eb51cfd54cb93ff08e28040095462bb63daf552878",
+  "parameters": {
+    "keep_alive": "2m",
+    "num_ctx": 2048,
+    "num_predict": 12,
+    "temperature": 0.2,
+    "timeout_seconds": 30.0
+  },
+  "purrcode_qualification": false,
+  "schedule": [
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 0,
+      "seed": 29
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "revision_checklist",
+      "schedule_index": 1,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "plain",
+      "schedule_index": 2,
+      "seed": 17
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "plain",
+      "schedule_index": 3,
+      "seed": 29
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "plain",
+      "schedule_index": 4,
+      "seed": 17
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "plain",
+      "schedule_index": 5,
+      "seed": 29
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "revision_checklist",
+      "schedule_index": 6,
+      "seed": 17
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 7,
+      "seed": 29
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "plain",
+      "schedule_index": 8,
+      "seed": 29
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 9,
+      "seed": 29
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "revision_checklist",
+      "schedule_index": 10,
+      "seed": 29
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 11,
+      "seed": 29
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "plain",
+      "schedule_index": 12,
+      "seed": 29
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 13,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "plain",
+      "schedule_index": 14,
+      "seed": 17
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "plain",
+      "schedule_index": 15,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 16,
+      "seed": 17
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "plain",
+      "schedule_index": 17,
+      "seed": 17
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "plain",
+      "schedule_index": 18,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "plain",
+      "schedule_index": 19,
+      "seed": 29
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "plain",
+      "schedule_index": 20,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "revision_checklist",
+      "schedule_index": 21,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 22,
+      "seed": 29
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "plain",
+      "schedule_index": 23,
+      "seed": 29
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "plain",
+      "schedule_index": 24,
+      "seed": 29
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 25,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-adverse",
+      "condition": "plain",
+      "schedule_index": 26,
+      "seed": 29
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "revision_checklist",
+      "schedule_index": 27,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "revision_checklist",
+      "schedule_index": 28,
+      "seed": 29
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 29,
+      "seed": 17
+    },
+    {
+      "case_id": "redundant-correction-adverse",
+      "condition": "plain",
+      "schedule_index": 30,
+      "seed": 17
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "revision_checklist",
+      "schedule_index": 31,
+      "seed": 17
+    },
+    {
+      "case_id": "redundant-correction-current",
+      "condition": "plain",
+      "schedule_index": 32,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "plain",
+      "schedule_index": 33,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-adverse",
+      "condition": "plain",
+      "schedule_index": 34,
+      "seed": 29
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "plain",
+      "schedule_index": 35,
+      "seed": 29
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "revision_checklist",
+      "schedule_index": 36,
+      "seed": 17
+    },
+    {
+      "case_id": "artifact-freshness-current",
+      "condition": "revision_checklist",
+      "schedule_index": 37,
+      "seed": 29
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "revision_checklist",
+      "schedule_index": 38,
+      "seed": 29
+    },
+    {
+      "case_id": "static-control-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 39,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "plain",
+      "schedule_index": 40,
+      "seed": 17
+    },
+    {
+      "case_id": "api-compatibility-current",
+      "condition": "plain",
+      "schedule_index": 41,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "plain",
+      "schedule_index": 42,
+      "seed": 29
+    },
+    {
+      "case_id": "scope-preservation-current",
+      "condition": "plain",
+      "schedule_index": 43,
+      "seed": 17
+    },
+    {
+      "case_id": "changed-behavior-current",
+      "condition": "revision_checklist",
+      "schedule_index": 44,
+      "seed": 17
+    },
+    {
+      "case_id": "static-control-current",
+      "condition": "revision_checklist",
+      "schedule_index": 45,
+      "seed": 17
+    },
+    {
+      "case_id": "artifact-freshness-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 46,
+      "seed": 17
+    },
+    {
+      "case_id": "scope-preservation-adverse",
+      "condition": "revision_checklist",
+      "schedule_index": 47,
+      "seed": 17
+    }
+  ],
+  "schedule_seed": 20261010,
+  "scheduled_calls": 48,
+  "schema_version": 1,
+  "script": "/Users/jackzhang/Documents/GitHub/PurrCode/scripts/local_review_probe.py",
+  "script_sha256": "20267619cdb7ea71fdd5e2356b726087bd6229282cb1efc8ac15dd7f8239d752",
+  "seeds": [
+    17,
+    29
+  ],
+  "server_version": "0.4.2",
+  "started_at": "2026-10-11T07:35:12.096362Z",
+  "status_counts": {
+    "invalid_response": 11,
+    "ok": 37
+  },
+  "task_sha256": "7cdcff5c9063cde277dd62d2b5cb46912df27e673b4ff9af982ea4b09fc6079c"
+}

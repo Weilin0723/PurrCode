@@ -1,0 +1,62 @@
+{
+  "model": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "cases": [
+    {
+      "name": "structured-output",
+      "passed": true,
+      "latency_ms": 1063,
+      "detail": "exact match"
+    },
+    {
+      "name": "tool-schema",
+      "passed": true,
+      "latency_ms": 1091,
+      "detail": "exact match"
+    },
+    {
+      "name": "multi-file-reasoning",
+      "passed": true,
+      "latency_ms": 1074,
+      "detail": "exact match"
+    },
+    {
+      "name": "patch-generation",
+      "passed": true,
+      "latency_ms": 811,
+      "detail": "exact match"
+    },
+    {
+      "name": "context-retention",
+      "passed": true,
+      "latency_ms": 1092,
+      "detail": "exact match"
+    },
+    {
+      "name": "test-failure-interpretation",
+      "passed": true,
+      "latency_ms": 1035,
+      "detail": "exact match"
+    },
+    {
+      "name": "judgment-calibration",
+      "passed": true,
+      "latency_ms": 1079,
+      "detail": "exact match"
+    }
+  ],
+  "accuracy": 1.0,
+  "mean_latency_ms": 1035.0,
+  "estimated_tokens_per_second": 3.034909232856862,
+  "maximum_reliable_context_tokens": 16384,
+  "recommended_roles": [
+    "router",
+    "summarizer",
+    "simple-coding",
+    "planner",
+    "high-risk-judge"
+  ],
+  "not_recommended_roles": []
+}

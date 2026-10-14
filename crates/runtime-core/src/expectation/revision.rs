@@ -196,16 +196,24 @@ impl ExpectationContract {
                     next.clauses.remove(position);
                     withdrawn.push(id);
                 }
-                ContractChange::ClauseRestated { id, to, .. } => {
+                ContractChange::ClauseRestated { id, from, to } => {
                     require_text("restated requirement", &to)?;
                     let clause = next
                         .clause_mut(id)
                         .ok_or(ExpectationError::UnknownRequirement(id))?;
-                    clause.statement = to;
-                    // Evidence was gathered against the old wording.
-                    if clause.status.was_checked() {
-                        clause.status = RequirementStatus::Unverified;
-                        invalidated.push(id);
+                    if clause.statement != from {
+                        return Err(ExpectationError::Invalid(format!(
+                            "restated requirement {id:?} expected from {:?}, found {:?}",
+                            clause.statement, from
+                        )));
+                    }
+                    if clause.statement != to {
+                        clause.statement = to;
+                        // Evidence was gathered against the old wording.
+                        if clause.status.was_checked() {
+                            clause.status = RequirementStatus::Unverified;
+                            invalidated.push(id);
+                        }
                     }
                 }
                 ContractChange::StrengthChanged { id, to, .. } => {
@@ -631,5 +639,50 @@ mod tests {
             .unwrap();
         let summary = revised.summary();
         assert!(summary.contains("re-checked"), "{summary}");
+    }
+
+    #[test]
+    fn a_restatement_must_name_the_current_statement() {
+        let (contract, id) = sidebar_contract();
+        let error = contract
+            .revise(ContractRevision {
+                revision: 2,
+                source: said(1, "keep the sidebar"),
+                reason: "the correction targets the sidebar requirement".into(),
+                changes: vec![ContractChange::ClauseRestated {
+                    id,
+                    from: "a stale statement from an earlier correction".into(),
+                    to: "keep the sidebar".into(),
+                }],
+            })
+            .expect_err("a restatement must apply to the current clause text");
+        assert!(
+            matches!(error, ExpectationError::Invalid(_)),
+            "got {error:?}"
+        );
+        assert!(error.to_string().contains("expected from"));
+    }
+
+    #[test]
+    fn a_same_text_restatement_does_not_invalidate_evidence() {
+        let (contract, id) = sidebar_contract();
+        let revised = contract
+            .revise(ContractRevision {
+                revision: 2,
+                source: said(1, "yes, keep the sidebar"),
+                reason: "the user repeated the existing requirement".into(),
+                changes: vec![ContractChange::ClauseRestated {
+                    id,
+                    from: "remove the sidebar".into(),
+                    to: "remove the sidebar".into(),
+                }],
+            })
+            .expect("same-text restatement is a no-op for evidence");
+        assert!(matches!(
+            revised.contract.clause(id).unwrap().status,
+            RequirementStatus::Verified { .. }
+        ));
+        assert!(revised.invalidated.is_empty());
+        assert!(!revised.requires_replanning());
     }
 }

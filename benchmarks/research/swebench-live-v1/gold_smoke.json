@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "scope": "single_task_gold_test_smoke",
+  "instance_id": "bridgecrewio__checkov-6630",
+  "base_commit": "e1a17d5af24185b8bc1952c8c46af130fce90794",
+  "image": "starryzhang/sweb.eval.x86_64.bridgecrewio_1776_checkov-6630:latest",
+  "image_digest": "sha256:bd59eee7174a803d311a588bab4682e826a46774608d1a6587762d45bfd4dcad",
+  "docker_server_version": "27.4.0",
+  "platform": "linux/amd64",
+  "limits": {
+    "cpus": 1,
+    "memory": "2g",
+    "network": "none",
+    "workers": 1
+  },
+  "checks": {
+    "base_checkout": "passed",
+    "solution_application": "passed",
+    "test_application": "passed",
+    "target_test": "passed",
+    "target_test_count": 1,
+    "target_test_exit_code": 0
+  },
+  "model_calls": 0,
+  "outcomes": "unrun",
+  "oracle_status": "unverified",
+  "interpretation": "one real image smoke only; not a thirty-task oracle qualification"
+}

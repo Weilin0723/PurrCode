@@ -1,0 +1,407 @@
+{
+  "analysis": "two-sided exact sign test at alpha 0.05 over 16 paired base-task clusters",
+  "completed_records": 64,
+  "condition": "revision_rubric_json",
+  "ended_at": "2026-10-12T17:55:10.310492Z",
+  "fixture": "benchmarks/research/review-traces-v3.json",
+  "fixture_sha256": "344c13bcf0175a072b7437de4c2788422129355cd952013d3655b32cba122111",
+  "metadata_errors": [],
+  "model": "llama3.2:1b",
+  "model_digest": "baf6a787fdffd633537aa2eb51cfd54cb93ff08e28040095462bb63daf552878",
+  "primary_model": "llama3.2:3b",
+  "schedule": [
+    {
+      "case_id": "stable-sort-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 0,
+      "seed": 29
+    },
+    {
+      "case_id": "missing-item-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 1,
+      "seed": 29
+    },
+    {
+      "case_id": "unicode-length-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 2,
+      "seed": 29
+    },
+    {
+      "case_id": "path-root-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 3,
+      "seed": 29
+    },
+    {
+      "case_id": "header-case-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 4,
+      "seed": 17
+    },
+    {
+      "case_id": "stable-sort-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 5,
+      "seed": 29
+    },
+    {
+      "case_id": "deprecated-alias-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 6,
+      "seed": 29
+    },
+    {
+      "case_id": "cursor-empty-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 7,
+      "seed": 17
+    },
+    {
+      "case_id": "backoff-cap-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 8,
+      "seed": 29
+    },
+    {
+      "case_id": "atomic-save-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 9,
+      "seed": 17
+    },
+    {
+      "case_id": "path-root-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 10,
+      "seed": 29
+    },
+    {
+      "case_id": "path-root-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 11,
+      "seed": 17
+    },
+    {
+      "case_id": "cursor-empty-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 12,
+      "seed": 17
+    },
+    {
+      "case_id": "csv-newline-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 13,
+      "seed": 29
+    },
+    {
+      "case_id": "timeout-unit-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 14,
+      "seed": 17
+    },
+    {
+      "case_id": "deprecated-alias-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 15,
+      "seed": 29
+    },
+    {
+      "case_id": "cache-zero-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 16,
+      "seed": 17
+    },
+    {
+      "case_id": "schema-extra-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 17,
+      "seed": 29
+    },
+    {
+      "case_id": "retry-budget-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 18,
+      "seed": 29
+    },
+    {
+      "case_id": "cursor-empty-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 19,
+      "seed": 29
+    },
+    {
+      "case_id": "deprecated-alias-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 20,
+      "seed": 17
+    },
+    {
+      "case_id": "atomic-save-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 21,
+      "seed": 17
+    },
+    {
+      "case_id": "backoff-cap-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 22,
+      "seed": 29
+    },
+    {
+      "case_id": "backoff-cap-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 23,
+      "seed": 17
+    },
+    {
+      "case_id": "csv-newline-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 24,
+      "seed": 17
+    },
+    {
+      "case_id": "stable-sort-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 25,
+      "seed": 17
+    },
+    {
+      "case_id": "schema-extra-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 26,
+      "seed": 17
+    },
+    {
+      "case_id": "idempotency-key-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 27,
+      "seed": 29
+    },
+    {
+      "case_id": "config-precedence-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 28,
+      "seed": 29
+    },
+    {
+      "case_id": "config-precedence-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 29,
+      "seed": 17
+    },
+    {
+      "case_id": "missing-item-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 30,
+      "seed": 29
+    },
+    {
+      "case_id": "cache-zero-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 31,
+      "seed": 29
+    },
+    {
+      "case_id": "deprecated-alias-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 32,
+      "seed": 17
+    },
+    {
+      "case_id": "cursor-empty-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 33,
+      "seed": 29
+    },
+    {
+      "case_id": "config-precedence-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 34,
+      "seed": 29
+    },
+    {
+      "case_id": "timeout-unit-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 35,
+      "seed": 29
+    },
+    {
+      "case_id": "missing-item-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 36,
+      "seed": 17
+    },
+    {
+      "case_id": "cache-zero-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 37,
+      "seed": 29
+    },
+    {
+      "case_id": "timeout-unit-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 38,
+      "seed": 29
+    },
+    {
+      "case_id": "atomic-save-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 39,
+      "seed": 29
+    },
+    {
+      "case_id": "config-precedence-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 40,
+      "seed": 17
+    },
+    {
+      "case_id": "header-case-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 41,
+      "seed": 17
+    },
+    {
+      "case_id": "path-root-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 42,
+      "seed": 17
+    },
+    {
+      "case_id": "schema-extra-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 43,
+      "seed": 17
+    },
+    {
+      "case_id": "csv-newline-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 44,
+      "seed": 29
+    },
+    {
+      "case_id": "csv-newline-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 45,
+      "seed": 17
+    },
+    {
+      "case_id": "schema-extra-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 46,
+      "seed": 29
+    },
+    {
+      "case_id": "idempotency-key-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 47,
+      "seed": 29
+    },
+    {
+      "case_id": "missing-item-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 48,
+      "seed": 17
+    },
+    {
+      "case_id": "unicode-length-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 49,
+      "seed": 17
+    },
+    {
+      "case_id": "atomic-save-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 50,
+      "seed": 29
+    },
+    {
+      "case_id": "stable-sort-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 51,
+      "seed": 17
+    },
+    {
+      "case_id": "timeout-unit-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 52,
+      "seed": 17
+    },
+    {
+      "case_id": "cache-zero-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 53,
+      "seed": 17
+    },
+    {
+      "case_id": "header-case-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 54,
+      "seed": 29
+    },
+    {
+      "case_id": "idempotency-key-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 55,
+      "seed": 17
+    },
+    {
+      "case_id": "unicode-length-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 56,
+      "seed": 29
+    },
+    {
+      "case_id": "header-case-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 57,
+      "seed": 29
+    },
+    {
+      "case_id": "retry-budget-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 58,
+      "seed": 17
+    },
+    {
+      "case_id": "unicode-length-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 59,
+      "seed": 17
+    },
+    {
+      "case_id": "retry-budget-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 60,
+      "seed": 29
+    },
+    {
+      "case_id": "idempotency-key-adverse",
+      "condition": "revision_rubric_json",
+      "schedule_index": 61,
+      "seed": 17
+    },
+    {
+      "case_id": "retry-budget-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 62,
+      "seed": 17
+    },
+    {
+      "case_id": "backoff-cap-fresh",
+      "condition": "revision_rubric_json",
+      "schedule_index": 63,
+      "seed": 17
+    }
+  ],
+  "schedule_seed": 20261012,
+  "schema_version": 3,
+  "script_sha256": "d9d1be797928af136ab8f488a4e0b816f2883cd57181f7f8d7e5fb761806e68f",
+  "seeds": [
+    17,
+    29
+  ],
+  "server_version": "0.4.2",
+  "started_at": "2026-10-12T17:54:20.870448Z"
+}

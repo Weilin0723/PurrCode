@@ -50,3 +50,19 @@ jobs:
         with:
           python-version: "3.12"
       - run: PYTHONPATH=sdk/python/src python -m unittest discover -s sdk/python/tests -v
+  research-offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Research harness offline tests
+        run: |
+          python -m py_compile scripts/swebench_live_e2e.py
+          python -m py_compile scripts/run_swebench_live_oracle.py
+          python -m py_compile scripts/swebench_live_oracle_preflight.py
+          python scripts/test_swebench_live_e2e.py
+          python scripts/test_freeze_fse_confirmatory_study.py
+          python scripts/test_fse_confirmatory_analysis.py
+          python benchmarks/research/swebench-live-v1/test_acquisition_preflight.py

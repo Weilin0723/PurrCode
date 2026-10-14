@@ -194,6 +194,28 @@ impl<'de> Deserialize<'de> for AgentAction {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_owned();
+        if action_type.is_empty()
+            && object.get("path").is_some_and(serde_json::Value::is_string)
+            && object
+                .get("content")
+                .is_some_and(serde_json::Value::is_string)
+        {
+            // Some structured-output providers preserve every write field but
+            // omit the enum discriminator. `path` + string `content` is an
+            // unambiguous member of this closed action schema, so recover only
+            // that shape. The canonical action still goes through
+            // normalisation, PawGate, durable authorization, and Claw's exact
+            // authorization recheck. Never infer commands or tools.
+            object.insert(
+                "type".into(),
+                serde_json::Value::String("write_file".into()),
+            );
+        }
+        let action_type = object
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         if matches!(
             action_type.as_str(),
             "git_status"
@@ -418,6 +440,33 @@ mod compatibility_tests {
         }))
         .unwrap_err();
         assert!(error.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn an_unambiguously_shaped_write_recovers_a_missing_discriminator() {
+        let action: AgentAction = serde_json::from_value(serde_json::json!({
+            "path": "src/config.rs",
+            "content": "pub const TIMEOUT: u64 = 30;",
+            "expected_digest": null
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            action,
+            AgentAction::WriteFile {
+                ref path,
+                ref content,
+                expected_digest: None
+            } if path == &PathBuf::from("src/config.rs")
+                && content == "pub const TIMEOUT: u64 = 30;"
+        ));
+
+        let error = serde_json::from_value::<AgentAction>(serde_json::json!({
+            "program": "cargo",
+            "arguments": ["test"]
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("missing field `type`"));
     }
 }
 

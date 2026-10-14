@@ -9,7 +9,7 @@ use purrcode_claw::{ToolRuntime, sandbox_capability};
 use purrcode_codex_bridge::{CodexBridge, CodexBridgeConfig};
 use purrcode_daemon::{
     DAEMON_API_VERSION, DaemonConfig, NATIVE_IDE_API_VERSION, NATIVE_IDE_BUILD_FINGERPRINT,
-    NATIVE_IDE_CAPABILITIES, bind_and_report,
+    NATIVE_IDE_CAPABILITIES, bind_and_report_with_research_gate,
 };
 use purrcode_evaluation_runtime::{
     BenchmarkCategory, BenchmarkResult, BenchmarkStatus, EvaluationMetrics, aggregate_metrics,
@@ -303,6 +303,10 @@ enum Command {
         bind: std::net::SocketAddr,
         #[arg(long)]
         allow_public_bind: bool,
+        /// Explicitly enable the research-only alignment=disabled session arm.
+        /// Ordinary daemon startup keeps alignment enabled.
+        #[arg(long)]
+        allow_research_alignment_disabled: bool,
     },
     /// Inspect installed repository skills.
     Skill {
@@ -1744,15 +1748,18 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Command::Serve {
             bind,
             allow_public_bind,
+            allow_research_alignment_disabled,
         } => {
-            let (report, server) = bind_and_report(DaemonConfig {
+            let config = DaemonConfig {
                 bind,
                 allow_public_bind,
                 database,
                 token_file: default_daemon_token_path()?,
                 app_config: config_path,
-            })
-            .await?;
+            };
+            let (report, server) =
+                bind_and_report_with_research_gate(config, allow_research_alignment_disabled)
+                    .await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             server.await?;
         }
@@ -4415,7 +4422,7 @@ fn event_summary(event: &SessionEvent) -> String {
         // The event carries the checks the task required, not the verdict —
         // that is computed by the reducer from the log. Rendering the declared
         // list is the honest thing to show here.
-        DeliveryGateEvaluated { validations } => format!(
+        DeliveryGateEvaluated { validations, .. } => format!(
             "Delivery gate ran against {} required check(s): {}",
             validations.len(),
             if validations.is_empty() {

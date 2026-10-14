@@ -213,6 +213,7 @@ mod tests {
             bearer_token: std::sync::Arc::from("test"),
             database: database.to_path_buf(),
             app_config: database.with_file_name("config.toml"),
+            allow_research_alignment_disabled: false,
             leases: std::sync::Arc::new(TokioMutex::new(BTreeMap::new())),
             lifecycle_epochs: std::sync::Arc::new(TokioMutex::new(BTreeMap::new())),
             lifecycle_gate: std::sync::Arc::new(TokioMutex::new(())),

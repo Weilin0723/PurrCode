@@ -1,0 +1,1237 @@
+{
+  "base_probe_script_sha256": "c8cd72402c5b667058a91988368222c99110b20930ec15c5b08999227f0f3a16",
+  "candidate_preflight_sha256": "f9fcbd10e5fb1db7506ff67f13575b5df095c46a84186f0fa2be442a54fa1392",
+  "conditions": [
+    "revision_rubric_json",
+    "plain_json"
+  ],
+  "created_before_model_calls": true,
+  "dataset": "benchmarks/research/small-model-pilot/dataset.json",
+  "dataset_sha256": "7fb370c3f7ab675a66e9999f0c0703ec699d885560539b19c599b14c931a8eb8",
+  "dependency_hashes": {
+    "benchmarks/alignment-fixture/Cargo.toml": "2b7684196b39400571b8afb11be27dc838aa06f270858f1b00032ff89dc5d0b3",
+    "benchmarks/alignment-fixture/migrations/0001_initial.sql": "232dad914e89cb6570b8cf2f30a8dc2bed2f80309a76f912474271041c607d47",
+    "benchmarks/alignment-fixture/src/accounts.rs": "b5967379b91652569dc3fbfbeb13e34e43e68cf0223c33a828e9f0acaf5677c8",
+    "benchmarks/alignment-fixture/src/config.rs": "3778c74472ef5369c571d68fdd5a338e896fcfddd89350a31ffb7078e8d2b77f",
+    "benchmarks/alignment-fixture/src/dates.rs": "41011ff6004d6aa7f64406a58bb4aee4786ceb5275057b1569ac8dfe2bf0052a",
+    "benchmarks/alignment-fixture/src/health.rs": "d8033f3f07948d92cb606369d904be25e2f26fa7ae3620d2b812f5eaf8cab48b",
+    "benchmarks/alignment-fixture/src/http.rs": "84977ffd5f5826858e9ab0023cdca5b9240be2a4ccf69787fd600c8e41749ddb",
+    "benchmarks/alignment-fixture/src/items.rs": "c39bc16d402dd221c13cb15b053211c4d78c3e60c71d9f66741b77565a41fb30",
+    "benchmarks/alignment-fixture/src/lib.rs": "e51831d0de8022f86c984ce4d57b6bfab1659ae121c5a1c68929a429e750e766",
+    "benchmarks/alignment-fixture/src/pagination.rs": "84ee6a73be3d1fbe1f88d1d2c00f3c50e6dff9f670cc940410d10197756a31d2",
+    "benchmarks/alignment-fixture/src/parser.rs": "661b30f792daa425207766b5df0160dddf48670b3a896248824744cc2050306f",
+    "benchmarks/alignment-fixture/src/reporter.rs": "6b72c27b61712ee1a537bed0873176be53128aee9544892967f30d5c23312f71",
+    "benchmarks/alignment-fixture/src/retry.rs": "8f3dd7cab75523240878a4a0d4066618a034bd3e17a637aa4ba4a52aca5645be",
+    "benchmarks/alignment-fixture/src/scheduler.rs": "d322121a3f8a404ba7ef7da5cfb5dcf151e7343e63afc6645f4764013f4b58e9",
+    "benchmarks/alignment-fixture/src/ui/mod.rs": "46ee5f0d4e6306351586dcc52255a4ef89c7f1ad77dbdd6f0515f9c82bb4faf8",
+    "benchmarks/alignment-fixture/src/ui/settings.rs": "508059ffd71256b8b7ab8687f7fb27831a9933b77ffca82d0c40dc7b16f9a9e1",
+    "benchmarks/alignment-fixture/tests/timeout.rs": "5354e9071d24e7d7d08519c8702442fe4cb514905116e412e463e11d63987352",
+    "benchmarks/research/small-model-pilot/dataset.json": "7fb370c3f7ab675a66e9999f0c0703ec699d885560539b19c599b14c931a8eb8",
+    "benchmarks/research/small-model-pilot/oracles/century_leap_year.rs": "b1f9acf0aff51fedae129d952f77b386965e140f4285be423114848805f0281c",
+    "benchmarks/research/small-model-pilot/oracles/http_client_retry_parity.rs": "03a6c370cb976beefdbe7066496bd0dc204b1342b80380feadefe5b35ba5e336",
+    "benchmarks/research/small-model-pilot/oracles/pagination.rs": "5462081f50109bf51c1857c36c054f307986fa947f3b1cf8dfb1c3df53cd90c4",
+    "benchmarks/research/small-model-pilot/oracles/retry_exponential_delay.rs": "1656cd12c65c1a7c69411c966e05cc613a36fa307ef774a5c62418b665c5a138",
+    "benchmarks/research/small-model-pilot/oracles/run_rust_oracle.py": "5eafd48bf8e80762d04aac49af942409eb74e49b9521f4e7baae35d9db637818",
+    "benchmarks/research/small-model-pilot/oracles/scheduler_reporter_ids.rs": "25dddd7a7f08e6a0c511230c3ed91029afac68602827bc7c887db28920ee723d",
+    "benchmarks/research/small-model-pilot/oracles/settings_label_preservation.rs": "ef429e9ad1a7509cd7268ad94dc223b4f1e287f37ea3acd8ff2fca8defdd9aea",
+    "crates/evaluation-runtime/src/bin/repository_completion_remote.rs": "4a864da7322395bc7ffcd09f3e153e5ff6eb8aa43ef573e1388591cb87b0edb9",
+    "docs/research/repository-completion-deepseek-v1-plan.md": "89b8bb5807c4223c94536408fe5baa58d3e8557962ec6156537fce54f69ec81b",
+    "docs/research/repository-completion-v1-plan.md": "56ea0f313cf449116f439e0514761d145d384c2353dc3011576ccbffa549483d",
+    "scripts/deepseek_repository_completion_probe.py": "d0620d3b1963e0182cb4ebf3ddc6bb65dd171e5857ce3c91e7ad8031c7ad4c78",
+    "scripts/local_review_probe.py": "20267619cdb7ea71fdd5e2356b726087bd6229282cb1efc8ac15dd7f8239d752",
+    "scripts/repository_completion_probe.py": "c8cd72402c5b667058a91988368222c99110b20930ec15c5b08999227f0f3a16",
+    "scripts/small_model_pilot_preflight.py": "445020708cad841d8deb7100429e25fac4d8988b105edadc9585a44d13981d7f"
+  },
+  "fixture": "benchmarks/alignment-fixture",
+  "fixture_tree_sha256": "54e4981cb6df978b14d03c1891028d3b7592af45782ccd0cd40502576cb3de4a",
+  "freeze_kind": "deepseek-repository-completion-pre-call-freeze",
+  "model": "deepseek-v4-pro",
+  "model_calls": 0,
+  "preflight_errors": [],
+  "preflight_ok": true,
+  "preregistration_plan": "docs/research/repository-completion-deepseek-v1-plan.md",
+  "preregistration_plan_sha256": "89b8bb5807c4223c94536408fe5baa58d3e8557962ec6156537fce54f69ec81b",
+  "primary_condition": "revision_rubric_json",
+  "provider": "deepseek",
+  "request_parameters": {
+    "api_seed": null,
+    "max_output_tokens": 128,
+    "response_format": {
+      "type": "json_object"
+    },
+    "temperature": "provider_default",
+    "thinking": "disabled_by_provider_gateway_for_structured_deepseek_requests",
+    "top_p": "provider_default"
+  },
+  "requests_bundle": {
+    "path": "requests.jsonl",
+    "sha256": "489cc55a7ee1227cf4c1e4a3aa539400ff93e2945bda0da2455ee4f3ac61702c"
+  },
+  "runner_source": "crates/evaluation-runtime/src/bin/repository_completion_remote.rs",
+  "runner_source_sha256": "4a864da7322395bc7ffcd09f3e153e5ff6eb8aa43ef573e1388591cb87b0edb9",
+  "schedule": [
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 0,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 1,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 2,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 3,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 4,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 5,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 6,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 7,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 8,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 9,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 10,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 11,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 12,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 13,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 14,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 15,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 16,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 17,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 18,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 19,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 20,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 21,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 22,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 23,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 24,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 25,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 26,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 27,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 28,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 29,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 30,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 31,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 32,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 33,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 34,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 35,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 36,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 37,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 38,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 39,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 40,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 41,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 42,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 43,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 44,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 45,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 46,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 47,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 48,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 49,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 50,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 51,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 52,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 53,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 54,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 55,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 56,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 57,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 58,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 59,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 60,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 61,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 62,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 63,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 64,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 65,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 66,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 67,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 68,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 69,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 70,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 71,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 72,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 73,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 74,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 75,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 76,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 77,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 78,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 79,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 80,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 81,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 82,
+      "seed": 17,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 83,
+      "seed": 29,
+      "task_id": "pagination-tail"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 84,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 85,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 86,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 87,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 88,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 89,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 90,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 91,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 92,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 93,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 94,
+      "seed": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 95,
+      "seed": 29,
+      "task_id": "century-leap-year"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 96,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 97,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 98,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 99,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 100,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 101,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 102,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 103,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 104,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 105,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 106,
+      "seed": 17,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 107,
+      "seed": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 108,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 109,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 110,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 111,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 112,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 113,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 114,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 115,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 116,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 117,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 118,
+      "seed": 17,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 119,
+      "seed": 29,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 120,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 121,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 122,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 123,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 124,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 125,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 126,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 127,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 128,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 129,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 130,
+      "seed": 17,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 131,
+      "seed": 29,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 132,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 133,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 134,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 135,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 136,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 137,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 138,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 139,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 140,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 141,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 142,
+      "seed": 17,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "deepseek-v4-pro",
+      "schedule_index": 143,
+      "seed": 29,
+      "task_id": "retry-exponential-delay"
+    }
+  ],
+  "schedule_order": "condition block, then task,candidate,seed",
+  "schedule_sha256": "619ca7dd703bb915e82186074ea9153bf8c2442ce388b15eba5ec43107f0e339",
+  "scheduled_calls": 144,
+  "schema_version": 1,
+  "script": "scripts/deepseek_repository_completion_probe.py",
+  "script_sha256": "d0620d3b1963e0182cb4ebf3ddc6bb65dd171e5857ce3c91e7ad8031c7ad4c78",
+  "seeds": [
+    17,
+    29
+  ],
+  "smoke_sha256": "be5302481ea6e9e52138ffca130d12806de0b4fda94029751b2c6f82b6fd8508"
+}

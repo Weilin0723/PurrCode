@@ -1,0 +1,165 @@
+{
+  "alpha": 0.05,
+  "arms": [
+    "B",
+    "C"
+  ],
+  "attrition_definition": "terminal_failure_or_oracle_unknown",
+  "attrition_limit": 0.1,
+  "bootstrap_samples": 100000,
+  "bootstrap_seed": 20261013,
+  "dataset_manifest_sha256": "1c1311dc826eb04855af08658c3daebf52601768fb58740544d467ebf67b8a4a",
+  "dataset_revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
+  "guardrail_margin": 0.05,
+  "interaction_estimand": "repository_average_revision_specific_difference_in_differences",
+  "minimum_baseline_correct_delivery_risk": 0.1,
+  "minimum_method_correct_delivery_risk": 0.1,
+  "model_freeze_sha256": "2f978fbdabf18ea08bc98906e6ae82ea5a4149f19acac10435b211f2bf7543e3",
+  "primary_estimand": "repository_average_correction_c_minus_b_all_scheduled_risk_difference",
+  "primary_model": "deepseek/deepseek-v4-pro",
+  "primary_variant": "correction",
+  "qualification_sha256": "5ba5d7c6a0475c5319dcb666848cd7f6af8991e96ea776318b786b03546732c8",
+  "repeats": [
+    0
+  ],
+  "repositories": {
+    "aws-cloudformation/cfn-lint": [
+      "aws-cloudformation__cfn-lint-3475",
+      "aws-cloudformation__cfn-lint-3498",
+      "aws-cloudformation__cfn-lint-3501"
+    ],
+    "bridgecrewio/checkov": [
+      "bridgecrewio__checkov-6612",
+      "bridgecrewio__checkov-6630",
+      "bridgecrewio__checkov-6687"
+    ],
+    "falconry/falcon": [
+      "falconry__falcon-2248",
+      "falconry__falcon-2254",
+      "falconry__falcon-2366"
+    ],
+    "instructlab/instructlab": [
+      "instructlab__instructlab-1762",
+      "instructlab__instructlab-2004",
+      "instructlab__instructlab-2789"
+    ],
+    "keras-team/keras": [
+      "keras-team__keras-19973",
+      "keras-team__keras-20079",
+      "keras-team__keras-20120"
+    ],
+    "matplotlib/matplotlib": [
+      "matplotlib__matplotlib-28577",
+      "matplotlib__matplotlib-28584",
+      "matplotlib__matplotlib-28734"
+    ],
+    "patroni/patroni": [
+      "patroni__patroni-3112",
+      "patroni__patroni-3119",
+      "patroni__patroni-3152"
+    ],
+    "pylint-dev/pylint": [
+      "pylint-dev__pylint-9771",
+      "pylint-dev__pylint-9772",
+      "pylint-dev__pylint-9785"
+    ],
+    "python-babel/babel": [
+      "python-babel__babel-1104",
+      "python-babel__babel-1120",
+      "python-babel__babel-1126"
+    ],
+    "sphinx-doc/sphinx": [
+      "sphinx-doc__sphinx-12598",
+      "sphinx-doc__sphinx-12615",
+      "sphinx-doc__sphinx-12737"
+    ]
+  },
+  "request_variants": [
+    "static",
+    "correction"
+  ],
+  "requested_model": "deepseek/deepseek-v4-pro",
+  "requirement_revision": {
+    "p0_hashes_sha256": "a2e50b96b82168ee3ae9c1d86c4fc8e222d7f845abd19122c2c8974dbc96a518",
+    "p0_sha256": {
+      "aws-cloudformation__cfn-lint-3475": "22b7976d3fa96b6890f4440e49fa59d4553c75bd49f29c9cdad6852d6986c929",
+      "aws-cloudformation__cfn-lint-3498": "b517596b85c54a6a62d0df58e5d4e4f6f36f43dc537c492224bd439d30664ee3",
+      "aws-cloudformation__cfn-lint-3501": "33adfdcf32097404b807d628d8a7cd54637d00c9cd637614b4f9b3bd197a5e0b",
+      "bridgecrewio__checkov-6612": "9819d64d85b08dfad760a6b76e2272806d24f431bc5a16bbad23f6e5253d37e7",
+      "bridgecrewio__checkov-6630": "7e29dc14c8c770c9dd12939972e5c948ae55f3803a2eac443bd78544c9db6af0",
+      "bridgecrewio__checkov-6687": "9050fec2bfe450549dbf406bbacea7b4e57f1739c2b0ed166c9a029c79ba5188",
+      "falconry__falcon-2248": "dd851d78d685ec768f675419f42b263af60841836f69799bf1dc9e06521787a7",
+      "falconry__falcon-2254": "0f5c86e856925b8616ddde2e67ea58460e463a0ec206156a759407932e57f95c",
+      "falconry__falcon-2366": "124dec8071740f2998f9c2a351b8c99c56c1e954b1d54c7beecf398fb7afc533",
+      "instructlab__instructlab-1762": "e8db0935768f10c1fae88ddbd689298e0944b5b13e74167fd1831d29bb9a25b1",
+      "instructlab__instructlab-2004": "bf4908899926196b46010e392c454912e24d2f64c23b16f65b6f6042a3e9e772",
+      "instructlab__instructlab-2789": "56a0d9e6c22c6368a20a9d19aa77850f9f9b237afadb0a706571f7784f75daeb",
+      "keras-team__keras-19973": "ca8ba4b486a470bb1a6ecebfcc341b09992c68a9a5b428af49c28e629b45a7cc",
+      "keras-team__keras-20079": "ba1c4657fae7f57906eaf849a22fe1b5cb31d10fafafd18044dfae70090df04e",
+      "keras-team__keras-20120": "c716ac187f53e80dae49437715026a65ab8bbb8b1b5294286d554bc612b2b2e8",
+      "matplotlib__matplotlib-28577": "60df402c6f04d502a85d4966f03f6173dad8b391b6ee2956edc3f384f9f73494",
+      "matplotlib__matplotlib-28584": "6c051831593417172762e47295111284e84c2b40a9b8aa357a59136d308a8f95",
+      "matplotlib__matplotlib-28734": "776ea14216ced05ac1b791d1e28c5cb2be6e25f63e52cd091a3be2550be348c6",
+      "patroni__patroni-3112": "c32d6c5b8d196638cdac3904bc7da787faa18e023eb08de918ff369cce3d3383",
+      "patroni__patroni-3119": "2ea7a9e619bb7eb583dd6bb1888cd4ba05a0cdaaa95a82ec1c406df76613ca28",
+      "patroni__patroni-3152": "24653de4fcdcf4d96db0873b88bda06f2e71f6152d04cc47c5ee5163851e1627",
+      "pylint-dev__pylint-9771": "f73901f07dcef60ee9bafa55905ccc428f955b5876972c1ef170a7fff8a39471",
+      "pylint-dev__pylint-9772": "8ee7b9c6c6788bb8169ec0eb942ecc5256b9bf52d0c38a513de48be5413ee1f9",
+      "pylint-dev__pylint-9785": "87ff7d0e0630b071c5c407930e02944b707ff0fc9aabfd0683ad3b9f6435e1e1",
+      "python-babel__babel-1104": "9115336ca42882f1d9ca5bee41a390cfd84bcf3b35fb1342a6ea3db71bb148dd",
+      "python-babel__babel-1120": "7ac8c3d95c6fed36cff24bb7c1e696f6ee2c29633c22c77b4a2928c303cf48f4",
+      "python-babel__babel-1126": "ce288f103e8d30ae50a6583d13c4135ee4c257d9ee0e4779a4646c59866e56d2",
+      "sphinx-doc__sphinx-12598": "f2364685a093827cc9055c68b1832d44201f78e2f22795f25473ad39f504bfb2",
+      "sphinx-doc__sphinx-12615": "afd2f2f37d53217e4114fdfdbeb05d5632395bcbf0d5bf64ed66d8351de13aee",
+      "sphinx-doc__sphinx-12737": "dc040dbd24e80b47c10fc71f3366b44ab0b5eb37a020dc8fee07ddb0394163d5"
+    },
+    "p1_hashes_sha256": "db2e38984bc210b96abc8ce2d01e2c53584232411b3634f5f082f47443eb94f0",
+    "p1_sha256": {
+      "aws-cloudformation__cfn-lint-3475": "0ca43f8b1a298f7dea92ac05178c764292a4ed4b0aad006c80e9dd7436dfa89a",
+      "aws-cloudformation__cfn-lint-3498": "447d6eab7788df45fb597e30ca0539a178b0734e8477dc77415aac25cf6d0e40",
+      "aws-cloudformation__cfn-lint-3501": "9f71ad77739c615acd05b54c0fe628fbec5959659a6d7346303ac1c88d8937b9",
+      "bridgecrewio__checkov-6612": "4d7bcb4b1c4641fd8274fe2151c9241ec8be4370f29b60a0f6e096be7945346c",
+      "bridgecrewio__checkov-6630": "b1419790335c6048b6bcd79cde7c0f473a7347206cc9f1364047707be90d7c87",
+      "bridgecrewio__checkov-6687": "f40d993055799ab0ff694a93fa8673b9cb54fa648cc0e1fde215cbf26f1a979c",
+      "falconry__falcon-2248": "93683a408d2a6c2f5c8337fccd3d994833d09b40990cf6e469b800d1ee823240",
+      "falconry__falcon-2254": "de3b24ac5172ade52c87fd595eb8b3b2308eb07fb873dc00f3eb3d38a13e582d",
+      "falconry__falcon-2366": "e0030e1da8f3163fbeb4d47c68d4ee7462a5615aa04c8fe73251247e95dcb3f5",
+      "instructlab__instructlab-1762": "04cb08b406e2ee3bc6f1fbd441f83b26f04e76d5c24ca281cea1364a6c977fbf",
+      "instructlab__instructlab-2004": "bd3e2bacf83394cac53b27dd610d922b52cd444bf6377196f1b7bb8355a8e076",
+      "instructlab__instructlab-2789": "159570faf5c289fbcde076350d0a32bb5cc5e7c0c7b784ca2cb8487122460b76",
+      "keras-team__keras-19973": "e7a6a4e19fc0e1d40dd60988f715f49be622b487b4d822bf6fc57d8f866a04cf",
+      "keras-team__keras-20079": "b01b0b5d5e39ff45b19f3f256a076deb545fc82b3791f056881386c2789a5004",
+      "keras-team__keras-20120": "b4394e4a6796cf5be3577b0907e36827a111e8a599af186c239609bcfcc44f94",
+      "matplotlib__matplotlib-28577": "93c9786cd6c12b0a3bb90a2f873fc6d8de30daa991d6680ad60f08879d98fb5b",
+      "matplotlib__matplotlib-28584": "28cd6c3d2692fab95935203aa7380eac81770949228b32752e284fb463ec572e",
+      "matplotlib__matplotlib-28734": "b577b578ee332d9b1c87e7dcbbbb11bf72272aabf4db5a60958527c5fd7134a8",
+      "patroni__patroni-3112": "42118b9b45886e3cf450d2f361e654a77452e787e2b725b27c21eee58ec67f02",
+      "patroni__patroni-3119": "c87a6ba5afc8a0a14c0e841b5884038ee6ac881f8dbe982ff85841b19ba98992",
+      "patroni__patroni-3152": "318e950e18b61dd11351a0e9db476bab5a84fbf7e5c12cf0ecf4df635d576b47",
+      "pylint-dev__pylint-9771": "d3420bbd62d30d13d721b1962a7296cb14fcf310bfddfa85bd22ee7b102adefb",
+      "pylint-dev__pylint-9772": "8b7ea5b05223ba0ba849abbb149851e778eaf0fac7c2c6d85afa3eb05982f081",
+      "pylint-dev__pylint-9785": "2d30cae0b01bd0998299b2403c3f54c7336979576550370a4ad38051a1850940",
+      "python-babel__babel-1104": "1050a7dd363ce3f67fa051781ce462674573aafe35e4b671ce5f7c6d6a9ffb12",
+      "python-babel__babel-1120": "ded53365ef2f06d12fb8749901f27a42f45563b39692ad07b8ec11c62fbb3a9e",
+      "python-babel__babel-1126": "c13ea4a455874788df7960ee19a5b59df3f9a92c7a395c0e8b25054edd53977e",
+      "sphinx-doc__sphinx-12598": "47f2c3e833167869203108352a9d6e71bf604d7333f56e48a0d05afc32c8867e",
+      "sphinx-doc__sphinx-12615": "cfcb3b1e0969680414c625cc46717da01b9b9290e4bf874f4faaf73da887e15c",
+      "sphinx-doc__sphinx-12737": "3ccdd84454462dccdec17e14c8738e33ffe3ea2851505696748f35aedc5147a0"
+    },
+    "trigger_policy": {
+      "acknowledgement_event": "requirement_revision_ack",
+      "acknowledgement_required": true,
+      "event": "ExecutionFinished",
+      "requires_nonempty_affected_paths": true,
+      "success_exit_code": 0,
+      "undelivered_policy": "retain_itt"
+    },
+    "trigger_policy_sha256": "e5d6a92b68fccad2cd3ee3cfbc330bccb7e508048745bea5c8dee22684272792"
+  },
+  "runs_per_model": 120,
+  "schedule_sha256": "53a1ac648fb5c12ca305c829978f8e4c1dbb900ab1244f3215d173b0dd0bb25a",
+  "scheduled_runs_per_model": 120,
+  "schema_version": 1,
+  "session_token_budget": 120000,
+  "study_id": "repository-completion-swebench-live-v1"
+}

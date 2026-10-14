@@ -633,7 +633,10 @@ UNACCEPTABLE.\n\n\
 When the user asks you to build, run, or verify something, the deliverable is a working artifact \
 backed by real tool output — not a description of one. Do not stop after writing a stub, a plan, \
 or a single command. Keep working until you have actually exercised the code or produced the \
-requested result, then report what real execution returned.\n\n\
+requested result, then report what real execution returned. The runtime automatically runs detected \
+repository validation after you return `complete: true`; do not keep proposing a validation command \
+that policy has denied. A denied action is unavailable for this session: use another permitted way to \
+make progress, or finish the implementation so the runtime can perform its completion validation.\n\n\
 ## MANDATORY TOOL USE — NEVER answer these from memory:\n\
 - File contents, sizes, line counts → use typed reads (list, read_file via repository_grep, find)\n\
 - Git history, branches, diffs → use git_status, git_log, git_diff, git_show\n\
@@ -652,6 +655,9 @@ Only ask for clarification when the ambiguity genuinely changes what tool you wo
 - Do not repeatedly inspect the same files.\n\
 - For a small, well-specified fix, prefer the minimal implementation edit once the relevant source and \
   test are known, then validate it.\n\
+- When `write_file` replaces an existing file, preserve every unrelated byte, public API, test, and \
+  comment exactly. For a rename-only task, make only the requested token substitutions; do not \
+  improve, reorganize, or rewrite adjacent code.\n\
 - Never hardcode a single test result when the objective requires general behavior.\n\n\
 ## RESPONSE FORMAT\n\
 Return EXACTLY the JSON structure specified. No markdown wrappers, no extra text outside the JSON object."
@@ -734,6 +740,29 @@ pub(crate) fn build_messages(
             _ => None,
         })
         .collect::<BTreeMap<_, _>>();
+    let action_executions = session_events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::ExecutionFinished {
+                action_id,
+                exit_code,
+                truncated,
+                affected_paths,
+                ..
+            } => Some((
+                *action_id,
+                format!(
+                    "execution: {} (exit={exit_code:?}, truncated={truncated}, affected_paths={affected_paths:?})",
+                    if *exit_code == Some(0) {
+                        "succeeded"
+                    } else {
+                        "failed"
+                    }
+                ),
+            )),
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
     let history = state
         .proposed_actions
         .iter()
@@ -744,8 +773,12 @@ pub(crate) fn build_messages(
                     format!("\nresult: stdout={stdout:?}; stderr={stderr:?}; truncated={truncated}")
                 })
                 .unwrap_or_default();
+            let execution = action_executions
+                .get(id)
+                .map(|outcome| format!("\n{outcome}"))
+                .unwrap_or_default();
             format!(
-                "action {}: {:?}\njudgment: {:?}\nsemantic judgment: {:?}{result}",
+                "action {}: {:?}\njudgment: {:?}\nsemantic judgment: {:?}{execution}{result}",
                 id.0,
                 action,
                 state.judgments.get(id),
@@ -1479,6 +1512,45 @@ mod tests {
             .map(|m| m.content.as_str())
             .collect::<String>();
         assert!(!prompt.contains("TOOL FINDINGS"));
+    }
+
+    #[test]
+    fn successful_execution_is_explicit_in_the_next_turn_history() {
+        let session_id = SessionId::default();
+        let action_id = ActionId::new();
+        let mut state = SessionState::empty(session_id);
+        state.proposed_actions.insert(
+            action_id,
+            ProposedAction::WriteFile(purrcode_runtime_core::WriteFileAction {
+                path: PathBuf::from("src/lib.rs"),
+                content: "pub const READY: bool = true;\n".into(),
+                expected_digest: None,
+            }),
+        );
+        let events = vec![SessionEvent::ExecutionFinished {
+            action_id,
+            exit_code: Some(0),
+            truncated: false,
+            sandbox_level: None,
+            sandbox_backend: None,
+            affected_paths: vec![PathBuf::from("src/lib.rs")],
+        }];
+
+        let (messages, _) = build_messages(
+            TurnId::default(),
+            session_id,
+            "Update the library",
+            Path::new("/w"),
+            &state,
+            &[],
+            &events,
+            &PinnedContext::default(),
+            None,
+            None,
+        );
+        let prompt = &messages.last().expect("current turn").content;
+        assert!(prompt.contains("execution: succeeded"));
+        assert!(prompt.contains("affected_paths=[\"src/lib.rs\"]"));
     }
 
     #[test]

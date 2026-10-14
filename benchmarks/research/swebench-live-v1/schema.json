@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://purrcode.local/research/swebench-live-v1.schema.json",
+  "title": "Frozen SWE-bench-Live acquisition manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "source",
+    "selection",
+    "visibility",
+    "run_plan",
+    "tasks"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"enum": ["acquisition_pending", "preflight_pass", "live_complete"]},
+    "outcomes": {"const": "unrun"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset", "config", "split", "revision", "rows_endpoint", "license"],
+      "properties": {
+        "dataset": {"const": "SWE-bench-Live/SWE-bench-Live"},
+        "config": {"const": "default"},
+        "split": {"const": "verified"},
+        "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "rows_endpoint": {"type": "string", "format": "uri"},
+        "license": {"const": "mit"}
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "task_count", "distinct_repository_count", "tasks_per_repository", "difficulty_lines_max", "source_rows_scanned", "eligible_row_count", "eligible_repository_count", "repository_order"],
+      "properties": {
+        "algorithm": {"type": "string"},
+        "task_count": {"const": 30},
+        "distinct_repository_count": {"const": 10},
+        "tasks_per_repository": {"const": 3},
+        "difficulty_lines_max": {"const": 50},
+        "requires_fail_to_pass": {"const": true},
+        "requires_pass_to_pass": {"const": true},
+        "source_rows_scanned": {"const": 500},
+        "eligible_row_count": {"const": 370},
+        "eligible_repository_count": {"const": 87},
+        "repository_order": {
+          "type": "array",
+          "minItems": 10,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[^/]+/[^/]+$"}
+        }
+      }
+    },
+    "visibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_fields", "auditor_only_fields", "forbidden_agent_fields"],
+      "properties": {
+        "agent_fields": {"type": "array", "items": {"type": "string"}},
+        "auditor_only_fields": {"type": "array", "items": {"type": "string"}},
+        "forbidden_agent_fields": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "run_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositories", "tasks", "arms", "request_variants", "repeat_labels", "runs_per_model", "arm_definitions", "requirement_phases", "requirement_revision", "status"],
+      "properties": {
+        "repositories": {"const": 10},
+        "tasks": {"const": 30},
+        "arms": {"const": ["B", "C"]},
+        "request_variants": {"const": ["static", "correction"]},
+        "repeat_labels": {"const": [0]},
+        "runs_per_model": {"const": 120},
+        "arm_definitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["B", "C"],
+          "properties": {
+            "B": {"const": "alignment disabled"},
+            "C": {"const": "alignment enabled with automatic evidence refresh"}
+          }
+        },
+        "requirement_phases": {"const": ["P0", "P1"]},
+        "requirement_revision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "per_task", "P0", "P1", "static_delivery", "correction_delivery", "injection_trigger", "production_path_filter", "acknowledgement_event", "acknowledgement_required", "correction_text_stored", "authoring_asset", "span_selection", "span_offsets_unit", "final_requirement", "shared_final_requirement_hash"],
+          "properties": {
+            "status": {"const": "verified"},
+            "per_task": {"const": true},
+            "P0": {"const": "controlled abridged problem_statement with one withheld original constraint span in the correction variant"},
+            "P1": {"const": "the exact original constraint span selected from the complete problem_statement"},
+            "static_delivery": {"const": "complete original problem_statement delivered from call 0"},
+            "correction_delivery": {"const": "abridged P0 at call 0; the identical P1 span after the first phase settles with a qualifying successful mutation"},
+            "injection_trigger": {"const": "first qualifying ExecutionFinished; identical P1 delivered after the first phase settles"},
+            "production_path_filter": {"const": false},
+            "acknowledgement_event": {"const": "requirement_revision_ack"},
+            "acknowledgement_required": {"const": true},
+            "correction_text_stored": {"const": true},
+            "authoring_asset": {"const": "requirement_revision.json"},
+            "span_selection": {"const": "one unique original behavior-related sentence or concise span; reject non-unique or non-specific spans"},
+            "span_offsets_unit": {"const": "unicode_codepoints"},
+            "final_requirement": {"const": "reconstructing abridged P0 with P1 at the recorded offset equals the complete original statement"},
+            "shared_final_requirement_hash": {"const": true}
+          }
+        },
+        "status": {"const": "blocked_until_environment_oracle_audit"}
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 30,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dataset_row",
+          "instance_id",
+          "repo",
+          "repo_url",
+          "pull_number",
+          "base_commit",
+          "commit_url",
+          "created_at",
+          "difficulty",
+          "test_cmds",
+          "log_parser",
+          "problem_statement_sha256",
+          "patch_sha256",
+          "test_patch_sha256",
+          "fail_to_pass_count",
+          "pass_to_pass_count",
+          "candidate_status",
+          "oracle_status"
+        ],
+        "properties": {
+          "dataset_row": {"type": "integer", "minimum": 0},
+          "instance_id": {"type": "string", "minLength": 1},
+          "repo": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
+          "repo_url": {"type": "string", "format": "uri"},
+          "pull_number": {"type": "string", "minLength": 1},
+          "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "commit_url": {"type": "string", "format": "uri"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "difficulty": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["files", "hunks", "lines"],
+            "properties": {
+              "files": {"type": "integer", "minimum": 1},
+              "hunks": {"type": "integer", "minimum": 1},
+              "lines": {"type": "integer", "minimum": 1, "maximum": 50}
+            }
+          },
+          "test_cmds": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "log_parser": {"type": "string", "minLength": 1},
+          "problem_statement_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "patch_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "test_patch_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "fail_to_pass_count": {"type": "integer", "minimum": 1},
+          "pass_to_pass_count": {"type": "integer", "minimum": 1},
+          "candidate_status": {"const": "pending"},
+          "oracle_status": {"const": "pending"}
+        }
+      }
+    }
+  }
+}

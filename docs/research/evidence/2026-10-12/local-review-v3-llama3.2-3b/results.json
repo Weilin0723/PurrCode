@@ -1,0 +1,1029 @@
+{
+  "results": [
+    {
+      "case_id": "stable-sort-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 7008.513,
+      "observed": "READY",
+      "schedule_index": 0,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 299,
+        "total": 310
+      }
+    },
+    {
+      "case_id": "missing-item-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1923.853,
+      "observed": "READY",
+      "schedule_index": 1,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 283,
+        "total": 294
+      }
+    },
+    {
+      "case_id": "unicode-length-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1623.016,
+      "observed": "READY",
+      "schedule_index": 2,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "path-root-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1907.909,
+      "observed": "BLOCKED",
+      "schedule_index": 3,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 291,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "header-case-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1711.786,
+      "observed": "READY",
+      "schedule_index": 4,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 299,
+        "total": 310
+      }
+    },
+    {
+      "case_id": "stable-sort-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1768.929,
+      "observed": "BLOCKED",
+      "schedule_index": 5,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 296,
+        "total": 308
+      }
+    },
+    {
+      "case_id": "deprecated-alias-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1985.081,
+      "observed": "READY",
+      "schedule_index": 6,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 313,
+        "total": 324
+      }
+    },
+    {
+      "case_id": "cursor-empty-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1813.297,
+      "observed": "READY",
+      "schedule_index": 7,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 305,
+        "total": 316
+      }
+    },
+    {
+      "case_id": "backoff-cap-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1990.854,
+      "observed": "READY",
+      "schedule_index": 8,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 285,
+        "total": 296
+      }
+    },
+    {
+      "case_id": "atomic-save-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2263.333,
+      "observed": "READY",
+      "schedule_index": 9,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 294,
+        "total": 305
+      }
+    },
+    {
+      "case_id": "path-root-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2032.373,
+      "observed": "READY",
+      "schedule_index": 10,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 293,
+        "total": 304
+      }
+    },
+    {
+      "case_id": "path-root-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 951.647,
+      "observed": "READY",
+      "schedule_index": 11,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 293,
+        "total": 304
+      }
+    },
+    {
+      "case_id": "cursor-empty-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2240.075,
+      "observed": "READY",
+      "schedule_index": 12,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 307,
+        "total": 318
+      }
+    },
+    {
+      "case_id": "csv-newline-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2052.451,
+      "observed": "READY",
+      "schedule_index": 13,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "timeout-unit-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2240.893,
+      "observed": "READY",
+      "schedule_index": 14,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 326,
+        "total": 337
+      }
+    },
+    {
+      "case_id": "deprecated-alias-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1948.051,
+      "observed": "READY",
+      "schedule_index": 15,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 292,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "cache-zero-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2063.616,
+      "observed": "READY",
+      "schedule_index": 16,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 308,
+        "total": 319
+      }
+    },
+    {
+      "case_id": "schema-extra-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2077.876,
+      "observed": "BLOCKED",
+      "schedule_index": 17,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 287,
+        "total": 299
+      }
+    },
+    {
+      "case_id": "retry-budget-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1996.827,
+      "observed": "READY",
+      "schedule_index": 18,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "cursor-empty-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1984.45,
+      "observed": "READY",
+      "schedule_index": 19,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 305,
+        "total": 316
+      }
+    },
+    {
+      "case_id": "deprecated-alias-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1912.206,
+      "observed": "READY",
+      "schedule_index": 20,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 292,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "atomic-save-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2176.678,
+      "observed": "READY",
+      "schedule_index": 21,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 309,
+        "total": 320
+      }
+    },
+    {
+      "case_id": "backoff-cap-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2741.65,
+      "observed": "BLOCKED",
+      "schedule_index": 22,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 282,
+        "total": 294
+      }
+    },
+    {
+      "case_id": "backoff-cap-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1151.433,
+      "observed": "BLOCKED",
+      "schedule_index": 23,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 282,
+        "total": 294
+      }
+    },
+    {
+      "case_id": "csv-newline-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2445.197,
+      "observed": "READY",
+      "schedule_index": 24,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "stable-sort-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1973.346,
+      "observed": "READY",
+      "schedule_index": 25,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 299,
+        "total": 310
+      }
+    },
+    {
+      "case_id": "schema-extra-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2126.397,
+      "observed": "BLOCKED",
+      "schedule_index": 26,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 287,
+        "total": 299
+      }
+    },
+    {
+      "case_id": "idempotency-key-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1818.715,
+      "observed": "READY",
+      "schedule_index": 27,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 255,
+        "total": 266
+      }
+    },
+    {
+      "case_id": "config-precedence-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1924.919,
+      "observed": "READY",
+      "schedule_index": 28,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 291,
+        "total": 302
+      }
+    },
+    {
+      "case_id": "config-precedence-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 840.139,
+      "observed": "READY",
+      "schedule_index": 29,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 291,
+        "total": 302
+      }
+    },
+    {
+      "case_id": "missing-item-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2140.317,
+      "observed": "READY",
+      "schedule_index": 30,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 304,
+        "total": 315
+      }
+    },
+    {
+      "case_id": "cache-zero-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1888.566,
+      "observed": "READY",
+      "schedule_index": 31,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 308,
+        "total": 319
+      }
+    },
+    {
+      "case_id": "deprecated-alias-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2131.008,
+      "observed": "READY",
+      "schedule_index": 32,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 313,
+        "total": 324
+      }
+    },
+    {
+      "case_id": "cursor-empty-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1880.693,
+      "observed": "READY",
+      "schedule_index": 33,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 307,
+        "total": 318
+      }
+    },
+    {
+      "case_id": "config-precedence-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1792.321,
+      "observed": "READY",
+      "schedule_index": 34,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 291,
+        "total": 302
+      }
+    },
+    {
+      "case_id": "timeout-unit-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2110.928,
+      "observed": "READY",
+      "schedule_index": 35,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 311,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "missing-item-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1815.461,
+      "observed": "READY",
+      "schedule_index": 36,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 304,
+        "total": 315
+      }
+    },
+    {
+      "case_id": "cache-zero-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1864.467,
+      "observed": "READY",
+      "schedule_index": 37,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 308,
+        "total": 319
+      }
+    },
+    {
+      "case_id": "timeout-unit-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2035.904,
+      "observed": "READY",
+      "schedule_index": 38,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 326,
+        "total": 337
+      }
+    },
+    {
+      "case_id": "atomic-save-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1948.434,
+      "observed": "READY",
+      "schedule_index": 39,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 309,
+        "total": 320
+      }
+    },
+    {
+      "case_id": "config-precedence-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 3075.629,
+      "observed": "READY",
+      "schedule_index": 40,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 291,
+        "total": 302
+      }
+    },
+    {
+      "case_id": "header-case-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2033.25,
+      "observed": "BLOCKED",
+      "schedule_index": 41,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 296,
+        "total": 308
+      }
+    },
+    {
+      "case_id": "path-root-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2143.116,
+      "observed": "BLOCKED",
+      "schedule_index": 42,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 291,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "schema-extra-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1946.77,
+      "observed": "READY",
+      "schedule_index": 43,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 289,
+        "total": 300
+      }
+    },
+    {
+      "case_id": "csv-newline-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2286.019,
+      "observed": "READY",
+      "schedule_index": 44,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 322,
+        "total": 333
+      }
+    },
+    {
+      "case_id": "csv-newline-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 888.5,
+      "observed": "READY",
+      "schedule_index": 45,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 322,
+        "total": 333
+      }
+    },
+    {
+      "case_id": "schema-extra-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2155.309,
+      "observed": "READY",
+      "schedule_index": 46,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 289,
+        "total": 300
+      }
+    },
+    {
+      "case_id": "idempotency-key-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1458.497,
+      "observed": "READY",
+      "schedule_index": 47,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 234,
+        "total": 245
+      }
+    },
+    {
+      "case_id": "missing-item-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1941.65,
+      "observed": "READY",
+      "schedule_index": 48,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 283,
+        "total": 294
+      }
+    },
+    {
+      "case_id": "unicode-length-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1816.19,
+      "observed": "READY",
+      "schedule_index": 49,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "atomic-save-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1776.989,
+      "observed": "READY",
+      "schedule_index": 50,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 294,
+        "total": 305
+      }
+    },
+    {
+      "case_id": "stable-sort-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2007.241,
+      "observed": "BLOCKED",
+      "schedule_index": 51,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 296,
+        "total": 308
+      }
+    },
+    {
+      "case_id": "timeout-unit-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2375.306,
+      "observed": "READY",
+      "schedule_index": 52,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 311,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "cache-zero-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2105.733,
+      "observed": "READY",
+      "schedule_index": 53,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 308,
+        "total": 319
+      }
+    },
+    {
+      "case_id": "header-case-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2144.035,
+      "observed": "READY",
+      "schedule_index": 54,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 299,
+        "total": 310
+      }
+    },
+    {
+      "case_id": "idempotency-key-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1799.529,
+      "observed": "READY",
+      "schedule_index": 55,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 255,
+        "total": 266
+      }
+    },
+    {
+      "case_id": "unicode-length-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2023.017,
+      "observed": "READY",
+      "schedule_index": 56,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "header-case-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2169.214,
+      "observed": "BLOCKED",
+      "schedule_index": 57,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 296,
+        "total": 308
+      }
+    },
+    {
+      "case_id": "retry-budget-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2353.226,
+      "observed": "READY",
+      "schedule_index": 58,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "unicode-length-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2518.856,
+      "observed": "READY",
+      "schedule_index": 59,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "retry-budget-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2550.551,
+      "observed": "READY",
+      "schedule_index": 60,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "idempotency-key-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 2139.178,
+      "observed": "READY",
+      "schedule_index": 61,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 234,
+        "total": 245
+      }
+    },
+    {
+      "case_id": "retry-budget-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2286.792,
+      "observed": "READY",
+      "schedule_index": 62,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 310,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "backoff-cap-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 2163.085,
+      "observed": "READY",
+      "schedule_index": 63,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 285,
+        "total": 296
+      }
+    }
+  ],
+  "schema_version": 3
+}

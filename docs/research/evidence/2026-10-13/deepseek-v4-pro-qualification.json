@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-13",
+  "provider": "deepseek",
+  "endpoint_host": "api.deepseek.com",
+  "model": "deepseek-v4-pro",
+  "credential_reference": "keychain:deepseek",
+  "credential_value_recorded": false,
+  "cases": [
+    {
+      "name": "structured-output",
+      "passed": true,
+      "latency_ms": 1173,
+      "detail": "exact match"
+    },
+    {
+      "name": "tool-schema",
+      "passed": true,
+      "latency_ms": 1173,
+      "detail": "exact match"
+    },
+    {
+      "name": "multi-file-reasoning",
+      "passed": true,
+      "latency_ms": 1331,
+      "detail": "exact match"
+    },
+    {
+      "name": "patch-generation",
+      "passed": true,
+      "latency_ms": 1172,
+      "detail": "exact match"
+    },
+    {
+      "name": "context-retention",
+      "passed": true,
+      "latency_ms": 1193,
+      "detail": "exact match"
+    },
+    {
+      "name": "test-failure-interpretation",
+      "passed": true,
+      "latency_ms": 770,
+      "detail": "exact match"
+    },
+    {
+      "name": "judgment-calibration",
+      "passed": true,
+      "latency_ms": 1141,
+      "detail": "exact match"
+    }
+  ],
+  "accuracy": 1.0,
+  "mean_latency_ms": 1136.142857142857,
+  "estimated_tokens_per_second": 2.764491999919411,
+  "maximum_reliable_context_tokens": 16384,
+  "recommended_roles": [
+    "router",
+    "summarizer",
+    "simple-coding",
+    "planner",
+    "high-risk-judge"
+  ],
+  "not_recommended_roles": [],
+  "study_boundary": "Generic provider qualification only; no repository-completion prompt or outcome was used."
+}

@@ -1,0 +1,111 @@
+{
+  "benchmark_kind": "synthetic-local-review-probe",
+  "by_condition": {
+    "plain": {
+      "accuracy": {
+        "correct": 12,
+        "denominator": 24,
+        "rate": 0.5
+      },
+      "accuracy_all_scheduled": {
+        "correct": 12,
+        "denominator": 24,
+        "rate": 0.5
+      },
+      "coverage": {
+        "rate": 1.0,
+        "scheduled_calls": 24,
+        "valid_responses": 24
+      },
+      "false_ready": {
+        "blocked_label_denominator": 12,
+        "count": 0,
+        "rate_among_blocked_labels": 0.0,
+        "rate_among_ready_declarations": null,
+        "ready_declaration_denominator": 0
+      },
+      "latency_ms": {
+        "actual": 336.8359583333333,
+        "actual_mean": 336.8359583333333,
+        "measured_calls": 24,
+        "null": 0,
+        "null_calls": 0
+      },
+      "scheduled_calls": 24,
+      "tokens": {
+        "actual": 4590,
+        "actual_total": 4590,
+        "measured_calls": 24,
+        "null": 0,
+        "null_calls": 0
+      },
+      "unique_tasks": 12,
+      "wrong_block": {
+        "blocked_declaration_denominator": 24,
+        "count": 12,
+        "rate_among_blocked_declarations": 0.5,
+        "rate_among_ready_labels": 1.0,
+        "ready_label_denominator": 12
+      }
+    },
+    "revision_checklist": {
+      "accuracy": {
+        "correct": 8,
+        "denominator": 13,
+        "rate": 0.6153846153846154
+      },
+      "accuracy_all_scheduled": {
+        "correct": 8,
+        "denominator": 24,
+        "rate": 0.3333333333333333
+      },
+      "coverage": {
+        "rate": 0.5416666666666666,
+        "scheduled_calls": 24,
+        "valid_responses": 13
+      },
+      "false_ready": {
+        "blocked_label_denominator": 12,
+        "count": 0,
+        "rate_among_blocked_labels": 0.0,
+        "rate_among_ready_declarations": null,
+        "ready_declaration_denominator": 0
+      },
+      "latency_ms": {
+        "actual": 799.448125,
+        "actual_mean": 799.448125,
+        "measured_calls": 24,
+        "null": 0,
+        "null_calls": 0
+      },
+      "scheduled_calls": 24,
+      "tokens": {
+        "actual": 5137,
+        "actual_total": 5137,
+        "measured_calls": 24,
+        "null": 0,
+        "null_calls": 0
+      },
+      "unique_tasks": 12,
+      "wrong_block": {
+        "blocked_declaration_denominator": 13,
+        "count": 5,
+        "rate_among_blocked_declarations": 0.38461538461538464,
+        "rate_among_ready_labels": 0.4166666666666667,
+        "ready_label_denominator": 12
+      }
+    }
+  },
+  "completed_records": 48,
+  "independence_note": "Seeds and prompt conditions repeat the same 12 synthetic tasks; they are not independent task samples and no significance test is reported.",
+  "label_provenance": "human-authored synthetic trace labels; no live tests or execution",
+  "live_coding": false,
+  "purrcode_qualification": false,
+  "scheduled_calls": 48,
+  "schema_version": 1,
+  "status_counts": {
+    "invalid_response": 11,
+    "ok": 37
+  },
+  "unique_tasks": 12
+}

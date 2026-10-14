@@ -12,6 +12,9 @@ answer — *there is nothing to do* — and measures nothing.
 ## House rules
 
 - `cargo test` must pass before any change is finished.
+- Leave benchmark changes in the worktree for the external scorer; never create a Git commit.
+- Make only the changes the request requires. Preserve unrelated public APIs,
+  behaviour, constants, tests, and documentation exactly as they are.
 - Public behaviour is covered by tests. If you change what a function returns,
   a test should have told you.
 - The settings panel is the user-facing surface. Options are reachable from it;

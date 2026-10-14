@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-10-13T23:09:11Z",
+  "command": [
+    "./target/debug/purrcode",
+    "model",
+    "qualify",
+    "deepseek/deepseek-flash"
+  ],
+  "exit_status": 0,
+  "credential_material_recorded": false,
+  "repository_head": "5d7ed0d0b3c752a6f7d84caf15ead5fe9d201c25",
+  "artifact_bindings": {
+    "purrcode_binary_sha256": "3509e65bea45d095c614f96a48ff476a7b72a6cbeaa3ff65eeba12b8b1dfd8f7",
+    "provider_gateway_source_sha256": "6e1b044d57f413896185b144a41da50bf2553a0fbffdd64a8bb50c3625db9d02",
+    "cargo_lock_sha256": "8facaf8a4d5cce717fe473898a9bb11cc2873efb2cc606c867fb92cbfb39028e"
+  },
+  "report": {
+    "model": {
+      "provider": "deepseek",
+      "model": "deepseek-flash"
+    },
+    "cases": [
+      {
+        "name": "structured-output",
+        "passed": true,
+        "latency_ms": 635,
+        "detail": "exact match"
+      },
+      {
+        "name": "tool-schema",
+        "passed": true,
+        "latency_ms": 953,
+        "detail": "exact match"
+      },
+      {
+        "name": "multi-file-reasoning",
+        "passed": true,
+        "latency_ms": 921,
+        "detail": "exact match"
+      },
+      {
+        "name": "patch-generation",
+        "passed": true,
+        "latency_ms": 1138,
+        "detail": "exact match"
+      },
+      {
+        "name": "context-retention",
+        "passed": true,
+        "latency_ms": 1181,
+        "detail": "exact match"
+      },
+      {
+        "name": "test-failure-interpretation",
+        "passed": true,
+        "latency_ms": 1077,
+        "detail": "exact match"
+      },
+      {
+        "name": "judgment-calibration",
+        "passed": true,
+        "latency_ms": 832,
+        "detail": "exact match"
+      }
+    ],
+    "accuracy": 1.0,
+    "mean_latency_ms": 962.4285714285714,
+    "estimated_tokens_per_second": 3.2637852832806145,
+    "maximum_reliable_context_tokens": 16384,
+    "recommended_roles": [
+      "router",
+      "summarizer",
+      "simple-coding",
+      "planner",
+      "high-risk-judge"
+    ],
+    "not_recommended_roles": []
+  },
+  "limitations": [
+    "The requested model alias is recorded; the current provider adapter does not preserve a provider-returned model identifier or system fingerprint.",
+    "The qualification probe is not an end-to-end repository task and does not establish efficacy.",
+    "The repository had pre-existing uncommitted changes; the source and binary digests above identify the tested local artifacts."
+  ]
+}

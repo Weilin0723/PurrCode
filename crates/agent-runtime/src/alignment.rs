@@ -32,7 +32,7 @@
 //! first one surviving. It errs toward *not* closing findings, which is the
 //! direction this release wants to err in.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use purrcode_alignment_runtime::{
@@ -287,13 +287,16 @@ impl AlignmentRuntime {
         let requirement_ids: Vec<RequirementId> =
             contract.required().map(|clause| clause.id).collect();
 
+        let reviewed_snapshot = RepositoryEngine::snapshot(worktree).await?;
         let changes = RepositoryEngine::changes(worktree, ChangeScope::Agent).await?;
         let diff = render_diff(&changes.patch);
         let files = review_files(worktree, &changes).await;
+        let tool_observations = review_tool_observations(&state, &store.events(session_id)?);
         let base = FreshReviewInput::for_contract(&contract)
             .with_repository_rules(repository_rules)
             .with_diff(diff)
             .with_files(files)
+            .with_tool_observations(tool_observations)
             .with_validations(
                 validations
                     .iter()
@@ -334,6 +337,19 @@ impl AlignmentRuntime {
             }
         }
 
+        // Reviews are evidence about exact repository bytes. If anything
+        // changed while the model was reviewing, none of those conclusions
+        // may settle a requirement; the next round will review the new bytes.
+        let current_snapshot = RepositoryEngine::snapshot(worktree).await?;
+        if current_snapshot.patch_digest != reviewed_snapshot.patch_digest {
+            note(
+                store,
+                session_id,
+                "The repository changed while alignment review was running; its findings were discarded and the current artifact will be reviewed again.",
+            )?;
+            outcomes.clear();
+        }
+
         for outcome in &outcomes {
             self.record_review(store, session_id, outcome, cycle)?;
         }
@@ -342,12 +358,19 @@ impl AlignmentRuntime {
             self.close_correction_cycle(store, session_id, cycle, &attempted, &outcomes)?;
         }
 
-        self.settle_requirements(store, session_id, &outcomes)?;
+        self.settle_requirements(
+            store,
+            session_id,
+            &outcomes,
+            &state.requirement_revisions,
+            &current_snapshot.patch_digest,
+        )?;
 
         store.append(
             session_id,
             &SessionEvent::DeliveryGateEvaluated {
                 validations: validations.to_vec(),
+                artifact_digest: Some(current_snapshot.patch_digest),
             },
         )?;
         store
@@ -444,6 +467,8 @@ impl AlignmentRuntime {
         store: &mut SessionStore,
         session_id: SessionId,
         outcomes: &[ReviewOutcome],
+        requirement_revisions: &BTreeMap<RequirementId, u64>,
+        artifact_digest: &str,
     ) -> Result<(), AgentError> {
         // Worst verdict wins. A requirement one reviewer called satisfied and
         // another called violated is not satisfied, and averaging the two is
@@ -479,9 +504,18 @@ impl AlignmentRuntime {
         for (requirement_id, kind, detail, evidence) in merged {
             let mut ids: Vec<EvidenceId> = Vec::new();
             for item in &evidence {
-                let record = AlignmentEvidence::new(
+                let record = AlignmentEvidence::new_bound(
                     AlignmentEvidenceKind::Review,
                     requirement_id,
+                    requirement_revisions
+                        .get(&requirement_id)
+                        .copied()
+                        .ok_or_else(|| {
+                            AgentError::CorruptSession(format!(
+                                "requirement {requirement_id:?} has no revision binding"
+                            ))
+                        })?,
+                    artifact_digest,
                     item.clone(),
                     detail.clone(),
                 );
@@ -561,7 +595,9 @@ pub fn decide(
         // unfinished. Whether to keep going or hand back depends on whether
         // going round again could plausibly help.
         CorrectionStep::NothingToFix => match assessment.state() {
-            DeliveryState::PartiallyComplete if rounds < MAXIMUM_ALIGNMENT_ROUNDS => {
+            DeliveryState::PartiallyComplete | DeliveryState::Blocked
+                if rounds < MAXIMUM_ALIGNMENT_ROUNDS =>
+            {
                 AlignmentVerdict::KeepWorking {
                     brief: format!(
                         "This is not finished. The delivery gate says:\n\n{}\n\nKeep working on \
@@ -643,6 +679,63 @@ async fn review_files(
     files
 }
 
+fn review_tool_observations(
+    state: &SessionState,
+    events: &[SessionEvent],
+) -> Vec<(String, String)> {
+    const MAXIMUM_OBSERVATIONS: usize = 8;
+    const MAXIMUM_OBSERVATION_CHARACTERS: usize = 6_000;
+    let successful = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::ExecutionFinished {
+                action_id,
+                exit_code: Some(0),
+                ..
+            } => Some(*action_id),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    events
+        .iter()
+        .rev()
+        .filter_map(|event| {
+            let SessionEvent::ActionOutputRecorded {
+                action_id,
+                stdout,
+                stderr,
+                truncated,
+                ..
+            } = event
+            else {
+                return None;
+            };
+            if !successful.contains(action_id) {
+                return None;
+            }
+            let action = state.proposed_actions.get(action_id)?;
+            if !matches!(
+                action,
+                purrcode_runtime_core::ProposedAction::RepositoryRead(_)
+            ) {
+                return None;
+            }
+            let combined = format!(
+                "stdout:\n{}\nstderr:\n{}\ntruncated: {}",
+                stdout, stderr, truncated
+            );
+            Some((
+                format!("successful repository read {action:?}"),
+                combined
+                    .chars()
+                    .take(MAXIMUM_OBSERVATION_CHARACTERS)
+                    .collect(),
+            ))
+        })
+        .take(MAXIMUM_OBSERVATIONS)
+        .collect()
+}
+
 /// Say something to the user in the conversation, as the runtime rather than as
 /// the agent.
 fn note(store: &mut SessionStore, session_id: SessionId, content: &str) -> Result<(), AgentError> {
@@ -662,4 +755,54 @@ fn note(store: &mut SessionStore, session_id: SessionId, content: &str) -> Resul
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use purrcode_runtime_core::expectation::delivery::evaluate;
+    use purrcode_runtime_core::expectation::{
+        DeliveryInputs, ExpectationClause, ExpectationContract, ExpectationStrength, IntentSource,
+    };
+    use purrcode_runtime_core::work::{AcceptanceCriterion, CriterionId};
+
+    use super::*;
+
+    #[test]
+    fn a_violated_requirement_goes_back_to_the_worker_before_handing_back() {
+        let mut contract = ExpectationContract::new("add pagination");
+        contract.clauses.push(ExpectationClause {
+            id: RequirementId::new(),
+            statement: "the endpoint accepts offset and limit".into(),
+            strength: ExpectationStrength::Required,
+            acceptance_criteria: vec![AcceptanceCriterion {
+                id: CriterionId::new(),
+                statement: "the endpoint returns the requested page".into(),
+            }],
+            status: RequirementStatus::Violated {
+                evidence: Vec::new(),
+                detail: "the helper exists but the endpoint does not use it".into(),
+            },
+            source: IntentSource::new(0, "Add offset/limit pagination"),
+        });
+        let assessment = evaluate(DeliveryInputs {
+            contract: &contract,
+            findings: &[],
+            validations: &[],
+            changed_paths: &[],
+            forbidden_prefixes: &[],
+            unresolved_conflicts: &[],
+        });
+        let mut state = SessionState::empty(SessionId::new());
+        state.expectation_contract = Some(contract);
+
+        assert_eq!(assessment.state(), DeliveryState::Blocked);
+        assert!(matches!(
+            decide(&state, &assessment, 0),
+            AlignmentVerdict::KeepWorking { .. }
+        ));
+        assert!(matches!(
+            decide(&state, &assessment, MAXIMUM_ALIGNMENT_ROUNDS),
+            AlignmentVerdict::HandBack { .. }
+        ));
+    }
 }

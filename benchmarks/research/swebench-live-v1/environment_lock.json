@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "status": "preflight_partial",
+  "manifest_sha256": "1c1311dc826eb04855af08658c3daebf52601768fb58740544d467ebf67b8a4a",
+  "dataset": {
+    "dataset": "SWE-bench-Live/SWE-bench-Live",
+    "split": "verified",
+    "revision": "b51a86422e10cfd403beb4773e5a2947953e36ec"
+  },
+  "acquired_checkout": {
+    "cache_basename": "swebench-live-v1-acquired-345482f7",
+    "checkout_count": 30,
+    "head_policy": "detached_at_manifest_base_commit",
+    "clean_policy": "no_tracked_or_untracked_changes",
+    "symlink_policy": "tracked_relative_targets_confined_to_checkout"
+  },
+  "official_harness": {
+    "repository": "SWE-bench-Live/SWE-bench-Live",
+    "commit": "a145aa87c62361532dacaa243398978164b234b7",
+    "commit_url": "https://github.com/SWE-bench-Live/SWE-bench-Live/commit/a145aa87c62361532dacaa243398978164b234b7",
+    "raw_base_url": "https://raw.githubusercontent.com/SWE-bench-Live/SWE-bench-Live/a145aa87c62361532dacaa243398978164b234b7/",
+    "python_minimum": ">=3.10",
+    "docker_required": true,
+    "image_namespace": "starryzhang",
+    "image_digest_status": "single_instance_smoke_only",
+    "image_digest_policy": "resolve and record each selected instance image digest before model calls",
+    "selected_smoke_image": {
+      "instance_id": "bridgecrewio__checkov-6630",
+      "digest": "sha256:bd59eee7174a803d311a588bab4682e826a46774608d1a6587762d45bfd4dcad",
+      "status": "gold_smoke_passed"
+    },
+    "files": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "84e7ac057cd44495cacda0c94bb52494ee20f613e012f0a14c6c68403f6d4b53"
+      },
+      {
+        "path": "README.md",
+        "sha256": "f1f172f64ef7274c2f358070ee2f93e9a4b0e89a3abe335a63d57da281013a34"
+      },
+      {
+        "path": "docs/guides/evaluation.md",
+        "sha256": "53397ad710a468cf10c4d1513a1ede4409e0cbc20feb73e71ce0960e87e123b8"
+      },
+      {
+        "path": "docs/guides/docker_setup.md",
+        "sha256": "15ce6d2b905322af25fb6d56f0ff22a6675429b776fd9028ddcc782f7643a185"
+      },
+      {
+        "path": "swebench/harness/run_evaluation.py",
+        "sha256": "9a9361d7c53f64d573ef546325b6f13d5b593fa78b4ddcbaa380efa0cd0aac04"
+      },
+      {
+        "path": "swebench/harness/test_spec/test_spec.py",
+        "sha256": "14b86fa885af3c4705aec4a55b3f8c5ff28b008611976b3cd173db3ec614e231"
+      },
+      {
+        "path": "swebench/harness/docker_build.py",
+        "sha256": "376978f1b28698bb0e55feca8390bff3c4f63b773eaa42455aa821ff44e93ff3"
+      },
+      {
+        "path": "swebench/harness/docker_utils.py",
+        "sha256": "908627ad2aad866a506cc8e7d15309abb41666bbe5696e648097280b850c5891"
+      },
+      {
+        "path": "swebench/harness/grading.py",
+        "sha256": "a3c5daf9713d6820811dad22aa21f08e145a641bdda800cce965c82c8ef0d8db"
+      },
+      {
+        "path": "swebench/harness/constants/python.py",
+        "sha256": "5ffc3eb97774955b9cfe8491bb5c9608ec108bf9fdfbb3354de85cf0df9ced4c"
+      },
+      {
+        "path": "swebench/harness/dockerfiles/python.py",
+        "sha256": "375f0829e363c6bee1fe529b06d6e10c0205953dfebe9a0cc424f13aa97351fb"
+      }
+    ]
+  },
+  "model_visibility": {
+    "allowed_fields": [
+      "repo",
+      "instance_id",
+      "base_commit",
+      "problem_statement",
+      "clean_checkout"
+    ],
+    "forbidden_fields": [
+      "patch",
+      "test_patch",
+      "hints_text",
+      "all_hints_text",
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "difficulty",
+      "test_cmds",
+      "log_parser",
+      "gold_patch",
+      "reference_solution"
+    ],
+    "auditor_only_solution_material": true
+  },
+  "requirement_revision": {
+    "status": "verified",
+    "per_task": true,
+    "P0": "controlled abridged problem_statement with one withheld original constraint span in the correction variant",
+    "P1": "the exact original constraint span selected from the complete problem_statement",
+    "static_delivery": "complete original problem_statement delivered from call 0",
+    "correction_delivery": "abridged P0 at call 0; the identical P1 span after the first phase settles with a qualifying successful mutation",
+    "injection_trigger": "first qualifying ExecutionFinished; identical P1 delivered after the first phase settles",
+    "production_path_filter": false,
+    "acknowledgement_event": "requirement_revision_ack",
+    "acknowledgement_required": true,
+    "correction_text_stored": true,
+    "authoring_asset": "requirement_revision.json",
+    "span_selection": "one unique original behavior-related sentence or concise span; reject non-unique or non-specific spans",
+    "span_offsets_unit": "unicode_codepoints",
+    "final_requirement": "reconstructing abridged P0 with P1 at the recorded offset equals the complete original statement",
+    "shared_final_requirement_hash": true
+  },
+  "p1_authoring": {
+    "status": "verified",
+    "reason_code": "controlled_span_from_original_statement",
+    "task_count": 30,
+    "p1_materialized_count": 30,
+    "p1_text_materialized": true,
+    "shared_p1_hash_required": true,
+    "p1_hashes_verified": true,
+    "input_kinds": [
+      "original_problem_statement",
+      "clean_base_checkout"
+    ],
+    "asset_path": "requirement_revision.json",
+    "asset_sha256": "de94df6c4b04aa99fb01a5a7c61077a155c07079e0c7c163244b6065f13fb0cf"
+  },
+  "oracle": {
+    "status": "unverified",
+    "gold_smoke": {
+      "status": "passed",
+      "instance_id": "bridgecrewio__checkov-6630",
+      "image_digest": "sha256:bd59eee7174a803d311a588bab4682e826a46774608d1a6587762d45bfd4dcad",
+      "evidence_sha256": "57f8d1e2e92cc26c5cc90312a692f63d19c3fd8c4a532c21b3c48de915eea2da",
+      "target_test_exit_code": 0,
+      "target_test_count": 1,
+      "scope": "single_task_smoke_only",
+      "model_calls": 0,
+      "outcomes": "unrun"
+    },
+    "required_before_model_calls": [
+      "hidden behavioral oracle accepts equivalent fixes",
+      "candidate patch and test patch remain auditor-only",
+      "oracle logs are credential-scrubbed and excluded from model-visible artifacts"
+    ]
+  },
+  "preflight": {
+    "model_calls": 0,
+    "outcomes": "unrun",
+    "asset_hashes": "pinned",
+    "docker_probe": "required",
+    "status_is_partial_until_oracle_and_docker_are_verified": true
+  }
+}

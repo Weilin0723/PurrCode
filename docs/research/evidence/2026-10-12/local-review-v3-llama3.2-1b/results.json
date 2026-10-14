@@ -1,0 +1,1029 @@
+{
+  "results": [
+    {
+      "case_id": "stable-sort-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 4546.519,
+      "observed": "BLOCKED",
+      "schedule_index": 0,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 299,
+        "total": 311
+      }
+    },
+    {
+      "case_id": "missing-item-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 435.17,
+      "observed": "BLOCKED",
+      "schedule_index": 1,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 283,
+        "total": 295
+      }
+    },
+    {
+      "case_id": "unicode-length-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 435.28,
+      "observed": "BLOCKED",
+      "schedule_index": 2,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "path-root-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 454.406,
+      "observed": "BLOCKED",
+      "schedule_index": 3,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 291,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "header-case-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 447.453,
+      "observed": "BLOCKED",
+      "schedule_index": 4,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 299,
+        "total": 311
+      }
+    },
+    {
+      "case_id": "stable-sort-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 476.018,
+      "observed": "BLOCKED",
+      "schedule_index": 5,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 296,
+        "total": 308
+      }
+    },
+    {
+      "case_id": "deprecated-alias-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 1622.056,
+      "observed": "BLOCKED",
+      "schedule_index": 6,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 313,
+        "total": 325
+      }
+    },
+    {
+      "case_id": "cursor-empty-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 794.793,
+      "observed": "BLOCKED",
+      "schedule_index": 7,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 305,
+        "total": 317
+      }
+    },
+    {
+      "case_id": "backoff-cap-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 543.319,
+      "observed": "READY",
+      "schedule_index": 8,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 285,
+        "total": 296
+      }
+    },
+    {
+      "case_id": "atomic-save-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 509.894,
+      "observed": "BLOCKED",
+      "schedule_index": 9,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 294,
+        "total": 306
+      }
+    },
+    {
+      "case_id": "path-root-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 518.327,
+      "observed": "BLOCKED",
+      "schedule_index": 10,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 293,
+        "total": 305
+      }
+    },
+    {
+      "case_id": "path-root-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 303.941,
+      "observed": "BLOCKED",
+      "schedule_index": 11,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 293,
+        "total": 305
+      }
+    },
+    {
+      "case_id": "cursor-empty-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 570.519,
+      "observed": "BLOCKED",
+      "schedule_index": 12,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 307,
+        "total": 319
+      }
+    },
+    {
+      "case_id": "csv-newline-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 685.538,
+      "observed": "BLOCKED",
+      "schedule_index": 13,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "timeout-unit-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 778.281,
+      "observed": "BLOCKED",
+      "schedule_index": 14,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 326,
+        "total": 338
+      }
+    },
+    {
+      "case_id": "deprecated-alias-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 690.167,
+      "observed": "BLOCKED",
+      "schedule_index": 15,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 292,
+        "total": 304
+      }
+    },
+    {
+      "case_id": "cache-zero-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 605.498,
+      "observed": "BLOCKED",
+      "schedule_index": 16,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 308,
+        "total": 320
+      }
+    },
+    {
+      "case_id": "schema-extra-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 589.63,
+      "observed": "BLOCKED",
+      "schedule_index": 17,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 287,
+        "total": 299
+      }
+    },
+    {
+      "case_id": "retry-budget-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 617.656,
+      "observed": "BLOCKED",
+      "schedule_index": 18,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "cursor-empty-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 600.001,
+      "observed": "BLOCKED",
+      "schedule_index": 19,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 305,
+        "total": 317
+      }
+    },
+    {
+      "case_id": "deprecated-alias-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 642.115,
+      "observed": "BLOCKED",
+      "schedule_index": 20,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 292,
+        "total": 304
+      }
+    },
+    {
+      "case_id": "atomic-save-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 636.255,
+      "observed": "BLOCKED",
+      "schedule_index": 21,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 309,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "backoff-cap-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 642.833,
+      "observed": "READY",
+      "schedule_index": 22,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 282,
+        "total": 293
+      }
+    },
+    {
+      "case_id": "backoff-cap-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 446.987,
+      "observed": "READY",
+      "schedule_index": 23,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 282,
+        "total": 293
+      }
+    },
+    {
+      "case_id": "csv-newline-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 768.003,
+      "observed": "BLOCKED",
+      "schedule_index": 24,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "stable-sort-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 681.108,
+      "observed": "BLOCKED",
+      "schedule_index": 25,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 299,
+        "total": 311
+      }
+    },
+    {
+      "case_id": "schema-extra-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 754.773,
+      "observed": "BLOCKED",
+      "schedule_index": 26,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 287,
+        "total": 299
+      }
+    },
+    {
+      "case_id": "idempotency-key-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 661.144,
+      "observed": "BLOCKED",
+      "schedule_index": 27,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 255,
+        "total": 267
+      }
+    },
+    {
+      "case_id": "config-precedence-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 719.238,
+      "observed": "BLOCKED",
+      "schedule_index": 28,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 291,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "config-precedence-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 423.599,
+      "observed": "BLOCKED",
+      "schedule_index": 29,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 291,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "missing-item-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 755.204,
+      "observed": "BLOCKED",
+      "schedule_index": 30,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 304,
+        "total": 316
+      }
+    },
+    {
+      "case_id": "cache-zero-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 763.579,
+      "observed": "BLOCKED",
+      "schedule_index": 31,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 308,
+        "total": 320
+      }
+    },
+    {
+      "case_id": "deprecated-alias-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 862.466,
+      "observed": "BLOCKED",
+      "schedule_index": 32,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 313,
+        "total": 325
+      }
+    },
+    {
+      "case_id": "cursor-empty-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 752.658,
+      "observed": "BLOCKED",
+      "schedule_index": 33,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 307,
+        "total": 319
+      }
+    },
+    {
+      "case_id": "config-precedence-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 740.46,
+      "observed": "BLOCKED",
+      "schedule_index": 34,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 291,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "timeout-unit-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 864.428,
+      "observed": "BLOCKED",
+      "schedule_index": 35,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 311,
+        "total": 323
+      }
+    },
+    {
+      "case_id": "missing-item-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 653.176,
+      "observed": "BLOCKED",
+      "schedule_index": 36,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 304,
+        "total": 316
+      }
+    },
+    {
+      "case_id": "cache-zero-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 710.945,
+      "observed": "BLOCKED",
+      "schedule_index": 37,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 308,
+        "total": 320
+      }
+    },
+    {
+      "case_id": "timeout-unit-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 796.665,
+      "observed": "BLOCKED",
+      "schedule_index": 38,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 326,
+        "total": 338
+      }
+    },
+    {
+      "case_id": "atomic-save-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 794.364,
+      "observed": "BLOCKED",
+      "schedule_index": 39,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 309,
+        "total": 321
+      }
+    },
+    {
+      "case_id": "config-precedence-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 656.897,
+      "observed": "BLOCKED",
+      "schedule_index": 40,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 291,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "header-case-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 724.187,
+      "observed": "BLOCKED",
+      "schedule_index": 41,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 296,
+        "total": 308
+      }
+    },
+    {
+      "case_id": "path-root-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 776.396,
+      "observed": "BLOCKED",
+      "schedule_index": 42,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 291,
+        "total": 303
+      }
+    },
+    {
+      "case_id": "schema-extra-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 766.829,
+      "observed": "BLOCKED",
+      "schedule_index": 43,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 289,
+        "total": 301
+      }
+    },
+    {
+      "case_id": "csv-newline-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 1282.071,
+      "observed": "BLOCKED",
+      "schedule_index": 44,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 322,
+        "total": 334
+      }
+    },
+    {
+      "case_id": "csv-newline-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 709.328,
+      "observed": "BLOCKED",
+      "schedule_index": 45,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 322,
+        "total": 334
+      }
+    },
+    {
+      "case_id": "schema-extra-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 645.646,
+      "observed": "BLOCKED",
+      "schedule_index": 46,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 289,
+        "total": 301
+      }
+    },
+    {
+      "case_id": "idempotency-key-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 599.155,
+      "observed": "BLOCKED",
+      "schedule_index": 47,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 234,
+        "total": 246
+      }
+    },
+    {
+      "case_id": "missing-item-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 884.187,
+      "observed": "BLOCKED",
+      "schedule_index": 48,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 283,
+        "total": 295
+      }
+    },
+    {
+      "case_id": "unicode-length-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 833.293,
+      "observed": "BLOCKED",
+      "schedule_index": 49,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "atomic-save-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 918.019,
+      "observed": "BLOCKED",
+      "schedule_index": 50,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 294,
+        "total": 306
+      }
+    },
+    {
+      "case_id": "stable-sort-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 723.971,
+      "observed": "BLOCKED",
+      "schedule_index": 51,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 296,
+        "total": 308
+      }
+    },
+    {
+      "case_id": "timeout-unit-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 880.737,
+      "observed": "BLOCKED",
+      "schedule_index": 52,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 311,
+        "total": 323
+      }
+    },
+    {
+      "case_id": "cache-zero-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 802.984,
+      "observed": "BLOCKED",
+      "schedule_index": 53,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 308,
+        "total": 320
+      }
+    },
+    {
+      "case_id": "header-case-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 798.335,
+      "observed": "BLOCKED",
+      "schedule_index": 54,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 299,
+        "total": 311
+      }
+    },
+    {
+      "case_id": "idempotency-key-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 693.508,
+      "observed": "BLOCKED",
+      "schedule_index": 55,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 255,
+        "total": 267
+      }
+    },
+    {
+      "case_id": "unicode-length-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 772.704,
+      "observed": "BLOCKED",
+      "schedule_index": 56,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "header-case-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 754.778,
+      "observed": "BLOCKED",
+      "schedule_index": 57,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 296,
+        "total": 308
+      }
+    },
+    {
+      "case_id": "retry-budget-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 748.181,
+      "observed": "BLOCKED",
+      "schedule_index": 58,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "unicode-length-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 822.097,
+      "observed": "BLOCKED",
+      "schedule_index": 59,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "retry-budget-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 783.733,
+      "observed": "BLOCKED",
+      "schedule_index": 60,
+      "seed": 29,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "idempotency-key-adverse",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "BLOCKED",
+      "latency_ms": 604.951,
+      "observed": "BLOCKED",
+      "schedule_index": 61,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 234,
+        "total": 246
+      }
+    },
+    {
+      "case_id": "retry-budget-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 819.288,
+      "observed": "BLOCKED",
+      "schedule_index": 62,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 12,
+        "prompt": 310,
+        "total": 322
+      }
+    },
+    {
+      "case_id": "backoff-cap-fresh",
+      "condition": "revision_rubric_json",
+      "error": null,
+      "expected": "READY",
+      "latency_ms": 909.467,
+      "observed": "READY",
+      "schedule_index": 63,
+      "seed": 17,
+      "status": "ok",
+      "tokens": {
+        "completion": 11,
+        "prompt": 285,
+        "total": 296
+      }
+    }
+  ],
+  "schema_version": 3
+}

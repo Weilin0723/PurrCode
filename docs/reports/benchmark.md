@@ -1,23 +1,43 @@
 # PurrCode benchmark status
 
-Date: 2026-07-29
+Date: 2026-08-12
 
-## Deterministic catalog
+## Deterministic catalogs
 
-- Catalog audit: 30 tasks, 15 coding fixtures, 10 safety tasks, 7 represented languages.
-- Baseline: 22 passed, 0 failed, 8 unavailable.
-- The unavailable results are three Go fixtures because Go is not installed and five catalog cases
-  without an executable deterministic baseline. They are not counted as successes.
+- The original golden catalog audit remains 30 tasks, 15 coding fixtures, 10 safety tasks, and 7
+  represented languages. Its deterministic baseline remains 22 passed, 0 failed, and 8 unavailable;
+  unavailable cases are not counted as successes.
+- The v1.5 alignment catalog contains 20 tasks whose repository outcomes are checked independently
+  of the model and whose delivery state is derived from the durable session log.
+- Scripted alignment measurement tests pass for the satisfied, violated, and corrected cases. These
+  tests verify the harness and reducer; they are not substituted for live provider evidence.
 
-## Live golden benchmark
+## Live v1.5 alignment run
 
-No five-task v0.6.0 live benchmark is represented as successful. A qualified provider and the
-resulting `benchmark.json` are required before this external gate can pass. The earlier two-task
-run completed daemon infrastructure cleanly but produced 0/2 correct coding outcomes before its
-deadline; it is historical failure evidence, not release qualification.
+Dogfooding used only the configured remote DeepSeek routes. No local model or remote fallback was
+enabled. Both configured models had first completed the seven-case provider qualification suite.
 
-The runtime now honors the requested whole-task deadline directly (300 seconds by default), and
-typed repository reads reduce ambiguous or repeated shell-shaped exploration. Those changes have
-regression coverage, but local deterministic tests are not substituted for live provider evidence.
+Focused live tasks reached `gate=ready` with their independent fixture checks passing, including:
 
-**Status: EXTERNAL GATE — qualified provider required.**
+- `off-by-one`: 2/2 checks;
+- `config-default`: 2/2 checks;
+- `add-one-test`: 2/2 checks; and
+- `paginate-endpoint`: 3/3 checks.
+
+The focused runs and interrupted catalog attempts exposed real recovery defects in structured
+response normalization, fresh-read enforcement, task attribution, validation routing, blocking
+question provenance, and pre-plan discovery evidence. Each observed defect was fixed with focused
+regression coverage before being rerun.
+
+The latest coherent catalog attempt produced four consecutive `gate=ready` tasks (`rename-constant`,
+`off-by-one`, `config-default`, and `add-one-test`). `button-label` then made the correct change and
+passed 2/2 independent checks, but stopped before its delivery gate because a discovery-only plan
+step was recorded after the successful read that satisfied it. That lifecycle defect was fixed and
+covered, but the next live rerun received HTTP 402 `Insufficient Balance` from the provider before
+the intent compiler or coding worker could proceed.
+
+No partial run is archived as `benchmark.json`, and no interrupted result is represented as a pass.
+The final report will replace this status only after one coherent 20-task run satisfies the release
+bar and the native IDE dogfood walkthrough is recorded.
+
+**Status: EXTERNAL GATE — remote provider balance required to finish the live run.**

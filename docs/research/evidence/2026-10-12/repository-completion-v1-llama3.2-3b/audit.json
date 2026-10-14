@@ -1,0 +1,7 @@
+{
+  "audit_kind": "repository_completion_probe_integrity",
+  "errors": [],
+  "schedule_complete": true,
+  "schema_version": 1,
+  "valid": true
+}

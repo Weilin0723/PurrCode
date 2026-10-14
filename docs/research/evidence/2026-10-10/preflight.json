@@ -1,0 +1,202 @@
+{
+  "started_utc": "20261010T151754Z",
+  "git_head": "5d7ed0d0b3c752a6f7d84caf15ead5fe9d201c25",
+  "working_tree_status": " M Cargo.lock\n M Cargo.toml\n M README.md\n M README.zh-CN.md\n M benchmarks/alignment-fixture/AGENTS.md\n M crates/agent-runtime/src/agent.rs\n M crates/agent-runtime/src/agent_tests.rs\n M crates/agent-runtime/src/alignment.rs\n M crates/agent-runtime/src/context.rs\n M crates/agent-runtime/src/normalize.rs\n M crates/agent-runtime/src/schema.rs\n M crates/alignment-runtime/src/fresh.rs\n M crates/alignment-runtime/src/intent.rs\n M crates/claw-sandbox/src/lib.rs\n M crates/evaluation-runtime/src/bin/alignment_benchmark.rs\n M crates/evaluation-runtime/tests/alignment_measurement.rs\n M crates/provider-gateway/src/lib.rs\n M crates/purrcode-tui-e2e/tests/evidence.rs\n M crates/validation-runtime/src/lib.rs\n M docs/implementation-status.md\n M docs/installation.md\n M docs/reports/benchmark.md\n M docs/reports/provider-qualification.md\n M packages/purrcode/README.md\n M packages/purrcode/package.json\n M scripts/install.sh\n?? benchmarks/alignment-fixture/.gitignore\n",
+  "memory_bytes": 8589934592,
+  "binary_sha256": "94b32ec69516748f2d81f6ccac570f03ee16180b84e80769cf0afad7c48fd4f4",
+  "purpose": "local provider feasibility only; not coding effectiveness evidence",
+  "ollama_models": {
+    "models": [
+      {
+        "name": "mistral:7b",
+        "model": "mistral:7b",
+        "modified_at": "2026-07-25T18:26:50.415470052-04:00",
+        "size": 4372824384,
+        "digest": "6577803aa9a036369e481d648a2baebb381ebc6e897f2bb9a766a2aa7bfbc1cf",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "llama",
+          "families": [
+            "llama"
+          ],
+          "parameter_size": "7.2B",
+          "quantization_level": "Q4_K_M"
+        }
+      },
+      {
+        "name": "qwen2.5-coder:7b",
+        "model": "qwen2.5-coder:7b",
+        "modified_at": "2026-07-25T12:18:30.360853998-04:00",
+        "size": 4683087561,
+        "digest": "dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "qwen2",
+          "families": [
+            "qwen2"
+          ],
+          "parameter_size": "7.6B",
+          "quantization_level": "Q4_K_M"
+        }
+      },
+      {
+        "name": "llama3.1:8b",
+        "model": "llama3.1:8b",
+        "modified_at": "2026-07-25T12:14:15.91420839-04:00",
+        "size": 4920753328,
+        "digest": "46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "llama",
+          "families": [
+            "llama"
+          ],
+          "parameter_size": "8.0B",
+          "quantization_level": "Q4_K_M"
+        }
+      },
+      {
+        "name": "qwen2.5:7b",
+        "model": "qwen2.5:7b",
+        "modified_at": "2026-07-25T11:54:37.763702715-04:00",
+        "size": 4683087332,
+        "digest": "845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "qwen2",
+          "families": [
+            "qwen2"
+          ],
+          "parameter_size": "7.6B",
+          "quantization_level": "Q4_K_M"
+        }
+      },
+      {
+        "name": "llama3.2:3b",
+        "model": "llama3.2:3b",
+        "modified_at": "2026-07-25T11:51:48.24022714-04:00",
+        "size": 2019393189,
+        "digest": "a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "llama",
+          "families": [
+            "llama"
+          ],
+          "parameter_size": "3.2B",
+          "quantization_level": "Q4_K_M"
+        }
+      },
+      {
+        "name": "llama3.2:1b",
+        "model": "llama3.2:1b",
+        "modified_at": "2026-07-25T11:42:06.718631175-04:00",
+        "size": 1321098329,
+        "digest": "baf6a787fdffd633537aa2eb51cfd54cb93ff08e28040095462bb63daf552878",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "llama",
+          "families": [
+            "llama"
+          ],
+          "parameter_size": "1.2B",
+          "quantization_level": "Q8_0"
+        }
+      }
+    ]
+  },
+  "schema_version": 1,
+  "runs": [
+    {
+      "model": "qwen2.5-coder:7b",
+      "status": "interrupted",
+      "qualification_report_available": false,
+      "reason": "host became severely slow during local preflight; aborted for resource control, no model-quality verdict"
+    },
+    {
+      "model": "qwen2.5:7b",
+      "status": "not_run",
+      "qualification_report_available": false
+    },
+    {
+      "model": "llama3.2:3b",
+      "status": "timeout",
+      "exit_code": null,
+      "elapsed_seconds": 180.98,
+      "deadline_seconds": 180,
+      "stdout": "llama3.2-3b.stdout.json",
+      "stderr": "llama3.2-3b.stderr.txt"
+    }
+  ],
+  "checks": [
+    {
+      "argv": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "seconds": 4.57,
+      "log": "target/research/checks-20261010/0.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "exit_code": null,
+      "status": "interrupted_after_600_seconds",
+      "reason": "test binary did not reach test output; startup stall, root cause undetermined",
+      "log": "target/research/checks-20261010/1.log"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "-p",
+        "purrcode-evaluation-runtime",
+        "--features",
+        "benchmark"
+      ],
+      "exit_code": null,
+      "status": "interrupted_during_build",
+      "reason": "rustc remained waiting during preflight; no test verdict"
+    },
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "scripts/test_research_metrics.py"
+      ],
+      "exit_code": 0,
+      "tests": 6
+    }
+  ],
+  "tracked_files_changed_since_preflight": [],
+  "evidence_limits": [
+    "No completed model qualification or coding run in this preflight.",
+    "Process startup/build stalls observed; root cause not established.",
+    "Uncommitted source hashes recorded locally, but no reconstructable dirty-source snapshot archived; not a publication replication package.",
+    "No changes to trusted runtime or existing release qualification reports."
+  ]
+}

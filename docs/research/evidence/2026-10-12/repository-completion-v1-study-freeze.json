@@ -1,0 +1,3121 @@
+{
+  "base_url": "http://127.0.0.1:11434",
+  "candidate_records_sha256": "f9fcbd10e5fb1db7506ff67f13575b5df095c46a84186f0fa2be442a54fa1392",
+  "candidate_snapshots": 36,
+  "conditions": [
+    "revision_rubric_json",
+    "plain_json"
+  ],
+  "created_before_model_calls": true,
+  "dataset": "benchmarks/research/small-model-pilot/dataset.json",
+  "dataset_sha256": "7fb370c3f7ab675a66e9999f0c0703ec699d885560539b19c599b14c931a8eb8",
+  "dependency_hashes": {
+    "benchmarks/research/small-model-pilot/dataset.json": "7fb370c3f7ab675a66e9999f0c0703ec699d885560539b19c599b14c931a8eb8",
+    "benchmarks/research/small-model-pilot/oracles/century_leap_year.rs": "b1f9acf0aff51fedae129d952f77b386965e140f4285be423114848805f0281c",
+    "benchmarks/research/small-model-pilot/oracles/http_client_retry_parity.rs": "03a6c370cb976beefdbe7066496bd0dc204b1342b80380feadefe5b35ba5e336",
+    "benchmarks/research/small-model-pilot/oracles/pagination.rs": "5462081f50109bf51c1857c36c054f307986fa947f3b1cf8dfb1c3df53cd90c4",
+    "benchmarks/research/small-model-pilot/oracles/retry_exponential_delay.rs": "1656cd12c65c1a7c69411c966e05cc613a36fa307ef774a5c62418b665c5a138",
+    "benchmarks/research/small-model-pilot/oracles/run_rust_oracle.py": "5eafd48bf8e80762d04aac49af942409eb74e49b9521f4e7baae35d9db637818",
+    "benchmarks/research/small-model-pilot/oracles/scheduler_reporter_ids.rs": "25dddd7a7f08e6a0c511230c3ed91029afac68602827bc7c887db28920ee723d",
+    "benchmarks/research/small-model-pilot/oracles/settings_label_preservation.rs": "ef429e9ad1a7509cd7268ad94dc223b4f1e287f37ea3acd8ff2fca8defdd9aea",
+    "docs/research/repository-completion-v1-plan.md": "56ea0f313cf449116f439e0514761d145d384c2353dc3011576ccbffa549483d",
+    "scripts/local_review_probe.py": "20267619cdb7ea71fdd5e2356b726087bd6229282cb1efc8ac15dd7f8239d752",
+    "scripts/repository_completion_probe.py": "c8cd72402c5b667058a91988368222c99110b20930ec15c5b08999227f0f3a16",
+    "scripts/small_model_pilot_preflight.py": "445020708cad841d8deb7100429e25fac4d8988b105edadc9585a44d13981d7f"
+  },
+  "fixture": "benchmarks/alignment-fixture",
+  "fixture_files": {
+    "Cargo.toml": "2b7684196b39400571b8afb11be27dc838aa06f270858f1b00032ff89dc5d0b3",
+    "migrations/0001_initial.sql": "232dad914e89cb6570b8cf2f30a8dc2bed2f80309a76f912474271041c607d47",
+    "src/accounts.rs": "b5967379b91652569dc3fbfbeb13e34e43e68cf0223c33a828e9f0acaf5677c8",
+    "src/config.rs": "3778c74472ef5369c571d68fdd5a338e896fcfddd89350a31ffb7078e8d2b77f",
+    "src/dates.rs": "41011ff6004d6aa7f64406a58bb4aee4786ceb5275057b1569ac8dfe2bf0052a",
+    "src/health.rs": "d8033f3f07948d92cb606369d904be25e2f26fa7ae3620d2b812f5eaf8cab48b",
+    "src/http.rs": "84977ffd5f5826858e9ab0023cdca5b9240be2a4ccf69787fd600c8e41749ddb",
+    "src/items.rs": "c39bc16d402dd221c13cb15b053211c4d78c3e60c71d9f66741b77565a41fb30",
+    "src/lib.rs": "e51831d0de8022f86c984ce4d57b6bfab1659ae121c5a1c68929a429e750e766",
+    "src/pagination.rs": "84ee6a73be3d1fbe1f88d1d2c00f3c50e6dff9f670cc940410d10197756a31d2",
+    "src/parser.rs": "661b30f792daa425207766b5df0160dddf48670b3a896248824744cc2050306f",
+    "src/reporter.rs": "6b72c27b61712ee1a537bed0873176be53128aee9544892967f30d5c23312f71",
+    "src/retry.rs": "8f3dd7cab75523240878a4a0d4066618a034bd3e17a637aa4ba4a52aca5645be",
+    "src/scheduler.rs": "d322121a3f8a404ba7ef7da5cfb5dcf151e7343e63afc6645f4764013f4b58e9",
+    "src/ui/mod.rs": "46ee5f0d4e6306351586dcc52255a4ef89c7f1ad77dbdd6f0515f9c82bb4faf8",
+    "src/ui/settings.rs": "508059ffd71256b8b7ab8687f7fb27831a9933b77ffca82d0c40dc7b16f9a9e1",
+    "tests/timeout.rs": "5354e9071d24e7d7d08519c8702442fe4cb514905116e412e463e11d63987352"
+  },
+  "fixture_tree_sha256": "54e4981cb6df978b14d03c1891028d3b7592af45782ccd0cd40502576cb3de4a",
+  "freeze_kind": "repository-completion-study-freeze",
+  "local_only": true,
+  "preregistration_plan": "docs/research/repository-completion-v1-plan.md",
+  "preregistration_plan_sha256": "56ea0f313cf449116f439e0514761d145d384c2353dc3011576ccbffa549483d",
+  "primary_condition": "revision_rubric_json",
+  "providers": {
+    "llama3.2:1b": {
+      "analysis_role": "secondary",
+      "model_digest": "baf6a787fdffd633537aa2eb51cfd54cb93ff08e28040095462bb63daf552878",
+      "model_info": {
+        "family": "llama",
+        "format": "gguf",
+        "model_info": {
+          "general.architecture": "llama",
+          "general.basename": "Llama-3.2",
+          "general.file_type": 7,
+          "general.finetune": "Instruct",
+          "general.languages": [
+            "en",
+            "de",
+            "fr",
+            "it",
+            "pt",
+            "hi",
+            "es",
+            "th"
+          ],
+          "general.parameter_count": 1235814432,
+          "general.quantization_version": 2,
+          "general.size_label": "1B",
+          "general.tags": [
+            "facebook",
+            "meta",
+            "pytorch",
+            "llama",
+            "llama-3",
+            "text-generation"
+          ],
+          "general.type": "model",
+          "llama.attention.head_count": 32,
+          "llama.attention.head_count_kv": 8,
+          "llama.attention.key_length": 64,
+          "llama.attention.layer_norm_rms_epsilon": 1e-05,
+          "llama.attention.value_length": 64,
+          "llama.block_count": 16,
+          "llama.context_length": 131072,
+          "llama.embedding_length": 2048,
+          "llama.feed_forward_length": 8192,
+          "llama.rope.dimension_count": 64,
+          "llama.rope.freq_base": 500000,
+          "llama.vocab_size": 128256,
+          "tokenizer.ggml.bos_token_id": 128000,
+          "tokenizer.ggml.eos_token_id": 128009,
+          "tokenizer.ggml.merges": null,
+          "tokenizer.ggml.model": "gpt2",
+          "tokenizer.ggml.pre": "llama-bpe",
+          "tokenizer.ggml.token_type": null,
+          "tokenizer.ggml.tokens": null
+        },
+        "modified_at": "2026-07-25T11:42:06.718631175-04:00",
+        "parameter_size": "1.2B",
+        "quantization_level": "Q8_0"
+      },
+      "server_version": "0.4.2"
+    },
+    "llama3.2:3b": {
+      "analysis_role": "primary",
+      "model_digest": "a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72",
+      "model_info": {
+        "family": "llama",
+        "format": "gguf",
+        "model_info": {
+          "general.architecture": "llama",
+          "general.basename": "Llama-3.2",
+          "general.file_type": 15,
+          "general.finetune": "Instruct",
+          "general.languages": [
+            "en",
+            "de",
+            "fr",
+            "it",
+            "pt",
+            "hi",
+            "es",
+            "th"
+          ],
+          "general.parameter_count": 3212749888,
+          "general.quantization_version": 2,
+          "general.size_label": "3B",
+          "general.tags": [
+            "facebook",
+            "meta",
+            "pytorch",
+            "llama",
+            "llama-3",
+            "text-generation"
+          ],
+          "general.type": "model",
+          "llama.attention.head_count": 24,
+          "llama.attention.head_count_kv": 8,
+          "llama.attention.key_length": 128,
+          "llama.attention.layer_norm_rms_epsilon": 1e-05,
+          "llama.attention.value_length": 128,
+          "llama.block_count": 28,
+          "llama.context_length": 131072,
+          "llama.embedding_length": 3072,
+          "llama.feed_forward_length": 8192,
+          "llama.rope.dimension_count": 128,
+          "llama.rope.freq_base": 500000,
+          "llama.vocab_size": 128256,
+          "tokenizer.ggml.bos_token_id": 128000,
+          "tokenizer.ggml.eos_token_id": 128009,
+          "tokenizer.ggml.merges": null,
+          "tokenizer.ggml.model": "gpt2",
+          "tokenizer.ggml.pre": "llama-bpe",
+          "tokenizer.ggml.token_type": null,
+          "tokenizer.ggml.tokens": null
+        },
+        "modified_at": "2026-07-25T11:51:48.24022714-04:00",
+        "parameter_size": "3.2B",
+        "quantization_level": "Q4_K_M"
+      },
+      "server_version": "0.4.2"
+    }
+  },
+  "request_parameters": {
+    "format": "json",
+    "keep_alive": "2m",
+    "num_ctx": 4096,
+    "num_predict": 32,
+    "stop": [
+      "\n\n"
+    ],
+    "temperature": 0.0,
+    "timeout_seconds": 30.0,
+    "top_p": 1.0
+  },
+  "schedule": [
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 0,
+      "seed": 17,
+      "study_schedule_index": 0,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 1,
+      "seed": 29,
+      "study_schedule_index": 1,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 2,
+      "seed": 17,
+      "study_schedule_index": 2,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 3,
+      "seed": 29,
+      "study_schedule_index": 3,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 4,
+      "seed": 17,
+      "study_schedule_index": 4,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 5,
+      "seed": 29,
+      "study_schedule_index": 5,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 6,
+      "seed": 17,
+      "study_schedule_index": 6,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 7,
+      "seed": 29,
+      "study_schedule_index": 7,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 8,
+      "seed": 17,
+      "study_schedule_index": 8,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 9,
+      "seed": 29,
+      "study_schedule_index": 9,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 10,
+      "seed": 17,
+      "study_schedule_index": 10,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 11,
+      "seed": 29,
+      "study_schedule_index": 11,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 12,
+      "seed": 17,
+      "study_schedule_index": 12,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 13,
+      "seed": 29,
+      "study_schedule_index": 13,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 14,
+      "seed": 17,
+      "study_schedule_index": 14,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 15,
+      "seed": 29,
+      "study_schedule_index": 15,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 16,
+      "seed": 17,
+      "study_schedule_index": 16,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 17,
+      "seed": 29,
+      "study_schedule_index": 17,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 18,
+      "seed": 17,
+      "study_schedule_index": 18,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 19,
+      "seed": 29,
+      "study_schedule_index": 19,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 20,
+      "seed": 17,
+      "study_schedule_index": 20,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 21,
+      "seed": 29,
+      "study_schedule_index": 21,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 22,
+      "seed": 17,
+      "study_schedule_index": 22,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 23,
+      "seed": 29,
+      "study_schedule_index": 23,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 24,
+      "seed": 17,
+      "study_schedule_index": 24,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 25,
+      "seed": 29,
+      "study_schedule_index": 25,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 26,
+      "seed": 17,
+      "study_schedule_index": 26,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 27,
+      "seed": 29,
+      "study_schedule_index": 27,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 28,
+      "seed": 17,
+      "study_schedule_index": 28,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 29,
+      "seed": 29,
+      "study_schedule_index": 29,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 30,
+      "seed": 17,
+      "study_schedule_index": 30,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 31,
+      "seed": 29,
+      "study_schedule_index": 31,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 32,
+      "seed": 17,
+      "study_schedule_index": 32,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 33,
+      "seed": 29,
+      "study_schedule_index": 33,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 34,
+      "seed": 17,
+      "study_schedule_index": 34,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 35,
+      "seed": 29,
+      "study_schedule_index": 35,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 36,
+      "seed": 17,
+      "study_schedule_index": 36,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 37,
+      "seed": 29,
+      "study_schedule_index": 37,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 38,
+      "seed": 17,
+      "study_schedule_index": 38,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 39,
+      "seed": 29,
+      "study_schedule_index": 39,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 40,
+      "seed": 17,
+      "study_schedule_index": 40,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 41,
+      "seed": 29,
+      "study_schedule_index": 41,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 42,
+      "seed": 17,
+      "study_schedule_index": 42,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 43,
+      "seed": 29,
+      "study_schedule_index": 43,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 44,
+      "seed": 17,
+      "study_schedule_index": 44,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 45,
+      "seed": 29,
+      "study_schedule_index": 45,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 46,
+      "seed": 17,
+      "study_schedule_index": 46,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 47,
+      "seed": 29,
+      "study_schedule_index": 47,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 48,
+      "seed": 17,
+      "study_schedule_index": 48,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 49,
+      "seed": 29,
+      "study_schedule_index": 49,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 50,
+      "seed": 17,
+      "study_schedule_index": 50,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 51,
+      "seed": 29,
+      "study_schedule_index": 51,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 52,
+      "seed": 17,
+      "study_schedule_index": 52,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 53,
+      "seed": 29,
+      "study_schedule_index": 53,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 54,
+      "seed": 17,
+      "study_schedule_index": 54,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 55,
+      "seed": 29,
+      "study_schedule_index": 55,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 56,
+      "seed": 17,
+      "study_schedule_index": 56,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 57,
+      "seed": 29,
+      "study_schedule_index": 57,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 58,
+      "seed": 17,
+      "study_schedule_index": 58,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 59,
+      "seed": 29,
+      "study_schedule_index": 59,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 60,
+      "seed": 17,
+      "study_schedule_index": 60,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 61,
+      "seed": 29,
+      "study_schedule_index": 61,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 62,
+      "seed": 17,
+      "study_schedule_index": 62,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 63,
+      "seed": 29,
+      "study_schedule_index": 63,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 64,
+      "seed": 17,
+      "study_schedule_index": 64,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 65,
+      "seed": 29,
+      "study_schedule_index": 65,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 66,
+      "seed": 17,
+      "study_schedule_index": 66,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 67,
+      "seed": 29,
+      "study_schedule_index": 67,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 68,
+      "seed": 17,
+      "study_schedule_index": 68,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 69,
+      "seed": 29,
+      "study_schedule_index": 69,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 70,
+      "seed": 17,
+      "study_schedule_index": 70,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 71,
+      "seed": 29,
+      "study_schedule_index": 71,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 72,
+      "seed": 17,
+      "study_schedule_index": 72,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 73,
+      "seed": 29,
+      "study_schedule_index": 73,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 74,
+      "seed": 17,
+      "study_schedule_index": 74,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 75,
+      "seed": 29,
+      "study_schedule_index": 75,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 76,
+      "seed": 17,
+      "study_schedule_index": 76,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 77,
+      "seed": 29,
+      "study_schedule_index": 77,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 78,
+      "seed": 17,
+      "study_schedule_index": 78,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 79,
+      "seed": 29,
+      "study_schedule_index": 79,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 80,
+      "seed": 17,
+      "study_schedule_index": 80,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 81,
+      "seed": 29,
+      "study_schedule_index": 81,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 82,
+      "seed": 17,
+      "study_schedule_index": 82,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 83,
+      "seed": 29,
+      "study_schedule_index": 83,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 84,
+      "seed": 17,
+      "study_schedule_index": 84,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 85,
+      "seed": 29,
+      "study_schedule_index": 85,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 86,
+      "seed": 17,
+      "study_schedule_index": 86,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 87,
+      "seed": 29,
+      "study_schedule_index": 87,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 88,
+      "seed": 17,
+      "study_schedule_index": 88,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 89,
+      "seed": 29,
+      "study_schedule_index": 89,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 90,
+      "seed": 17,
+      "study_schedule_index": 90,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 91,
+      "seed": 29,
+      "study_schedule_index": 91,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 92,
+      "seed": 17,
+      "study_schedule_index": 92,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 93,
+      "seed": 29,
+      "study_schedule_index": 93,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 94,
+      "seed": 17,
+      "study_schedule_index": 94,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 95,
+      "seed": 29,
+      "study_schedule_index": 95,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 96,
+      "seed": 17,
+      "study_schedule_index": 96,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 97,
+      "seed": 29,
+      "study_schedule_index": 97,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 98,
+      "seed": 17,
+      "study_schedule_index": 98,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 99,
+      "seed": 29,
+      "study_schedule_index": 99,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 100,
+      "seed": 17,
+      "study_schedule_index": 100,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 101,
+      "seed": 29,
+      "study_schedule_index": 101,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 102,
+      "seed": 17,
+      "study_schedule_index": 102,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 103,
+      "seed": 29,
+      "study_schedule_index": 103,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 104,
+      "seed": 17,
+      "study_schedule_index": 104,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 105,
+      "seed": 29,
+      "study_schedule_index": 105,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 106,
+      "seed": 17,
+      "study_schedule_index": 106,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 107,
+      "seed": 29,
+      "study_schedule_index": 107,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 108,
+      "seed": 17,
+      "study_schedule_index": 108,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 109,
+      "seed": 29,
+      "study_schedule_index": 109,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 110,
+      "seed": 17,
+      "study_schedule_index": 110,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 111,
+      "seed": 29,
+      "study_schedule_index": 111,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 112,
+      "seed": 17,
+      "study_schedule_index": 112,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 113,
+      "seed": 29,
+      "study_schedule_index": 113,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 114,
+      "seed": 17,
+      "study_schedule_index": 114,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 115,
+      "seed": 29,
+      "study_schedule_index": 115,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 116,
+      "seed": 17,
+      "study_schedule_index": 116,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 117,
+      "seed": 29,
+      "study_schedule_index": 117,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 118,
+      "seed": 17,
+      "study_schedule_index": 118,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 119,
+      "seed": 29,
+      "study_schedule_index": 119,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 120,
+      "seed": 17,
+      "study_schedule_index": 120,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 121,
+      "seed": 29,
+      "study_schedule_index": 121,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 122,
+      "seed": 17,
+      "study_schedule_index": 122,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 123,
+      "seed": 29,
+      "study_schedule_index": 123,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 124,
+      "seed": 17,
+      "study_schedule_index": 124,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 125,
+      "seed": 29,
+      "study_schedule_index": 125,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 126,
+      "seed": 17,
+      "study_schedule_index": 126,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 127,
+      "seed": 29,
+      "study_schedule_index": 127,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 128,
+      "seed": 17,
+      "study_schedule_index": 128,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 129,
+      "seed": 29,
+      "study_schedule_index": 129,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 130,
+      "seed": 17,
+      "study_schedule_index": 130,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 131,
+      "seed": 29,
+      "study_schedule_index": 131,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 132,
+      "seed": 17,
+      "study_schedule_index": 132,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 133,
+      "seed": 29,
+      "study_schedule_index": 133,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 134,
+      "seed": 17,
+      "study_schedule_index": 134,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 135,
+      "seed": 29,
+      "study_schedule_index": 135,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 136,
+      "seed": 17,
+      "study_schedule_index": 136,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 137,
+      "seed": 29,
+      "study_schedule_index": 137,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 138,
+      "seed": 17,
+      "study_schedule_index": 138,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 139,
+      "seed": 29,
+      "study_schedule_index": 139,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 140,
+      "seed": 17,
+      "study_schedule_index": 140,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 141,
+      "seed": 29,
+      "study_schedule_index": 141,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 142,
+      "seed": 17,
+      "study_schedule_index": 142,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "primary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:3b",
+      "run_schedule_index": 143,
+      "seed": 29,
+      "study_schedule_index": 143,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 0,
+      "seed": 17,
+      "study_schedule_index": 144,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 1,
+      "seed": 29,
+      "study_schedule_index": 145,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 2,
+      "seed": 17,
+      "study_schedule_index": 146,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 3,
+      "seed": 29,
+      "study_schedule_index": 147,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 4,
+      "seed": 17,
+      "study_schedule_index": 148,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 5,
+      "seed": 29,
+      "study_schedule_index": 149,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 6,
+      "seed": 17,
+      "study_schedule_index": 150,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 7,
+      "seed": 29,
+      "study_schedule_index": 151,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 8,
+      "seed": 17,
+      "study_schedule_index": 152,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 9,
+      "seed": 29,
+      "study_schedule_index": 153,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 10,
+      "seed": 17,
+      "study_schedule_index": 154,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 11,
+      "seed": 29,
+      "study_schedule_index": 155,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 12,
+      "seed": 17,
+      "study_schedule_index": 156,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 13,
+      "seed": 29,
+      "study_schedule_index": 157,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 14,
+      "seed": 17,
+      "study_schedule_index": 158,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 15,
+      "seed": 29,
+      "study_schedule_index": 159,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 16,
+      "seed": 17,
+      "study_schedule_index": 160,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 17,
+      "seed": 29,
+      "study_schedule_index": 161,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 18,
+      "seed": 17,
+      "study_schedule_index": 162,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 19,
+      "seed": 29,
+      "study_schedule_index": 163,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 20,
+      "seed": 17,
+      "study_schedule_index": 164,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 21,
+      "seed": 29,
+      "study_schedule_index": 165,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 22,
+      "seed": 17,
+      "study_schedule_index": 166,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 23,
+      "seed": 29,
+      "study_schedule_index": 167,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 24,
+      "seed": 17,
+      "study_schedule_index": 168,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 25,
+      "seed": 29,
+      "study_schedule_index": 169,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 26,
+      "seed": 17,
+      "study_schedule_index": 170,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 27,
+      "seed": 29,
+      "study_schedule_index": 171,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 28,
+      "seed": 17,
+      "study_schedule_index": 172,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 29,
+      "seed": 29,
+      "study_schedule_index": 173,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 30,
+      "seed": 17,
+      "study_schedule_index": 174,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 31,
+      "seed": 29,
+      "study_schedule_index": 175,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 32,
+      "seed": 17,
+      "study_schedule_index": 176,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 33,
+      "seed": 29,
+      "study_schedule_index": 177,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 34,
+      "seed": 17,
+      "study_schedule_index": 178,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 35,
+      "seed": 29,
+      "study_schedule_index": 179,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 36,
+      "seed": 17,
+      "study_schedule_index": 180,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 37,
+      "seed": 29,
+      "study_schedule_index": 181,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 38,
+      "seed": 17,
+      "study_schedule_index": 182,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 39,
+      "seed": 29,
+      "study_schedule_index": 183,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 40,
+      "seed": 17,
+      "study_schedule_index": 184,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 41,
+      "seed": 29,
+      "study_schedule_index": 185,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 42,
+      "seed": 17,
+      "study_schedule_index": 186,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 43,
+      "seed": 29,
+      "study_schedule_index": 187,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 44,
+      "seed": 17,
+      "study_schedule_index": 188,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 45,
+      "seed": 29,
+      "study_schedule_index": 189,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 46,
+      "seed": 17,
+      "study_schedule_index": 190,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 47,
+      "seed": 29,
+      "study_schedule_index": 191,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 48,
+      "seed": 17,
+      "study_schedule_index": 192,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 49,
+      "seed": 29,
+      "study_schedule_index": 193,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 50,
+      "seed": 17,
+      "study_schedule_index": 194,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 51,
+      "seed": 29,
+      "study_schedule_index": 195,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 52,
+      "seed": 17,
+      "study_schedule_index": 196,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 53,
+      "seed": 29,
+      "study_schedule_index": 197,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 54,
+      "seed": 17,
+      "study_schedule_index": 198,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 55,
+      "seed": 29,
+      "study_schedule_index": 199,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 56,
+      "seed": 17,
+      "study_schedule_index": 200,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 57,
+      "seed": 29,
+      "study_schedule_index": 201,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 58,
+      "seed": 17,
+      "study_schedule_index": 202,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 59,
+      "seed": 29,
+      "study_schedule_index": 203,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 60,
+      "seed": 17,
+      "study_schedule_index": 204,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 61,
+      "seed": 29,
+      "study_schedule_index": 205,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 62,
+      "seed": 17,
+      "study_schedule_index": 206,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 63,
+      "seed": 29,
+      "study_schedule_index": 207,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 64,
+      "seed": 17,
+      "study_schedule_index": 208,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 65,
+      "seed": 29,
+      "study_schedule_index": 209,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 66,
+      "seed": 17,
+      "study_schedule_index": 210,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 67,
+      "seed": 29,
+      "study_schedule_index": 211,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 68,
+      "seed": 17,
+      "study_schedule_index": 212,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 69,
+      "seed": 29,
+      "study_schedule_index": 213,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 70,
+      "seed": 17,
+      "study_schedule_index": 214,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "revision_rubric_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 71,
+      "seed": 29,
+      "study_schedule_index": 215,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 72,
+      "seed": 17,
+      "study_schedule_index": 216,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 73,
+      "seed": 29,
+      "study_schedule_index": 217,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 74,
+      "seed": 17,
+      "study_schedule_index": 218,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 75,
+      "seed": 29,
+      "study_schedule_index": 219,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 76,
+      "seed": 17,
+      "study_schedule_index": 220,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 77,
+      "seed": 29,
+      "study_schedule_index": 221,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 78,
+      "seed": 17,
+      "study_schedule_index": 222,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 79,
+      "seed": 29,
+      "study_schedule_index": 223,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 80,
+      "seed": 17,
+      "study_schedule_index": 224,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 81,
+      "seed": 29,
+      "study_schedule_index": 225,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 82,
+      "seed": 17,
+      "study_schedule_index": 226,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 83,
+      "seed": 29,
+      "study_schedule_index": 227,
+      "task_id": "pagination-tail"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 84,
+      "seed": 17,
+      "study_schedule_index": 228,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 85,
+      "seed": 29,
+      "study_schedule_index": 229,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 86,
+      "seed": 17,
+      "study_schedule_index": 230,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 87,
+      "seed": 29,
+      "study_schedule_index": 231,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 88,
+      "seed": 17,
+      "study_schedule_index": 232,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 89,
+      "seed": 29,
+      "study_schedule_index": 233,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 90,
+      "seed": 17,
+      "study_schedule_index": 234,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 91,
+      "seed": 29,
+      "study_schedule_index": 235,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 92,
+      "seed": 17,
+      "study_schedule_index": 236,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 93,
+      "seed": 29,
+      "study_schedule_index": 237,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 94,
+      "seed": 17,
+      "study_schedule_index": 238,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 95,
+      "seed": 29,
+      "study_schedule_index": 239,
+      "task_id": "century-leap-year"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 96,
+      "seed": 17,
+      "study_schedule_index": 240,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 97,
+      "seed": 29,
+      "study_schedule_index": 241,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 98,
+      "seed": 17,
+      "study_schedule_index": 242,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 99,
+      "seed": 29,
+      "study_schedule_index": 243,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 100,
+      "seed": 17,
+      "study_schedule_index": 244,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 101,
+      "seed": 29,
+      "study_schedule_index": 245,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 102,
+      "seed": 17,
+      "study_schedule_index": 246,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 103,
+      "seed": 29,
+      "study_schedule_index": 247,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 104,
+      "seed": 17,
+      "study_schedule_index": 248,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 105,
+      "seed": 29,
+      "study_schedule_index": 249,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 106,
+      "seed": 17,
+      "study_schedule_index": 250,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 107,
+      "seed": 29,
+      "study_schedule_index": 251,
+      "task_id": "scheduler-reporter-ids"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 108,
+      "seed": 17,
+      "study_schedule_index": 252,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 109,
+      "seed": 29,
+      "study_schedule_index": 253,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 110,
+      "seed": 17,
+      "study_schedule_index": 254,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 111,
+      "seed": 29,
+      "study_schedule_index": 255,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 112,
+      "seed": 17,
+      "study_schedule_index": 256,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 113,
+      "seed": 29,
+      "study_schedule_index": 257,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 114,
+      "seed": 17,
+      "study_schedule_index": 258,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 115,
+      "seed": 29,
+      "study_schedule_index": 259,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 116,
+      "seed": 17,
+      "study_schedule_index": 260,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 117,
+      "seed": 29,
+      "study_schedule_index": 261,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 118,
+      "seed": 17,
+      "study_schedule_index": 262,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 119,
+      "seed": 29,
+      "study_schedule_index": 263,
+      "task_id": "http-client-retry-parity"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 120,
+      "seed": 17,
+      "study_schedule_index": 264,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 121,
+      "seed": 29,
+      "study_schedule_index": 265,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 122,
+      "seed": 17,
+      "study_schedule_index": 266,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 123,
+      "seed": 29,
+      "study_schedule_index": 267,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 124,
+      "seed": 17,
+      "study_schedule_index": 268,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 125,
+      "seed": 29,
+      "study_schedule_index": 269,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 126,
+      "seed": 17,
+      "study_schedule_index": 270,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 127,
+      "seed": 29,
+      "study_schedule_index": 271,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 128,
+      "seed": 17,
+      "study_schedule_index": 272,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 129,
+      "seed": 29,
+      "study_schedule_index": 273,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 130,
+      "seed": 17,
+      "study_schedule_index": 274,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 131,
+      "seed": 29,
+      "study_schedule_index": 275,
+      "task_id": "settings-label-preservation"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 132,
+      "seed": 17,
+      "study_schedule_index": 276,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "baseline",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 133,
+      "seed": 29,
+      "study_schedule_index": 277,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 134,
+      "seed": 17,
+      "study_schedule_index": 278,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 135,
+      "seed": 29,
+      "study_schedule_index": 279,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 136,
+      "seed": 17,
+      "study_schedule_index": 280,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "stale",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 137,
+      "seed": 29,
+      "study_schedule_index": 281,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 138,
+      "seed": 17,
+      "study_schedule_index": 282,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "overbroad",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 139,
+      "seed": 29,
+      "study_schedule_index": 283,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 140,
+      "seed": 17,
+      "study_schedule_index": 284,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "test_tampering",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 141,
+      "seed": 29,
+      "study_schedule_index": 285,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 142,
+      "seed": 17,
+      "study_schedule_index": 286,
+      "task_id": "retry-exponential-delay"
+    },
+    {
+      "analysis_role": "secondary",
+      "candidate": "gold_stale_evidence",
+      "condition": "plain_json",
+      "model": "llama3.2:1b",
+      "run_schedule_index": 143,
+      "seed": 29,
+      "study_schedule_index": 287,
+      "task_id": "retry-exponential-delay"
+    }
+  ],
+  "schedule_order": "model block, condition block, then task,candidate,seed",
+  "schedule_sha256": "d3dde02378ae61c862237c4352e996bcda51a0c4579970f563719fa067281729",
+  "scheduled_calls": 288,
+  "schema_version": 1,
+  "script": "scripts/repository_completion_probe.py",
+  "script_sha256": "c8cd72402c5b667058a91988368222c99110b20930ec15c5b08999227f0f3a16",
+  "seeds": [
+    17,
+    29
+  ],
+  "smoke": {
+    "go": true,
+    "oracle_harness_outside_agent_worktree": true,
+    "records": [
+      {
+        "candidate": "gold",
+        "external_accepted": true,
+        "external_expected": true,
+        "gate": "READY",
+        "gate_expected": "READY",
+        "oracle_isolated": true,
+        "oracle_label": "ACCEPT",
+        "present": true,
+        "tree_digest": "749e8893e432227c47be77e19183f10b08041684a237913b998a4b3c29e1a6b0"
+      },
+      {
+        "candidate": "gold_stale_evidence",
+        "external_accepted": true,
+        "external_expected": true,
+        "gate": "BLOCKED",
+        "gate_expected": "BLOCKED",
+        "oracle_isolated": true,
+        "oracle_label": "ACCEPT",
+        "present": true,
+        "tree_digest": "749e8893e432227c47be77e19183f10b08041684a237913b998a4b3c29e1a6b0"
+      },
+      {
+        "candidate": "test_tampering",
+        "external_accepted": false,
+        "external_expected": false,
+        "gate": "READY",
+        "gate_expected": "READY",
+        "oracle_isolated": true,
+        "oracle_label": "ACCEPT",
+        "present": true,
+        "tree_digest": "60a55c0105d732285adb2ea8eb119c6ec2e99c062b148c90d517eb2f52a1640b"
+      }
+    ],
+    "required_candidates": [
+      "gold",
+      "gold_stale_evidence",
+      "test_tampering"
+    ],
+    "task_id": "pagination-tail"
+  }
+}
