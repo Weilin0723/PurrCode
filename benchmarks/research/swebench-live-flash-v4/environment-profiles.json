@@ -67,6 +67,61 @@
           ]
         }
       ]
+    },
+    "pytorch__torchtune-1832": {
+      "base_commit": "4107cc489eba9c25a1ddbfd1314be4a3a80de197",
+      "source_workflow_run_id": 38629415831,
+      "source_row_sha256": "b551b7e345b85213177a64f88cf6cff560bd7d8a85e1e00201f0bf6d6efcfc88",
+      "source_registry_repo_digests": [
+        "starryzhang/sweb.eval.x86_64.pytorch_1776_torchtune-1832@sha256:0c7e5d0e1a9a2faa7ced3ed9efbf812d4e3384b7e4196f9f01763cd7a42e9e26"
+      ],
+      "reference_python_version": "3.11.12",
+      "constraints": [
+        "torch==2.4.1+cpu",
+        "torchvision==0.19.1+cpu",
+        "torchao==0.5.0",
+        "bitsandbytes==0.44.1",
+        "datasets==3.0.1",
+        "huggingface-hub==0.25.2"
+      ],
+      "execution_variant": "Host Python 3.11 and CPU Torch wheels; registry-reference versions recorded; GPU behavior is outside scope.",
+      "prerequisites": [
+        {
+          "index_url": "https://download.pytorch.org/whl/cpu",
+          "requirements": [
+            "torch==2.4.1+cpu",
+            "torchvision==0.19.1+cpu"
+          ]
+        },
+        {
+          "index_url": "https://pypi.org/simple",
+          "requirements": [
+            "torchao==0.5.0"
+          ]
+        }
+      ]
+    },
+    "deepset-ai__haystack-8609": {
+      "base_commit": "3da5bac8c4743c59940e857d5d7a0552604d3fa9",
+      "source_workflow_run_id": 38629415831,
+      "source_row_sha256": "938b94c5846265da90eb51d862a09eba002c7ee317f7a66f5cb4ae712229ccbf",
+      "source_registry_repo_digests": [
+        "starryzhang/sweb.eval.x86_64.deepset-ai_1776_haystack-8609@sha256:08dc745310487e1641d74b46c5571a723997ab562cf33dcdbd92e932a36ffbcd"
+      ],
+      "reference_python_version": "3.9.22",
+      "constraints": [
+        "ddtrace==2.17.2",
+        "torch==2.5.1+cpu"
+      ],
+      "execution_variant": "Host Python 3.11 and CPU Torch wheels; registry-reference versions recorded; GPU behavior is outside scope.",
+      "prerequisites": [
+        {
+          "index_url": "https://download.pytorch.org/whl/cpu",
+          "requirements": [
+            "torch==2.5.1+cpu"
+          ]
+        }
+      ]
     }
   }
 }
