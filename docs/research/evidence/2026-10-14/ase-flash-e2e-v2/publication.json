@@ -1,0 +1,25 @@
+{
+  "kind": "pre_cell_0_publication_receipt",
+  "source_commit": "63ae2b8d101058aea2cffe169dbcd27cfa83d06d",
+  "published_branch": "codex/ase-submission-ready",
+  "publication": "git commit and successful upstream push",
+  "recorded_at_utc": "2026-10-14T07:13:43.122915+00:00",
+  "scheduled_model_cells_started": 0,
+  "files": {
+    "README.md": "aa46aab18ccd9af7331ef4b72887c21ccf39a7393501ceaa03a5314ac859fb1b",
+    "analysis-plan.json": "5b9abd166bde34766eedb8b975df51c2688830368a492240429d4d3cb61ce5cc",
+    "config.toml": "4d32a354c35ee05770237ef4f39b218c356dd90e1072c1712381f8b2e3acdcd3",
+    "dependency-lock.json": "cc147b345dc8f7c9be1a674290f010f9774782d18672897ad01a125b97dd563f",
+    "freeze.json": "749d1f9d5b3c7ab011d6d8359feaa2a75fe9dff38bb0f96ec4c0ae03cea5f025",
+    "model-freeze.md": "a625d31b587f1f62426ead60a545b1b5f45bac035f7d4abe0a5d99927cb9807c",
+    "qualification.json": "aa2644a8440ed676913b2c6ab6d0f9a76885619f3ab5a1a63c56e843de89420e",
+    "receipt.json": "c22c84880d57c4e9a16517d6f2d52d5ab65d8fb264c0317f7fe5668a1766153c",
+    "runner-lock.json": "aa648614ed38dc842b8c4267518269416cde9d128a02de746c144be3d5296471"
+  },
+  "validation": {
+    "format": "passed",
+    "clippy": "passed",
+    "python_tests": 96,
+    "workspace_tests": "running; first attempt had one Git child-process failure; retained"
+  }
+}
