@@ -61,6 +61,32 @@ def image_digest(instance_id: str) -> tuple[str | None, str | None]:
     return image, result.stdout.strip() or None
 
 
+def public_environment_metadata(image: str, environment: Mapping[str, str]) -> dict[str, Any]:
+    """Read installed-package metadata only, with no mounts or container network."""
+    query = "import importlib.metadata as m, json, platform, sys; print(json.dumps({'python_version': platform.python_version(), 'prefix': sys.prefix, 'executable': sys.executable, 'packages': {d.metadata['Name']: d.version for d in m.distributions() if d.metadata['Name']}}))"
+    attempts = []
+    for python in ("/opt/miniconda3/envs/testbed/bin/python", "/opt/venv/bin/python", "/usr/local/bin/python", "/usr/bin/python3"):
+        try:
+            result = subprocess.run(["docker", "run", "--rm", "--network", "none", "--entrypoint", python,
+                                     image, "-c", query], capture_output=True, text=True,
+                                    env=dict(environment), timeout=30, check=False)
+            attempts.append({"python": python, "exit_code": result.returncode})
+            if result.returncode != 0:
+                continue
+            if len(result.stdout) > 4 * 1024 * 1024:
+                raise ValueError("package metadata exceeds acquisition bound")
+            value = json.loads(result.stdout)
+            if not isinstance(value.get("packages"), dict) or not value["packages"]:
+                continue
+            inspection = subprocess.run(["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image],
+                capture_output=True, text=True, env=dict(environment), timeout=15, check=False)
+            value["registry_repo_digests"] = json.loads(inspection.stdout) if inspection.returncode == 0 else None
+            return {"status": "observed", "scope": "installed package metadata only; no repository or test contents", "attempts": attempts, **value}
+        except (subprocess.TimeoutExpired, OSError, ValueError) as error:
+            attempts.append({"python": python, "error_type": type(error).__name__})
+    return {"status": "unavailable", "attempts": attempts}
+
+
 def run_gold(task: Mapping[str, Any], *, out: Path, args: argparse.Namespace) -> dict[str, Any]:
     index = int(task["selection_index"])
     instance_id = str(task["instance_id"])
@@ -159,6 +185,9 @@ def run_gold(task: Mapping[str, Any], *, out: Path, args: argparse.Namespace) ->
         "report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest() if report_path.is_file() else None,
         "image": image,
         "image_digest": digest,
+        "image_digest_kind": "docker_image_configuration_id",
+        **({"public_environment_metadata": public_environment_metadata(image, clean_environment(args.hf_home))}
+           if getattr(args, "public_environment_metadata", False) and image else {}),
         "model_calls": 0,
         "created_at": now(),
     }
@@ -175,6 +204,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tasks", type=int)
     parser.add_argument("--instance-ids", nargs="*")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--public-environment-metadata", action="store_true")
     return parser.parse_args()
 
 
