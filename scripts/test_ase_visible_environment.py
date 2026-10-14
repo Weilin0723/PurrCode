@@ -9,6 +9,20 @@ import ase_visible_environment as module
 
 
 class VisibleEnvironmentTests(unittest.TestCase):
+    def test_profiles_reject_changed_commits_or_package_options_before_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = {"tasks": [{"instance_id": "task", "base_commit": "abc"}]}
+            invalid = [{"base_commit": "other"},
+                       {"base_commit": "abc", "constraints": ["--index-url=untrusted"]},
+                       {"base_commit": "abc", "prerequisites": [{"index_url": "https://untrusted.invalid", "requirements": ["torch==2.4.1"]}]}]
+            with patch.object(module, "verify_checkout", return_value=root), \
+                 patch.object(module.subprocess, "run") as run:
+                for profile in invalid:
+                    with self.assertRaises(ValueError):
+                        module.provision(manifest, "task", root / "cache", root / "environment", {"task": profile})
+            run.assert_not_called()
+
     def test_hatch_poetry_and_unambiguous_public_lock_constraints(self):
         metadata = {"tool": {"hatch": {"envs": {"test": {"extra-dependencies": ["arrow", "pytest"]},
                                                    "docs": {"dependencies": ["not-a-test-dependency"]}}},

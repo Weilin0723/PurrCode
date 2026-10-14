@@ -82,10 +82,20 @@ def poetry_test_groups(metadata):
     return result
 
 
-def provision(manifest, instance_id, cache, root):
+def provision(manifest, instance_id, cache, root, profiles=None):
     row = next(row for row in manifest["tasks"] if row["instance_id"] == instance_id)
     task = {**row, "checkout": instance_id, "base_task_id": instance_id}
     checkout = verify_checkout(task, cache)
+    profile = (profiles or {}).get(instance_id, {})
+    if profile and profile.get("base_commit") != row["base_commit"]:
+        raise ValueError("public environment profile does not match the base commit")
+    profile_constraints = profile.get("constraints", [])
+    prerequisites = profile.get("prerequisites", [])
+    for requirement in [*profile_constraints, *(value for group in prerequisites for value in group["requirements"])]:
+        if not isinstance(requirement, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*==[0-9][A-Za-z0-9.!+_-]*", requirement):
+            raise ValueError("public environment profiles require exact package-version pins")
+    if any(group["index_url"] not in {"https://pypi.org/simple", "https://download.pytorch.org/whl/cpu"} for group in prerequisites):
+        raise ValueError("unsupported public prerequisite index")
     environment = clean_environment()
     venv = root / "agent-venv"
     if venv.exists():
@@ -110,8 +120,12 @@ def provision(manifest, instance_id, cache, root):
             project_name = metadata.get("project", {}).get("name", metadata.get("tool", {}).get("poetry", {}).get("name", ""))
             constraints = root / "public-lock-constraints.txt"
             locked = public_lock_constraints(checkout, project_name)
-            constraints.write_text("\n".join(locked) + "\n")
+            constraints.write_text("\n".join([*locked, *profile_constraints]) + "\n")
             receipt["public_lock_constraints"] = locked
+            receipt["public_environment_profile"] = profile
+            for group in prerequisites:
+                execute([python, "-m", "pip", "install", "-c", str(constraints),
+                         "--index-url", group["index_url"], *group["requirements"]])
             extras = metadata.get("project", {}).get("optional-dependencies", {})
             selected = sorted(set(extras) & PUBLIC_TEST_GROUPS)
             if project.exists() or (checkout / "setup.py").exists():
@@ -163,5 +177,7 @@ if __name__ == "__main__":
     parser.add_argument("--cache", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
     args = parser.parse_args()
+    profile_path = args.manifest.with_name("environment-profiles.json")
+    profiles = json.loads(profile_path.read_text())["tasks"] if profile_path.exists() else None
     provision(json.loads(args.manifest.read_text()), args.instance_id,
-              args.cache.resolve(), args.root.resolve())
+              args.cache.resolve(), args.root.resolve(), profiles=profiles)

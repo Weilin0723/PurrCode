@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "public-reference-metadata-compatibility-profiles",
+  "tasks": {
+    "pytorch__torchtune-1806": {
+      "base_commit": "c5b738681ef0c2541344aff1063e5f85720b3c1f",
+      "source_workflow_run_id": 38629415831,
+      "source_row_sha256": "f908a82082c85b1f3f6e6014e258a0963da5465ec2f2643776a08b68c7ebc86d",
+      "source_registry_repo_digests": [
+        "starryzhang/sweb.eval.x86_64.pytorch_1776_torchtune-1806@sha256:6a0106a74fd85349ed8730cb41eb41e4c1f1e59cd9aa9675f0154b8c7b279c0b"
+      ],
+      "reference_python_version": "3.11.12",
+      "constraints": [
+        "torch==2.4.1+cpu",
+        "torchvision==0.19.1+cpu",
+        "torchao==0.5.0",
+        "bitsandbytes==0.44.1",
+        "datasets==3.0.1",
+        "huggingface-hub==0.25.2"
+      ],
+      "execution_variant": "CPU wheels of the observed Torch/torchvision releases replace CUDA builds; GPU execution is outside this experiment.",
+      "prerequisites": [
+        {
+          "index_url": "https://download.pytorch.org/whl/cpu",
+          "requirements": [
+            "torch==2.4.1+cpu",
+            "torchvision==0.19.1+cpu"
+          ]
+        },
+        {
+          "index_url": "https://pypi.org/simple",
+          "requirements": [
+            "torchao==0.5.0"
+          ]
+        }
+      ]
+    },
+    "pytorch__torchtune-1697": {
+      "base_commit": "3fddc56942846220b39945559f4b5e695873bb43",
+      "source_workflow_run_id": 38629415831,
+      "source_row_sha256": "03c04286425ca132fab7249fb6c623822cec7ded767cd86b414150e16925c42b",
+      "source_registry_repo_digests": [
+        "starryzhang/sweb.eval.x86_64.pytorch_1776_torchtune-1697@sha256:671cde55e7fd47a02df0f4218766f8c976edaff2013ae878b051b88609a08ca9"
+      ],
+      "reference_python_version": "3.11.12",
+      "constraints": [
+        "torch==2.4.1+cpu",
+        "torchvision==0.19.1+cpu",
+        "torchao==0.5.0",
+        "bitsandbytes==0.44.0",
+        "datasets==3.0.1",
+        "huggingface-hub==0.25.1"
+      ],
+      "execution_variant": "CPU wheels of the observed Torch/torchvision releases replace CUDA builds; GPU execution is outside this experiment.",
+      "prerequisites": [
+        {
+          "index_url": "https://download.pytorch.org/whl/cpu",
+          "requirements": [
+            "torch==2.4.1+cpu",
+            "torchvision==0.19.1+cpu"
+          ]
+        },
+        {
+          "index_url": "https://pypi.org/simple",
+          "requirements": [
+            "torchao==0.5.0"
+          ]
+        }
+      ]
+    }
+  }
+}
