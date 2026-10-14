@@ -1,0 +1,929 @@
+{
+  "schema_version": 1,
+  "status": "acquisition_pending",
+  "outcomes": "unrun",
+  "source": {
+    "dataset": "SWE-bench-Live/SWE-bench-Live",
+    "config": "default",
+    "split": "verified",
+    "revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
+    "rows_endpoint": "https://datasets-server.huggingface.co/rows",
+    "license": "mit"
+  },
+  "selection": {
+    "algorithm": "Apply pinned line-count and nonempty F2P/P2P eligibility, additionally require a public pytest test command when pytest_only is true; exclude prior, observed, and oracle-failed repository lists; retain the next ten groups in first-eligible-row order and each group's first three rows. Oracle qualification precedes the scientific freeze.",
+    "task_count": 30,
+    "distinct_repository_count": 10,
+    "tasks_per_repository": 3,
+    "difficulty_lines_max": 50,
+    "requires_fail_to_pass": true,
+    "requires_pass_to_pass": true,
+    "source_rows_scanned": 500,
+    "repository_order": [
+      "geopandas/geopandas",
+      "pdm-project/pdm",
+      "pytorch/torchtune",
+      "yt-dlp/yt-dlp",
+      "projectmesa/mesa",
+      "run-llama/llama_deploy",
+      "Delgan/loguru",
+      "python-control/python-control",
+      "deepset-ai/haystack",
+      "koxudaxi/datamodel-code-generator"
+    ],
+    "excluded_prior_repository_order": [
+      "pylint-dev/pylint",
+      "aws-cloudformation/cfn-lint",
+      "keras-team/keras",
+      "falconry/falcon",
+      "matplotlib/matplotlib",
+      "sphinx-doc/sphinx",
+      "instructlab/instructlab",
+      "python-babel/babel",
+      "bridgecrewio/checkov",
+      "patroni/patroni"
+    ],
+    "excluded_oracle_failed_repositories": [
+      "conan-io/conan",
+      "kedro-org/kedro"
+    ],
+    "excluded_observed_repository_order": [
+      "python-attrs/attrs",
+      "streamlink/streamlink",
+      "pydata/xarray",
+      "Kozea/WeasyPrint",
+      "shapely/shapely",
+      "ipython/ipython",
+      "reflex-dev/reflex",
+      "beeware/briefcase",
+      "joke2k/faker",
+      "sissbruecker/linkding"
+    ],
+    "pytest_only": true,
+    "eligibility_count_status": "awaiting independently reproduced filtered counts; inherited unfiltered counts removed"
+  },
+  "visibility": {
+    "agent_fields": [
+      "repo",
+      "instance_id",
+      "base_commit",
+      "problem_statement"
+    ],
+    "auditor_only_fields": [
+      "patch",
+      "test_patch",
+      "hints_text",
+      "all_hints_text",
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "difficulty",
+      "test_cmds",
+      "log_parser"
+    ],
+    "forbidden_agent_fields": [
+      "patch",
+      "test_patch",
+      "hints_text",
+      "all_hints_text",
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "gold_patch",
+      "reference_solution"
+    ]
+  },
+  "run_plan": {
+    "repositories": 10,
+    "tasks": 30,
+    "arms": [
+      "B",
+      "C"
+    ],
+    "request_variants": [
+      "static",
+      "correction"
+    ],
+    "repeat_labels": [
+      0
+    ],
+    "runs_per_model": 120,
+    "arm_definitions": {
+      "B": "alignment disabled",
+      "C": "alignment enabled with automatic evidence refresh"
+    },
+    "requirement_phases": [
+      "P0",
+      "P1"
+    ],
+    "requirement_revision": {
+      "status": "verified",
+      "per_task": true,
+      "P0": "controlled abridged problem_statement with one withheld original constraint span in the correction variant",
+      "P1": "the exact original constraint span selected from the complete problem_statement",
+      "static_delivery": "complete original problem_statement delivered from call 0",
+      "correction_delivery": "abridged P0 at call 0; the identical P1 span after the first phase settles with a qualifying successful mutation",
+      "injection_trigger": "first qualifying ExecutionFinished; identical P1 delivered after the first phase settles",
+      "production_path_filter": false,
+      "acknowledgement_event": "requirement_revision_ack",
+      "acknowledgement_required": true,
+      "correction_text_stored": true,
+      "authoring_asset": "requirement_revision.json",
+      "span_selection": "one unique original behavior-related sentence or concise span; reject non-unique or non-specific spans",
+      "span_offsets_unit": "unicode_codepoints",
+      "final_requirement": "reconstructing abridged P0 with P1 at the recorded offset equals the complete original statement",
+      "shared_final_requirement_hash": true
+    },
+    "status": "blocked_until_environment_oracle_audit"
+  },
+  "tasks": [
+    {
+      "instance_id": "geopandas__geopandas-3419",
+      "repo": "geopandas/geopandas",
+      "base_commit": "0910a7b10ee32005239dd8ca3d392afc0cf02ffc",
+      "pull_number": "3419",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 35
+      },
+      "test_cmds": [
+        "pytest -v -rA geopandas/"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 0,
+      "dataset_row": 78,
+      "repo_url": "https://github.com/geopandas/geopandas.git",
+      "commit_url": "https://github.com/geopandas/geopandas/commit/0910a7b10ee32005239dd8ca3d392afc0cf02ffc",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1926,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "97f4e36ebf73b8cc70a44971a4f609da97b2d93d21923f99ee62afa0f80362c5",
+      "patch_sha256": "74a7c9eb70e2e78e8c8b9ea2e3e1c9a7f79f1c42dc6b0059b094022694e85bcc",
+      "test_patch_sha256": "c9f6885071a804c840e0bf6170f53d2b241fad16ea4d7192de37dfcd0aa4d3a6"
+    },
+    {
+      "instance_id": "geopandas__geopandas-3424",
+      "repo": "geopandas/geopandas",
+      "base_commit": "3d0ff15aaa0c7e5165aecc4f33bdb3171f04d7b0",
+      "pull_number": "3424",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 6
+      },
+      "test_cmds": [
+        "pytest -v -rA geopandas/"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 1,
+      "dataset_row": 96,
+      "repo_url": "https://github.com/geopandas/geopandas.git",
+      "commit_url": "https://github.com/geopandas/geopandas/commit/3d0ff15aaa0c7e5165aecc4f33bdb3171f04d7b0",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1921,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "69469d66fa9a0f78cbd9cc9d827db7b7d67f7ee6bc933ae336803f16d4a45962",
+      "patch_sha256": "4e93a3c52b4c91a9a0b4edd33faa05accf609fc79303ee60c3675232a8f10ddd",
+      "test_patch_sha256": "d3dd5475fa312664fcc6fb30613b1fd7527af0a71541ffb572e260c2a710785b"
+    },
+    {
+      "instance_id": "pdm-project__pdm-3170",
+      "repo": "pdm-project/pdm",
+      "base_commit": "ff9e871af1ee6ff55267342e1f6f3889ab55278b",
+      "pull_number": "3170",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 3
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 2,
+      "dataset_row": 104,
+      "repo_url": "https://github.com/pdm-project/pdm.git",
+      "commit_url": "https://github.com/pdm-project/pdm/commit/ff9e871af1ee6ff55267342e1f6f3889ab55278b",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 903,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "da214c8e7185b7b046a8d9cf903cbcd543976e4950fbf0e3beb7c06531dcb445",
+      "patch_sha256": "dfea2278a2f607704eb3c02fb86bbc334db3556fc29ba74d82390778c70f1255",
+      "test_patch_sha256": "d27c15119c7b4e27665373e7173b6494ffcfd0a32b230a1c3fc5d6b870d91274"
+    },
+    {
+      "instance_id": "pytorch__torchtune-1697",
+      "repo": "pytorch/torchtune",
+      "base_commit": "3fddc56942846220b39945559f4b5e695873bb43",
+      "pull_number": "1697",
+      "difficulty": {
+        "files": 1,
+        "hunks": 3,
+        "lines": 17
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 3,
+      "dataset_row": 114,
+      "repo_url": "https://github.com/pytorch/torchtune.git",
+      "commit_url": "https://github.com/pytorch/torchtune/commit/3fddc56942846220b39945559f4b5e695873bb43",
+      "fail_to_pass_count": 8,
+      "pass_to_pass_count": 528,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "aa84017affcae577cca233b8b12c8877ab5baaf7bebc14466de101e3453792e7",
+      "patch_sha256": "69f29056ee679793aa792dc4340706092758fe393beb0d5092b00539c9bd7c95",
+      "test_patch_sha256": "4c0ca96ea16f4f2c7a27f5720ed0dba2a1b56a2b30fbdb97d57d3a9e78b4cae5"
+    },
+    {
+      "instance_id": "pytorch__torchtune-1806",
+      "repo": "pytorch/torchtune",
+      "base_commit": "c5b738681ef0c2541344aff1063e5f85720b3c1f",
+      "pull_number": "1806",
+      "difficulty": {
+        "files": 4,
+        "hunks": 8,
+        "lines": 21
+      },
+      "test_cmds": [
+        "pytest -rA tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 4,
+      "dataset_row": 131,
+      "repo_url": "https://github.com/pytorch/torchtune.git",
+      "commit_url": "https://github.com/pytorch/torchtune/commit/c5b738681ef0c2541344aff1063e5f85720b3c1f",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 558,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "0c8403b7ec6ddabc2846bf293bffa4b16561b981fb525aac9b256062ff79d6d7",
+      "patch_sha256": "68d358fcd038548cd0a1110316f5932b60217bc15868ea860c0c14da50f7a539",
+      "test_patch_sha256": "3f6c12d062fb6897af3c2fc63ca0aaba8d9188953872a214a2238de284426b63"
+    },
+    {
+      "instance_id": "pytorch__torchtune-1832",
+      "repo": "pytorch/torchtune",
+      "base_commit": "4107cc489eba9c25a1ddbfd1314be4a3a80de197",
+      "pull_number": "1832",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 18
+      },
+      "test_cmds": [
+        "pytest tests --cov=. --cov-report=xml --durations=20 -vv -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 5,
+      "dataset_row": 134,
+      "repo_url": "https://github.com/pytorch/torchtune.git",
+      "commit_url": "https://github.com/pytorch/torchtune/commit/4107cc489eba9c25a1ddbfd1314be4a3a80de197",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 562,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "f0c5e9caca1018e7d78df71d7e98474fad1484a42a8c80a4e85d24a4c6fc54cf",
+      "patch_sha256": "52ecef128978c86cb9706372e0d40eb2f83ed50080d839316108765188f30026",
+      "test_patch_sha256": "8e8c325a052c9aad9f4d840741217ec41a62dae2163becf9adc5890e13e15683"
+    },
+    {
+      "instance_id": "yt-dlp__yt-dlp-11425",
+      "repo": "yt-dlp/yt-dlp",
+      "base_commit": "a6783a3b9905e547f6c1d4df9d7c7999feda8afa",
+      "pull_number": "11425",
+      "difficulty": {
+        "files": 1,
+        "hunks": 10,
+        "lines": 50
+      },
+      "test_cmds": [
+        "python3 devscripts/run_tests.py --pytest-args \"-rA\"",
+        "python3 devscripts/run_tests.py --pytest-args -rA",
+        "python3 devscripts/run_tests.py --pytest-args=-rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 6,
+      "dataset_row": 164,
+      "repo_url": "https://github.com/yt-dlp/yt-dlp.git",
+      "commit_url": "https://github.com/yt-dlp/yt-dlp/commit/a6783a3b9905e547f6c1d4df9d7c7999feda8afa",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 624,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "89d1a6992ac2b13f315777fce1065a19a9fc91fcf550eb84845df365ba3db442",
+      "patch_sha256": "5b81cd0dc0a98d126d6a8b22e3102396ba19bf78caff61445e4efd93c9247633",
+      "test_patch_sha256": "66466efb63e958bbda1840ca2f7089f918b9f18c4c96f317e12228875ad59a57"
+    },
+    {
+      "instance_id": "pdm-project__pdm-3255",
+      "repo": "pdm-project/pdm",
+      "base_commit": "acb40b0713c30466dcbab73e6b98d1add8e5dd98",
+      "pull_number": "3255",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 4
+      },
+      "test_cmds": [
+        "pdm run pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 7,
+      "dataset_row": 168,
+      "repo_url": "https://github.com/pdm-project/pdm.git",
+      "commit_url": "https://github.com/pdm-project/pdm/commit/acb40b0713c30466dcbab73e6b98d1add8e5dd98",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 916,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "efc76fa1b8a970305016fe1f4886fdf198e233d590bfc0be4d51a650071bbf1b",
+      "patch_sha256": "aa0ec8155c2dd2adf5f8ab2dd3d723989481028c1af42d7926aeb0c0d3501aa7",
+      "test_patch_sha256": "27ebe3a051577c7b764d9a732cf1b1d5ecf8e84e68a767659c3a8c4c87d78a8c"
+    },
+    {
+      "instance_id": "projectmesa__mesa-2463",
+      "repo": "projectmesa/mesa",
+      "base_commit": "ef383c4edef8b2e13f40bfd28e9d149386577ff3",
+      "pull_number": "2463",
+      "difficulty": {
+        "files": 1,
+        "hunks": 3,
+        "lines": 9
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 8,
+      "dataset_row": 170,
+      "repo_url": "https://github.com/projectmesa/mesa.git",
+      "commit_url": "https://github.com/projectmesa/mesa/commit/ef383c4edef8b2e13f40bfd28e9d149386577ff3",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 247,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "6a82eb961a65d796a3fbdc729cdf3aa9e5c8ff8011111cb1c1dc72a15dc1f0cc",
+      "patch_sha256": "3bc399dc3a9dd53422c6c034c7b4dc0a5ce0cb486769c203fe3db727007e3359",
+      "test_patch_sha256": "dfbff54d90207003703588c4c34cfa3239d2a501191158b62788d3ef4a273770"
+    },
+    {
+      "instance_id": "run-llama__llama_deploy-356",
+      "repo": "run-llama/llama_deploy",
+      "base_commit": "5f5e76e2c0ba47e644b11e8e2177ffff606f76af",
+      "pull_number": "356",
+      "difficulty": {
+        "files": 1,
+        "hunks": 4,
+        "lines": 27
+      },
+      "test_cmds": [
+        "poetry run pytest -rA tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 9,
+      "dataset_row": 178,
+      "repo_url": "https://github.com/run-llama/llama_deploy.git",
+      "commit_url": "https://github.com/run-llama/llama_deploy/commit/5f5e76e2c0ba47e644b11e8e2177ffff606f76af",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 158,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "3a4f7909c2b9f7286fb36bd162e49ebab1c1c63b97b54c89930e2e1ceff5a7fc",
+      "patch_sha256": "5eb51fa0ed28d86934fec46c9a113a69b5cd331c4ca557b286a02cd80df28dd1",
+      "test_patch_sha256": "d89b83f32adcb463b26631b30bdf445750aeb3decd886013566e088b99c02165"
+    },
+    {
+      "instance_id": "geopandas__geopandas-3471",
+      "repo": "geopandas/geopandas",
+      "base_commit": "b96d3e05238c615d87bd9042b057e4b08d030313",
+      "pull_number": "3471",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 2
+      },
+      "test_cmds": [
+        "pytest -v -rA geopandas/",
+        "pytest -v -rA geopandas/"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 10,
+      "dataset_row": 187,
+      "repo_url": "https://github.com/geopandas/geopandas.git",
+      "commit_url": "https://github.com/geopandas/geopandas/commit/b96d3e05238c615d87bd9042b057e4b08d030313",
+      "fail_to_pass_count": 7,
+      "pass_to_pass_count": 2227,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "44bf425b44aff56c91203be5f63163c75d54c160932d184aa3b972313a763ee4",
+      "patch_sha256": "a29f2c8de4a3d555cce9199c3347272501853608901388ba256921d9e26d1aa7",
+      "test_patch_sha256": "afe552bfd93b2a61fedc82091c6865b177275c59087d246cc99794e7bbe13686"
+    },
+    {
+      "instance_id": "delgan__loguru-1236",
+      "repo": "Delgan/loguru",
+      "base_commit": "37f44eda5555ffed3b4c581925650fb939e55b94",
+      "pull_number": "1236",
+      "difficulty": {
+        "files": 3,
+        "hunks": 4,
+        "lines": 27
+      },
+      "test_cmds": [
+        "pytest -vv -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 11,
+      "dataset_row": 190,
+      "repo_url": "https://github.com/Delgan/loguru.git",
+      "commit_url": "https://github.com/Delgan/loguru/commit/37f44eda5555ffed3b4c581925650fb939e55b94",
+      "fail_to_pass_count": 3,
+      "pass_to_pass_count": 1470,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "59190048fe5031a27c4c51deb4d79cb70ba3680ae930e29bc76e84cc9a7dce04",
+      "patch_sha256": "10e2183a4c741f8beba135edb4bf90bb5f47c1b9518a2eb40fd0fdc42448a69b",
+      "test_patch_sha256": "344b84609229bc457096923da2b3529e372dd4784fdad08582935bdcf8fa0fa4"
+    },
+    {
+      "instance_id": "python-control__python-control-1065",
+      "repo": "python-control/python-control",
+      "base_commit": "d810d5aac00cf9a4215f601247d08f6f7904bcfe",
+      "pull_number": "1065",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 19
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 12,
+      "dataset_row": 191,
+      "repo_url": "https://github.com/python-control/python-control.git",
+      "commit_url": "https://github.com/python-control/python-control/commit/d810d5aac00cf9a4215f601247d08f6f7904bcfe",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 3372,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "989c769db75be36a78acd1afd0f45932097d4e2de74af7ad497714a12ac704b4",
+      "patch_sha256": "1171cdf9e5228919923da8f5349aa3043c18618c188dfbda8fe37f3ed0d813bd",
+      "test_patch_sha256": "07bd8a848d0bc963b9adc1996a1d3e8d9a4c90a013eb9b33477171a3c80f3cf2"
+    },
+    {
+      "instance_id": "run-llama__llama_deploy-384",
+      "repo": "run-llama/llama_deploy",
+      "base_commit": "a8225996abf3e8c4706324fbdde2908e4dd777df",
+      "pull_number": "384",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 3
+      },
+      "test_cmds": [
+        "poetry run pytest -rA tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 13,
+      "dataset_row": 195,
+      "repo_url": "https://github.com/run-llama/llama_deploy.git",
+      "commit_url": "https://github.com/run-llama/llama_deploy/commit/a8225996abf3e8c4706324fbdde2908e4dd777df",
+      "fail_to_pass_count": 3,
+      "pass_to_pass_count": 165,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "cf5f3ad1197829832445f8de88e93a7f2984905d0f8ebc6ea76de43e95a4507b",
+      "patch_sha256": "c65b1b5bd73919024869bd581cc4aa3bfa10c6916cfae3ecad46583ecd3cdf31",
+      "test_patch_sha256": "8ffd7460ba3f67e2361516a29d1699ffc07ba030644bdf14383c4495c37e033a"
+    },
+    {
+      "instance_id": "delgan__loguru-1240",
+      "repo": "Delgan/loguru",
+      "base_commit": "fddcd4556c01bf7add84a265ee79a41be06647c7",
+      "pull_number": "1240",
+      "difficulty": {
+        "files": 3,
+        "hunks": 7,
+        "lines": 46
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 14,
+      "dataset_row": 197,
+      "repo_url": "https://github.com/Delgan/loguru.git",
+      "commit_url": "https://github.com/Delgan/loguru/commit/fddcd4556c01bf7add84a265ee79a41be06647c7",
+      "fail_to_pass_count": 19,
+      "pass_to_pass_count": 1494,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "2a5f45c43afec83fffda2257a9c1eccac160b88be4ad04a68fb9594309036042",
+      "patch_sha256": "496e9d415caf1371cafbc0fb37d5a11b90027353734cb6da1220b8f6f00a5feb",
+      "test_patch_sha256": "e02eb6d875eb91e0f1537e5b6077f74527258e3da35da32613e4f5bdd2921c60"
+    },
+    {
+      "instance_id": "projectmesa__mesa-2523",
+      "repo": "projectmesa/mesa",
+      "base_commit": "dbb926408d96258e30f8139aeed7e1ce3ec20167",
+      "pull_number": "2523",
+      "difficulty": {
+        "files": 1,
+        "hunks": 2,
+        "lines": 15
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 15,
+      "dataset_row": 202,
+      "repo_url": "https://github.com/projectmesa/mesa.git",
+      "commit_url": "https://github.com/projectmesa/mesa/commit/dbb926408d96258e30f8139aeed7e1ce3ec20167",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 238,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "e06f669acf4e771da7f2c92397c083ccf54a83dce3a7d593dfe48bba70c72c98",
+      "patch_sha256": "2eaca2af2835b9009d506e8c3cc91e1a8912d5b8c1e2bf5134501ba58987d6cd",
+      "test_patch_sha256": "1cd3c20052508351a0a44b0db0f0d3e40d95bc97424f24cf7736fd4bf2eba311"
+    },
+    {
+      "instance_id": "deepset-ai__haystack-8609",
+      "repo": "deepset-ai/haystack",
+      "base_commit": "3da5bac8c4743c59940e857d5d7a0552604d3fa9",
+      "pull_number": "8609",
+      "difficulty": {
+        "files": 2,
+        "hunks": 9,
+        "lines": 50
+      },
+      "test_cmds": [
+        "pytest --cov-report xml:coverage.xml --cov=\"haystack\" -m \"not integration\" -rA test"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 16,
+      "dataset_row": 212,
+      "repo_url": "https://github.com/deepset-ai/haystack.git",
+      "commit_url": "https://github.com/deepset-ai/haystack/commit/3da5bac8c4743c59940e857d5d7a0552604d3fa9",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1639,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "5692d7a1b8e3d163d9f457a072e2bb1885d1fb902da98a61ca37ac967cb4b37e",
+      "patch_sha256": "d3e20f46c478910975cb2e4a8c78cf2c7a3ba7c539ffc720f3df689216b0d0c1",
+      "test_patch_sha256": "984634a37cf6312401f6aaf3777abc4b11959fb084c1cbca363221c0a402dfbc"
+    },
+    {
+      "instance_id": "yt-dlp__yt-dlp-11880",
+      "repo": "yt-dlp/yt-dlp",
+      "base_commit": "d298693b1b266d198e8eeecb90ea17c4a031268f",
+      "pull_number": "11880",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 2
+      },
+      "test_cmds": [
+        "python devscripts/run_tests.py --pytest-args=\"-rA -v\""
+      ],
+      "log_parser": "pytest",
+      "selection_index": 17,
+      "dataset_row": 239,
+      "repo_url": "https://github.com/yt-dlp/yt-dlp.git",
+      "commit_url": "https://github.com/yt-dlp/yt-dlp/commit/d298693b1b266d198e8eeecb90ea17c4a031268f",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 625,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "659bc829370c4bf2bbb1e18b06a2dbc17b22387be3e377bab492869921540890",
+      "patch_sha256": "95ef318b29c6725fd2be283c37c61222a0c473b13cfcbe53293e7e40910dc5b6",
+      "test_patch_sha256": "7d075ebdc3e217db7a223e6ad29f118ff811b11ba127ed362de26b23056699f7"
+    },
+    {
+      "instance_id": "pdm-project__pdm-3374",
+      "repo": "pdm-project/pdm",
+      "base_commit": "f37fb16c2459807e0b392dc3306c373e5f68cc4f",
+      "pull_number": "3374",
+      "difficulty": {
+        "files": 6,
+        "hunks": 10,
+        "lines": 40
+      },
+      "test_cmds": [
+        "pdm run pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 18,
+      "dataset_row": 263,
+      "repo_url": "https://github.com/pdm-project/pdm.git",
+      "commit_url": "https://github.com/pdm-project/pdm/commit/f37fb16c2459807e0b392dc3306c373e5f68cc4f",
+      "fail_to_pass_count": 3,
+      "pass_to_pass_count": 935,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "3c0c6b72637cde83296563cb5837cb872d0cabc8064183621d8ac63e600810b5",
+      "patch_sha256": "10e3daedce9711a80e9810bfd99d117964e71a2db126cff36f98105aa8d4b318",
+      "test_patch_sha256": "7e05db12072f59d9f26dab4ff5e15af93ce5040636fdb4c52c97bd9cada8b51d"
+    },
+    {
+      "instance_id": "koxudaxi__datamodel-code-generator-2257",
+      "repo": "koxudaxi/datamodel-code-generator",
+      "base_commit": "6e33a336c6be430b231d7d5d99cdadc94ed6b906",
+      "pull_number": "2257",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 1
+      },
+      "test_cmds": [
+        "cat ./scripts/test.sh",
+        "pytest -n auto --cov=datamodel_code_generator --cov-report xml --cov-report term-missing -rA tests",
+        "poetry run pytest -n auto --cov=datamodel_code_generator --cov-report xml --cov-report term-missing -rA tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 19,
+      "dataset_row": 266,
+      "repo_url": "https://github.com/koxudaxi/datamodel-code-generator.git",
+      "commit_url": "https://github.com/koxudaxi/datamodel-code-generator/commit/6e33a336c6be430b231d7d5d99cdadc94ed6b906",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 598,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "4563c9792f273fc5be9a204e7a021bcb802b8fcf323a232bb835a5776680854a",
+      "patch_sha256": "33403b8bb9c6ea97ee4d66d56fec4a53daae0dbf621419ad49021dc7dad96add",
+      "test_patch_sha256": "6e5c79ab232a67338fb87338e905043cec60883097982527b2ca9b51f1365c47"
+    },
+    {
+      "instance_id": "koxudaxi__datamodel-code-generator-2259",
+      "repo": "koxudaxi/datamodel-code-generator",
+      "base_commit": "0def44efc13ac98ecef691daf217a31f6c459812",
+      "pull_number": "2259",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 18
+      },
+      "test_cmds": [
+        "cat ./scripts/test.sh",
+        "poetry run pytest -n auto -rA --cov=datamodel_code_generator --cov-report xml  --cov-report term-missing tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 20,
+      "dataset_row": 267,
+      "repo_url": "https://github.com/koxudaxi/datamodel-code-generator.git",
+      "commit_url": "https://github.com/koxudaxi/datamodel-code-generator/commit/0def44efc13ac98ecef691daf217a31f6c459812",
+      "fail_to_pass_count": 3,
+      "pass_to_pass_count": 599,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "eeb69db5d126301cdb1a49984abc88adead131a1a9570fbdaf3b36fcccd8838f",
+      "patch_sha256": "3f583924a19947374fcb5cdf7074f1de4c6354001c64611be5cca91dee9f525d",
+      "test_patch_sha256": "3f083751a2b1a5c5f90e4cc334c3c7ab609851f9bb1fedde36ec52c37aba231e"
+    },
+    {
+      "instance_id": "koxudaxi__datamodel-code-generator-2260",
+      "repo": "koxudaxi/datamodel-code-generator",
+      "base_commit": "0def44efc13ac98ecef691daf217a31f6c459812",
+      "pull_number": "2260",
+      "difficulty": {
+        "files": 1,
+        "hunks": 2,
+        "lines": 20
+      },
+      "test_cmds": [
+        "cat ./scripts/test.sh",
+        "poetry run pytest -n auto --cov=datamodel_code_generator --cov-report xml --cov-report term-missing -rA tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 21,
+      "dataset_row": 268,
+      "repo_url": "https://github.com/koxudaxi/datamodel-code-generator.git",
+      "commit_url": "https://github.com/koxudaxi/datamodel-code-generator/commit/0def44efc13ac98ecef691daf217a31f6c459812",
+      "fail_to_pass_count": 3,
+      "pass_to_pass_count": 602,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "52651230952a8a1061c2bd36b6c7199793dc91571f67814f532e0f7d9cbd57a2",
+      "patch_sha256": "490ffcea784856cdf13bfa73277b6f7f2dc6f01d4de1eae611b189608a469bd3",
+      "test_patch_sha256": "9d122d46d6135c6aa992e657d4146f75ad5466be58a0721c9cc4d09d8c78b1d5"
+    },
+    {
+      "instance_id": "deepset-ai__haystack-8708",
+      "repo": "deepset-ai/haystack",
+      "base_commit": "4f73b192f8bcab8077ef7adac7063b23c237f630",
+      "pull_number": "8708",
+      "difficulty": {
+        "files": 2,
+        "hunks": 5,
+        "lines": 20
+      },
+      "test_cmds": [
+        "pytest --cov-report xml:coverage.xml --cov=\"haystack\" -m \"not integration\" -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 22,
+      "dataset_row": 269,
+      "repo_url": "https://github.com/deepset-ai/haystack.git",
+      "commit_url": "https://github.com/deepset-ai/haystack/commit/4f73b192f8bcab8077ef7adac7063b23c237f630",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 1778,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "997ce5888fc7e54481ef99694607adbe32581d2088df0a58e7dbcde3dedd195c",
+      "patch_sha256": "1b70acb7862c54d065a03cfcca0c1de276762d237e5a65a86fc677ee4cdead89",
+      "test_patch_sha256": "9d1d5f0b1873d3b0e40b5f9dbfe7fcd59a779ae9051ec3813a6192eb346b3b5f"
+    },
+    {
+      "instance_id": "python-control__python-control-1096",
+      "repo": "python-control/python-control",
+      "base_commit": "ec7dc8aea29b51f08c4671a6d2fc2c800c29091f",
+      "pull_number": "1096",
+      "difficulty": {
+        "files": 2,
+        "hunks": 4,
+        "lines": 28
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 23,
+      "dataset_row": 274,
+      "repo_url": "https://github.com/python-control/python-control.git",
+      "commit_url": "https://github.com/python-control/python-control/commit/ec7dc8aea29b51f08c4671a6d2fc2c800c29091f",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 3509,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "5de0a5fd67a209f94055930b803ed2599261eefde6e97b7f921a2d0128b28f9b",
+      "patch_sha256": "9ee9e2f060811469412daec4a1a8b3829d5dbe678af1e9de01bcf0a1fb0e4214",
+      "test_patch_sha256": "8b977bfcce31dae34459cb36c8871c83d319996ac2527ef2c4daf0a42c4e7082"
+    },
+    {
+      "instance_id": "deepset-ai__haystack-8725",
+      "repo": "deepset-ai/haystack",
+      "base_commit": "26b80778f52246214efe72b777d548f85d810198",
+      "pull_number": "8725",
+      "difficulty": {
+        "files": 2,
+        "hunks": 5,
+        "lines": 34
+      },
+      "test_cmds": [
+        "pytest --cov-report xml:coverage.xml --cov=\"haystack\" -m \"not integration\" -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 24,
+      "dataset_row": 277,
+      "repo_url": "https://github.com/deepset-ai/haystack.git",
+      "commit_url": "https://github.com/deepset-ai/haystack/commit/26b80778f52246214efe72b777d548f85d810198",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 1788,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "fbe995311317bae011d3a465f2aa0a69dc8adb72267e7e953f8e5a8eca9054c8",
+      "patch_sha256": "29743c80c2ed71bcf3382a3ed3fe620825840e3ad60327c368c8067f6c62047c",
+      "test_patch_sha256": "49f460a05ccff0cad5d5613772579fdaad89833fe8a5aeb5afad824d62e9fa49"
+    },
+    {
+      "instance_id": "python-control__python-control-1099",
+      "repo": "python-control/python-control",
+      "base_commit": "0ff045263f69802e32d7e5a69ac5c16142f7a96e",
+      "pull_number": "1099",
+      "difficulty": {
+        "files": 1,
+        "hunks": 3,
+        "lines": 39
+      },
+      "test_cmds": [
+        "pytest -rA control/tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 25,
+      "dataset_row": 286,
+      "repo_url": "https://github.com/python-control/python-control.git",
+      "commit_url": "https://github.com/python-control/python-control/commit/0ff045263f69802e32d7e5a69ac5c16142f7a96e",
+      "fail_to_pass_count": 3,
+      "pass_to_pass_count": 3511,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "51cb39a4ced8d69f10641edee558d4d265978f454179288e35964e41e7536900",
+      "patch_sha256": "28ac99fd2f29e7f61a89f05eba5c0f3e199ce626233689b6901c9eb2a0d48a2e",
+      "test_patch_sha256": "4a08b984078bcd1244b27d3725a9c7c03e82e67b186647901b918a17500c0748"
+    },
+    {
+      "instance_id": "projectmesa__mesa-2632",
+      "repo": "projectmesa/mesa",
+      "base_commit": "d680bf4719933756a41cced3a4f17620e0be9381",
+      "pull_number": "2632",
+      "difficulty": {
+        "files": 1,
+        "hunks": 1,
+        "lines": 16
+      },
+      "test_cmds": [
+        "pytest -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 26,
+      "dataset_row": 287,
+      "repo_url": "https://github.com/projectmesa/mesa.git",
+      "commit_url": "https://github.com/projectmesa/mesa/commit/d680bf4719933756a41cced3a4f17620e0be9381",
+      "fail_to_pass_count": 2,
+      "pass_to_pass_count": 250,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "736d459e5b3e1bcb79075ae43ba5c5c97aefff10f8176a96bcd8aeb0a34748f1",
+      "patch_sha256": "5b71ca0230f88858c5bf40fe3fe1ff9f68b00c38073dd01b6d36b3a9e632f182",
+      "test_patch_sha256": "ffe5721ca5f01045a260170ce8e8f41cbff51e6b991156b0f2d400777a21fc28"
+    },
+    {
+      "instance_id": "run-llama__llama_deploy-457",
+      "repo": "run-llama/llama_deploy",
+      "base_commit": "4eb62f05f8a6207ba0df279823f53893af3c7f86",
+      "pull_number": "457",
+      "difficulty": {
+        "files": 2,
+        "hunks": 8,
+        "lines": 41
+      },
+      "test_cmds": [
+        "poetry run pytest -rA tests"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 27,
+      "dataset_row": 332,
+      "repo_url": "https://github.com/run-llama/llama_deploy.git",
+      "commit_url": "https://github.com/run-llama/llama_deploy/commit/4eb62f05f8a6207ba0df279823f53893af3c7f86",
+      "fail_to_pass_count": 3,
+      "pass_to_pass_count": 186,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "fd817c9c907e9819d497912c76f72a0cee8779ff64df12cc5989623b1244b132",
+      "patch_sha256": "85170781dc285fea54bf991fa7703554203a47e06cae7f9c5c0c4de45979adfc",
+      "test_patch_sha256": "f37b48815ae81dae017e17a506016f64b5d96f162e2bc63eaa997edf4a432870"
+    },
+    {
+      "instance_id": "delgan__loguru-1297",
+      "repo": "Delgan/loguru",
+      "base_commit": "e310e2029102b5d63a679a2b64501c045aa86336",
+      "pull_number": "1297",
+      "difficulty": {
+        "files": 2,
+        "hunks": 2,
+        "lines": 39
+      },
+      "test_cmds": [
+        "pytest -vv -rA"
+      ],
+      "log_parser": "pytest",
+      "selection_index": 28,
+      "dataset_row": 335,
+      "repo_url": "https://github.com/Delgan/loguru.git",
+      "commit_url": "https://github.com/Delgan/loguru/commit/e310e2029102b5d63a679a2b64501c045aa86336",
+      "fail_to_pass_count": 4,
+      "pass_to_pass_count": 1522,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "0368432d5d613af17b313606c7f68dcfb831a4a8c5cfb8e5c8e1170593fa49cc",
+      "patch_sha256": "8d584d8fa4b27ed0253a88478bc8c361968cba5440615092463322d7687b85db",
+      "test_patch_sha256": "04171825f4cbcfec827167263c867d037f200763384fa7bed998d052a1287d5f"
+    },
+    {
+      "instance_id": "yt-dlp__yt-dlp-12714",
+      "repo": "yt-dlp/yt-dlp",
+      "base_commit": "9d5e6de2e7a47226d1f72c713ad45c88ba01db68",
+      "pull_number": "12714",
+      "difficulty": {
+        "files": 1,
+        "hunks": 5,
+        "lines": 33
+      },
+      "test_cmds": [
+        "python3 devscripts/run_tests.py --pytest-args '-rA'",
+        "python3 devscripts/run_tests.py --pytest-args -rA",
+        "python3 devscripts/run_tests.py --pytest-args=\"-rA\""
+      ],
+      "log_parser": "pytest",
+      "selection_index": 29,
+      "dataset_row": 419,
+      "repo_url": "https://github.com/yt-dlp/yt-dlp.git",
+      "commit_url": "https://github.com/yt-dlp/yt-dlp/commit/9d5e6de2e7a47226d1f72c713ad45c88ba01db68",
+      "fail_to_pass_count": 1,
+      "pass_to_pass_count": 637,
+      "candidate_status": "pending",
+      "oracle_status": "pending",
+      "problem_statement_sha256": "13d22f6ea839d39e81579726429b9887fe3dc749bcea8be0a068f1207a252277",
+      "patch_sha256": "eda1da73e58105519211f5945d2ea8db5e2b72d954daa839e11126cd98683797",
+      "test_patch_sha256": "a9fa59e8ea1f82649ca566d05911d34afbf124105e17b74a3ef15c03acd5c948"
+    }
+  ],
+  "study_role": "repository-disjoint pre-model oracle qualification candidates; no efficacy outcomes"
+}

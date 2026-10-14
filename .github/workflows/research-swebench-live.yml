@@ -56,6 +56,8 @@ jobs:
       tasks: ${{ steps.matrix.outputs.tasks }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -66,7 +68,9 @@ jobs:
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json, os
           from pathlib import Path
-          for variable in ("STUDY_DIR", "RUN_BUNDLE", "DATASET_MANIFEST"):
+          oracle_only = json.loads('${{ toJSON(inputs.oracle_only) }}')
+          variables = ("DATASET_MANIFEST",) if oracle_only else ("STUDY_DIR", "RUN_BUNDLE", "DATASET_MANIFEST")
+          for variable in variables:
               path = Path(os.environ[variable])
               if path.is_absolute() or ".." in path.parts or not path.exists():
                   raise SystemExit(f"invalid repository-relative {variable}")
@@ -97,6 +101,8 @@ jobs:
       RESEARCH_ROOT: ${{ github.workspace }}/.research-cache/purrcode-swebench-live
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -114,6 +120,15 @@ jobs:
       - name: Build PurrCode
         if: ${{ !inputs.oracle_only }}
         run: cargo build --release -p purrcode-cli -p purrcode-daemon -j 4
+      - name: Provision visible public dependency environment
+        if: ${{ !inputs.oracle_only }}
+        run: |
+          python scripts/ase_visible_environment.py \
+            --manifest "$DATASET_MANIFEST" \
+            --instance-id "$TASK_ID" \
+            --cache "$RESEARCH_ROOT/checkouts" \
+            --root "$RESEARCH_ROOT"
+          echo "$RESEARCH_ROOT/agent-venv/bin" >> "$GITHUB_PATH"
       - name: Materialize operator-only DeepSeek credential
         if: ${{ !inputs.oracle_only }}
         run: |
@@ -198,7 +213,16 @@ jobs:
             ${{ github.workspace }}/.research-cache/purrcode-swebench-live/e2e/session-audit/
             ${{ github.workspace }}/.research-cache/purrcode-swebench-live/e2e/started/
             ${{ github.workspace }}/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl
-            ${{ env.RUN_BUNDLE }}
+            ${{ github.workspace }}/.research-cache/purrcode-swebench-live/visible-environment.json
+            ${{ env.DATASET_MANIFEST }}
+      - name: Upload frozen model study schedule
+        if: ${{ always() && !inputs.oracle_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: schedule-${{ matrix.task }}
+          if-no-files-found: error
+          retention-days: 14
+          path: ${{ env.RUN_BUNDLE }}
 
   analysis:
     needs: task
