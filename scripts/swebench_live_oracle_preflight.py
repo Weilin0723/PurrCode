@@ -128,7 +128,6 @@ def run_gold(task: Mapping[str, Any], *, out: Path, args: argparse.Namespace) ->
         "status": "passed" if passed else "failed",
         "resolved": resolved,
         "patch_successfully_applied": report.get("patch_successfully_applied") if isinstance(report, Mapping) else None,
-        "tests_status": report.get("tests_status") if isinstance(report, Mapping) else None,
         "report_error": report_error,
         "oracle_exit_code": completed.returncode,
         "report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest() if report_path.is_file() else None,

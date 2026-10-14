@@ -1,47 +1,32 @@
-# Evidence-Gated Completion Under Requirement Revisions: A Preregistered Component Study
+# Freshness Is Not Correctness: Auditing Revision-Bound Completion in Coding Agents
 
-**FSE-style initial submission draft — component scope**  
-**Date:** 2026-10-13  
+**ASE research-track working manuscript — component evidence; E2E qualification open**
+**Date:** 2026-10-14
 **Artifact status:** complete 288-call local study plus audited 144-call DeepSeek operational repair  
 
 ## Abstract
 
-Coding agents can claim completion after a request changes while relying on evidence produced for
-an obsolete requirement or artifact. We study a narrow control-plane intervention: conjoin a
-model's completion verdict with a deterministic gate that requires current requirement, artifact,
-and evidence bindings. The gate is not a semantic oracle; it only checks whether recorded evidence
-is current and bound to the reviewed artifact.
+When a user changes a software requirement, a coding agent can reuse validation or review evidence
+that refers to an obsolete request or artifact. We investigate whether revision- and artifact-bound
+completion checks distinguish trustworthy delivery from merely current evidence. A deterministic
+binding gate filters a model's completion verdict; it does not evaluate semantic correctness.
+Because conjunction can only remove deliveries, our central question is which decisions it removes
+and what availability it sacrifices.
 
-We preregistered a repository-snapshot component study before any model generation. Six base tasks
-each contributed six immutable candidate snapshots: an unchanged baseline, a correct repair, a
-stale repair, an over-broad repair, a test-tampering repair, and a behaviorally correct repair with
-stale evidence. Independent Rust behavior oracles, preservation checks, and test-integrity checks
-produced external labels without entering model prompts or authorization. Local Llama 3.2 3B was
-the primary reviewer and Llama 3.2 1B was secondary. Two prompt conditions and two repeated seeds
-produced 288 scheduled calls. The primary comparison was model verdict alone (B) versus the same
-verdict conjoined with the deterministic gate (C), clustered over the six base tasks.
+A preregistered component study constructed 36 executable snapshots from six authored Rust tasks,
+including current-but-incorrect and correct-but-stale counterexamples. Independent behavioral,
+preservation, and test-integrity oracles supplied external labels. Two local models, two prompt
+conditions, and two replicate labels yielded 288 scheduled calls. In the primary 3B condition,
+filtering reduced false-ready decisions from 23/48 to 13/48, while correct coverage fell from 10/24
+to 5/24 and violated the predeclared five-point loss margin. A separately frozen, outcome-aware
+DeepSeek output-cap repair produced 143/144 valid responses: false-ready fell from 30/48 to 12/48,
+but correct coverage fell from 24/24 to 12/24. Current binding admitted over-broad and test-tampering
+repairs; stale binding rejected behaviorally correct code.
 
-For the preregistered 3B revision-rubric condition, C reduced external false-ready decisions from
-23/48 (47.9%) to 13/48 (27.1%), a −20.8 percentage-point paired risk difference. All six task
-clusters favored C; the preregistered two-sided exact sign test was significant
-(`p=0.03125`). The safety gain did not satisfy the usefulness guardrail: coverage of externally
-correct snapshots fell from 10/24 (41.7%) to 5/24 (20.8%), exceeding the predeclared 5-point loss
-margin. Current-bound over-broad and test-tampering snapshots remained false-ready, whereas the
-correct stale-evidence snapshot was blocked. Strict-output attrition was also high: 64/144 3B and
-93/144 1B calls were valid. The result therefore supports a bounded claim: revision binding
-significantly reduced false-ready risk over the preregistered set of externally rejected
-candidates in this authored small-model fixture; the reduction was concentrated in the baseline
-and stale strata, for which no separate inferential test was performed. The gate is neither a
-semantic correctness oracle nor a free improvement. The observed safety–availability trade-off is
-the main result.
-
-We then evaluated model externality with the official `deepseek-v4-pro` API. A first frozen run was
-operationally inconclusive because 26/144 responses hit its 128-token ceiling. An outcome-aware
-repair changed only that ceiling to 256 and reran all 144 cells. The repaired run had 143/144 valid
-responses. In its primary condition, false-ready fell from 30/48 (62.5%) to 12/48 (25.0%); all six
-task clusters favored the gate (`p=0.03125`, bootstrap 95% CI [−45.8, −29.2] points). Correct
-coverage simultaneously fell from 24/24 to 12/24, again failing the guardrail. This follow-up
-strengthens the cross-model behavioral observation but not the method-win or generalization claim.
+These authored counterexamples establish a mechanism boundary and an availability cost, rather
+than an estimate of real-world failure prevalence or a general improvement in coding agents.
+They motivate measuring evidence refresh separately from static evidence filtering. The
+cross-repository live study is still unqualified and contributes no efficacy claim to this draft.
 
 ## 1. Introduction
 
@@ -71,6 +56,14 @@ claim end-to-end coding-agent efficacy. An attempted 3B end-to-end feasibility r
 complete within the local runtime budget, so the confirmatory small-model evidence is deliberately
 scoped to completion decisions over executable repository snapshots.
 
+We ask three research questions:
+
+- **RQ1 (safety):** How much does binding reduce false-ready decisions on externally rejected candidates?
+- **RQ2 (availability):** How much externally correct work does the same filter block?
+- **RQ3 (failure boundary):** Which current-but-wrong and correct-but-stale cases distinguish freshness from correctness?
+
+The implemented live extension asks whether evidence refresh changes this trade-off during actual coding. That question remains unanswered by the completed component studies.
+
 This work contributes:
 
 1. a revision- and artifact-bound completion rule that is explicitly separated from a semantic
@@ -79,8 +72,8 @@ This work contributes:
    correct-but-stale counterexamples;
 3. a preregistered 288-call small-model study with task-clustered inference, intention-to-treat
    failure handling, write-once freeze records, and independent recomputation; and
-4. evidence of a statistically significant false-ready reduction together with a failed coverage
-   guardrail, exposing rather than hiding the mechanism's safety–availability trade-off; and
+4. evidence of a measured false-ready reduction together with a failed coverage
+   guardrail, exposing rather than hiding the mechanism's safety–availability trade-off;
 5. an audited DeepSeek V4 Pro operational-repair replication that preserves the same trade-off
    while explicitly retaining the failed first remote run.
 
@@ -122,6 +115,27 @@ For a model verdict \(M\) and deterministic gate verdict \(G\), the study define
 
 B and C use the same model response. Their difference therefore estimates filtering by the gate,
 not an extra model call or token budget.
+
+### 2.3 What conjunction can and cannot establish
+
+For a fixed model response, C can only remove deliveries allowed by B. For any external label Y,
+`Pr(C=READY, Y=incorrect) ≤ Pr(B=READY, Y=incorrect)`. The same set inclusion applies to correct
+candidates. Consequently, a directional safety improvement is structurally expected from a
+nontrivial filter; a small p-value alone cannot establish that binding is a useful intervention.
+Our empirical questions concern its magnitude, where removed decisions occur, and the availability
+cost. The frozen guardrail is essential to distinguish useful selectivity from indiscriminate blocking.
+
+| External behavior | Evidence binding | Required interpretation |
+| --- | --- | --- |
+| Correct | Current | Eligible for delivery, subject to model verdict |
+| Incorrect | Current | Freshness cannot establish correctness |
+| Correct | Stale | Revalidation is needed; code need not be changed |
+| Incorrect | Stale | Blocking prevents delivery, without diagnosing the semantic defect |
+
+The first three binding predicates are the isolated component intervention. The production
+review-and-delivery loop performs additional reviews and can refresh evidence; it is a different
+intervention. Its generated patches, extra model calls, latency, and validation costs must be
+measured separately rather than inferred from the component contrast.
 
 ## 3. Preregistered study
 
@@ -238,8 +252,9 @@ paired mean difference was −20.8 percentage points; the task-cluster bootstrap
 | Scheduler/reporter IDs | −12.5 pp |
 | Settings preservation | −37.5 pp |
 
-The exact sign test produced 6 wins, 0 losses, and 0 ties, with two-sided `p=0.03125`. This meets
-the preregistered statistical criterion for the narrow false-ready contrast. Enumeration of all
+The exact sign test produced 6 wins, 0 losses, and 0 ties, with two-sided `p=0.03125`. We retain this preregistered numerical output, but conjunction makes
+positive C-minus-B differences impossible. The sign-symmetry assumption does not establish useful
+selectivity in this paired filtering design; this p-value is not evidence of a general method win. Enumeration of all
 64 paired-cluster sign assignments gave the preregistered descriptive 95% null-reference interval
 [−16.7, +16.7] points. This interval describes the sign-flip null distribution; it is not a
 confidence interval for the observed effect.
@@ -287,6 +302,25 @@ was [−45.8, −29.2] points. However, correct coverage fell from 24/24 to 12/2
 the gate retained all current-bound gold claims but blocked every correct stale-evidence claim.
 The unchanged five-point guardrail therefore failed. The plain-prompt secondary block showed a
 similar −39.6-point descriptive difference.
+
+### 4.6 Evidence ledger and live-study audit
+
+| Study | Scheduled calls | Valid responses | Primary false-ready B → C | Correct coverage B → C | Interpretation |
+| --- | ---: | ---: | --- | --- | --- |
+| Local 3B | 144 | 64 | 23/48 → 13/48 | 10/24 → 5/24 | Confirmatory component contrast; guardrail failed |
+| Local 1B | 144 | 93 | Secondary analysis | Secondary analysis | Exploratory; no adjusted significant finding |
+| DeepSeek v1 | 144 | 118 | Inference suppressed | Inference suppressed | Operationally inconclusive |
+| DeepSeek v2 | 144 | 143 | 30/48 → 12/48 | 24/24 → 12/24 | Outcome-aware repair; guardrail failed |
+| SWE-bench-Live | 120 sessions planned | Not qualified | Not reported | Not reported | Cross-repository E2E gate open |
+
+An operator audit on 2026-10-14 inspected four downloaded cells from one task in the running
+x86_64 workflow. All four had failed sessions, zero output tokens, empty patches, and unknown
+oracles, despite successful task-job conclusions. This partial sample cannot establish the
+failure rate of the full run or identify the provider failure cause. It establishes that workflow
+success is insufficient evidence of experimental validity. A subsequent runner repair classifies
+failed/cancelled sessions as errors and unknown correctness as missing; artifact aggregation also
+preserves task directories to avoid filename collisions. Existing frozen records remain unchanged.
+Any repaired study must use a new runner lock and pre-call freeze.
 
 ## 5. Discussion
 
@@ -357,7 +391,7 @@ user-facing completion decision.
 ## 8. Conclusion
 
 In a preregistered six-task small-model component study, conjoining a model completion verdict with
-revision/artifact binding significantly reduced external false-ready risk by 20.8 percentage
+revision/artifact binding reduced external false-ready decisions by 20.8 percentage
 points over the prespecified externally rejected stratum (`p=0.03125`). The same mechanism reduced
 externally correct coverage by 20.8 points and failed the predeclared usefulness guardrail. Binding
 checks reliably identify stale evidence but cannot identify current-bound semantic errors; they may
@@ -404,9 +438,9 @@ artifacts. AI assistance did not fabricate observations, citations, or missing r
 
 ## References
 
-1. [FSE 2027 Research Papers CFP](https://conf.researchr.org/track/fse-2027/fse-2027-papers).
+1. [ASE 2026 Research Papers CFP](https://conf.researchr.org/track/ase-2026/ase-2026-research-track) (venue policy reference, not research evidence).
 2. Orlanski et al., [SlopCodeBench](https://arxiv.org/abs/2603.24755).
-3. Thai et al., [SWE-EVO](https://arxiv.org/abs/2512.18470).
+3. Le et al., [SWE-EVO](https://arxiv.org/abs/2512.18470).
 4. Wang, Pradel, and Liu, [Are “Solved Issues” in SWE-bench Really Solved Correctly?](https://software-lab.org/publications/icse2026_SWE-bench-correctness.pdf).
 5. Zheng et al., [SWE-Bench Pro Verified](https://arxiv.org/abs/2609.08149).
 6. Yao et al., [τ-bench](https://openreview.net/pdf?id=roNSXZpUDN).

@@ -781,7 +781,11 @@ def run_one(
     metrics = event_metrics(events)
     requested_alignment = task["arm"] == "C"
     observed_alignment = alignment_observed(events)
-    terminal_status = "timeout" if measurement["timed_out"] else "valid"
+    terminal_status = "valid"
+    if measurement["timed_out"]:
+        terminal_status = "timeout"
+    elif measurement["session_status"] in {"failed", "cancelled"}:
+        terminal_status = "error"
     if terminal_status != "valid":
         claimed_complete = None
         oracle_status = "unknown"
@@ -806,7 +810,7 @@ def run_one(
         "terminal_status": terminal_status,
         "oracle_status": oracle_status,
         "claimed_complete": claimed_complete,
-        "externally_correct": oracle_status == "correct",
+        "externally_correct": None if oracle_status == "unknown" else oracle_status == "correct",
         "session_id": measurement["session_id"],
         "session_status": measurement["session_status"],
         "elapsed_ms": measurement["elapsed_ms"],

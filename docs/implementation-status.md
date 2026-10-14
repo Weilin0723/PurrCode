@@ -5,6 +5,29 @@ Updated: 2026-10-13 (v1.5 alignment-first autonomous development on
 
 ## v1.5 — Alignment-first autonomous development
 
+
+### ASE submission work — 2026-10-14
+
+The cheapest currently documented official DeepSeek model, `deepseek-flash`, passed a fresh
+7/7 qualification with a 16,384-token context probe. The dated report and binary/source hashes
+are archived under `research/evidence/2026-10-14/deepseek-flash/`. Qualification does not establish
+coding efficacy. NIM catalog access succeeded but generation smoke requests timed out.
+
+The completed prior x86_64 workflow yielded 108 downloadable cells, including 104 failed
+sessions and 106 unknown oracle outcomes; it is not release or research qualification evidence.
+Original downloaded rows are retained in `research/evidence/2026-10-14/previous-e2e-audit/`.
+The research runner now classifies failed/cancelled sessions as errors and unknown correctness
+as missing, preserves task artifact directories, rejects duplicate rows, pins the oracle dataset
+revision, and removes hidden test lists from the gold-preflight export. Existing frozen records
+are unchanged; their runner locks are not reused for the repaired study.
+
+A new repository-disjoint 30-task/10-repository candidate set is prepared for **oracle-only
+qualification**, before its model-study freeze. It has no efficacy outcomes. ASE submission
+readiness remains open until genuine live evidence, analysis, anonymous artifacts, and manuscript
+validation pass. The manuscript now explicitly distinguishes deterministic conjunction from live
+review and explains the structural limitation of the component sign-test interpretation.
+
+
 Full design in [`v1.5-architecture.md`](v1.5-architecture.md).
 
 **Implemented and under release-candidate qualification.** User intent is compiled into a

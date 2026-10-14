@@ -3,6 +3,31 @@ name: Research - SWE-bench-Live E2E
 on:
   workflow_dispatch:
     inputs:
+      oracle_only:
+        description: Qualify oracle inputs without starting a daemon or calling a model
+        required: true
+        default: false
+        type: boolean
+      dataset_manifest:
+        description: Repository-relative task acquisition manifest
+        required: true
+        default: benchmarks/research/swebench-live-v1/manifest.json
+        type: string
+      study_directory:
+        description: Repository-relative directory containing this study's frozen evidence
+        required: true
+        default: docs/research/evidence/2026-10-13/swebench-live-v1
+        type: string
+      run_bundle:
+        description: Repository-relative frozen run bundle
+        required: true
+        default: benchmarks/research/swebench-live-v1/run-bundle.json
+        type: string
+      credential_secret:
+        description: Name of the operator-side provider credential secret
+        required: true
+        default: DEEPSEEK_API_KEY
+        type: string
       instance_ids:
         description: Whitespace-separated instance IDs to run (empty = all frozen 30)
         required: false
@@ -20,6 +45,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_TOOLCHAIN: "1.88"
+  STUDY_DIR: ${{ inputs.study_directory }}
+  RUN_BUNDLE: ${{ inputs.run_bundle }}
+  DATASET_MANIFEST: ${{ inputs.dataset_manifest }}
 
 jobs:
   prepare:
@@ -38,7 +66,11 @@ jobs:
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json, os
           from pathlib import Path
-          manifest = json.loads(Path("benchmarks/research/swebench-live-v1/manifest.json").read_text())
+          for variable in ("STUDY_DIR", "RUN_BUNDLE", "DATASET_MANIFEST"):
+              path = Path(os.environ[variable])
+              if path.is_absolute() or ".." in path.parts or not path.exists():
+                  raise SystemExit(f"invalid repository-relative {variable}")
+          manifest = json.loads(Path(os.environ["DATASET_MANIFEST"]).read_text())
           selected = [row["instance_id"] for row in manifest["tasks"]]
           requested = os.environ.get("REQUESTED", "").split()
           if requested:
@@ -80,13 +112,15 @@ jobs:
           git -C "$RESEARCH_ROOT/swebench" checkout --detach a145aa87c62361532dacaa243398978164b234b7
           "$RESEARCH_ROOT/venv/bin/python" -m pip install -e "$RESEARCH_ROOT/swebench"
       - name: Build PurrCode
+        if: ${{ !inputs.oracle_only }}
         run: cargo build --release -p purrcode-cli -p purrcode-daemon -j 4
       - name: Materialize operator-only DeepSeek credential
+        if: ${{ !inputs.oracle_only }}
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets[inputs.credential_secret] }}
         run: |
           mkdir -p "$RESEARCH_ROOT/ci-config"
-          cp docs/research/evidence/2026-10-13/swebench-live-v1/config.toml "$RESEARCH_ROOT/ci-config/config.toml"
+          cp "$STUDY_DIR/config.toml" "$RESEARCH_ROOT/ci-config/config.toml"
           python - <<'PY'
           import os
           from pathlib import Path
@@ -99,6 +133,7 @@ jobs:
           PY
           chmod 600 "$RESEARCH_ROOT/ci-config/credentials.toml"
       - name: Start isolated daemon
+        if: ${{ !inputs.oracle_only }}
         run: |
           mkdir -p "$RESEARCH_ROOT/state"
           "$PWD/target/release/purrcoded" \
@@ -122,7 +157,7 @@ jobs:
       - name: Gold hidden-oracle preflight
         run: |
           "$RESEARCH_ROOT/venv/bin/python" scripts/swebench_live_oracle_preflight.py \
-            --manifest benchmarks/research/swebench-live-v1/manifest.json \
+            --manifest "$DATASET_MANIFEST" \
             --out "$RESEARCH_ROOT/oracle" \
             --oracle-python "$RESEARCH_ROOT/venv/bin/python" \
             --oracle-runner "$PWD/scripts/run_swebench_live_oracle.py" \
@@ -130,13 +165,14 @@ jobs:
             --instance-ids "$TASK_ID" \
             --max-tasks 1
       - name: Run scheduled B/C x static/correction cells
+        if: ${{ !inputs.oracle_only }}
         run: |
           "$RESEARCH_ROOT/venv/bin/python" scripts/swebench_live_e2e.py run \
-            --bundle benchmarks/research/swebench-live-v1/run-bundle.json \
-            --runner-lock docs/research/evidence/2026-10-13/swebench-live-v1/runner-lock.json \
+            --bundle "$RUN_BUNDLE" \
+            --runner-lock "$STUDY_DIR/runner-lock.json" \
             --cache-dir "$RESEARCH_ROOT/checkouts" \
-            --plan docs/research/evidence/2026-10-13/swebench-live-v1/analysis-plan.json \
-            --freeze docs/research/evidence/2026-10-13/swebench-live-v1/freeze.json \
+            --plan "$STUDY_DIR/analysis-plan.json" \
+            --freeze "$STUDY_DIR/freeze.json" \
             --daemon http://127.0.0.1:7477 \
             --token-file "$RESEARCH_ROOT/state/daemon.token" \
             --output "$RESEARCH_ROOT/e2e" \
@@ -160,11 +196,11 @@ jobs:
           path: |
             ${{ github.workspace }}/.research-cache/purrcode-swebench-live/e2e/results.jsonl
             ${{ github.workspace }}/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl
-            benchmarks/research/swebench-live-v1/run-bundle.json
+            ${{ env.RUN_BUNDLE }}
 
   analysis:
     needs: task
-    if: ${{ inputs.run_analysis }}
+    if: ${{ inputs.run_analysis && !inputs.oracle_only }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -175,7 +211,7 @@ jobs:
         with:
           pattern: e2e-*
           path: "${{ runner.temp }}/artifacts"
-          merge-multiple: true
+          merge-multiple: false
       - name: Combine scheduled rows
         run: |
           python - "${{ runner.temp }}/artifacts" "${{ runner.temp }}/results.jsonl" <<'PY'
@@ -189,6 +225,8 @@ jobs:
                   if not line.strip():
                       continue
                   row = json.loads(line)
+                  if row["run_id"] in rows:
+                      raise SystemExit(f"duplicate run_id: {row['run_id']}")
                   rows[row["run_id"]] = row
           target.write_text("".join(json.dumps(rows[key], sort_keys=True) + "\n" for key in sorted(rows)), encoding="utf-8")
           print(f"combined {len(rows)} rows")
@@ -197,14 +235,14 @@ jobs:
         run: |
           python scripts/fse_confirmatory_analysis.py \
             "${{ runner.temp }}/results.jsonl" \
-            docs/research/evidence/2026-10-13/swebench-live-v1/analysis-plan.json \
-            docs/research/evidence/2026-10-13/swebench-live-v1/freeze.json \
-            benchmarks/research/swebench-live-v1/manifest.json \
-            --runner-artifact docs/research/evidence/2026-10-13/swebench-live-v1/runner-lock.json \
-            --dependency-lock docs/research/evidence/2026-10-13/swebench-live-v1/dependency-lock.json \
-            --qualification docs/research/evidence/2026-10-13/swebench-live-v1/qualification.json \
-            --model-freeze docs/research/evidence/2026-10-13/swebench-live-v1/model-freeze.md \
-            --expected-freeze-sha256 "$(python -c 'import json; print(json.load(open("docs/research/evidence/2026-10-13/swebench-live-v1/receipt.json"))["freeze_sha256"])')" \
+            "$STUDY_DIR/analysis-plan.json" \
+            "$STUDY_DIR/freeze.json" \
+            "$DATASET_MANIFEST" \
+            --runner-artifact "$STUDY_DIR/runner-lock.json" \
+            --dependency-lock "$STUDY_DIR/dependency-lock.json" \
+            --qualification "$STUDY_DIR/qualification.json" \
+            --model-freeze "$STUDY_DIR/model-freeze.md" \
+            --expected-freeze-sha256 "$(python -c 'import json, os; from pathlib import Path; print(json.loads((Path(os.environ["STUDY_DIR"]) / "receipt.json").read_text())["freeze_sha256"])')" \
             > "${{ runner.temp }}/analysis.json"
       - uses: actions/upload-artifact@v4
         with:

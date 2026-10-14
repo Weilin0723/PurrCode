@@ -1,0 +1,7 @@
+{
+  "model": "deepseek-ai/deepseek-v4.1-flash",
+  "request_kind": "minimal_nonstream_smoke",
+  "qualification": false,
+  "error_type": "TimeoutError",
+  "elapsed_seconds": 30.1
+}

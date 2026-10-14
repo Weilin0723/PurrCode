@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -17,6 +18,29 @@ import swebench_live_e2e as e2e
 
 
 class SwebenchLiveE2ETests(unittest.TestCase):
+    def test_failed_session_and_unknown_oracle_are_not_valid_observations(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            task = dict(run_id="r", task_id="r", repository="org/repo", base_task_id="t",
+                        variant="static", arm="B", repeat=0, model="nim/model", maximum_seconds=1)
+            measurement = dict(session_id="s", session_status="failed", elapsed_ms=1,
+                               timed_out=False, mid_run_correction_requested=False,
+                               mid_run_correction_triggered=False, mid_run_correction_acknowledged=False,
+                               mid_run_correction_trigger_event_sha256=None,
+                               mid_run_correction_message_event_sha256=None)
+            with patch.object(e2e, "verify_checkout", return_value=root), \
+                 patch.object(e2e, "run_session", return_value=(measurement, [], {})), \
+                 patch.object(e2e, "state_worktree", return_value=root), \
+                 patch.object(e2e, "extract_patch", return_value=b""), \
+                 patch.object(e2e, "run_oracle", return_value=dict(status="unknown", oracle_run_id="o")):
+                row = e2e.run_one(task, cache_dir=root, base="unused", token="synthetic",
+                                  output=root, plan=dict(study_id="test", dataset_manifest_sha256="d",
+                                                         schedule_sha256="s"), freeze={}, bundle_sha256="b",
+                                  oracle_python=root, oracle_runner=root, hf_home=root, oracle_timeout=1)
+            self.assertEqual(row["terminal_status"], "error")
+            self.assertIsNone(row["claimed_complete"])
+            self.assertIsNone(row["externally_correct"])
+
     def _fixture(self, root: Path) -> tuple[Path, Path, Path]:
         cache = root / "cache"
         cache.mkdir()

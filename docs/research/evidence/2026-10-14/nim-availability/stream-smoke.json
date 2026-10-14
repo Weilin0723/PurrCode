@@ -1,0 +1,7 @@
+{
+  "model": "deepseek-ai/deepseek-v4.1-flash",
+  "request_kind": "availability_smoke",
+  "qualification": false,
+  "error_type": "TimeoutError",
+  "elapsed_seconds": 60.14
+}

@@ -1,0 +1,12 @@
+{
+  "requested_model": "deepseek-ai/deepseek-v4.1-flash",
+  "request_kind": "model_catalog",
+  "qualification": false,
+  "http_status": 200,
+  "model_listed": true,
+  "deepseek_models": [
+    "deepseek-ai/deepseek-coder-6.7b-instruct",
+    "deepseek-ai/deepseek-v4.1-flash"
+  ],
+  "elapsed_seconds": 0.16
+}

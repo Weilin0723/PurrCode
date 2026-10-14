@@ -1,0 +1,21 @@
+{
+  "purpose": "editorial_assistance_not_study_evidence",
+  "model_requested": "deepseek-flash",
+  "model_returned": "deepseek-flash",
+  "created_at_utc": "2026-10-14T04:29:25.405966+00:00",
+  "prompt_sha256": "9d9ef321f41a222feca53bfdfc6fa3fc8ecadc5cbeb546dd6682412fc8403255",
+  "response_sha256": "dc20ab4d1328081e79d7f6001484a85b7974feb9430a71edbf197d4a061e80fd",
+  "usage": {
+    "prompt_tokens": 6740,
+    "completion_tokens": 3465,
+    "total_tokens": 10205,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 6740
+  },
+  "finish_reason": "stop",
+  "elapsed_seconds": 22.5,
+  "credential_material_recorded": false
+}

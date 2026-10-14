@@ -1,0 +1,45 @@
+{
+  "workflow_run_id": 38507673127,
+  "artifact_files": 27,
+  "rows": 108,
+  "session_status_counts": {
+    "failed": 104,
+    "null": 4
+  },
+  "oracle_status_counts": {
+    "unknown": 106,
+    "correct": 1,
+    "incorrect": 1
+  },
+  "output_tokens": 25777,
+  "scope": "downloaded original rows retained unchanged; not qualification evidence",
+  "artifact_hashes": {
+    "e2e-falconry__falcon-2248/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "5b3a772d1740bd8f81c97556c71858e955d56f3610ff495b62060f6d17953dc9",
+    "e2e-python-babel__babel-1104/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "e03c5027205eeec33e12fe7d499674fcf457ada51e837adee9287c69fc495626",
+    "e2e-aws-cloudformation__cfn-lint-3475/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "99baa4a73b7ebf61c757b513aa4fae281b7c9b3cb2958022b05e444b4040020c",
+    "e2e-falconry__falcon-2366/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "26f7cbff15e084c0802cff184a5001261c90487b7036ccf8952c2fdb17b9f502",
+    "e2e-sphinx-doc__sphinx-12737/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "9ccda1c86b540b8056ec8189517e3737e6b2af898f989beac2b090765e9d44fe",
+    "e2e-aws-cloudformation__cfn-lint-3501/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "820fde208a00f1cb744d4fa758d34cad9b5c94b7ff8653dab6d37dd70d60f2b9",
+    "e2e-patroni__patroni-3119/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "d93ada487fe45f3cb69c27227c08c5345a38c9bde2980cda6a420ea423d8fc5c",
+    "e2e-pylint-dev__pylint-9772/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "b9c732024e9fdebdcb7088c29411e6bdcdbe021970f217178fb4401a8b827193",
+    "e2e-python-babel__babel-1126/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "da253ad187829b75bace2f12832c79fca4126dc48033064a997ee3815587dec5",
+    "e2e-falconry__falcon-2254/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "a1be4a6df616a71f8963ac7761e560ebccdab65efba80d0bdd1f7ff6d2bc8f67",
+    "e2e-python-babel__babel-1120/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "c2a6a644c7d9d2e67dcf713b03826cd3c8305a821835fc29e2a405b839a41afd",
+    "e2e-keras-team__keras-19973/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "5ba960250546c9f0d8e766711acb9c8c22ed3fc87f0da409e6739828d0cd9f18",
+    "e2e-sphinx-doc__sphinx-12615/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "f58ddb65c96a89cc42f4e3bbedfc97af997480b71e6c2263541809895e8a9a1f",
+    "e2e-instructlab__instructlab-2789/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "30d035308df8aabe29ef79810aa74e7b1ced660c70c99ffbe5f87e5c47238e12",
+    "e2e-instructlab__instructlab-1762/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "54faeef2be7cb6d1c38a37999563f93a99baed58f9149b84c1dd0e6c96fa6e73",
+    "e2e-instructlab__instructlab-2004/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "8a0ad80c4f03cca393528242f51ff2e7d313f2c4c935f4e88a6913397314dabc",
+    "e2e-patroni__patroni-3112/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "e79728021960bdc77242592441adff77d07ecbeeceea712e919fad86e2121795",
+    "e2e-matplotlib__matplotlib-28734/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "4b83bd4243dddffafea79535f183aa891755c910f0a469e3aaaa20308ae1b02d",
+    "e2e-keras-team__keras-20120/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "26530867bf0526a165c6930e695ce419cd4d7bafa4094b959825107f1ee20b17",
+    "e2e-sphinx-doc__sphinx-12598/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "4bd309cf1d47c05d1bfe54cdc0d494c9078cf1bf9dfc367592868aebb7a10a05",
+    "e2e-patroni__patroni-3152/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "687289b145a8b8100bd2caf3ce2f8f68e3cd740f374c68a32784a308c9345d9d",
+    "e2e-pylint-dev__pylint-9785/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "0f1609ab69f61f90b55738222e8c411bdb1fcfae6d9054222e6cc5697aa56fed",
+    "e2e-pylint-dev__pylint-9771/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "bfc0912526b7159a77c88d40c86e8739d703a72a7377b8dd1b11e2d4b1179a9d",
+    "e2e-matplotlib__matplotlib-28577/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "3dd9fbe026a6739851196157f7ebde1e2b0a01e3d42a7b6c165ad1a523835269",
+    "e2e-matplotlib__matplotlib-28584/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "49020c65fd456a495e25274312701b8ae335060da5d4dce6486c3be797a0f7ce",
+    "e2e-aws-cloudformation__cfn-lint-3498/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "fa439f25a5d7024eb88c83333368b345ff1f70e0a73712dd1cef5e616020d1d2",
+    "e2e-keras-team__keras-20079/.research-cache/purrcode-swebench-live/e2e/results.jsonl": "3270e9479b6e4eec16c5981b854179f4eb8e5251a30d0b0dcb26c4661ce35fa4"
+  }
+}

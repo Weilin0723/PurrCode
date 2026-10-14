@@ -1,7 +1,7 @@
-# 需求修订下的证据门控完成判定：预注册组件研究
+# 证据新鲜不等于行为正确：编码 Agent 需求修订完成判定审计
 
-**FSE 风格初始投稿稿——组件范围**  
-**日期：** 2026-10-13  
+**ASE 主会研究论文工作稿——组件证据完整，端到端资格门仍开放**
+**日期：** 2026-10-14
 **证据状态：** 本地 288/288 调用完成；DeepSeek 144-call operational repair 通过审计
 
 ## 摘要
@@ -12,7 +12,9 @@
 
 在预注册的 3B revision-rubric 条件下，模型单独判定 B 的 external false-ready 为 23/48（47.9%），与 gate 取交集后的 C 为 13/48（27.1%），paired risk difference 为 −20.8 个百分点。6 个 task clusters 全部同向，双侧 exact sign test `p=0.03125`，达到预注册显著性标准。但 usefulness guardrail 失败：externally-correct coverage 从 10/24（41.7%）降至 5/24（20.8%），远超预设最多损失 5pp 的界限。当前绑定但语义错误的 over-broad/test-tampering 候选仍会 false-ready；行为正确但 evidence stale 的候选则被阻断。
 
-因此，本文支持的最窄结论是：在该人工构造的小模型 fixture 的预注册 externally-rejected 候选总体中，revision binding 显著降低 false-ready risk；下降集中于 baseline/stale strata，但没有对 stale-only 子层做独立推断。它不是语义 correctness oracle，也不是无代价改进。主要发现是 safety–availability trade-off，而非“方法全面胜出”。
+由于 C 的接受集合天然包含于 B，C−B 的差不可能为正。预注册 sign test 的数值保留用于审计，但它的符号对称假设不能在这个单向过滤设计中证明方法有效；摘要中的效应大小应作描述性解释，而不能依赖显著性推销方法。
+
+因此，本文支持的最窄结论是：在该人工构造的小模型 fixture 的预注册 externally-rejected 候选总体中，revision binding 减少 false-ready decisions；下降集中于 baseline/stale strata，但没有对 stale-only 子层做独立推断。它不是语义 correctness oracle，也不是无代价改进。主要发现是 safety–availability trade-off，而非“方法全面胜出”。
 
 随后我们用官方 `deepseek-v4-pro` API 做 model-external follow-up。首个冻结运行有 26/144 个响应触及 128-token 上限并形成不完整 JSON，超过 10% attrition 阈值，因此永久标记为 operationally inconclusive。一个 outcome-aware repair 只把上限改为 256，并重新执行全部 144 cells；143/144 输出有效。主条件 false-ready 从 30/48（62.5%）降到 12/48（25.0%），六个 cluster 全部同向（`p=0.03125`，bootstrap 95% CI [−45.8, −29.2]pp）。但 correct coverage 同时从 24/24 降到 12/24，再次违反 guardrail。它加强了跨模型行为证据，但不构成独立确认、方法全面胜出或跨仓库泛化。
 
@@ -27,6 +29,12 @@
 - **D = G**：每个唯一候选只计算一次的 gate-only diagnostic。
 
 B 与 C 使用完全相同的模型响应，因此差异来自 gate filtering，而不是额外模型调用或 token budget。
+
+### 研究问题与可证明的边界
+
+RQ1 测量错误完成声明减少多少；RQ2 测量正确交付损失多少；RQ3 区分“当前但错误”和“正确但过期”的失败类型。对于同一模型响应，C = M ∧ G 的接受集合必然是 B = M 的子集，因此 false-ready 不增加本身由结构保证。统计显著不能单独证明方法有用；效应大小、被移除的候选类型，以及预设覆盖率门槛共同决定结论。
+
+生产运行中的实时复审与证据刷新具有额外模型调用和成本，是不同于静态 conjunction 的干预。组件结果不能推导其端到端收益。
 
 ## 2. 预注册设计
 
@@ -91,9 +99,13 @@ guardrail 仍失败：B 对 externally accepted candidates 的 coverage 为 24/2
 - 预注册和两次独立 pre-call review 降低选择性分析风险，但不能消除 authored task selection 的外部有效性限制。
 - DeepSeek v1/v2 不合并 p 值；v2 的上限修复与 v1 失败都必须在投稿中保留。
 
+### 新增端到端证据审计（2026-10-14）
+
+下载检查了仍在运行的 x86_64 工作流中一个任务的四个 cells：全部 session failed、output tokens=0、patch 为空、oracle unknown，尽管该任务 job 显示 success。这里只能判断该样本不合格，不能据此断言全量失败率或 provider 根因。runner 已修复 failed/cancelled 的错误分类，unknown correctness 保留缺失值；工作流下载也改为保留任务目录，避免同名 results 文件互相覆盖。旧冻结记录不改写；任何修复后或 NIM 新模型实验都必须建立新 lock 与 pre-call freeze。
+
 ## 5. 结论
 
-revision/artifact binding 在预注册本地 externally-rejected 候选总体中显著降低了 20.8pp external false-ready risk（`p=0.03125`），DeepSeek operational repair 又观察到 −37.5pp（`p=0.03125`）。前者 coverage 下降 20.8pp，后者下降 50pp，两个 usefulness guardrails 都失败。正确解释是“跨模型一致的显著 safety gain + 实质 availability cost”，而不是方法全面胜出。下一步必须是 repository-disjoint end-to-end study，并加入 automatic evidence refresh 来测试能否保留 safety benefit、减少正确工作的阻断。
+revision/artifact binding 在预注册本地 externally-rejected 候选总体中减少了 20.8pp external false-ready risk（`p=0.03125`），DeepSeek operational repair 又观察到 −37.5pp（`p=0.03125`）。前者 coverage 下降 20.8pp，后者下降 50pp，两个 usefulness guardrails 都失败。正确解释是“跨模型一致的描述性 safety gain + 实质 availability cost”，而不是方法全面胜出。下一步必须是 repository-disjoint end-to-end study，并加入 automatic evidence refresh 来测试能否保留 safety benefit、减少正确工作的阻断。
 
 ## Data Availability
 

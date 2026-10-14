@@ -1,0 +1,71 @@
+{
+  "captured_at_utc": "2026-10-14T04:29:02.310699+00:00",
+  "exit_status": 0,
+  "credential_material_recorded": false,
+  "model_alias_is_mutable": true,
+  "binary_sha256": "d2b0ca50a917ebe166e0a48394f90c34e3d74030bf88129f76153ea33c9b994c",
+  "provider_gateway_source_sha256": "6e1b044d57f413896185b144a41da50bf2553a0fbffdd64a8bb50c3625db9d02",
+  "cargo_lock_sha256": "8facaf8a4d5cce717fe473898a9bb11cc2873efb2cc606c867fb92cbfb39028e",
+  "report": {
+    "model": {
+      "provider": "deepseek",
+      "model": "deepseek-flash"
+    },
+    "cases": [
+      {
+        "name": "structured-output",
+        "passed": true,
+        "latency_ms": 1317,
+        "detail": "exact match"
+      },
+      {
+        "name": "tool-schema",
+        "passed": true,
+        "latency_ms": 983,
+        "detail": "exact match"
+      },
+      {
+        "name": "multi-file-reasoning",
+        "passed": true,
+        "latency_ms": 823,
+        "detail": "exact match"
+      },
+      {
+        "name": "patch-generation",
+        "passed": true,
+        "latency_ms": 1092,
+        "detail": "exact match"
+      },
+      {
+        "name": "context-retention",
+        "passed": true,
+        "latency_ms": 1390,
+        "detail": "exact match"
+      },
+      {
+        "name": "test-failure-interpretation",
+        "passed": true,
+        "latency_ms": 711,
+        "detail": "exact match"
+      },
+      {
+        "name": "judgment-calibration",
+        "passed": true,
+        "latency_ms": 630,
+        "detail": "exact match"
+      }
+    ],
+    "accuracy": 1.0,
+    "mean_latency_ms": 992.2857142857143,
+    "estimated_tokens_per_second": 3.1658649533389283,
+    "maximum_reliable_context_tokens": 16384,
+    "recommended_roles": [
+      "router",
+      "summarizer",
+      "simple-coding",
+      "planner",
+      "high-risk-judge"
+    ],
+    "not_recommended_roles": []
+  }
+}
