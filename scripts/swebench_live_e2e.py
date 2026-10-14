@@ -367,7 +367,11 @@ def run_session(
 
     deadline = started + maximum_seconds
     phase_view, phase_events, timed_out = await_phase(deadline)
-    if correction_requested and not timed_out:
+    # A blocked review/approval is an observed outcome, not permission to
+    # resume it. The daemon accepts follow-ups only at these settled states.
+    phase_view = wait_until_stopped(base, token, session_id)
+    if (correction_requested and not timed_out
+            and session_status(phase_view) in {"completed", "paused"}):
         trigger = first_successful_mutation(phase_events)
         if trigger is not None:
             event, event_index = trigger
@@ -470,7 +474,7 @@ def extract_patch(worktree: Path) -> bytes:
 
 
 def event_metrics(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    started = finished = 0
+    started = finished = unknown_usage = 0
     input_tokens = output_tokens = 0
     providers: set[str] = set()
     models: set[str] = set()
@@ -487,11 +491,14 @@ def event_metrics(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 models.add(data["model"])
         elif kind == "model_request_finished":
             finished += 1
+            if data.get("input_tokens") is None or data.get("output_tokens") is None:
+                unknown_usage += 1
             input_tokens += int(data.get("input_tokens") or 0)
             output_tokens += int(data.get("output_tokens") or 0)
     return {
         "model_calls": started,
         "incomplete_model_calls": max(0, started - finished),
+        "unknown_usage_calls": unknown_usage,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "providers": sorted(providers),
@@ -602,7 +609,8 @@ def run_oracle(
     }
 
 
-def prepare_bundle(*, manifest_path: Path, revision_path: Path, cache_dir: Path, out: Path, model: str) -> dict[str, Any]:
+def prepare_bundle(*, manifest_path: Path, revision_path: Path, cache_dir: Path, out: Path, model: str,
+                   study_id: str = "repository-completion-swebench-live-v1") -> dict[str, Any]:
     if out.exists() and any(out.iterdir()):
         raise E2EError(f"refusing to reuse non-empty output directory: {out}")
     manifest = load_json(manifest_path)
@@ -666,7 +674,7 @@ def prepare_bundle(*, manifest_path: Path, revision_path: Path, cache_dir: Path,
         )
     bundle = {
         "schema_version": 1,
-        "study_id": "repository-completion-swebench-live-v1",
+        "study_id": study_id,
         "model": model,
         "dataset_manifest_sha256": canonical_hash(manifest),
         "requirement_revision_sha256": canonical_hash(revision),
@@ -691,6 +699,8 @@ def read_results(path: Path) -> dict[str, dict[str, Any]]:
             raise E2EError(f"{path}:{line_number}: invalid JSON: {error}") from error
         if not isinstance(row, dict) or not isinstance(row.get("run_id"), str):
             raise E2EError(f"{path}:{line_number}: invalid result row")
+        if row["run_id"] in rows:
+            raise E2EError(f"{path}:{line_number}: duplicate run ID")
         rows[row["run_id"]] = row
     return rows
 
@@ -769,6 +779,13 @@ def run_one(
     patch_dir.mkdir(parents=True, exist_ok=True)
     patch_path = patch_dir / f"{safe_slug(str(task['run_id']))}.patch"
     patch_path.write_bytes(patch)
+    audit_dir = output / "session-audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    write_json(audit_dir / f"{safe_slug(str(task['run_id']))}.json", {
+        "measurement": measurement, "events": events,
+        "patch_sha256": hashlib.sha256(patch).hexdigest(),
+        "kind": "agent_events_only_no_hidden_oracle_inputs",
+    })
     oracle = run_oracle(
         task=task,
         patch=patch,
@@ -841,6 +858,7 @@ def command_prepare(args: argparse.Namespace) -> int:
         cache_dir=args.cache_dir,
         out=args.out,
         model=args.model,
+        study_id=args.study_id,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
@@ -892,6 +910,24 @@ def command_run(args: argparse.Namespace) -> int:
         if limit is not None and completed_this_invocation >= limit:
             break
         print(f"[{task['schedule_index']:03d}] {task['run_id']}", flush=True)
+        started_dir = output / "started"
+        started_dir.mkdir(exist_ok=True)
+        started_path = started_dir / f"{safe_slug(str(task['run_id']))}.json"
+        if args.rerun:
+            raise E2EError("frozen scientific cells cannot be rerun in the same output directory")
+        if started_path.exists():
+            row = error_row(task, plan=plan, freeze=freeze,
+                            bundle_sha256=bundle_sha256,
+                            detail="interrupted scheduled cell; retained without replay")
+            append_result(results_path, row)
+            existing[str(task["run_id"])] = row
+            completed_this_invocation += 1
+            continue
+        with started_path.open("x", encoding="utf-8") as handle:
+            json.dump({"run_id": task["run_id"], "started_at": utc_now(),
+                       "bundle_sha256": bundle_sha256}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
         try:
             row = run_one(
                 task,
@@ -932,6 +968,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--cache-dir", type=Path, required=True)
     prepare.add_argument("--out", type=Path, required=True)
     prepare.add_argument("--model", required=True)
+    prepare.add_argument("--study-id", default="repository-completion-swebench-live-v1")
     prepare.set_defaults(func=command_prepare)
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--bundle", type=Path, required=True)

@@ -1045,16 +1045,20 @@ async fn ensure_purrcode_excluded(repository: &Path) -> Result<(), RepositoryErr
     };
     let current = std::fs::read_to_string(&exclude).unwrap_or_default();
     let mut lines: Vec<&str> = current.lines().collect();
-    // v1.3: only the runtime scratch under `.purrcode/worktrees/` is excluded,
-    // so `.purrcode/agents/`, `.purrcode/commands/`, `.purrcode/hooks/` and
+    // Exclude runtime-owned scratch, while `.purrcode/agents/`,
+    // `.purrcode/commands/`, `.purrcode/hooks/` and
     // `.purrcode/settings.yaml` can be committed as project configuration. If a
     // previous PurrCode run wrote the blanket `.purrcode/` line, replace it.
     lines.retain(|line| line.trim() != ".purrcode/");
-    let has_narrow = lines
-        .iter()
-        .any(|line| line.trim() == ".purrcode/worktrees/");
-    if !has_narrow {
-        lines.push(".purrcode/worktrees/");
+    for scratch in [
+        ".purrcode/worktrees/",
+        ".purrcode/context.db",
+        ".purrcode/context.db-wal",
+        ".purrcode/context.db-shm",
+    ] {
+        if !lines.iter().any(|line| line.trim() == scratch) {
+            lines.push(scratch);
+        }
     }
     let mut updated = String::new();
     let mut first = true;
@@ -1505,6 +1509,33 @@ mod tests {
                 assert!(status.success());
             }
         }
+    }
+
+    #[tokio::test]
+    async fn runtime_context_cache_is_excluded_but_project_settings_are_visible() {
+        let temporary = tempfile::tempdir().unwrap();
+        git(temporary.path(), &["init", "-q"]);
+        std::fs::write(temporary.path().join("README.md"), "baseline\n").unwrap();
+        git(temporary.path(), &["add", "."]);
+        git(temporary.path(), &["commit", "-q", "-m", "base"]);
+        let worktree = RepositoryEngine::create_worktree(temporary.path(), SessionId::new())
+            .await
+            .unwrap();
+        std::fs::create_dir_all(worktree.path.join(".purrcode")).unwrap();
+        for name in [
+            "context.db",
+            "context.db-wal",
+            "context.db-shm",
+            "settings.yaml",
+        ] {
+            std::fs::write(worktree.path.join(".purrcode").join(name), "test\n").unwrap();
+        }
+        let changes = RepositoryEngine::changes(&worktree, ChangeScope::Agent)
+            .await
+            .unwrap();
+        let diff = String::from_utf8(changes.patch).unwrap();
+        assert!(!diff.contains("context.db"));
+        assert!(diff.contains("settings.yaml"));
     }
 
     #[tokio::test]

@@ -1,0 +1,9 @@
+{
+  "workflow_run_id": 38522037780,
+  "scheduled_reserve_instances": 6,
+  "qualified_reserve_instances": 6,
+  "qualified_retained_instances": 24,
+  "qualified_final_instances": 30,
+  "model_calls": 0,
+  "qualification_basis": "24 retained instances passed in run 38514744241; 6 replacements passed in this run; no model candidate outcomes used"
+}

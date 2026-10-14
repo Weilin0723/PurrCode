@@ -116,20 +116,19 @@ jobs:
         run: cargo build --release -p purrcode-cli -p purrcode-daemon -j 4
       - name: Materialize operator-only DeepSeek credential
         if: ${{ !inputs.oracle_only }}
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets[inputs.credential_secret] }}
         run: |
           mkdir -p "$RESEARCH_ROOT/ci-config"
           cp "$STUDY_DIR/config.toml" "$RESEARCH_ROOT/ci-config/config.toml"
           python - <<'PY'
-          import os
+          import json, os
           from pathlib import Path
-          key = os.environ["DEEPSEEK_API_KEY"]
+          key = ${{ toJSON(secrets[inputs.credential_secret]) }}
           if not key or any(ch in key for ch in "\r\n"):
               raise SystemExit("DEEPSEEK_API_KEY is missing or malformed")
-          Path(os.environ["RESEARCH_ROOT"], "ci-config", "credentials.toml").write_text(
-              f'deepseek = "{key}"\n', encoding="utf-8"
-          )
+          target = Path(os.environ["RESEARCH_ROOT"], "ci-config", "credentials.toml")
+          descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+          with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+              handle.write("deepseek = " + json.dumps(key) + "\n")
           PY
           chmod 600 "$RESEARCH_ROOT/ci-config/credentials.toml"
       - name: Start isolated daemon
@@ -195,6 +194,9 @@ jobs:
           retention-days: 14
           path: |
             ${{ github.workspace }}/.research-cache/purrcode-swebench-live/e2e/results.jsonl
+            ${{ github.workspace }}/.research-cache/purrcode-swebench-live/e2e/patches/
+            ${{ github.workspace }}/.research-cache/purrcode-swebench-live/e2e/session-audit/
+            ${{ github.workspace }}/.research-cache/purrcode-swebench-live/e2e/started/
             ${{ github.workspace }}/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl
             ${{ env.RUN_BUNDLE }}
 

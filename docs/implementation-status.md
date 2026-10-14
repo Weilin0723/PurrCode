@@ -21,11 +21,22 @@ as missing, preserves task artifact directories, rejects duplicate rows, pins th
 revision, and removes hidden test lists from the gold-preflight export. Existing frozen records
 are unchanged; their runner locks are not reused for the repaired study.
 
-A new repository-disjoint 30-task/10-repository candidate set is prepared for **oracle-only
-qualification**, before its model-study freeze. It has no efficacy outcomes. ASE submission
+A new repository-disjoint 30-task/10-repository set has **30 passing gold-oracle
+qualifications**: 24 retained tasks and six replacements for two wholly rejected repository
+groups. Failed qualification evidence remains archived; replacement precedes model generation.
+It has no efficacy outcomes. ASE submission
 readiness remains open until genuine live evidence, analysis, anonymous artifacts, and manuscript
 validation pass. The manuscript now explicitly distinguishes deterministic conjunction from live
 review and explains the structural limitation of the component sign-test interpretation.
+
+Synthetic correction preflights exposed operational faults now repaired: requested alignment
+fails closed if contract compilation fails; required additions cannot silently become optional;
+revision calls are billed even when their semantic result is rejected; a follow-up is judged
+against the current user instruction while preserving the prior durable plan; duplicate writes
+cannot leave a phantom approval state. The context index's SQLite scratch is excluded from
+repository changes, while project settings remain visible. Native action authorization and
+adapter revalidation still apply independently. Full current-snapshot workspace validation
+and successful end-to-end correction qualification remain open; synthetic failures are retained.
 
 
 Full design in [`v1.5-architecture.md`](v1.5-architecture.md).

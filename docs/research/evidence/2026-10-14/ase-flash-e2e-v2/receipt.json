@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "study_id": "ase-flash-repository-completion-v2",
+  "freeze_sha256": "1941fc7c60cf6fb4612911e2f75e2b56f85365217257ff8b1ed232b941b01c29",
+  "primary_model": "deepseek/deepseek-flash",
+  "requested_model": "deepseek/deepseek-flash",
+  "schedule_sha256": "a26cb53c3b270c6b72fdd02fe5c6398c73e7e3cc11b4f7d9f3fd6913a017e460",
+  "runs_per_model": 120,
+  "scheduled_runs_per_model": 120,
+  "session_token_budget": 1000000,
+  "qualification_sha256": "aa2644a8440ed676913b2c6ab6d0f9a76885619f3ab5a1a63c56e843de89420e",
+  "model_freeze_sha256": "a625d31b587f1f62426ead60a545b1b5f45bac035f7d4abe0a5d99927cb9807c",
+  "p0_hashes_sha256": "dea7feeab17182f1bfd9b890fe72e00e8ac66b6f29105a62a849c7541cbd02bd",
+  "p1_hashes_sha256": "77c8db37933afa532b0913795bd77da6058f6fe1bf17a5571d65a5e4565da153",
+  "trigger_policy_sha256": "e5d6a92b68fccad2cd3ee3cfbc330bccb7e508048745bea5c8dee22684272792",
+  "publication_status": "must_be_published_before_scheduled_run_0"
+}

@@ -1,0 +1,62 @@
+{
+  "kind": "synthetic_preflights_not_scientific_cells",
+  "sessions": [
+    {
+      "session_id": "cfdbad5d-e37f-4839-83cb-da376562c46f",
+      "session_status": "failed",
+      "metrics": {
+        "model_calls": 21,
+        "incomplete_model_calls": 0,
+        "unknown_usage_calls": 0,
+        "input_tokens": 109098,
+        "output_tokens": 10387,
+        "providers": [
+          "deepseek"
+        ],
+        "models": [
+          "deepseek-flash"
+        ]
+      },
+      "terminal_reasons": [
+        {
+          "event": "session_failed",
+          "data": {
+            "reason": "agent execution failed: session storage failed: session SessionId(cfdbad5d-e37f-4839-83cb-da376562c46f) rejected invalid event: session SessionId(cfdbad5d-e37f-4839-83cb-da376562c46f) cannot accept event OutcomeReviewRequired { reason: \"blocked \u2014 2 / 2 requirements verified\\n1 outstanding:\\n  \u00b7 marker.txt was changed, and the task rules out: No additional content beyond `marker` plus a newline is added (no comments, no YAML front matter, no extra blank lines).\\n16 advisory finding(s) recorded, not blocking.\" }: outcome review required: cannot move from AwaitingApproval(ActionId(dfa70677-2935-4a4d-8bfb-8cd7cac433fd)) to AwaitingReview"
+          }
+        }
+      ],
+      "session_events_sha256": "83baaf13df82b6b9b232c2864531f21396c47e3e1e8f56c577895fb0c4464bef"
+    },
+    {
+      "session_id": "ecb396ee-4ddc-48ca-832e-b69adbb9f1cd",
+      "session_status": "awaiting_review",
+      "metrics": {
+        "model_calls": 7,
+        "incomplete_model_calls": 0,
+        "unknown_usage_calls": 0,
+        "input_tokens": 29137,
+        "output_tokens": 3491,
+        "providers": [
+          "deepseek"
+        ],
+        "models": [
+          "deepseek-flash"
+        ]
+      },
+      "terminal_reasons": [
+        {
+          "event": "outcome_review_required",
+          "data": {
+            "reason": "needs decision \u2014 2 / 3 requirements verified\n1 outstanding:\n  \u00b7 could not be established: The file is newly created and no existing file is overwritten or removed in the process. \u2014 The diff shows marker.txt as `new file mode 100644` with index `0000000..5abed26`, indicating it did not previously exist in the tracked tree, and GitStatus lists it as untracked (`?? marker.txt`), not as a modification or deletion. However, the observations provide no baseline snapshot proving no untracked marker.txt (or other untracked file) existed before this request, and no full status/diff of paths outside marker.txt and .purrcode/ is shown. The new .purrcode/ database files are also added and could not be confirmed as pre-existing or newly created by a prior turn, and the diff is stated to be against the original checkout rather than the latest request boundary. Whether marker.txt was newly created by this request (as opposed to an earlier turn) and whether any existing file was removed or overwritten cannot be established from the given evidence.\n2 advisory finding(s) recorded, not blocking."
+          }
+        }
+      ],
+      "session_events_sha256": "1359054fac145e709d89faec7f7c902b4eb1c61f9ccf497268b828728084637a"
+    }
+  ],
+  "operator_bootstrap_failure": {
+    "kind": "connection_refused_before_session_creation",
+    "model_calls": 0,
+    "log_sha256": "4d7529d44a1055d7d1275ad55c7fe97ddf108e9f841137ff7c4d72d26f4bdc2a"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "kind": "synthetic_harness_preflight_not_study_evidence",
+  "passed": false,
+  "measurement": {
+    "session_id": "65fbdbf6-8bcb-498e-8a47-ceb512aecef4",
+    "session_status": "failed",
+    "timed_out": false,
+    "elapsed_ms": 20625,
+    "mid_run_correction_requested": true,
+    "mid_run_correction_triggered": true,
+    "mid_run_correction_acknowledged": true,
+    "mid_run_correction_trigger_event_sha256": "c6f3428c1b891cd6cf6ee0e54166450620c9cc6ef8760511ab734d5c89ed7851",
+    "mid_run_correction_message_event_sha256": "7b49c305f9aa7904312ec410cc2d1de1e411210302350655facff9e8917c9452"
+  },
+  "metrics": {
+    "model_calls": 8,
+    "incomplete_model_calls": 0,
+    "input_tokens": 34708,
+    "output_tokens": 1672,
+    "providers": [
+      "deepseek"
+    ],
+    "models": [
+      "deepseek-flash"
+    ]
+  },
+  "contents": {
+    "marker.txt": "marker\n",
+    "followup.txt": null
+  },
+  "patch": "diff --git a/marker.txt b/marker.txt\nnew file mode 100644\nindex 0000000..5abed26\n--- /dev/null\n+++ b/marker.txt\n@@ -0,0 +1 @@\n+marker\n"
+}

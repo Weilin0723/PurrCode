@@ -1,0 +1,15 @@
+{
+  "kind": "mechanical_chain_audit_not_delivery_qualification_or_scientific_evidence",
+  "session_id": "ff01d8d4-0fab-4d13-994b-8ea93a9310cc",
+  "source_sha256": "9e2f22467b452aaeb7625d9dfa1e58a937fdd81ab8a8e55f3796d926867759f2",
+  "events_sha256": "4724cca131a645231f3e36bc1933b6785a6f4ad2c8ce3dda867dbd04a3b84e29",
+  "durable_authorizations": 5,
+  "executions": 5,
+  "every_execution_preceded_by_durable_authorization": true,
+  "correction_admitted": true,
+  "contract_revised": true,
+  "expected_file_contents": true,
+  "delivery_passed": false,
+  "terminal_status": "awaiting_review",
+  "interpretation": "The correction path functioned; preservation remained undetermined, so delivery stayed blocked."
+}

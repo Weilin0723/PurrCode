@@ -61,6 +61,8 @@ pub enum AlignmentError {
     Unfaithful(String),
     #[error("{0}")]
     Invalid(String),
+    #[error("the correction does not change the contract")]
+    NoChange,
 }
 
 /// Which model runs a stage, and where.

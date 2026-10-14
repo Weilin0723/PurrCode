@@ -129,16 +129,33 @@ fn direct_mode_ignores_a_post_work_plan_restatement() {
 
     assert!(!plan_revision_requires_review(
         WorkflowProfile::Direct,
-        true
+        true,
+        false
     ));
     assert!(plan_revision_requires_review(
         WorkflowProfile::Standard,
-        true
+        true,
+        false
     ));
-    assert!(plan_revision_requires_review(WorkflowProfile::Ultra, true));
+    assert!(plan_revision_requires_review(
+        WorkflowProfile::Ultra,
+        true,
+        false
+    ));
     assert!(!plan_revision_requires_review(
         WorkflowProfile::Ultra,
+        false,
         false
+    ));
+    assert!(!plan_revision_requires_review(
+        WorkflowProfile::Standard,
+        true,
+        true
+    ));
+    assert!(!plan_revision_requires_review(
+        WorkflowProfile::Ultra,
+        true,
+        true
     ));
 }
 
@@ -1387,6 +1404,54 @@ async fn escaping_read_path_gets_one_bounded_action_repair() {
             ..
         } if paths == &[PathBuf::new()]
     )));
+}
+
+#[tokio::test]
+async fn a_successful_duplicate_write_does_not_leave_a_phantom_approval() {
+    let write = serde_json::json!({
+        "plan": ["create new.txt"], "current_step_index": 0,
+        "rationale": "create the requested file", "expected_postconditions": ["new.txt exists"],
+        "action": {"type": "write_file", "path": "new.txt", "content": "created",
+                   "expected_digest": null}, "complete": false
+    });
+    let complete = serde_json::json!({"rationale": "the requested file exists", "action": null,
+                                     "complete": true});
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![complete, write.clone(), write])),
+    };
+    let mut controls = build_controls();
+    controls.permission_mode = purrcode_runtime_core::adaptation::PermissionMode::Auto;
+    let agent = NativeAgent::new(role_map(provider), Policy::default()).with_controls(controls);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let outcome = agent
+        .start(&mut store, repository.path(), "create new.txt")
+        .await
+        .unwrap();
+    let session_id = session_id_of(&outcome);
+    let state = store.load(session_id).unwrap();
+    assert!(
+        matches!(outcome, AgentOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(state.status, SessionStatus::Completed);
+    let executed_writes = store
+        .events(session_id)
+        .unwrap()
+        .iter()
+        .filter(|event| match event {
+            SessionEvent::ExecutionFinished {
+                action_id,
+                exit_code: Some(0),
+                ..
+            } => matches!(
+                state.proposed_actions.get(action_id),
+                Some(ProposedAction::WriteFile(_))
+            ),
+            _ => false,
+        })
+        .count();
+    assert_eq!(executed_writes, 1);
 }
 
 #[tokio::test]
@@ -3019,10 +3084,9 @@ async fn a_blocking_finding_turns_completion_into_a_correction_cycle() {
 }
 
 #[tokio::test]
-async fn a_contract_that_cannot_quote_the_user_leaves_the_session_saying_so() {
+async fn an_unfaithful_contract_cannot_silently_disable_requested_alignment() {
     // The intent compiler refuses a clause the user never asked for. When that
-    // happens twice the session continues on the v1.4 path — which is an honest
-    // degradation, not a quiet one, so the conversation says it out loud.
+    // happens twice, requested alignment cannot degrade into ungated execution.
     let invented = serde_json::json!({
         "objective": "Simplify settings",
         "understanding": "…",
@@ -3045,19 +3109,29 @@ async fn a_contract_that_cannot_quote_the_user_leaves_the_session_saying_so() {
     ]);
     let repository = repository();
     let mut store = SessionStore::in_memory().unwrap();
-    let outcome = agent
+    let error = agent
         .start(&mut store, repository.path(), ALIGNMENT_OBJECTIVE)
         .await
-        .unwrap();
-    let AgentOutcome::Completed { session_id, .. } = outcome else {
-        panic!("without a contract the session runs as v1.4 did: {outcome:?}");
-    };
+        .unwrap_err();
+    assert!(matches!(error, AgentError::InvalidModelTurn(_)));
+    let session_id = store.list_session_ids().unwrap()[0];
     let state = store.load(session_id).unwrap();
     assert!(state.expectation_contract.is_none());
     assert!(
         state.conversation_messages.iter().any(|message| {
-            message.role == "system" && message.content.contains("without the delivery gate")
+            message.role == "system" && message.content.contains("execution cannot proceed")
         }),
-        "a run with no gate must say so rather than looking like a gated one"
+        "a refused contract must be explained"
+    );
+    assert_ne!(state.status, SessionStatus::Completed);
+    assert!(
+        !store
+            .events(session_id)
+            .unwrap()
+            .iter()
+            .any(|event| matches!(
+                event,
+                SessionEvent::ActionProposed { .. } | SessionEvent::SessionCompleted
+            ))
     );
 }

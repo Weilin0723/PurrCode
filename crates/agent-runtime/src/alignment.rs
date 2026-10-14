@@ -18,10 +18,8 @@
 //!
 //! **A failed contract compilation does not silently disable the gate.** If the
 //! intent compiler cannot produce a contract whose clauses quote the user, the
-//! session says so in the conversation and continues on the v1.4 path. That is
-//! an honest degradation and not a quiet one: the benchmark counts a completion
-//! with no gate as a false `Done`, so this route cannot become the comfortable
-//! way to finish.
+//! session explains the failure and refuses ungated execution. A compiler error
+//! cannot erase the user's request for alignment.
 //!
 //! **Whether a repair worked is decided by re-review, matched by complaint.**
 //! A repair cycle produces new findings with new identities, so nothing links
@@ -184,9 +182,12 @@ impl AlignmentRuntime {
                 .map(|path| format!("The task runs against the repository at {}", path.display()))
                 .unwrap_or_default(),
         };
-        match self.compiler.compile(&request).await {
+        let (compiled, ledger) = self.compiler.compile_with_usage(&request).await;
+        for usage in ledger {
+            self.bill(store, session_id, "planner", usage)?;
+        }
+        match compiled {
             Ok(compiled) => {
-                self.bill(store, session_id, "planner", compiled.usage)?;
                 store.append(
                     session_id,
                     &SessionEvent::ExpectationContractCreated {
@@ -201,18 +202,17 @@ impl AlignmentRuntime {
                 Ok(Some(compiled.understanding))
             }
             Err(error) => {
-                // Said out loud rather than swallowed. A session with no
-                // contract has no delivery gate, and the user is entitled to
-                // know that this run is the old kind.
+                // Alignment was requested. Missing evidence for a contract
+                // must not silently turn this into an ungated execution.
                 note(
                     store,
                     session_id,
                     &format!(
-                        "I could not turn this request into a checkable contract, so this task \
-                         runs without the delivery gate: {error}"
+                        "I could not turn this request into a checkable contract, so execution \
+                         cannot proceed with the requested delivery gate: {error}"
                     ),
                 )?;
-                Ok(None)
+                Err(AgentError::InvalidModelTurn(error.to_string()))
             }
         }
     }
@@ -232,7 +232,17 @@ impl AlignmentRuntime {
             user_messages: user_messages(state, follow_up),
             repository_summary: String::new(),
         };
-        match self.compiler.revise(contract, &request).await {
+        let revision = match self.compiler.revise_with_usage(contract, &request).await {
+            Ok((revision, usage)) => {
+                self.bill(store, session_id, "planner", usage)?;
+                revision
+            }
+            Err(error) => {
+                self.bill(store, session_id, "planner", None)?;
+                Err(error)
+            }
+        };
+        match revision {
             Ok(revision) => {
                 let reason = revision.reason.clone();
                 let outcome = contract
@@ -254,14 +264,14 @@ impl AlignmentRuntime {
             // A follow-up that changes nothing is the common case — "carry on",
             // "thanks", a question. It is not an error and does not deserve a
             // line in the conversation.
-            Err(AlignmentError::Invalid(_)) => Ok(None),
+            Err(AlignmentError::NoChange) => Ok(None),
             Err(error) => {
                 note(
                     store,
                     session_id,
                     &format!("I could not fit that correction to the contract: {error}"),
                 )?;
-                Ok(None)
+                Err(AgentError::InvalidModelTurn(error.to_string()))
             }
         }
     }
@@ -308,11 +318,14 @@ impl AlignmentRuntime {
         // Coverage first: it is the cheapest and the one that catches the
         // requirement everybody forgot, which changes what the other two are
         // looking at.
-        for outcome in [
+        for (index, outcome) in [
             self.coverage.review(base.clone(), &requirement_ids).await,
             self.code.review(base.clone(), &requirement_ids).await,
             self.alignment.review(base.clone(), &requirement_ids).await,
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             match outcome {
                 Ok(outcome) => {
                     let role = if outcome.kind
@@ -329,11 +342,19 @@ impl AlignmentRuntime {
                 // The failure is recorded, and the requirements that reviewer
                 // would have settled stay unsettled — which blocks the gate,
                 // which is the correct outcome for "we could not check".
-                Err(error) => note(
-                    store,
-                    session_id,
-                    &format!("A review could not be completed: {error}"),
-                )?,
+                Err(error) => {
+                    let role = if index == 2 {
+                        "alignment_reviewer"
+                    } else {
+                        "reviewer"
+                    };
+                    self.bill(store, session_id, role, None)?;
+                    note(
+                        store,
+                        session_id,
+                        &format!("A review could not be completed: {error}"),
+                    )?;
+                }
             }
         }
 
@@ -673,7 +694,10 @@ async fn review_files(
         let Some(after) = contents.after else {
             continue;
         };
-        let trimmed: String = after.chars().take(MAXIMUM_FILE_CHARACTERS).collect();
+        let mut trimmed: String = after.chars().take(MAXIMUM_FILE_CHARACTERS).collect();
+        if trimmed.len() < after.len() {
+            trimmed.push_str("\n[FILE TRUNCATED: only the supplied prefix was reviewed; omitted bytes are unknown]");
+        }
         files.push(ReviewSubject::new(path, trimmed));
     }
     files
@@ -685,6 +709,10 @@ fn review_tool_observations(
 ) -> Vec<(String, String)> {
     const MAXIMUM_OBSERVATIONS: usize = 8;
     const MAXIMUM_OBSERVATION_CHARACTERS: usize = 6_000;
+    let request_boundary = events.iter().rposition(|event| {
+        matches!(event, SessionEvent::ConversationMessageAdded { message }
+            if message.role.eq_ignore_ascii_case("user"))
+    });
     let successful = events
         .iter()
         .filter_map(|event| match event {
@@ -696,10 +724,11 @@ fn review_tool_observations(
             _ => None,
         })
         .collect::<BTreeSet<_>>();
-    events
+    let observations = events
         .iter()
+        .enumerate()
         .rev()
-        .filter_map(|event| {
+        .filter_map(|(index, event)| {
             let SessionEvent::ActionOutputRecorded {
                 action_id,
                 stdout,
@@ -724,15 +753,35 @@ fn review_tool_observations(
                 "stdout:\n{}\nstderr:\n{}\ntruncated: {}",
                 stdout, stderr, truncated
             );
+            let before_request = request_boundary.is_some_and(|boundary| index < boundary);
             Some((
-                format!("successful repository read {action:?}"),
-                combined
-                    .chars()
-                    .take(MAXIMUM_OBSERVATION_CHARACTERS)
-                    .collect(),
+                before_request,
+                (
+                    format!(
+                        "successful repository read {} the latest user request: {action:?}",
+                        if before_request { "before" } else { "after" }
+                    ),
+                    combined
+                        .chars()
+                        .take(MAXIMUM_OBSERVATION_CHARACTERS)
+                        .collect(),
+                ),
             ))
         })
-        .take(MAXIMUM_OBSERVATIONS)
+        .collect::<Vec<_>>();
+    let prior = observations
+        .iter()
+        .filter(|(before, _)| *before)
+        .take(MAXIMUM_OBSERVATIONS / 2)
+        .map(|(_, observation)| observation.clone())
+        .collect::<Vec<_>>();
+    let current_limit = MAXIMUM_OBSERVATIONS - prior.len();
+    observations
+        .iter()
+        .filter(|(before, _)| !*before)
+        .take(current_limit)
+        .map(|(_, observation)| observation.clone())
+        .chain(prior)
         .collect()
 }
 
@@ -766,6 +815,64 @@ mod tests {
     use purrcode_runtime_core::work::{AcceptanceCriterion, CriterionId};
 
     use super::*;
+
+    #[test]
+    fn preservation_reviews_keep_bounded_reads_from_before_the_user_revision() {
+        use purrcode_runtime_core::{ActionId, ProposedAction, RepositoryReadAction};
+        let mut state = SessionState::empty(SessionId::new());
+        let mut events = Vec::new();
+        let read = |state: &mut SessionState, events: &mut Vec<SessionEvent>, contents: &str| {
+            let action_id = ActionId::new();
+            state.proposed_actions.insert(
+                action_id,
+                ProposedAction::RepositoryRead(RepositoryReadAction::ReadFile {
+                    path: "marker.txt".into(),
+                    max_bytes: 64,
+                }),
+            );
+            events.push(SessionEvent::ExecutionFinished {
+                action_id,
+                exit_code: Some(0),
+                truncated: false,
+                sandbox_level: None,
+                sandbox_backend: None,
+                affected_paths: vec![],
+            });
+            events.push(SessionEvent::ActionOutputRecorded {
+                action_id,
+                stdout: contents.into(),
+                stderr: String::new(),
+                truncated: false,
+                turn_id: None,
+            });
+        };
+        read(&mut state, &mut events, "marker-before-request");
+        events.push(SessionEvent::ConversationMessageAdded {
+            message: ConversationMessage {
+                id: "user-revision".into(),
+                role: "user".into(),
+                content: "Preserve marker.txt".into(),
+                timestamp: chrono::Utc::now(),
+                tool_calls: vec![],
+                tool_results: vec![],
+                model: None,
+                turn_id: None,
+            },
+        });
+        for _ in 0..12 {
+            read(&mut state, &mut events, "marker-after-request");
+        }
+        let observations = review_tool_observations(&state, &events);
+        assert_eq!(observations.len(), 8);
+        assert!(observations.iter().any(|(label, output)| {
+            label.contains("before the latest user request")
+                && output.contains("marker-before-request")
+        }));
+        assert!(observations.iter().any(|(label, output)| {
+            label.contains("after the latest user request")
+                && output.contains("marker-after-request")
+        }));
+    }
 
     #[test]
     fn a_violated_requirement_goes_back_to_the_worker_before_handing_back() {

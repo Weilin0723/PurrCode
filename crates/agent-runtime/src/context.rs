@@ -991,7 +991,10 @@ pub(crate) fn build_messages(
         .map(|(_, text)| text.as_str())
         .collect::<String>();
     let plan_block = format!(
-        "## CURRENT PLAN (revision {}):\n{:?}\n\n",
+        "## CURRENT PLAN (revision {}):\n{:?}\n\n\
+Once work has started, retain this historical plan and its evidence. For a new \
+user request, continue with actions satisfying the current request and revised \
+contract; do not emit a replacement retrospective plan.\n\n",
         state.plan_revision, state.plan_steps,
     );
     let recent_actions_block = format!("## RECENT ACTIONS AND RESULTS:\n{history}\n\n");

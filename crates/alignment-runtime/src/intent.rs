@@ -51,7 +51,10 @@ Rules, in order of importance:
 1. Every requirement and every non-goal must carry `quotation`: the user's own \
    words, copied verbatim from their message. Do not paraphrase, tidy, expand \
    or summarise inside `quotation`. If you cannot point at words the user \
-   actually wrote, the requirement does not belong in the contract.
+   actually wrote, the requirement does not belong in the contract. A valid
+   quotation alone does not justify additional constraints: do not turn
+   creating one file into a requirement that no other file may change. Put
+   inferred safety or implementation assumptions in `assumptions` instead.
 2. Separate what the task is not done without (`required`) from what the user \
    would like (`preferred`). Only `required` can hold up delivery, so a \
    contract that marks everything required produces an agent that never \
@@ -59,7 +62,9 @@ Rules, in order of importance:
    anything.
 3. Record what the user ruled out as non-goals. \"Don't remove functionality\" \
    is a non-goal, not a requirement — scope drift is doing something extra, \
-   and a list of things that must be true cannot detect it.
+   and a list of things that must be true cannot detect it. Set `path_prefix` \
+   only for an explicit prohibition on modifying that whole path. Content \
+   restrictions such as no comments or extra blank lines are not path bans.
 4. Every required clause needs at least one acceptance criterion: a concrete \
    observation that would settle whether it holds. \"Settings are better\" \
    cannot be checked and will be declared done by whoever is in a hurry.
@@ -194,6 +199,25 @@ impl IntentCompiler {
         &self,
         request: &IntentRequest,
     ) -> Result<CompiledContract, AlignmentError> {
+        self.compile_with_usage(request).await.0
+    }
+
+    /// Account for every attempt, including rejected or undecodable replies.
+    /// Unknown usage remains unknown rather than an unrecorded free call.
+    pub async fn compile_with_usage(
+        &self,
+        request: &IntentRequest,
+    ) -> (Result<CompiledContract, AlignmentError>, Vec<crate::Usage>) {
+        let mut ledger = Vec::new();
+        let result = self.compile_attempts(request, &mut ledger).await;
+        (result, ledger)
+    }
+
+    async fn compile_attempts(
+        &self,
+        request: &IntentRequest,
+        ledger: &mut Vec<crate::Usage>,
+    ) -> Result<CompiledContract, AlignmentError> {
         if request.user_messages.iter().all(|m| m.trim().is_empty()) {
             return Err(AlignmentError::Invalid(
                 "there is no user request to compile".into(),
@@ -208,10 +232,12 @@ impl IntentCompiler {
                     content: complaint,
                 });
             }
-            let (draft, usage): (DraftContract, crate::Usage) = self
+            let response: Result<(DraftContract, crate::Usage), AlignmentError> = self
                 .route
                 .structured(messages.clone(), schema_for!(DraftContract))
-                .await?;
+                .await;
+            ledger.push(response.as_ref().ok().and_then(|(_, usage)| *usage));
+            let (draft, usage) = response?;
             match assemble(draft, request, usage) {
                 Ok(compiled) => return Ok(compiled),
                 Err(AlignmentError::Unfaithful(complaint)) if attempt == 0 => {
@@ -265,6 +291,17 @@ impl IntentCompiler {
         contract: &ExpectationContract,
         request: &IntentRequest,
     ) -> Result<ContractRevision, AlignmentError> {
+        self.revise_with_usage(contract, request)
+            .await
+            .and_then(|(revision, _)| revision)
+    }
+
+    /// Retain provider usage so the runtime can bill successful correction calls.
+    pub async fn revise_with_usage(
+        &self,
+        contract: &ExpectationContract,
+        request: &IntentRequest,
+    ) -> Result<(Result<ContractRevision, AlignmentError>, crate::Usage), AlignmentError> {
         let correction = request
             .user_messages
             .last()
@@ -298,11 +335,14 @@ impl IntentCompiler {
                 content: body,
             },
         ];
-        let (draft, _usage): (DraftRevision, crate::Usage) = self
+        let (draft, usage): (DraftRevision, crate::Usage) = self
             .route
             .structured(messages, schema_for!(DraftRevision))
             .await?;
-        assemble_revision(draft, contract, request, &correction)
+        Ok((
+            assemble_revision(draft, contract, request, &correction),
+            usage,
+        ))
     }
 }
 
@@ -317,7 +357,11 @@ wording so it stops counting as progress; that is the point of saying so.
 
 Refer to requirements by the index shown. Quote the user verbatim in \
 `quotation`. Say in `reason` what you understood them to mean — that sentence \
-is what they read to check you took the right lesson from what they said.";
+is what they read to check you took the right lesson from what they said.\n\n\
+An added requirement is required unless the user explicitly makes it optional. \
+For every required addition include at least one concrete acceptance criterion. \
+Use `strength: preferred` only for an explicitly optional addition; omitting \
+acceptance criteria must never make a required addition optional.";
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct DraftRevisionChange {
@@ -330,6 +374,9 @@ struct DraftRevisionChange {
     /// The new wording, the added requirement, or the non-goal.
     #[serde(default)]
     statement: Option<String>,
+    /// Added clauses default to required; only explicit preferences are optional.
+    #[serde(default)]
+    strength: Option<String>,
     #[serde(default)]
     acceptance_criteria: Vec<String>,
     #[serde(default)]
@@ -379,13 +426,12 @@ fn assemble(
                 statement: criterion.trim().to_owned(),
             })
             .collect();
-        // A hard requirement with nothing that could check it is one that gets
-        // declared done. Rather than refuse the whole contract, it becomes the
-        // preference it actually is — recorded and reported, and not able to
-        // hold delivery on an unfalsifiable claim.
-        let strength = if required && criteria.is_empty() {
-            ExpectationStrength::Preferred
-        } else if required {
+        if required && criteria.is_empty() {
+            return Err(AlignmentError::Unfaithful(format!(
+                "the required clause \"{statement}\" needs an acceptance criterion; refusing to silently make it optional"
+            )));
+        }
+        let strength = if required {
             ExpectationStrength::Required
         } else {
             ExpectationStrength::Preferred
@@ -420,6 +466,7 @@ fn assemble(
             .as_deref()
             .map(str::trim)
             .filter(|prefix| !prefix.is_empty())
+            .filter(|prefix| quotation_forbids_path(&non_goal.quotation, prefix))
         {
             recorded = recorded.within(prefix);
         }
@@ -488,6 +535,40 @@ fn quotation_expresses_ambiguity(quotation: &str) -> bool {
         .any(|marker| quotation.contains(marker))
 }
 
+/// A filename in a content constraint does not prohibit all edits to that file.
+fn quotation_forbids_path(quotation: &str, prefix: &str) -> bool {
+    if !quotation.contains(prefix) {
+        return false;
+    }
+    let quotation = normalise(quotation).replace(['`', '"'], "");
+    let prefix = prefix.to_lowercase();
+    [
+        "do not modify ",
+        "don't modify ",
+        "do not edit ",
+        "don't edit ",
+        "do not touch ",
+        "don't touch ",
+        "do not change ",
+        "don't change ",
+        "不要修改",
+        "不要改动",
+        "不要动",
+    ]
+    .iter()
+    .any(|verb| {
+        let expression = format!("{verb}{prefix}");
+        quotation.match_indices(&expression).any(|(start, _)| {
+            quotation[start + expression.len()..]
+                .chars()
+                .next()
+                .is_none_or(|character| {
+                    character.is_whitespace() || ",;.!?)。；，".contains(character)
+                })
+        })
+    })
+}
+
 fn assemble_revision(
     draft: DraftRevision,
     contract: &ExpectationContract,
@@ -501,7 +582,7 @@ fn assemble_revision(
     }
     // The correction is the last message, so its index is known without asking.
     let message_index = request.user_messages.len().saturating_sub(1) as u64;
-    let quotation = if request.locate(&draft.quotation).is_some() {
+    let quotation = if request.locate(&draft.quotation) == Some(message_index) {
         draft.quotation.trim().to_owned()
     } else {
         // The user's correction is right there; falling back to it whole is
@@ -518,7 +599,9 @@ fn assemble_revision(
         match change.kind.to_ascii_lowercase().as_str() {
             "restate" => {
                 let Some(clause) = clause_at(change.requirement) else {
-                    continue;
+                    return Err(AlignmentError::Invalid(
+                        "revision references an unknown requirement".into(),
+                    ));
                 };
                 let Some(to) = change.statement.as_deref().map(str::trim) else {
                     continue;
@@ -534,7 +617,9 @@ fn assemble_revision(
             }
             "withdraw" => {
                 let Some(clause) = clause_at(change.requirement) else {
-                    continue;
+                    return Err(AlignmentError::Invalid(
+                        "revision references an unknown requirement".into(),
+                    ));
                 };
                 changes.push(ContractChange::ClauseWithdrawn {
                     id: clause.id,
@@ -560,9 +645,18 @@ fn assemble_revision(
                         statement: criterion.trim().to_owned(),
                     })
                     .collect();
-                let clause = if criteria.is_empty() {
+                let clause = if change
+                    .strength
+                    .as_deref()
+                    .is_some_and(|strength| strength.eq_ignore_ascii_case("preferred"))
+                {
                     ExpectationClause::preferred(statement, source.clone())
                 } else {
+                    if criteria.is_empty() {
+                        return Err(AlignmentError::Unfaithful(format!(
+                            "the added requirement \"{statement}\" needs an acceptance criterion; refusing to silently make it optional"
+                        )));
+                    }
                     ExpectationClause::required(statement, criteria, source.clone())
                 };
                 changes.push(ContractChange::ClauseAdded {
@@ -571,7 +665,9 @@ fn assemble_revision(
             }
             "strengthen" | "soften" => {
                 let Some(clause) = clause_at(change.requirement) else {
-                    continue;
+                    return Err(AlignmentError::Invalid(
+                        "revision references an unknown requirement".into(),
+                    ));
                 };
                 let to = if change.kind.eq_ignore_ascii_case("strengthen") {
                     ExpectationStrength::Required
@@ -649,14 +745,16 @@ fn assemble_revision(
                     answer: answer.to_owned(),
                 });
             }
-            _ => {}
+            _ => {
+                return Err(AlignmentError::Invalid(
+                    "revision contains an unsupported change kind".into(),
+                ));
+            }
         }
     }
 
     if changes.is_empty() {
-        return Err(AlignmentError::Invalid(
-            "the correction did not change the contract".into(),
-        ));
+        return Err(AlignmentError::NoChange);
     }
 
     let revision = ContractRevision {
@@ -893,10 +991,15 @@ mod tests {
             "non_goals": [], "assumptions": [], "open_questions": []
         });
         let provider = ScriptedProvider::new(vec![invented, faithful()]);
-        let compiled = IntentCompiler::new(route(provider.clone()))
-            .compile(&request())
-            .await
-            .expect("the second attempt quotes the user");
+        let (compiled, ledger) = IntentCompiler::new(route(provider.clone()))
+            .compile_with_usage(&request())
+            .await;
+        let compiled = compiled.expect("the second attempt quotes the user");
+        assert_eq!(
+            ledger.len(),
+            2,
+            "the rejected first call still costs a call"
+        );
         assert_eq!(compiled.contract.tally().total(), 1);
         assert!(
             provider.transcript().contains("which the user never wrote"),
@@ -906,10 +1009,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unfalsifiable_hard_requirement_becomes_the_preference_it_is() {
+    async fn an_uncheckable_hard_requirement_is_not_silently_made_optional() {
         // "Settings are better" with nothing that could check it would be
-        // declared done by whoever is in a hurry. It is real, it is recorded,
-        // and it does not hold delivery.
+        // declared done by whoever is in a hurry. Missing criteria cannot
+        // change the user's required outcome into an optional preference.
         let vague = json!({
             "objective": "Simplify Settings",
             "understanding": "…",
@@ -921,13 +1024,13 @@ mod tests {
             }],
             "non_goals": [], "assumptions": [], "open_questions": []
         });
-        let provider = ScriptedProvider::new(vec![vague]);
-        let compiled = IntentCompiler::new(route(provider))
-            .compile(&request())
-            .await
-            .unwrap();
-        assert_eq!(compiled.contract.tally().total(), 0);
-        assert_eq!(compiled.contract.preferred().count(), 1);
+        let provider = ScriptedProvider::new(vec![vague.clone(), vague]);
+        let (result, ledger) = IntentCompiler::new(route(provider))
+            .compile_with_usage(&request())
+            .await;
+        let error = result.unwrap_err();
+        assert_eq!(ledger.len(), 2);
+        assert!(matches!(error, AlignmentError::Unfaithful(_)));
     }
 
     #[tokio::test]
@@ -1031,7 +1134,39 @@ mod tests {
             )
             .await
             .expect_err("an empty revision is not a revision");
-        assert!(matches!(error, AlignmentError::Invalid(_)), "{error:?}");
+        assert!(matches!(error, AlignmentError::NoChange), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn an_added_requirement_is_never_silently_downgraded() {
+        let contract = IntentCompiler::new(route(ScriptedProvider::new(vec![faithful()])))
+            .compile(&request())
+            .await
+            .unwrap()
+            .contract;
+        let correction = "Additionally create followup.txt containing exactly followup.";
+        let request = IntentRequest::from_messages(vec![REQUEST.into(), correction.into()]);
+        let draft = |criteria: Vec<&str>| {
+            json!({
+                "reason": "the user adds a required file",
+                "quotation": correction,
+                "changes": [{"kind": "add", "statement": "followup.txt contains exactly followup",
+                             "acceptance_criteria": criteria}]
+            })
+        };
+        let missing = IntentCompiler::new(route(ScriptedProvider::new(vec![draft(vec![])])))
+            .revise(&contract, &request)
+            .await
+            .unwrap_err();
+        assert!(matches!(missing, AlignmentError::Unfaithful(_)));
+        let valid = IntentCompiler::new(route(ScriptedProvider::new(vec![draft(vec![
+            "Reading followup.txt returns exactly followup",
+        ])])))
+        .revise(&contract, &request)
+        .await
+        .unwrap();
+        let revised = contract.revise(valid).unwrap();
+        assert!(revised.contract.clauses.last().unwrap().is_required());
     }
 
     #[tokio::test]
@@ -1081,4 +1216,20 @@ mod tests {
             "the message should name the clause that could not be strengthened: {error}"
         );
     }
+}
+#[test]
+fn content_restrictions_do_not_create_blanket_path_bans() {
+    assert!(!quotation_forbids_path(
+        "Create marker.txt containing exactly marker and a newline; no extra content",
+        "marker.txt"
+    ));
+    assert!(quotation_forbids_path(
+        "Do not modify `src/editor`",
+        "src/editor"
+    ));
+    assert!(!quotation_forbids_path(
+        "Do not modify src/editor_helpers",
+        "src/editor"
+    ));
+    assert!(quotation_forbids_path("不要修改src/editor。", "src/editor"));
 }

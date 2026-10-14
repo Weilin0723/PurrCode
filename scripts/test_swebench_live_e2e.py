@@ -18,6 +18,35 @@ import swebench_live_e2e as e2e
 
 
 class SwebenchLiveE2ETests(unittest.TestCase):
+    def test_unknown_usage_is_reported_as_unmeasured(self) -> None:
+        metrics = e2e.event_metrics([
+            dict(event="model_request_started", data={"provider": "synthetic"}),
+            dict(event="model_request_finished", data={"input_tokens": None, "output_tokens": None})])
+        self.assertEqual(metrics["model_calls"], 1)
+        self.assertEqual(metrics["unknown_usage_calls"], 1)
+
+    def test_blocked_review_does_not_receive_correction(self) -> None:
+        view = dict(status_code="awaiting_review", lease_active=False)
+        task = dict(objective="synthetic", model="synthetic", max_tokens=10,
+                    arm="C", variant="correction", mid_run_correction="correction")
+        with patch.object(e2e, "http_json", return_value={"id": "s"}) as http, \
+             patch.object(e2e, "get_session", return_value=view), \
+             patch.object(e2e, "get_events", return_value=[]), \
+             patch.object(e2e, "wait_until_stopped", return_value=view), \
+             patch.object(e2e, "first_successful_mutation", return_value=({}, 0)):
+            measurement, _, _ = e2e.run_session(
+                base="unused", token="synthetic", task=task,
+                repository=Path("/synthetic"), maximum_seconds=1)
+        self.assertFalse(measurement["mid_run_correction_triggered"])
+        self.assertEqual(http.call_count, 1)
+
+    def test_duplicate_result_rows_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = Path(temporary) / "results.jsonl"
+            result.write_text('{"run_id":"same"}\n{"run_id":"same"}\n')
+            with self.assertRaisesRegex(e2e.E2EError, "duplicate run ID"):
+                e2e.read_results(result)
+
     def test_failed_session_and_unknown_oracle_are_not_valid_observations(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

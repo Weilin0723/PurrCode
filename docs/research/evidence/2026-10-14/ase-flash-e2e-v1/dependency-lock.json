@@ -1,0 +1,105 @@
+{
+  "docker": {
+    "credential_policy": "temporary_empty_docker_config",
+    "platform": "linux/amd64",
+    "required": true
+  },
+  "kind": "swebench-live-e2e-dependency-lock",
+  "notes": [
+    "Unmodified pinned official harness; immutable dataset revision and selected local JSON quarantine; ISO-formatted timestamp metadata only.",
+    "Gold oracle passed for every selected task before scientific model generation. Both failed groups and operational pilots retained separately.",
+    "Provider credentials resolved outside repository and tool-process environments. No fallback. Model alias and remote image tags remain service state, not immutable weight/image provenance."
+  ],
+  "python": {
+    "ci": "3.11",
+    "minimum": "3.10"
+  },
+  "repo_files": [
+    {
+      "path": ".github/workflows/research-swebench-live.yml",
+      "sha256": "afca7a2f295bc80b28864d32f14a0e2e483ba7ccd55d3ed9c7682e58953c307f"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "8facaf8a4d5cce717fe473898a9bb11cc2873efb2cc606c867fb92cbfb39028e"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v2/manifest.json",
+      "sha256": "ce8a2203149bf500560018c8f2f00ee0f1fe99a7e7a35480be5dfbda93774e1e"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v2/requirement_revision.json",
+      "sha256": "318670884e63a385f72e41901f0a914a846a8c3a601b05bcd7cc0a451d09bb6d"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-v1/acquisition_preflight.py",
+      "sha256": "06213c8e8742783cdb1b4bc4291d78d38d45e83e4a0f64cf8701799918cc657d"
+    },
+    {
+      "path": "crates/agent-runtime/src/agent.rs",
+      "sha256": "496ed55aca346a60a30749d73fe2aec071be076dc9d626dcca8d2bd7f4ad7af3"
+    },
+    {
+      "path": "crates/agent-runtime/src/alignment.rs",
+      "sha256": "7651d17b6999240b20de132cb8d26f7d27500fa658afb965f666513a79e26a33"
+    },
+    {
+      "path": "crates/agent-runtime/src/context.rs",
+      "sha256": "439d3cdd0fee410d48229f4f92c59c4dead85a05f602f18ab3c0446fb83abd01"
+    },
+    {
+      "path": "crates/alignment-runtime/src/fresh.rs",
+      "sha256": "32faeeb637ceb3a58ffa3f74d1681772ab4e7090ddf92b94ea7aaeb1cc428653"
+    },
+    {
+      "path": "crates/alignment-runtime/src/intent.rs",
+      "sha256": "12270c51e1ea968d8a9bd63b057cd2586553be5a65d3ce23e4b74684578426f4"
+    },
+    {
+      "path": "crates/alignment-runtime/src/lib.rs",
+      "sha256": "c01b0b2962b69a8d540abd5f1374bb893f16e00113d616342e9cb540e2b3a13a"
+    },
+    {
+      "path": "crates/evaluation-runtime/src/bin/repository_completion_e2e.rs",
+      "sha256": "9a01702711aadbc7ae78900907e424c52ab499a4f70517ffb713bee5478e48ad"
+    },
+    {
+      "path": "crates/purrcode-daemon/src/lib.rs",
+      "sha256": "17dec64cc82773a34107f160fe5b46db18937de5b3b6adc250baced355f1fab7"
+    },
+    {
+      "path": "crates/repository-engine/src/lib.rs",
+      "sha256": "a395f1914e7f1f86ff2d3a252f7f400d72d36d393aa041b0734a29255548a285"
+    },
+    {
+      "path": "crates/runtime-core/src/expectation/evidence.rs",
+      "sha256": "13b6f469c5f6ede578046d6622017e8259af11228ea882f485513d8800fed9b1"
+    },
+    {
+      "path": "crates/runtime-core/src/expectation/revision.rs",
+      "sha256": "1ebd6f197384717e7f86f1d30f311ba81cd82f7bf5fb22ca589380d19fd8c449"
+    },
+    {
+      "path": "scripts/ase_disjoint_acquisition.py",
+      "sha256": "5ea8211642a017adb56a79af8d8afca656883338bdf7739115ee16b85060d704"
+    },
+    {
+      "path": "scripts/run_swebench_live_oracle.py",
+      "sha256": "6ece6f7b0ae9c8af6c34ab7ceefac328fc971de73a093a8f7ee9759b6081fa69"
+    },
+    {
+      "path": "scripts/swebench_live_e2e.py",
+      "sha256": "1c006c30782ab28d35c59868e8ad7c26688dc37a1e83004b795c315acc0e5e08"
+    }
+  ],
+  "schema_version": 1,
+  "status": "gold_oracle_qualified_pre_model",
+  "swebench_live": {
+    "config": "default",
+    "dataset": "SWE-bench-Live/SWE-bench-Live",
+    "harness_commit": "a145aa87c62361532dacaa243398978164b234b7",
+    "harness_repository": "SWE-bench-Live/SWE-bench-Live",
+    "revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
+    "split": "verified"
+  }
+}

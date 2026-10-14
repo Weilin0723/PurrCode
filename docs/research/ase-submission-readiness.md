@@ -7,7 +7,7 @@ submission work, not a claim about acceptance probability.
 | --- | --- | --- |
 | Defensible research question | Freshness/correctness counterexamples; structural conjunction limitation disclosed | Evaluate live evidence refresh separately |
 | Qualified affordable provider | Fresh official `deepseek-flash` 7/7; 16,384-token context probe | Verify operational agent loop on rebuilt daemon |
-| Independent real repositories | New deterministic 30-task/10-repository candidate manifest, disjoint from prior study | Qualify official oracle before freezing model study |
+| Independent real repositories | All 30 tasks in acquisition v2 have passing official gold-oracle evidence; ten repositories disjoint from prior study | Publish new model-study freeze |
 | Complete live observations | Prior incomplete/failed run archived, never pooled | Complete newly frozen schedule without selective retries |
 | Useful comparative finding | Static gate guardrail failed and remains reported | Assess safety, correct delivery, latency and token cost using frozen inference |
 | Audited inference | Existing offline analysis tests pass; unknown outcomes retained | Recompute new results independently and assess attrition/minimum competence gates |

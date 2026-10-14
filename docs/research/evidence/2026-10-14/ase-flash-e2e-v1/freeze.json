@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "study_id": "ase-flash-repository-completion-v1",
+  "analysis_plan_sha256": "f9e8882b20fddfa55ea18b8e8c5c822815ed145b591ed7e3172c0ee849ea5bc8",
+  "frozen_at": "2026-10-14T06:56:38.291639+00:00",
+  "primary_model": "deepseek/deepseek-flash",
+  "requested_model": "deepseek/deepseek-flash",
+  "dataset_revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
+  "dataset_manifest_sha256": "6794c9e0fb0f3266aeaaeb6405104979630393c569bfdd0af37fc8f2235883d5",
+  "schedule_sha256": "a26cb53c3b270c6b72fdd02fe5c6398c73e7e3cc11b4f7d9f3fd6913a017e460",
+  "scheduled_runs_per_model": 120,
+  "session_token_budget": 1000000,
+  "qualification_sha256": "aa2644a8440ed676913b2c6ab6d0f9a76885619f3ab5a1a63c56e843de89420e",
+  "model_freeze_sha256": "a625d31b587f1f62426ead60a545b1b5f45bac035f7d4abe0a5d99927cb9807c",
+  "p0_hashes_sha256": "dea7feeab17182f1bfd9b890fe72e00e8ac66b6f29105a62a849c7541cbd02bd",
+  "p1_hashes_sha256": "77c8db37933afa532b0913795bd77da6058f6fe1bf17a5571d65a5e4565da153",
+  "trigger_policy_sha256": "e5d6a92b68fccad2cd3ee3cfbc330bccb7e508048745bea5c8dee22684272792",
+  "artifact_sha256": {
+    "analysis_script": "d74606c538e29fca5fc584535290b5b481f1fbf4dcf26d5911b199f1901a1cc2",
+    "runner": "1c006c30782ab28d35c59868e8ad7c26688dc37a1e83004b795c315acc0e5e08",
+    "dependency_lock": "d95124a0c97b69e93315c6b12d3cbc04b896fb85388cb820a354aab10a6ee7eb",
+    "qualification": "aa2644a8440ed676913b2c6ab6d0f9a76885619f3ab5a1a63c56e843de89420e",
+    "model_freeze": "a625d31b587f1f62426ead60a545b1b5f45bac035f7d4abe0a5d99927cb9807c"
+  }
+}

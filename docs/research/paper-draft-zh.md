@@ -101,7 +101,9 @@ guardrail 仍失败：B 对 externally accepted candidates 的 coverage 为 24/2
 
 ### 新增端到端证据审计（2026-10-14）
 
-下载检查了仍在运行的 x86_64 工作流中一个任务的四个 cells：全部 session failed、output tokens=0、patch 为空、oracle unknown，尽管该任务 job 显示 success。这里只能判断该样本不合格，不能据此断言全量失败率或 provider 根因。runner 已修复 failed/cancelled 的错误分类，unknown correctness 保留缺失值；工作流下载也改为保留任务目录，避免同名 results 文件互相覆盖。旧冻结记录不改写；任何修复后或 NIM 新模型实验都必须建立新 lock 与 pre-call freeze。
+已从完成的 x86_64 工作流恢复 27 个任务工件中的 108 个 cells：104 个 session failed，4 个缺少 session 状态；106 个 oracle unknown，102 个 patch 为空，仅 1 个 patch 被外部 oracle 接受。另 12 个计划 cells 未恢复，保留为缺失。这些证据不能支持预期的方法比较，也不能归因为单一 provider 根因。runner 已修复 failed/cancelled 的错误分类，unknown correctness 保留缺失值；工作流下载保留任务目录并拒绝重复行。旧冻结记录不改写，修复后实验必须建立新的 lock 与 pre-call freeze。
+
+在新模型生成前，另一个与旧研究仓库完全不重叠的候选集执行了参考补丁验证。首批 30 个任务有 5 个参考补丁失败，集中在两个仓库组；这两个组整体剔除，保留失败证据，按固定顺序补入后续两个合格仓库组。24 个保留任务和 6 个替代任务全部获得参考补丁通过证据。这证明 oracle 环境可用，不证明 agent 有效；合成需求修订预检及旧失败研究不会混入新的方法效应分析。
 
 ## 5. 结论
 

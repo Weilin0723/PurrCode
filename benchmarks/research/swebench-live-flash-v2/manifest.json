@@ -43,14 +43,16 @@
       "instructlab/instructlab",
       "python-babel/babel",
       "bridgecrewio/checkov",
-      "patroni/patroni",
-      "conan-io/conan",
-      "kedro-org/kedro"
+      "patroni/patroni"
     ],
     "oracle_qualification_exclusions": {
       "conan-io/conan": "2 of 3 reference patches failed the official required oracle",
       "kedro-org/kedro": "3 of 3 reference patches failed the official required oracle"
-    }
+    },
+    "excluded_oracle_failed_repositories": [
+      "conan-io/conan",
+      "kedro-org/kedro"
+    ]
   },
   "visibility": {
     "agent_fields": [

@@ -1,0 +1,40 @@
+{
+  "artifacts": [
+    {
+      "path": "scripts/swebench_live_e2e.py",
+      "role": "runner",
+      "sha256": "28de561f85c157c6083054d090d9399bcd6755534076e5f060a4c2530e1c58a2"
+    },
+    {
+      "path": "scripts/freeze_fse_confirmatory_study.py",
+      "role": "freeze_builder",
+      "sha256": "d36a6eefd53d7dcd69dbfa8c26ce9a7ae5d8724670f78bd248cf7112a7322be9"
+    },
+    {
+      "path": "scripts/run_swebench_live_oracle.py",
+      "role": "oracle_wrapper",
+      "sha256": "6ece6f7b0ae9c8af6c34ab7ceefac328fc971de73a093a8f7ee9759b6081fa69"
+    },
+    {
+      "path": "scripts/swebench_live_oracle_preflight.py",
+      "role": "oracle_preflight",
+      "sha256": "8a4491e972baaf837dc88943b992e6edff52410979df6782b9c6b5058bc0a82a"
+    },
+    {
+      "path": "scripts/fse_confirmatory_analysis.py",
+      "role": "analysis",
+      "sha256": "d74606c538e29fca5fc584535290b5b481f1fbf4dcf26d5911b199f1901a1cc2"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v2/flash-e2e-v2/run-bundle.json",
+      "role": "bundle",
+      "sha256": "873e026c6ea8076db6cc3e3cadf2aea19f591998383ca3628b1b8047e352511d"
+    }
+  ],
+  "bundle_path": "benchmarks/research/swebench-live-flash-v2/flash-e2e-v2/run-bundle.json",
+  "bundle_sha256": "873e026c6ea8076db6cc3e3cadf2aea19f591998383ca3628b1b8047e352511d",
+  "kind": "swebench-live-e2e-runner-lock",
+  "model": "deepseek/deepseek-flash",
+  "schema_version": 1,
+  "status": "frozen_pre_call"
+}

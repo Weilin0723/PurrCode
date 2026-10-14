@@ -313,14 +313,23 @@ similar −39.6-point descriptive difference.
 | DeepSeek v2 | 144 | 143 | 30/48 → 12/48 | 24/24 → 12/24 | Outcome-aware repair; guardrail failed |
 | SWE-bench-Live | 120 sessions planned | Not qualified | Not reported | Not reported | Cross-repository E2E gate open |
 
-An operator audit on 2026-10-14 inspected four downloaded cells from one task in the running
-x86_64 workflow. All four had failed sessions, zero output tokens, empty patches, and unknown
-oracles, despite successful task-job conclusions. This partial sample cannot establish the
-failure rate of the full run or identify the provider failure cause. It establishes that workflow
-success is insufficient evidence of experimental validity. A subsequent runner repair classifies
+An operator audit on 2026-10-14 recovered 108 cells from 27 task artifacts in the completed
+x86_64 workflow. Of these, 104 recorded failed sessions and four omitted session status;
+106 had unknown oracle outcomes, 102 had empty patches, and only one patch was externally
+accepted. The twelve unrecovered scheduled cells remain missing. These observations do not
+qualify the intended comparison or identify one common provider failure cause. They establish
+that workflow success is insufficient evidence of experimental validity. A subsequent runner repair classifies
 failed/cancelled sessions as errors and unknown correctness as missing; artifact aggregation also
 preserves task directories to avoid filename collisions. Existing frozen records remain unchanged.
 Any repaired study must use a new runner lock and pre-call freeze.
+
+Before new model generation, a repository-disjoint acquisition qualified the official reference
+patches. The first thirty candidates included five gold-oracle failures in two repository groups;
+both whole groups were rejected, their failures retained, and the next two eligible groups selected
+in the pinned acquisition order. Twenty-four retained tasks and six replacements yielded thirty
+passing reference-patch qualifications across ten repositories. This is oracle-environment evidence,
+not a measurement of agent efficacy. Synthetic correction preflights and the earlier failed live
+study are excluded from the prospective efficacy analysis.
 
 ## 5. Discussion
 

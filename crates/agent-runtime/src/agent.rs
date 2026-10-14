@@ -3511,7 +3511,11 @@ impl<'a> NativeAgent<'a> {
                         .map(|workflow| workflow.profile)
                         .unwrap_or_default();
                     if material_work_exists
-                        && !plan_revision_requires_review(workflow_profile, material_work_exists)
+                        && !plan_revision_requires_review(
+                            workflow_profile,
+                            material_work_exists,
+                            follow_up.is_some(),
+                        )
                     {
                         // Direct mode has no explicit plan-review boundary. A
                         // model often restates its checklist after PawGate asks
@@ -3519,6 +3523,10 @@ impl<'a> NativeAgent<'a> {
                         // durable graph would orphan evidence, but pausing the
                         // entire task is equally wrong. Keep the accepted plan
                         // and continue with the corrected action.
+                        // A user follow-up authorizes additional work, not the
+                        // replacement of the historical plan and its evidence.
+                        turn.plan = None;
+                        turn.current_step_index = None;
                     } else if material_work_exists {
                         store.append(
                             session_id,
@@ -3661,7 +3669,11 @@ impl<'a> NativeAgent<'a> {
                     {
                         let outcome_request = build_outcome_request(
                             &objective,
-                            turn.plan.as_deref().unwrap_or(&state.plan_steps),
+                            if follow_up.is_some() {
+                                &[]
+                            } else {
+                                turn.plan.as_deref().unwrap_or(&state.plan_steps)
+                            },
                             state.plan_revision + u64::from(turn.plan.is_some()),
                             &session_worktree,
                             &report,
@@ -3835,14 +3847,6 @@ impl<'a> NativeAgent<'a> {
                 }
                 _ => self.policy.evaluate(&proposed, &worktree),
             };
-            store.append(
-                session_id,
-                &SessionEvent::JudgmentRecorded {
-                    action_id,
-                    decision: deterministic.clone(),
-                    turn_id: Some(turn_id),
-                },
-            )?;
             if let Some(constraints) = decision_constraints(&deterministic) {
                 if let Some(previous_action_id) =
                     successful_duplicate_action(&state, &session_events, &proposed, constraints)?
@@ -3875,6 +3879,14 @@ impl<'a> NativeAgent<'a> {
                     continue;
                 }
             }
+            store.append(
+                session_id,
+                &SessionEvent::JudgmentRecorded {
+                    action_id,
+                    decision: deterministic.clone(),
+                    turn_id: Some(turn_id),
+                },
+            )?;
             let decision = if let (Some(judge), Some(constraints)) = (
                 self.contextual_judge
                     .as_ref()
@@ -3884,9 +3896,19 @@ impl<'a> NativeAgent<'a> {
                 let events = store.events(session_id)?;
                 let request = build_contextual_request(ContextualRequestInput {
                     objective: &objective,
-                    plan: turn.plan.as_deref().unwrap_or(&state.plan_steps),
+                    // A new user turn is judged against its current intent;
+                    // the completed historical plan remains in durable state.
+                    plan: if follow_up.is_some() {
+                        &[]
+                    } else {
+                        turn.plan.as_deref().unwrap_or(&state.plan_steps)
+                    },
                     plan_revision: state.plan_revision + u64::from(turn.plan.is_some()),
-                    current_step_index: turn.current_step_index,
+                    current_step_index: if follow_up.is_some() {
+                        None
+                    } else {
+                        turn.current_step_index
+                    },
                     expected_postconditions: &turn.expected_postconditions,
                     rationale: &turn.rationale,
                     action: &proposed,
@@ -4956,8 +4978,11 @@ fn task_mentions_path(objective: &str, path: &str, file_name: &str, stem: &str) 
 fn plan_revision_requires_review(
     profile: purrcode_runtime_core::adaptation::WorkflowProfile,
     material_work_exists: bool,
+    user_follow_up: bool,
 ) -> bool {
-    material_work_exists && profile != purrcode_runtime_core::adaptation::WorkflowProfile::Direct
+    material_work_exists
+        && profile != purrcode_runtime_core::adaptation::WorkflowProfile::Direct
+        && !user_follow_up
 }
 
 fn append_task_status(

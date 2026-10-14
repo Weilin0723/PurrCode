@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "study_id": "ase-flash-repository-completion-v2",
+  "primary_model": "deepseek/deepseek-flash",
+  "requested_model": "deepseek/deepseek-flash",
+  "primary_variant": "correction",
+  "arms": [
+    "B",
+    "C"
+  ],
+  "request_variants": [
+    "static",
+    "correction"
+  ],
+  "dataset_revision": "b51a86422e10cfd403beb4773e5a2947953e36ec",
+  "dataset_manifest_sha256": "6794c9e0fb0f3266aeaaeb6405104979630393c569bfdd0af37fc8f2235883d5",
+  "schedule_sha256": "a26cb53c3b270c6b72fdd02fe5c6398c73e7e3cc11b4f7d9f3fd6913a017e460",
+  "runs_per_model": 120,
+  "scheduled_runs_per_model": 120,
+  "session_token_budget": 1000000,
+  "qualification_sha256": "aa2644a8440ed676913b2c6ab6d0f9a76885619f3ab5a1a63c56e843de89420e",
+  "model_freeze_sha256": "a625d31b587f1f62426ead60a545b1b5f45bac035f7d4abe0a5d99927cb9807c",
+  "primary_estimand": "repository_average_correction_c_minus_b_all_scheduled_risk_difference",
+  "interaction_estimand": "repository_average_revision_specific_difference_in_differences",
+  "attrition_definition": "terminal_failure_or_oracle_unknown",
+  "repositories": {
+    "Kozea/WeasyPrint": [
+      "kozea__weasyprint-2233",
+      "kozea__weasyprint-2300",
+      "kozea__weasyprint-2301"
+    ],
+    "beeware/briefcase": [
+      "beeware__briefcase-1972",
+      "beeware__briefcase-2035",
+      "beeware__briefcase-2088"
+    ],
+    "ipython/ipython": [
+      "ipython__ipython-14503",
+      "ipython__ipython-14555",
+      "ipython__ipython-14693"
+    ],
+    "joke2k/faker": [
+      "joke2k__faker-2096",
+      "joke2k__faker-2101",
+      "joke2k__faker-2104"
+    ],
+    "pydata/xarray": [
+      "pydata__xarray-9369",
+      "pydata__xarray-9586",
+      "pydata__xarray-9760"
+    ],
+    "python-attrs/attrs": [
+      "python-attrs__attrs-1319",
+      "python-attrs__attrs-1320",
+      "python-attrs__attrs-1372"
+    ],
+    "reflex-dev/reflex": [
+      "reflex-dev__reflex-3833",
+      "reflex-dev__reflex-3842",
+      "reflex-dev__reflex-3982"
+    ],
+    "shapely/shapely": [
+      "shapely__shapely-2120",
+      "shapely__shapely-2223",
+      "shapely__shapely-2226"
+    ],
+    "sissbruecker/linkding": [
+      "sissbruecker__linkding-812",
+      "sissbruecker__linkding-984",
+      "sissbruecker__linkding-989"
+    ],
+    "streamlink/streamlink": [
+      "streamlink__streamlink-6111",
+      "streamlink__streamlink-6205",
+      "streamlink__streamlink-6207"
+    ]
+  },
+  "repeats": [
+    0
+  ],
+  "requirement_revision": {
+    "p0_sha256": {
+      "beeware__briefcase-1972": "0d35e05ea3e44abd95e1c85af33921c9bc303dc29d0eb413c7fb89b8a2d63906",
+      "beeware__briefcase-2035": "dc06c724858f81c1a6f2e20e7b3800bc502497544ee470554de155326b242202",
+      "beeware__briefcase-2088": "84630454d0c5a3cd06b0ebbfc037a41869a06ac6472e2b17931dca5e358e5905",
+      "ipython__ipython-14503": "e3465698843752328c97b7069c241a8f9801a3762122f4351f59b2e5c196bacc",
+      "ipython__ipython-14555": "a80c59bd1402f9b233c28be831f6a7a0cea589085f5b8a871c6e204af637437c",
+      "ipython__ipython-14693": "a494fc5152645912518a65accbd4ee6d4302fcbcc0a0fc7511d3d338a576f80b",
+      "joke2k__faker-2096": "afc33ec720e736d286df6b06a15d9db07fe8f67de04b672703ea599d7928d51e",
+      "joke2k__faker-2101": "c666bd62e35322650d3313a5ebb4312346510bcb9b61be22b0491e7c6b8262ed",
+      "joke2k__faker-2104": "92e19fedc82d732f046bced5042e010a0e7bb1b4438a4eafa529a5aabbb0a6da",
+      "kozea__weasyprint-2233": "2919b73cc0c605c06ff031bfbb052a273bfedf92665847308e59f061a9fad0c6",
+      "kozea__weasyprint-2300": "60ac3cf473ba1bc27a3f85a6ddfe79d2cb5ab5f2c88079132c43d195f1fdcb6c",
+      "kozea__weasyprint-2301": "5b18de246ef06dd20025ca0e1a2793bcb9ff89d1680006dd650a1e7e721d6fe0",
+      "pydata__xarray-9369": "7a7bf6c8dabb7d8deca9962d7a4eb7952b1ff80d90fc3dca7c0d2657fea7470f",
+      "pydata__xarray-9586": "a6e731f15df39f8536d378652af4ad78e12860d1ef300930d76e2a80352c1d9a",
+      "pydata__xarray-9760": "218ccfc9edd15141a0daac19dc4f22b68fddb40a22e73ef8af80ea1545a5b5fd",
+      "python-attrs__attrs-1319": "a96383e53832a1cfdaa12d0a66ad938ae623242324c1a7d28da6f5d53529daf5",
+      "python-attrs__attrs-1320": "0da5e3364b68da8e6d1be46a42fc6d4f8c33d08233e647f4753e675d074baee3",
+      "python-attrs__attrs-1372": "99d36e31d00da66d2240a34e2db1bab067f2af12cfed2bdd4f5e1b6b735ea867",
+      "reflex-dev__reflex-3833": "ad7f623c3eaf80440c3c2ac564f64fc9b0d1775e6fef6de38719ab718a5e62a7",
+      "reflex-dev__reflex-3842": "1749c74e3ac630b8a6726b616fcc3f39a0a4f1f41a15d46e0d5e59aec1f6e346",
+      "reflex-dev__reflex-3982": "e24353edb3b3ebe7b1d5278d2abcefd4a11ad76e55032e903343d51763582411",
+      "shapely__shapely-2120": "3808e3e2cdce38675a3f5e7c4dd861168521f663107d42d16e0437e02baaefb0",
+      "shapely__shapely-2223": "3ae067acb66af34215136abfc1b47ff930521eda2d612dff92180841e7f5ada2",
+      "shapely__shapely-2226": "0439540494348846c8f44806594b822e5168f66ea2de12fc62d7b863d8a5b1e9",
+      "sissbruecker__linkding-812": "fa8ef604f702c6c9018b61ec1367cc462a4a2aa1489074f3d5a22e0d0d81ec14",
+      "sissbruecker__linkding-984": "19a30f6423487a9fb37222b22965f5802fbe01d5b9608b7e5b411335acc4b9f8",
+      "sissbruecker__linkding-989": "a48c1ea340f8f57ecd5c56201dd5e646394a45986507a352b9c6fd3597e3e46d",
+      "streamlink__streamlink-6111": "c8b953b386b4f045ac18b3b785ceeefe887c097e7b4fa41e343260cf29a04fa3",
+      "streamlink__streamlink-6205": "783657230b59eef72441e1567c6ac33cecd2752fc8980b96242e7a73242b20e7",
+      "streamlink__streamlink-6207": "fd7bbf4242578067427c7f848fd1b73eee27401a1bdd460f8a32b3dd575c916b"
+    },
+    "p1_sha256": {
+      "beeware__briefcase-1972": "95da8498b80596649b418a0491ef8dd14c68f09c267e694c6caf9c9d19ee6840",
+      "beeware__briefcase-2035": "c76168c06c53d099c727a934c98fb680a697bd9aac9f4c6579e26189df847392",
+      "beeware__briefcase-2088": "1677c7118d676ded6ce004ed1ba7d2f9caeac95d15091f69b4ee2e0c7fe803a1",
+      "ipython__ipython-14503": "1f6efc95ece35d0233e3a221efc6a076e44a48a8107de9e74f46d640fcc16df2",
+      "ipython__ipython-14555": "151c208fd47e2e1cc440b39b25c6bb68482ac86454af5f8a0473793f6bbd124e",
+      "ipython__ipython-14693": "7f9b7eb86db6d31dae12cf9b2544faffe9a3732d8796dd601111437c6575afed",
+      "joke2k__faker-2096": "415eb9750e28858bd817f73a08c5a15363ef7c82c504d2570681fd5f572fed35",
+      "joke2k__faker-2101": "daf9ded870be3d89c4c56a76b11e4ddad55f9f1cf41e33f9948c48722997a5fe",
+      "joke2k__faker-2104": "ba4912f84ab1b2136a54351348dedf458a22aa53dba0ebc4bfdf22d3430afa34",
+      "kozea__weasyprint-2233": "eaad6addbf6398fafaf1327ea4f46819ff0b33af7122999af84445dc09d52806",
+      "kozea__weasyprint-2300": "5f17b1154f33522ed6a951e44af28f8eae81c43a4b97e2f858b659490d2a68ce",
+      "kozea__weasyprint-2301": "1e1ca72087f6ad639ae3b3b2274a79d51e8bc2ca199353688270711e8071328c",
+      "pydata__xarray-9369": "faf9c8aed040e614ff04c1a07bea60c1c4ce63e226720ded1a224d0a05c36dd7",
+      "pydata__xarray-9586": "b9d778e62a70773161a263c7388588e7d195ce8cf53b32d3f052eb53251b4a5d",
+      "pydata__xarray-9760": "1b6a4250bf9c2e1aa99c79836ea508a90297e9113a198aabd8a6d498b797be1d",
+      "python-attrs__attrs-1319": "df086c9911928396843c95daf5661543abb2b084f5f3626e56a754ef3bd3cb59",
+      "python-attrs__attrs-1320": "fdb01ae74bbce3155aad75e21cb2d0038b6bc4f3e750ff2c139a8b25165f1adf",
+      "python-attrs__attrs-1372": "e4cce5f30891017cf6a4a46a7e5ee569aa55eddb4773d00ab7fb44a30cc75a87",
+      "reflex-dev__reflex-3833": "680bfc4be8f8a1893ce2f81370d53669105c3247327f0594bded3070079d95b5",
+      "reflex-dev__reflex-3842": "2e4c7256bd39e88791be28cffe2f852013ae463d19ea71c7ce069a443cf42826",
+      "reflex-dev__reflex-3982": "1c50f308ba609700f9f2acc6525e3de460575c97895416a3874ea953fbe85ae7",
+      "shapely__shapely-2120": "67e4fd70663e2f481eb3a354abb8b5c70b04bef7cd187332886476728140987f",
+      "shapely__shapely-2223": "bcc84fcbf86d72c40606e84dc9d59a28628f98c9b962064067a4c4482034202d",
+      "shapely__shapely-2226": "4762a58478beb4578e44239d7c65853d36eb02de252b8158b33b4c8c3b42b0ee",
+      "sissbruecker__linkding-812": "39211d139b7f6d4e382957129c26c5529fc86f8fc81dc8ffc8cc95a1f8675ac7",
+      "sissbruecker__linkding-984": "8c2ff2c2bfa2700692a59d05221218b3b50f78279c5457c717f3ef16925a33be",
+      "sissbruecker__linkding-989": "dde06a92261dd62f6e4a45c82397d3aa7728a8da14b173718c0d278927569843",
+      "streamlink__streamlink-6111": "bf54bc541a4eefdaddbc41c8bde5ae7e446dc2bcc326686f4dbf85d026aaa27a",
+      "streamlink__streamlink-6205": "f5eb08d667e58fbd25fabe91471779d9572c55ee6acb76fa2b2f22fb3e58742a",
+      "streamlink__streamlink-6207": "f393a3292779cd65514c0e0971e715e7b4a2f9c954a29858d9b35ebb9a2ea640"
+    },
+    "trigger_policy": {
+      "event": "ExecutionFinished",
+      "success_exit_code": 0,
+      "requires_nonempty_affected_paths": true,
+      "acknowledgement_event": "requirement_revision_ack",
+      "acknowledgement_required": true,
+      "undelivered_policy": "retain_itt"
+    },
+    "p0_hashes_sha256": "dea7feeab17182f1bfd9b890fe72e00e8ac66b6f29105a62a849c7541cbd02bd",
+    "p1_hashes_sha256": "77c8db37933afa532b0913795bd77da6058f6fe1bf17a5571d65a5e4565da153",
+    "trigger_policy_sha256": "e5d6a92b68fccad2cd3ee3cfbc330bccb7e508048745bea5c8dee22684272792"
+  },
+  "bootstrap_samples": 100000,
+  "bootstrap_seed": 20261013,
+  "alpha": 0.05,
+  "guardrail_margin": 0.05,
+  "attrition_limit": 0.1,
+  "minimum_baseline_correct_delivery_risk": 0.1,
+  "minimum_method_correct_delivery_risk": 0.1
+}

@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "benchmarks/research/swebench-live-v1"))
 import acquisition_preflight as acquisition
 
 
-def select(prior, rows):
+def select(prior, rows, rejected_repositories=()):
     groups = {}
     for index, row in sorted(rows.items()):
         difficulty = row.get("difficulty", {})
@@ -24,6 +24,7 @@ def select(prior, rows):
                 and difficulty["lines"] <= 50 and row.get("FAIL_TO_PASS") and row.get("PASS_TO_PASS")):
             groups.setdefault(row["repo"], []).append((index, row))
     excluded = set(prior["selection"]["repository_order"])
+    excluded.update(rejected_repositories)
     repositories = [repo for repo, group in groups.items() if len(group) >= 3 and repo not in excluded][:10]
     if len(repositories) != 10:
         raise ValueError("not enough disjoint eligible repositories")
@@ -32,6 +33,7 @@ def select(prior, rows):
         algorithm="Apply pinned eligibility; exclude prior repositories; retain the next ten groups in first-eligible-row order and each group's first three rows. Oracle qualification precedes the scientific freeze.",
         repository_order=repositories,
         excluded_prior_repository_order=prior["selection"]["repository_order"],
+        excluded_oracle_failed_repositories=list(rejected_repositories),
     )
     manifest["study_role"] = "repository-disjoint pre-model oracle qualification candidates; no efficacy outcomes"
     manifest["tasks"] = []
@@ -53,7 +55,7 @@ def select(prior, rows):
 if __name__ == "__main__":
     prior = acquisition.load_json(ROOT / "benchmarks/research/swebench-live-v1/manifest.json")
     rows = acquisition.fetch_public_rows(prior["source"], 0, 500)
-    manifest = select(prior, rows)
+    manifest = select(prior, rows, sys.argv[2:])
     target = Path(sys.argv[1])
     with target.open("x") as handle:
         json.dump(manifest, handle, indent=2)
