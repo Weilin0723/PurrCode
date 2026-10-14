@@ -1,0 +1,17 @@
+{
+  "freeze_sha256": "9732bcbfe35bb8c302ca501a28ed3b9e0bf8f8ba7c8aff4ad87650e1fc0345b1",
+  "model_freeze_sha256": "bd7bf6ea802e92e51c071db03207c1931dc3b0cc42e4463de90a9ba8f30e6662",
+  "p0_hashes_sha256": "47ac5af4f4f3582911b80e75b0137f3a55be362515dca29e91d1ce2f70cf7dc6",
+  "p1_hashes_sha256": "c5980c97bdd9c385aef462b1bfd5ed9eb7c944b471660d09ee5dd1daf23180c7",
+  "primary_model": "deepseek/deepseek-flash",
+  "publication_status": "must_be_published_before_scheduled_run_0",
+  "qualification_sha256": "c32878c8d8bfa282ff2e77f541ed65827bbafcdabd26f35963a349af7ebe51b9",
+  "requested_model": "deepseek/deepseek-flash",
+  "runs_per_model": 120,
+  "schedule_sha256": "fe26e90f81d8fb7da3c97f1ffa50d813394fe68d2a8a7a806d3a46fdec6de45f",
+  "scheduled_runs_per_model": 120,
+  "schema_version": 1,
+  "session_token_budget": 1000000,
+  "study_id": "ase-flash-e2e-v4-valid-paired",
+  "trigger_policy_sha256": "e5d6a92b68fccad2cd3ee3cfbc330bccb7e508048745bea5c8dee22684272792"
+}

@@ -1,0 +1,27 @@
+schema_version = 1
+
+[privacy]
+mode = "mixed"
+allow_remote_fallback = false
+
+[providers.deepseek]
+type = "openai-compatible"
+base_url = "https://api.deepseek.com/"
+api_key_env = "keychain:deepseek"
+local = false
+
+[models]
+default = "deepseek/deepseek-flash"
+
+[models.roles]
+coding_worker = "deepseek/deepseek-flash"
+judge = "deepseek/deepseek-flash"
+planner = "deepseek/deepseek-flash"
+reviewer = "deepseek/deepseek-flash"
+alignment_reviewer = "deepseek/deepseek-flash"
+router = "deepseek/deepseek-flash"
+summarizer = "deepseek/deepseek-flash"
+repair_worker = "deepseek/deepseek-flash"
+
+[judgment]
+allow_same_model = true

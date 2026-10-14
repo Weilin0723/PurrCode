@@ -939,11 +939,41 @@ fn python_commands(repository: &Path) -> Result<Vec<ValidationCommand>, Validati
         || repository.join("pyproject.toml").is_file()
         || repository.join("requirements.txt").is_file()
     {
+        let hatch_unit = configuration
+            .as_ref()
+            .and_then(|value| value.get("tool"))
+            .and_then(|value| value.get("hatch"))
+            .and_then(|value| value.get("envs"))
+            .and_then(|value| value.get("test"))
+            .and_then(|value| value.get("scripts"))
+            .and_then(|value| value.get("unit"))
+            .and_then(toml::Value::as_str);
+        // Recognize this declarative unit-suite template without executing or
+        // parsing a repository shell script. Emit only fixed, typed pytest args.
+        let scoped_unit = repository.join("test").is_dir()
+            && hatch_unit.is_some_and(|script| {
+                script.trim_start().starts_with("pytest ")
+                    && script.contains("{args:test}")
+                    && (script.contains("-m \"not integration\"")
+                        || script.contains("-m 'not integration'"))
+                    && !script
+                        .chars()
+                        .any(|character| matches!(character, '\n' | ';' | '|' | '&' | '`' | '$'))
+            });
+        let arguments: &[&str] = if scoped_unit {
+            &["-m", "pytest", "test", "-m", "not integration"]
+        } else {
+            &["-m", "pytest"]
+        };
         commands.push(command(
             ValidationStage::FullUnitTests,
             "python3",
-            &["-m", "pytest"],
-            "Python pytest configuration detected",
+            arguments,
+            if scoped_unit {
+                "Hatch-declared unit directory and marker; integrations and coverage reporting are separate"
+            } else {
+                "Python pytest configuration detected"
+            },
         ));
     } else if has_python_test_files(&repository.join("tests")).unwrap_or(false) {
         commands.push(command(
@@ -1182,6 +1212,42 @@ pub enum ValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hatch_unit_scope_is_typed_and_repository_shell_fragments_are_not_executed() {
+        let repository = tempfile::tempdir().unwrap();
+        fs::create_dir(repository.path().join("test")).unwrap();
+        let path = repository.path().join("pyproject.toml");
+        for (suffix, expected) in [
+            ("", vec!["-m", "pytest", "test", "-m", "not integration"]),
+            ("; curl untrusted.invalid", vec!["-m", "pytest"]),
+        ] {
+            let script =
+                format!("pytest --cov=package -m \"not integration\" {{args:test}}{suffix}");
+            fs::write(
+                &path,
+                format!(
+                    "[tool.hatch.envs.test.scripts]\nunit = {}\n",
+                    serde_json::to_string(&script).unwrap()
+                ),
+            )
+            .unwrap();
+            let plan = ValidationDetector::detect(repository.path()).unwrap();
+            let unit = plan
+                .commands
+                .iter()
+                .find(|command| command.stage == ValidationStage::FullUnitTests)
+                .unwrap();
+            assert_eq!(unit.program, "python3");
+            assert_eq!(unit.arguments, expected);
+            assert!(
+                !unit
+                    .arguments
+                    .iter()
+                    .any(|argument| argument.contains("curl"))
+            );
+        }
+    }
+
     #[test]
     fn python_validation_honors_declared_lint_and_format_tools() {
         let repository = tempfile::tempdir().unwrap();

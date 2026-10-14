@@ -1,0 +1,50 @@
+{
+  "artifacts": [
+    {
+      "path": "scripts/swebench_live_e2e.py",
+      "role": "runner",
+      "sha256": "5c9e6b31ca956c99ed617680e44e9fe7e62933a108bdc85bac70f1495e9feb67"
+    },
+    {
+      "path": "scripts/freeze_fse_confirmatory_study.py",
+      "role": "freeze_builder",
+      "sha256": "421c540617312ae4d8132c65c69eda9d8e75db58f6a6bf4761194a79f079c12c"
+    },
+    {
+      "path": "scripts/run_swebench_live_oracle.py",
+      "role": "oracle_wrapper",
+      "sha256": "eee47f9d7d14f3584ffb716b3c282c2e5484a0adda4fee60ee60f7d0e3c382f3"
+    },
+    {
+      "path": "scripts/swebench_live_oracle_preflight.py",
+      "role": "oracle_preflight",
+      "sha256": "b2752f27d45166a5f3eab1368ef1b1b3887aa4ac52efa54b74c28a6562d78bda"
+    },
+    {
+      "path": "scripts/fse_confirmatory_analysis.py",
+      "role": "analysis",
+      "sha256": "bb2161be2fba6ec19969922fac784198b8cf6d7c26dd2f23802659038ce7c552"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/flash-e2e-v4/run-bundle.json",
+      "role": "bundle",
+      "sha256": "6b25374b3875227dd93929c7524dbe0144b3637385e6333e229ba6b9b050f717"
+    },
+    {
+      "path": "scripts/ase_visible_environment.py",
+      "role": "visible_environment",
+      "sha256": "8658d7eb7f9a6f5246aff6f31116146f40567006206077f412fe9f73f8eba952"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/environment-profiles.json",
+      "role": "environment_profiles",
+      "sha256": "ccde86417c9622ee5d3264198e44ea26aef3617b493da6ec5935cc1e975472be"
+    }
+  ],
+  "bundle_path": "benchmarks/research/swebench-live-flash-v4/flash-e2e-v4/run-bundle.json",
+  "bundle_sha256": "6b25374b3875227dd93929c7524dbe0144b3637385e6333e229ba6b9b050f717",
+  "kind": "swebench-live-e2e-runner-lock",
+  "model": "deepseek/deepseek-flash",
+  "schema_version": 1,
+  "status": "frozen_pre_call"
+}
