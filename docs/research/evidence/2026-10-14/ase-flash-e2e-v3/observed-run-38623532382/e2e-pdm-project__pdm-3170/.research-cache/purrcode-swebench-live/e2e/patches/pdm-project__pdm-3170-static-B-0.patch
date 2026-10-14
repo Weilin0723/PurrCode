@@ -1,0 +1,22 @@
+diff --git a/src/pdm/utils.py b/src/pdm/utils.py
+index a474d913..ff552012 100644
+--- a/src/pdm/utils.py
++++ b/src/pdm/utils.py
+@@ -244,7 +244,7 @@ def expand_env_vars(credential: str, quote: bool = False, env: Mapping[str, str]
+ 
+     def replace_func(match: Match) -> str:
+         rv = env.get(match.group(1), match.group(0))
+-        return parse.quote(rv) if quote else rv
++        return parse.quote(rv, safe="") if quote else rv
+ 
+     return re.sub(r"\$\{(.+?)\}", replace_func, credential)
+ 
+@@ -266,7 +266,7 @@ def path_replace(pattern: str, replace_with: str, dest: str) -> str:
+     :param pattern: the pattern to match
+     :param replace_with: the string to replace with
+     :param dest: the path to replace
+-    :return the replaced path
++    :return the replaced string
+     """
+     sub_flags = re.IGNORECASE if os_name == "nt" else 0
+     return re.sub(

@@ -86,14 +86,29 @@ anonymous working manuscript PDF has been typeset, with the live audit included;
 results, anonymous package extension, and final PDF QA still remain open.
 
 The repaired 120-cell B/C × static/correction study was frozen in commit caf912c and
-published before dispatch in c4fe105. Workflow 38623532382 is running that fixed version.
+published before dispatch in c4fe105. Workflow 38623532382 ran that fixed version and was
+cancelled by the operator after repeated public-test dependency failures were established.
 Its primary population is prospectively defined as valid evaluable B/C pairs; no-output,
 budget, provider, runtime, timeout, and unknown-oracle observations are separately audited.
 Incorrect but evaluable outcomes remain included. Conditional method support also requires
 at least 24 correction pairs across eight repositories and the frozen correct-delivery
 guardrail. Failed historical studies are not pooled into this comparison. The operator
 requested experiment monitoring and intervention for operational failures, with normal
-behavioral failures recorded rather than selectively rerun. Scientific results remain pending.
+behavioral failures recorded rather than selectively rerun. Its 35 archived rows have 19
+frozen `valid` labels and 16 error labels, four correct oracle patches, and zero completed
+deliveries. Some paused sessions labeled `valid` were blocked by missing test dependencies;
+the original labels and freeze remain immutable, and a separately versioned audit must
+exclude these environment-invalid observations. Recorded usage is a lower bound of
+12,887,576 tokens across 426 calls, with eight incomplete calls and potentially unarchived
+interrupted requests. This interrupted study is not complete efficacy evidence.
+
+Environment repair commit 7225a3f installs public dev/examples dependencies, follows public
+Ruff pins, and blocks model execution when base-revision pytest collection fails. Workflow
+38626695048 passed public collection and gold qualification for all three Mesa tasks with
+zero model calls. The complete 30-task collection qualification, workflow 38627233895,
+is still running and has exposed additional public dependency/configuration gaps. These
+must be repaired before resuming scientific generation; normal incorrect outcomes remain
+preserved rather than replaced.
 
 
 Full design in [`v1.5-architecture.md`](v1.5-architecture.md).

@@ -1,0 +1,66 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11923564321,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyMzU2NDMyMQ==",
+    "name": "e2e-python-control__python-control-1065",
+    "size_in_bytes": 457356,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923564321",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923564321/zip",
+    "expired": false,
+    "digest": "sha256:9227d90c880743877324fcc4b135bbd9148c80733a3da48070dff743eca2a59a",
+    "created_at": "2026-10-14T19:52:05Z",
+    "updated_at": "2026-10-14T19:52:05Z",
+    "expires_at": "2026-10-28T19:52:04Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:52:39.835600+00:00",
+  "files": [
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/python-control__python-control-1065-static-B-0.patch",
+      "sha256": "c5d3636623fc83777a2c0e8cb1ca0564e364ac12b18bce71573090fcc82f7ef8"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/python-control__python-control-1065-static-C-0.patch",
+      "sha256": "1627a37328368936a6d69106f7f8dc40a1f14147a7b549c0074295666ff98105"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "sha256": "65e4a70ccd4cddc8287430590a0fc44e3b6a2bf96c689b599e58fcee96adf4a9"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/python-control__python-control-1065-static-B-0.json",
+      "sha256": "2686dd4bc3f1f6fd38c3973495cc2c2060c1bcf90ee2e532de2a7f8089ea4b7a"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/python-control__python-control-1065-static-C-0.json",
+      "sha256": "7ead2e9aa6b76822cbdbc3ea7b416f96106404a00a0494acd759ba7edd86d968"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/python-control__python-control-1065-static-B-0.json",
+      "sha256": "038adcc9a0e1c8f3dcb37eee2a1aad982ee5232fa8df7138f2d23385b67989d7"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/python-control__python-control-1065-static-C-0.json",
+      "sha256": "ca92a1973f6a0c1e8e72acf4e0d38d15148398cd2c07d46e33e728584f16b30e"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "124a5970b6221facaa64742b69c955663712a490db3b821fbed170c2291a4dd1"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "cb852a190449c81f48334151642e43692714dcdbf9c867e4db06a8b0079d2d03"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}

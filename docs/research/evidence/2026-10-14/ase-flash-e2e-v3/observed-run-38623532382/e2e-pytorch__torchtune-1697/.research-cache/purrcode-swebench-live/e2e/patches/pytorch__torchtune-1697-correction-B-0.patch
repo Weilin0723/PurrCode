@@ -1,0 +1,24 @@
+diff --git a/torchtune/datasets/_packed.py b/torchtune/datasets/_packed.py
+index 8cee72ee..3ba350f2 100644
+--- a/torchtune/datasets/_packed.py
++++ b/torchtune/datasets/_packed.py
+@@ -243,13 +243,15 @@ class PackedDataset(Dataset):
+         # Pad input_pos continuing the sequence from last value
+         # in input_pos
+         # e.g. [0 1 2] -> [0 1 2 3 4 5] for self.max_seq_len = 6
++        # ``num_padding_tokens`` is exactly the number of padded positions, so
++        # build the range from a count rather than from max_seq_len - len(input_pos),
++        # which can produce an empty or inverted (upper <= lower) range when a sample
++        # is split across packs and len(pack["input_pos"]) >= self.max_seq_len.
+         num_range = torch.arange(
+             pack["input_pos"][-1] + 1,
+-            pack["input_pos"][-1] + self.max_seq_len - len(pack["input_pos"]) + 1,
++            pack["input_pos"][-1] + num_padding_tokens + 1,
+         )
+-        # Clamp to max_seq_len - 1 to avoid out of bounds error
+-        clamped_num_range = torch.clamp(num_range, 0, self.max_seq_len - 1)
+-        padded_input_pos = torch.cat([pack["input_pos"], clamped_num_range])
++        padded_input_pos = torch.cat([pack["input_pos"], num_range])
+ 
+         return {
+             "tokens": padded_tokens,

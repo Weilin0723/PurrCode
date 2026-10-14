@@ -1,0 +1,51 @@
+diff --git a/llama_deploy/message_queues/apache_kafka.py b/llama_deploy/message_queues/apache_kafka.py
+index e5d1a5f..404db7c 100644
+--- a/llama_deploy/message_queues/apache_kafka.py
++++ b/llama_deploy/message_queues/apache_kafka.py
+@@ -34,6 +34,7 @@ class KafkaMessageQueueConfig(BaseSettings):
+     topic_name: str = Field(default=DEFAULT_TOPIC_NAME)
+     host: str | None = None
+     port: int | None = None
++    group_id: str = Field(default=DEFAULT_GROUP_ID)
+ 
+     @model_validator(mode="after")
+     def update_url(self) -> "KafkaMessageQueueConfig":
+@@ -48,8 +49,8 @@ class KafkaMessageQueue(AbstractMessageQueue):
+     This class implements a traditional message broker using Apache Kafka.
+         - Topics are created with N partitions
+         - Consumers are registered to a single group to implement a competing
+-        consumer scheme where only one consumer subscribed to a topic gets the
+-        message
++          consumer scheme where only one consumer subscribed to a topic gets the
++          message
+             - Default round-robin assignment is used
+ 
+     Attributes:
+@@ -163,7 +164,7 @@ class KafkaMessageQueue(AbstractMessageQueue):
+         admin_client = KafkaAdminClient(bootstrap_servers=self._config.url)
+         active_topics = admin_client.list_topics()
+         topics_to_delete = [el for el in message_types if el in active_topics]
+-        admin_client.delete_consumer_groups(DEFAULT_GROUP_ID)
++        admin_client.delete_consumer_groups(self._config.group_id)
+         if topics_to_delete:
+             admin_client.delete_topics(topics_to_delete)
+ 
+@@ -203,7 +204,7 @@ class KafkaMessageQueue(AbstractMessageQueue):
+         self._kafka_consumer = AIOKafkaConsumer(
+             self._config.topic_name,
+             bootstrap_servers=self._config.url,
+-            group_id=DEFAULT_GROUP_ID,
++            group_id=self._config.group_id,
+             auto_offset_reset="earliest",
+         )
+ 
+@@ -235,4 +236,8 @@ class KafkaMessageQueue(AbstractMessageQueue):
+         return start_consuming_callable
+ 
+     def as_config(self) -> BaseModel:
+-        return KafkaMessageQueueConfig(url=self._config.url)
++        return KafkaMessageQueueConfig(
++            url=self._config.url,
++            topic_name=self._config.topic_name,
++            group_id=self._config.group_id,
++        )

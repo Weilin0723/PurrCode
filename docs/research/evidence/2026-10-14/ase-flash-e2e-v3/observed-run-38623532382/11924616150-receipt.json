@@ -1,0 +1,70 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11924616150,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyNDYxNjE1MA==",
+    "name": "e2e-pdm-project__pdm-3170",
+    "size_in_bytes": 149835,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924616150",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924616150/zip",
+    "expired": false,
+    "digest": "sha256:e415697313209c6d808ef8146aed6ea76535b6b060fab7e33ca63e9e6ae101b8",
+    "created_at": "2026-10-14T19:52:05Z",
+    "updated_at": "2026-10-14T19:52:05Z",
+    "expires_at": "2026-10-28T19:52:05Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:52:26.358540+00:00",
+  "files": [
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/pdm-project__pdm-3170-static-B-0.patch",
+      "sha256": "a04e75539e5cff6b83677de88f120b5080a474ee440d752bffa36bb6036e3057"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/pdm-project__pdm-3170-static-C-0.patch",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "sha256": "5b8f8e8c913637825ae7fd4cd959b1e2f518826e11e425aa52165329c21d6b70"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/pdm-project__pdm-3170-static-B-0.json",
+      "sha256": "80ab3c8693e3c504271526c882312f7df692c2c8e14772765e5f876934fe71c1"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/pdm-project__pdm-3170-static-C-0.json",
+      "sha256": "84c895ec951cb11bb12a7af49d5f41e4cdb58868aeb7e8150b06c2936383d165"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pdm-project__pdm-3170-correction-B-0.json",
+      "sha256": "783d18eed0463bdd27bfa956c3cb0cce4e58c5bf283ceab3a3b408bf786bf078"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pdm-project__pdm-3170-static-B-0.json",
+      "sha256": "a11b7e658f94177a38cf6f69bc785e155606cbf12593ee22c7400735bcfbfdee"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pdm-project__pdm-3170-static-C-0.json",
+      "sha256": "32f93c4d72c9623d5085b815c99c7b75d9f181a65a68b9c0be322a65c5a2e63e"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "827a7bfece774051d8fb4665a7549490f661f9726cc31be29e60458961a8d803"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "ab00bda3b123c0b00efa0445b534fec03fb60b191196ffa5269ce448a69e6adf"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}

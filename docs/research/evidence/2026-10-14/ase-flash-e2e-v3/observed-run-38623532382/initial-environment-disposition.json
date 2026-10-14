@@ -1,0 +1,20 @@
+{
+  "recorded_at": "2026-10-14T19:48:40.596242+00:00",
+  "observations_available": 8,
+  "source_workflow": 38623532382,
+  "original_rows_modified": false,
+  "issue": "Three Mesa cells were terminal-labeled valid but paused on pre-existing public test imports missing from the operator-provisioned environment. Their correct hidden-oracle patches do not establish successful delivery or environment-valid efficacy.",
+  "affected_runs": [
+    "projectmesa__mesa-2463:static:B:0",
+    "projectmesa__mesa-2463:static:C:0",
+    "projectmesa__mesa-2463:correction:C:0"
+  ],
+  "technical_evidence": [
+    "matplotlib, networkx and ipyvuetify absent; tests stop at collection",
+    "Public project dev/examples extras were not installed",
+    "Project pins Ruff 0.7.2; operator provisioned 0.11.5"
+  ],
+  "analysis_status": "Frozen executable classification is retained unchanged. Environment-invalid cells must be excluded in a separately versioned audited valid-only analysis; this correction is recorded after observing these eight cells. No normal incorrect behavior is relabeled as infrastructure failure.",
+  "repair_commit": "7225a3f",
+  "repair_qualification_model_calls": 0
+}

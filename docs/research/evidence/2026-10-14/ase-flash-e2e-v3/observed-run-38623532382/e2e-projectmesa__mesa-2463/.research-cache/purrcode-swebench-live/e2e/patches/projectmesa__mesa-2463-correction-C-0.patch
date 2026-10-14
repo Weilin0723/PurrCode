@@ -1,0 +1,33 @@
+diff --git a/mesa/visualization/solara_viz.py b/mesa/visualization/solara_viz.py
+index 48f64c1..479f1d2 100644
+--- a/mesa/visualization/solara_viz.py
++++ b/mesa/visualization/solara_viz.py
+@@ -16,7 +16,7 @@ Usage:
+     1. Define an agent_portrayal function to specify how agents should be displayed
+     2. Set up model_params to define adjustable parameters
+     3. Create a SolaraViz instance with your model, parameters, and desired measures
+-    4. Display the visualization in a Jupyter notebook or run as a Solara app
++    4. Display the visualization in a Jupyter notebook or run it as a Solara app
+ 
+ See the Visualization Tutorial and example models for more details.
+ """
+@@ -345,11 +345,16 @@ def _check_model_params(init_func, model_params):
+             model_parameters[name].default == inspect.Parameter.empty
+             and name not in model_params
+             and name != "self"
++            and model_parameters[name].kind != inspect.Parameter.VAR_KEYWORD
+         ):
+             raise ValueError(f"Missing required model parameter: {name}")
+-    for name in model_params:
+-        if name not in model_parameters:
+-            raise ValueError(f"Invalid model parameter: {name}")
++    if not any(
++        param.kind == inspect.Parameter.VAR_KEYWORD
++        for param in model_parameters.values()
++    ):
++        for name in model_params:
++            if name not in model_parameters:
++                raise ValueError(f"Invalid model parameter: {name}")
+ 
+ 
+ @solara.component

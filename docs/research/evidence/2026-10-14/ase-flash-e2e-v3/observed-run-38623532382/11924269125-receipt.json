@@ -1,0 +1,34 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11924269125,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyNDI2OTEyNQ==",
+    "name": "e2e-delgan__loguru-1240",
+    "size_in_bytes": 9261,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924269125",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924269125/zip",
+    "expired": false,
+    "digest": "sha256:aada2dd0da5259f37d575540dc5dc09fc96ca0028c807b405f9da8c02878e436",
+    "created_at": "2026-10-14T19:52:03Z",
+    "updated_at": "2026-10-14T19:52:03Z",
+    "expires_at": "2026-10-28T19:52:02Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:52:30.738123+00:00",
+  "files": [
+    {
+      "path": ".research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "e86b86673c03d2a54965f00277bc683218d498fe15c02f4f5679da20f4c4dcfb"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}

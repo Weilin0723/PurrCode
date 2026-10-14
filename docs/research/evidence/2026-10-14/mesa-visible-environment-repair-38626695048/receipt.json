@@ -1,0 +1,50 @@
+{
+  "workflow_run_id": 38626695048,
+  "source_commit": "7225a3f",
+  "model_calls": 0,
+  "public_test_collection_passed": 3,
+  "gold_passed": 3,
+  "ruff_versions": {
+    "projectmesa__mesa-2632": "0.8.6",
+    "projectmesa__mesa-2463": "0.7.2",
+    "projectmesa__mesa-2523": "0.7.2"
+  },
+  "files": [
+    {
+      "path": "original-artifacts/e2e-projectmesa__mesa-2463/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "4f8a5b32e9a941a823d5298c27e1208a622a9dbd2d0bff49a06a0c7f26156509"
+    },
+    {
+      "path": "original-artifacts/e2e-projectmesa__mesa-2463/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "501ea8bd2122257bd10ebb87b153294d950148b3392a85191493558e46a59f8f"
+    },
+    {
+      "path": "original-artifacts/e2e-projectmesa__mesa-2463/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-projectmesa__mesa-2523/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "ddf3e50b407d7f596d738f95a9cdff516d8286ea47a80fb79620f9a14e162804"
+    },
+    {
+      "path": "original-artifacts/e2e-projectmesa__mesa-2523/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "5a695490eb520ffe135fbab0a13b484b793bbefee22349dc804aea69e3a803c9"
+    },
+    {
+      "path": "original-artifacts/e2e-projectmesa__mesa-2523/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    },
+    {
+      "path": "original-artifacts/e2e-projectmesa__mesa-2632/.research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "749873b5128d30c3827551748bbc21aac6753c44b860023cb393a96c1d1e54f2"
+    },
+    {
+      "path": "original-artifacts/e2e-projectmesa__mesa-2632/.research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "6c3185635ba3c51597312ee7caa7442122a68702f9e1cdccc83210525e72c3c3"
+    },
+    {
+      "path": "original-artifacts/e2e-projectmesa__mesa-2632/benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}

@@ -1,0 +1,3121 @@
+{
+  "events": [
+    {
+      "data": {
+        "authority_mode": {
+          "allowed_programs": [],
+          "capabilities": [],
+          "mode": "elevated"
+        },
+        "objective": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n",
+        "repository": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697"
+      },
+      "event": "session_created"
+    },
+    {
+      "data": {
+        "controls": {
+          "alignment": "enabled",
+          "auto_context": true,
+          "budget_profile": "custom",
+          "custom_budget": {
+            "maximum_estimated_cost": null,
+            "maximum_input_tokens": null,
+            "maximum_mcp_calls": null,
+            "maximum_model_calls": null,
+            "maximum_output_tokens": null,
+            "maximum_search_requests": null,
+            "maximum_total_tokens": 1000000,
+            "maximum_wall_time_seconds": null
+          },
+          "execution_style": "autonomous",
+          "permission_mode": "auto",
+          "routing": "auto",
+          "search_policy": null,
+          "task_mode": "build",
+          "workflow": "auto"
+        }
+      },
+      "event": "session_controls_updated"
+    },
+    {
+      "data": {
+        "model": "deepseek/deepseek-flash"
+      },
+      "event": "model_selected"
+    },
+    {
+      "data": {
+        "decision": {
+          "complexity": "moderate",
+          "evidence": [
+            {
+              "requested_artifact_count": 2
+            },
+            "migration_required",
+            "multiple_deliverables"
+          ],
+          "selected_budget": "custom",
+          "selected_search_policy": "auto",
+          "selected_workflow": "standard"
+        },
+        "plan": {
+          "budgets": {
+            "max_active_lanes": 2,
+            "max_depth": 2,
+            "max_parallel_writers_per_scope": 1,
+            "max_repair_cycles": 3
+          },
+          "completion_condition": "all_lanes_done",
+          "dependencies": [
+            {
+              "artifact_kind": "patch_summary",
+              "from": "ed3545da-2516-4538-8fa4-47eb02be1b46",
+              "to": "84a86380-58f3-4384-9037-61749f650c73"
+            }
+          ],
+          "lanes": [
+            {
+              "allowed_tools": [
+                "repository_read",
+                "write_file",
+                "command"
+              ],
+              "completion_condition": "recorded evidence satisfies the lane objective",
+              "dependencies": [],
+              "kind": "implementation",
+              "lane_id": "ed3545da-2516-4538-8fa4-47eb02be1b46",
+              "objective": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n",
+              "read_scope": [
+                "repository"
+              ],
+              "token_budget": 64000,
+              "wall_time_budget_seconds": 600,
+              "write_scope": [
+                "repository"
+              ]
+            },
+            {
+              "allowed_tools": [
+                "repository_read",
+                "command"
+              ],
+              "completion_condition": "recorded evidence satisfies the lane objective",
+              "dependencies": [
+                "ed3545da-2516-4538-8fa4-47eb02be1b46"
+              ],
+              "kind": "validation",
+              "lane_id": "84a86380-58f3-4384-9037-61749f650c73",
+              "objective": "Independently validate the implementation and report failures",
+              "read_scope": [
+                "repository"
+              ],
+              "token_budget": 32000,
+              "wall_time_budget_seconds": 600,
+              "write_scope": []
+            }
+          ],
+          "objective": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n",
+          "plan_id": "56371124-3c4a-484c-8224-147ad1d6820d",
+          "profile": "standard",
+          "search_policy": "auto"
+        }
+      },
+      "event": "workflow_plan_created"
+    },
+    {
+      "data": {
+        "message": {
+          "content": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n",
+          "id": "a6336e9e-53e7-4b4a-bac0-0cb131cfa565",
+          "role": "user",
+          "timestamp": "2026-10-14T19:43:28.274259665Z",
+          "tool_calls": [],
+          "tool_results": [],
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "conversation_message_added"
+    },
+    {
+      "data": {
+        "base_head": "3fddc56942846220b39945559f4b5e695873bb43",
+        "path": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+        "source_was_dirty": false
+      },
+      "event": "worktree_created"
+    },
+    {
+      "data": {
+        "initialized": [],
+        "unavailable": []
+      },
+      "event": "submodules_prepared"
+    },
+    {
+      "data": {
+        "head": "3fddc56942846220b39945559f4b5e695873bb43",
+        "label": "session-start",
+        "patch_digest": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+      },
+      "event": "checkpoint_created"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "planner"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "input_tokens": 1235,
+        "output_tokens": 706,
+        "role": "planner"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 1235,
+          "latency_ms": 0,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 706,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:43:32.249605727Z",
+          "request_id": "08592f27-235f-40b1-a462-61749bde0562",
+          "search_requests": 0,
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "contract": {
+          "assumptions": [
+            {
+              "id": "bb991c6f-7690-4105-9ada-0c4d5b7689e6",
+              "invalidated_by": null,
+              "statement": "The reproduction snippet is a bug report, so the fix should make the example succeed rather than preserve the failure."
+            },
+            {
+              "id": "bd706c74-3ba1-456d-8509-bdb25d2ffd27",
+              "invalidated_by": null,
+              "statement": "Padding behavior for a final partial pack should follow existing PackedDataset conventions (e.g. as done for the non-split path)."
+            },
+            {
+              "id": "454c2978-c623-406c-b6ac-de2065063afb",
+              "invalidated_by": null,
+              "statement": "No other PackedDataset behaviors (split_across_pack=False, shorter sequences) should regress."
+            }
+          ],
+          "clauses": [
+            {
+              "acceptance_criteria": [
+                {
+                  "id": "aa1407fb-8364-40db-9dff-71d20ca24074",
+                  "statement": "Constructing PackedDataset([f], max_seq_len=60, split_across_pack=True) with f={\"tokens\": list(range(121)), \"labels\": list(range(121))} and iterating over it completes without raising RuntimeError."
+                },
+                {
+                  "id": "93b754af-31ae-4f51-b865-f255464dc814",
+                  "statement": "The same holds for sequence lengths beyond 3*max_seq_len (e.g. length 200 with max_seq_len=60)."
+                }
+              ],
+              "id": "dbd3e079-c292-45c2-a490-51b25ac0dc55",
+              "source": {
+                "message_index": 0,
+                "quotation": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True"
+              },
+              "statement": "With split_across_pack=True, PackedDataset accepts and processes input sequences whose length is larger than 2*max_seq_len without raising a runtime error.",
+              "status": {
+                "state": "unverified"
+              },
+              "strength": "required"
+            },
+            {
+              "acceptance_criteria": [
+                {
+                  "id": "d54ba936-27f3-4eea-a94c-313205f80ab0",
+                  "statement": "No RuntimeError (\"upper bound and larger bound inconsistent with step sign\") is raised from _pad_pack() when iterating the reproduction example."
+                }
+              ],
+              "id": "c702c27a-2d83-49c5-bcc4-098b7cb1b85c",
+              "source": {
+                "message_index": 0,
+                "quotation": "it reports a runtime error in the self._pad_pack()"
+              },
+              "statement": "The failure in _pad_pack() for long sequences is eliminated, so _pad_pack() no longer raises 'upper bound and larger bound inconsistent with step sign' on that path.",
+              "status": {
+                "state": "unverified"
+              },
+              "strength": "required"
+            },
+            {
+              "acceptance_criteria": [
+                {
+                  "id": "ff32b08a-6e8f-432f-affc-726d6a32014d",
+                  "statement": "Each yielded pack has token length no greater than max_seq_len (aside from any documented padding of the final pack)."
+                },
+                {
+                  "id": "39d3b692-e133-45d4-ac0e-8d4af2d0440e",
+                  "statement": "Concatenating the yielded token sequences reproduces the original 121 tokens in order."
+                },
+                {
+                  "id": "4614d130-d8e3-41b6-92c1-79408cb14f52",
+                  "statement": "Labels stay aligned with their corresponding tokens across the splits."
+                }
+              ],
+              "id": "c6d9b55e-2ceb-4622-8098-b812c391b6be",
+              "source": {
+                "message_index": 0,
+                "quotation": "f = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\nfor i in x:\n    print(i)"
+              },
+              "statement": "Packed output for split-across-pack long sequences remains usable: emitted packs respect max_seq_len and the tokens/labels are preserved in the split.",
+              "status": {
+                "state": "unverified"
+              },
+              "strength": "preferred"
+            }
+          ],
+          "non_goals": [],
+          "objective": "Fix PackedDataset so it can handle sequences longer than 2*max_seq_len when split_across_pack=True instead of raising a RuntimeError in _pad_pack().",
+          "open_questions": [],
+          "revision": 1,
+          "schema_version": 2
+        }
+      },
+      "event": "expectation_contract_created"
+    },
+    {
+      "data": {
+        "message": {
+          "content": "What I understood: The user reports that PackedDataset fails at runtime when given a sample sequence longer than twice max_seq_len while split_across_pack=True. The reproducible example uses tokens/labels of length 121 with max_seq_len=60, and iterating the dataset raises 'RuntimeError: upper bound and larger bound inconsistent with step sign' from inside _pad_pack(). The user wants this case to work rather than crash — i.e. long sequences should be split across packs correctly. The example is a bug report; the requirement is that the long-sequence case succeeds (produces usable packed output), not that the error persists.",
+          "id": "661d1037-28ea-4e3f-90e5-e6dd2e23c89e",
+          "role": "system",
+          "timestamp": "2026-10-14T19:43:32.250784680Z",
+          "tool_calls": [],
+          "tool_results": []
+        }
+      },
+      "event": "conversation_message_added"
+    },
+    {
+      "data": {
+        "files": 5,
+        "sensitive_files": 0,
+        "symbols": 10
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:43:32.335323114Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1117,
+              "class": "conversation_tail",
+              "estimated_tokens": 279,
+              "label": "conversation_messages[0..2]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 727,
+              "class": "task_state",
+              "estimated_tokens": 182,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 33,
+              "class": "task_state",
+              "estimated_tokens": 8,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 43,
+              "class": "task_state",
+              "estimated_tokens": 11,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 13944,
+              "class": "retrieved_context",
+              "estimated_tokens": 3486,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 8,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 550,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1890,
+              "class": "instructions",
+              "estimated_tokens": 471,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "total_estimated_tokens": 6445,
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 8313,
+          "latency_ms": 1125,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 91,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:43:33.461446967Z",
+          "request_id": "ed228f66-ea21-4a95-a834-8d4fd5ac4b1a",
+          "search_requests": 0,
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 8313,
+        "output_tokens": 91,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": false,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 1024,
+          "paths": [
+            "torchtune"
+          ],
+          "pattern": "_pad_pack",
+          "type": "repository_read"
+        },
+        "action_id": "e846bcd4-9c64-43b9-b302-d938627f9ae0",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "e846bcd4-9c64-43b9-b302-d938627f9ae0",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": false,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 1024,
+          "paths": [
+            "torchtune"
+          ],
+          "pattern": "class PackedDataset",
+          "type": "repository_read"
+        },
+        "action_id": "095b6018-435d-4dc4-9192-36b157548c9d",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "095b6018-435d-4dc4-9192-36b157548c9d",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "find",
+          "max_depth": 3,
+          "max_entries": 1024,
+          "paths": [
+            "torchtune/datasets"
+          ],
+          "type": "repository_read"
+        },
+        "action_id": "606718ca-38d0-4478-9797-550f0f209ff2",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "606718ca-38d0-4478-9797-550f0f209ff2",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "aec2f4d461f606208bbadf80e79d8ec9b266c7db59b73e13cc6feee6d5347c33",
+          "action_id": "e846bcd4-9c64-43b9-b302-d938627f9ae0",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:33.467469226Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "48a8b4ce30b8937c14181523b2fbc06988e0151dff7b308f3e8e4fdf967e1a91",
+          "action_id": "095b6018-435d-4dc4-9192-36b157548c9d",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:33.467961261Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "7fe16f9a426a04b487ace3c801d5bb1445fc1f0ec7c4e30d7bf2705ec06d073b",
+          "action_id": "606718ca-38d0-4478-9797-550f0f209ff2",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:33.468288840Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "e846bcd4-9c64-43b9-b302-d938627f9ae0"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "e846bcd4-9c64-43b9-b302-d938627f9ae0",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:33.485849695Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [
+              "torchtune"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:33.468770766Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "e846bcd4-9c64-43b9-b302-d938627f9ae0",
+        "affected_paths": [
+          "torchtune"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "e846bcd4-9c64-43b9-b302-d938627f9ae0",
+        "stderr": "",
+        "stdout": "torchtune/datasets/_packed.py:207:        pack = self._pad_pack(pack, padding_idx=self.padding_idx)\ntorchtune/datasets/_packed.py:219:    def _pad_pack(self, pack: PACK_TYPE, padding_idx: int) -> PACK_TYPE:\n",
+        "truncated": false,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "e846bcd4-9c64-43b9-b302-d938627f9ae0",
+        "evidence": "exit=Some(0); affected_paths=[\"torchtune\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "095b6018-435d-4dc4-9192-36b157548c9d"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "095b6018-435d-4dc4-9192-36b157548c9d",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:33.489793178Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [
+              "torchtune"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:33.468770766Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "095b6018-435d-4dc4-9192-36b157548c9d",
+        "affected_paths": [
+          "torchtune"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "095b6018-435d-4dc4-9192-36b157548c9d",
+        "stderr": "",
+        "stdout": "torchtune/datasets/_packed.py:17:class PackedDataset(Dataset):\n",
+        "truncated": false,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "095b6018-435d-4dc4-9192-36b157548c9d",
+        "evidence": "exit=Some(0); affected_paths=[\"torchtune\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "606718ca-38d0-4478-9797-550f0f209ff2"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "606718ca-38d0-4478-9797-550f0f209ff2",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "bb8bb21f022991431f31e4324c704c98085d3ec373fb194c7e4a3cf50ca3ffd9",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:33.492285932Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [
+              "torchtune/datasets"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:33.468770766Z",
+          "structured_output": null,
+          "tool_id": "native:find",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "606718ca-38d0-4478-9797-550f0f209ff2",
+        "affected_paths": [
+          "torchtune/datasets"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "606718ca-38d0-4478-9797-550f0f209ff2",
+        "stderr": "",
+        "stdout": "torchtune/datasets\ntorchtune/datasets/_wikitext.py\ntorchtune/datasets/_cnn_dailymail.py\ntorchtune/datasets/_samsum.py\ntorchtune/datasets/_hh_rlhf_helpful.py\ntorchtune/datasets/_stack_exchange_paired.py\ntorchtune/datasets/_concat.py\ntorchtune/datasets/_packed.py\ntorchtune/datasets/multimodal\ntorchtune/datasets/multimodal/_llava_instruct.py\ntorchtune/datasets/multimodal/__init__.py\ntorchtune/datasets/multimodal/_multimodal.py\ntorchtune/datasets/multimodal/_the_cauldron.py\ntorchtune/datasets/_grammar.py\ntorchtune/datasets/_alpaca.py\ntorchtune/datasets/_instruct.py\ntorchtune/datasets/_chat.py\ntorchtune/datasets/_text_completion.py\ntorchtune/datasets/_slimorca.py\ntorchtune/datasets/__init__.py\ntorchtune/datasets/_preference.py\ntorchtune/datasets/_sft.py\n",
+        "truncated": false,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "606718ca-38d0-4478-9797-550f0f209ff2",
+        "evidence": "exit=Some(0); affected_paths=[\"torchtune/datasets\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "files": 5,
+        "sensitive_files": 0,
+        "symbols": 10
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:43:33.525576507Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1117,
+              "class": "conversation_tail",
+              "estimated_tokens": 279,
+              "label": "conversation_messages[0..2]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 727,
+              "class": "task_state",
+              "estimated_tokens": 182,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 3172,
+              "class": "task_state",
+              "estimated_tokens": 793,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 180,
+              "class": "task_state",
+              "estimated_tokens": 45,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 13944,
+              "class": "retrieved_context",
+              "estimated_tokens": 3486,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 8,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 550,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1890,
+              "class": "instructions",
+              "estimated_tokens": 471,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "total_estimated_tokens": 7264,
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 9430,
+          "latency_ms": 1238,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 54,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:43:34.765043280Z",
+          "request_id": "0cac1f15-8986-4016-9e36-edff388452a2",
+          "search_requests": 0,
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 9430,
+        "output_tokens": 54,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 32768,
+          "path": "torchtune/datasets/_packed.py",
+          "type": "repository_read"
+        },
+        "action_id": "4228f591-2345-410a-afd1-6a7e46debe78",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "4228f591-2345-410a-afd1-6a7e46debe78",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "f9525045566a7d742837b2c248131405966c29882f7eb8310561004880305df8",
+          "action_id": "4228f591-2345-410a-afd1-6a7e46debe78",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:34.768240695Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "4228f591-2345-410a-afd1-6a7e46debe78"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "4228f591-2345-410a-afd1-6a7e46debe78",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:34.811174694Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:34.790510750Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "4228f591-2345-410a-afd1-6a7e46debe78",
+        "affected_paths": [],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "4228f591-2345-410a-afd1-6a7e46debe78",
+        "stderr": "",
+        "stdout": "# Copyright (c) Meta Platforms, Inc. and affiliates.\n# All rights reserved.\n#\n# This source code is licensed under the BSD-style license found in the\n# LICENSE file in the root directory of this source tree.\n\nfrom typing import Dict, List, Optional\n\nimport torch\nfrom torch.nn import functional as F\n\nfrom torch.utils.data import Dataset\nfrom torchtune.data._common import CROSS_ENTROPY_IGNORE_IDX, PACK_TYPE\nfrom tqdm import tqdm\n\n\nclass PackedDataset(Dataset):\n    \"\"\"\n    Performs greedy sample packing on a provided dataset. This is done as a single\n    preprocessing step before training begins. Shuffling is done outside of this\n    class on packed samples with a ``Sampler`` as part of the dataloader. Currently,\n    this only supports in-memory map-style datasets.\n\n    The class loads, tokenizes, and packs examples on initialization - no tokenization is done during training.\n\n    The general flow on initialization is: load tokenized sample -> add to buffer ->\n    when buffer is long enough, add to ``self.packs``.\n\n    During training, returns self.packs[idx] as input, label, attention mask, and\n    position ids. The attention mask is a lower triangular block mask to prevent\n    samples from cross-attending within a pack. The position ids indicate the position\n    of each token relative to its sample within a pack. These are all padded to max\n    sequence length, so a batch-wise collator is not needed.\n\n    A packed sample is made up of individual smaller sequence length samples jammed together\n    within ``max_seq_len``. For example, if max_seq_len is 6 and there are varied\n    length samples::\n\n        tokens = [\n            [S1, S1, S1, S2, S2, pad],\n            [S3, S3, S4, S4, pad, pad],\n            ...,\n        ]\n\n    To prevent cross-contamination, the following mask would be returned for the\n    first pack in the example::\n\n        mask = [\n            [1, 0, 0, 0, 0, 0],\n            [1, 1, 0, 0, 0, 0],\n            [1, 1, 1, 0, 0, 0],\n            [0, 0, 0, 1, 0, 0],\n            [0, 0, 0, 1, 1, 0],\n            [0, 0, 0, 0, 0, 1],\n        ]\n\n    The position ids would be::\n\n        input_pos = [\n            [0, 1, 2, 0, 1, 2],\n            [0, 1, 0, 1, 2, 3],\n            ...,\n        ]\n\n    The identity matrix is used in the mask for pad tokens instead of a causal mask.\n    For position ids for pad tokens, we simply continue to increment from the previous\n    sample normally.\n\n    Args:\n        ds (Dataset): dataset to sample pack. This should return a dictionary with field\n            \"tokens\" and \"labels\" containing the tokenized and label samples.\n        max_seq_len (int): Maximum number of tokens to pack\n        padding_idx (int): padding index for the tokenizer. Default is 0.\n        max_packs (Optional[int]): Maximum number of packs. Default is None, which will create as many\n            packs as possible.\n        split_across_pack (bool): if the last sample in a pack does not fit in ``max_seq_len``,\n            split the sample into the next pack, or move it entirely to the beginning of the next pack.\n            For pre-training, typically this is set to True for general text completion. For\n            fine-tuning, typically this is set to False to avoid truncating sentences in instruct\n            tuning. Default is False.\n    \"\"\"\n\n    def __init__(\n        self,\n        ds: Dataset,\n        *,\n        max_seq_len: int,\n        padding_idx: int = 0,\n        max_packs: Optional[int] = None,\n        split_across_pack: bool = False,\n    ) -> None:\n        self.ds = ds\n        self.max_seq_len = max_seq_len\n        self.padding_idx = padding_idx\n        self.max_packs = max_packs\n        self.split_across_pack = split_across_pack\n        # Where final samples will be held\n        self.packs: List[PACK_TYPE] = []\n        self.previous_sample_boundary: int = 0\n        self._pack()\n\n    def _pack(self) -> None:\n        \"\"\"Iterate through the dataset. Use a buffer to hold samples until max_seq_len,\n        then append the buffer to self.packs as a single \"packed\" sample. Continue\n        until max_packs or end of dataset.\"\"\"\n        # Buffer to hold samples until they are long enough to be added to self.packs\n        current_pack = {\n            \"tokens\": [],\n            \"labels\": [],\n            \"input_pos\": [],\n            \"seq_lens\": [],\n        }\n\n        # Only show progress bar on rank 0\n        rank = (\n            torch.distributed.get_rank()\n            if torch.distributed.is_available() and torch.distributed.is_initialized()\n            else 0\n        )\n        if rank == 0:\n            pbar = tqdm(total=len(self.ds), desc=\"Packing dataset\", dynamic_ncols=True)\n\n        for sample in self.ds:\n            tokens, labels = sample[\"tokens\"], sample[\"labels\"]\n\n            # If the dataset outputs samples that are larger than the specified\n            # max_seq_len and we're unable to split it, user needs to modify\n            # one of the two parameters\n            seq_len = len(tokens)\n            if seq_len > self.max_seq_len and not self.split_across_pack:\n                raise ValueError(\n                    f\"Dataset sample is too long ({seq_len} > {self.max_seq_len}). \"\n                    \"Please set `split_across_pack=True` or increase `max_seq_len`.\"\n                )\n\n            # Update the current pack\n            current_pack[\"tokens\"] += tokens\n            current_pack[\"labels\"] += labels\n            current_pack[\"input_pos\"] += list(range(seq_len))\n            current_pack[\"seq_lens\"] += [seq_len]\n\n            # If the current pack is over the max_seq_len, add it to self.packs and\n            # retain any truncated or bumped samples for next pack\n            if len(current_pack[\"tokens\"]) > self.max_seq_len:\n                current_pack = self._split_and_add_pack(current_pack)\n\n            if rank == 0:\n                pbar.update()\n\n            # Keep track of previous sample boundary\n            self.previous_sample_boundary = len(current_pack[\"tokens\"])\n\n            # If max packs is set, stop packing when we reach that number\n            if self.max_packs is not None and len(self.packs) == self.max_packs:\n                break\n\n        # Handle the last pack if there's leftover and we haven't filled up the max packs\n        if len(current_pack[\"tokens\"]) > 0 and (\n            self.max_packs is None or len(self.packs) < self.max_packs\n        ):\n            # No need to handle splitting at this point so we can just add the current pack\n            self._add_pack(current_pack)\n\n    def _split_and_add_pack(self, current_pack: PACK_TYPE) -> PACK_TYPE:\n        \"\"\"Splits the current pack at the boundary, processes it, adds it to ``self.packs`` and\n        returns the start of the next pack.\"\"\"\n\n        if self.split_across_pack:\n            boundary = self.max_seq_len\n            # The last elem in ``seq_lens`` ensures that ``sum(seq_lens) == self.max_seq_len``\n            leftover_seq_len = self.max_seq_len - sum(current_pack[\"seq_lens\"][:-1])\n            seq_len_padding = [leftover_seq_len] if leftover_seq_len > 0 else []\n        else:\n            boundary = self.previous_sample_boundary\n            # If we aren't splitting across packs, we leave out the last sample b/c\n            # it will go into the next pack\n            seq_len_padding = []\n\n        pack = {\n            \"tokens\": current_pack[\"tokens\"][:boundary],\n            \"labels\": current_pack[\"labels\"][:boundary],\n            \"input_pos\": current_pack[\"input_pos\"][:boundary],\n            \"seq_lens\": current_pack[\"seq_lens\"][:-1] + seq_len_padding,\n        }\n\n        # Process and add the pack\n        self._add_pack(pack)\n\n        # Return the length of the first sample in next pack if we are splitting across packs,\n        # otherwise return the length of the last sample in the current pack\n        next_seq_len = (\n            len(current_pack[\"tokens\"][boundary:])\n            if self.split_across_pack\n            else current_pack[\"seq_lens\"][-1]\n        )\n\n        return {\n            \"tokens\": current_pack[\"tokens\"][boundary:],\n            \"labels\": current_pack[\"labels\"][boundary:],\n            \"input_pos\": current_pack[\"input_pos\"][boundary:],\n            \"seq_lens\": [next_seq_len],\n        }\n\n    def _add_pack(self, pack: PACK_TYPE) -> None:\n        \"\"\"Processes, pads and adds a pack to ``self.packs``.\"\"\"\n        pack = self._convert_to_tensors(pack)\n        pack = self._pad_pack(pack, padding_idx=self.padding_idx)\n        self.packs.append(pack)\n\n    def _convert_to_tensors(self, pack: PACK_TYPE) -> PACK_TYPE:\n        \"\"\"Converts a pack into tensors. Pack comes in as a dict of lists and is converted to tensors.\"\"\"\n        return {\n            \"tokens\": torch.tensor(pack[\"tokens\"], dtype=torch.long),\n            \"labels\": torch.tensor(pack[\"labels\"], dtype=torch.long),\n            \"input_pos\": torch.tensor(pack[\"input_pos\"], dtype=torch.long),\n            \"seq_lens\": torch.tensor(pack[\"seq_lens\"], dtype=torch.long),\n        }\n\n    def _pad_pack(self, pack: PACK_TYPE, padding_idx: int) -> PACK_TYPE:\n        \"\"\"Pads a pack to ``self.max_seq_len``.\"\"\"\n        # Pad tokens\n        num_padding_tokens = self.max_seq_len - len(pack[\"tokens\"])\n        padded_tokens = F.pad(\n            pack[\"tokens\"],\n            (0, num_padding_tokens),\n            value=padding_idx,\n        )\n\n        # Pad labels\n        padded_labels = F.pad(\n            pack[\"labels\"],\n            (0, self.max_seq_len - len(pack[\"labels\"])),\n            value=CROSS_ENTROPY_IGNORE_IDX,\n        )\n\n        # Add padding tokens as a last seq len to ensure sum is max_seq_len\n        padded_seq_lens = (\n            torch.cat([pack[\"seq_lens\"], torch.tensor([num_padding_tokens])])\n            if num_padding_tokens > 0\n            else pack[\"seq_lens\"]\n        )\n\n        # Pad input_pos continuing the sequence from last value\n        # in input_pos\n        # e.g. [0 1 2] -> [0 1 2 3 4 5] for self.max_seq_len = 6\n        num_range = torch.arange(\n            pack[\"input_pos\"][-1] + 1,\n            pack[\"input_pos\"][-1] + self.max_seq_len - len(pack[\"input_pos\"]) + 1,\n        )\n        # Clamp to max_seq_len - 1 to avoid out of bounds error\n        clamped_num_range = torch.clamp(num_range, 0, self.max_seq_len - 1)\n        padded_input_pos = torch.cat([pack[\"input_pos\"], clamped_num_range])\n\n        return {\n            \"tokens\": padded_tokens,\n            \"labels\": padded_labels,\n            \"input_pos\": padded_input_pos,\n            \"seq_lens\": padded_seq_lens,\n        }\n\n    def __len__(self) -> int:\n        return len(self.packs)\n\n    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:\n        return self.packs[idx]\n",
+        "truncated": false,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "4228f591-2345-410a-afd1-6a7e46debe78",
+        "evidence": "exit=Some(0); affected_paths=[]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "files": 5,
+        "sensitive_files": 0,
+        "symbols": 10
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:43:34.844779199Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1117,
+              "class": "conversation_tail",
+              "estimated_tokens": 279,
+              "label": "conversation_messages[0..2]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 727,
+              "class": "task_state",
+              "estimated_tokens": 182,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 14910,
+              "class": "task_state",
+              "estimated_tokens": 3727,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 212,
+              "class": "task_state",
+              "estimated_tokens": 53,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 13944,
+              "class": "retrieved_context",
+              "estimated_tokens": 3486,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 9,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 549,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1890,
+              "class": "instructions",
+              "estimated_tokens": 472,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "total_estimated_tokens": 10207,
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 12704,
+          "latency_ms": 2312,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 266,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:43:37.158505503Z",
+          "request_id": "5164f028-83d3-4677-9e49-3c614479d896",
+          "search_requests": 0,
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 12704,
+        "output_tokens": 266,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 32768,
+          "path": "torchtune/datasets/_packed.py",
+          "type": "repository_read"
+        },
+        "action_id": "8d080abf-ae02-40ae-8e46-6be54ddfbe73",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "8d080abf-ae02-40ae-8e46-6be54ddfbe73",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "list",
+          "max_entries": 200,
+          "paths": [
+            "tests/torchtune/datasets"
+          ],
+          "type": "repository_read"
+        },
+        "action_id": "602aa2f6-cc0e-4913-aa30-f1b2e30f3937",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "602aa2f6-cc0e-4913-aa30-f1b2e30f3937",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": false,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 200,
+          "paths": [
+            "tests"
+          ],
+          "pattern": "split_across_pack",
+          "type": "repository_read"
+        },
+        "action_id": "736170ba-aaec-4fbd-b00d-77aa7365f355",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "736170ba-aaec-4fbd-b00d-77aa7365f355",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "f9525045566a7d742837b2c248131405966c29882f7eb8310561004880305df8",
+          "action_id": "8d080abf-ae02-40ae-8e46-6be54ddfbe73",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:37.164501043Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "c1ae6d3eb10cad865d0c4e863b3eedf81caa4facaf494299ee10e16af47d0082",
+          "action_id": "602aa2f6-cc0e-4913-aa30-f1b2e30f3937",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:37.165064941Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "c6fd708bf21aef4631083215d11b9fa22388ecfaaf1e34d8989e8da06c8af7ff",
+          "action_id": "736170ba-aaec-4fbd-b00d-77aa7365f355",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:37.165500772Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "8d080abf-ae02-40ae-8e46-6be54ddfbe73"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "8d080abf-ae02-40ae-8e46-6be54ddfbe73",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:37.174164422Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [
+              "torchtune/datasets/_packed.py"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:37.166042699Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "8d080abf-ae02-40ae-8e46-6be54ddfbe73",
+        "affected_paths": [
+          "torchtune/datasets/_packed.py"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "8d080abf-ae02-40ae-8e46-6be54ddfbe73",
+        "stderr": "",
+        "stdout": "# Copyright (c) Meta Platforms, Inc. and affiliates.\n# All rights reserved.\n#\n# This source code is licensed under the BSD-style license found in the\n# LICENSE file in the root directory of this source tree.\n\nfrom typing import Dict, List, Optional\n\nimport torch\nfrom torch.nn import functional as F\n\nfrom torch.utils.data import Dataset\nfrom torchtune.data._common import CROSS_ENTROPY_IGNORE_IDX, PACK_TYPE\nfrom tqdm import tqdm\n\n\nclass PackedDataset(Dataset):\n    \"\"\"\n    Performs greedy sample packing on a provided dataset. This is done as a single\n    preprocessing step before training begins. Shuffling is done outside of this\n    class on packed samples with a ``Sampler`` as part of the dataloader. Currently,\n    this only supports in-memory map-style datasets.\n\n    The class loads, tokenizes, and packs examples on initialization - no tokenization is done during training.\n\n    The general flow on initialization is: load tokenized sample -> add to buffer ->\n    when buffer is long enough, add to ``self.packs``.\n\n    During training, returns self.packs[idx] as input, label, attention mask, and\n    position ids. The attention mask is a lower triangular block mask to prevent\n    samples from cross-attending within a pack. The position ids indicate the position\n    of each token relative to its sample within a pack. These are all padded to max\n    sequence length, so a batch-wise collator is not needed.\n\n    A packed sample is made up of individual smaller sequence length samples jammed together\n    within ``max_seq_len``. For example, if max_seq_len is 6 and there are varied\n    length samples::\n\n        tokens = [\n            [S1, S1, S1, S2, S2, pad],\n            [S3, S3, S4, S4, pad, pad],\n            ...,\n        ]\n\n    To prevent cross-contamination, the following mask would be returned for the\n    first pack in the example::\n\n        mask = [\n            [1, 0, 0, 0, 0, 0],\n            [1, 1, 0, 0, 0, 0],\n            [1, 1, 1, 0, 0, 0],\n            [0, 0, 0, 1, 0, 0],\n            [0, 0, 0, 1, 1, 0],\n            [0, 0, 0, 0, 0, 1],\n        ]\n\n    The position ids would be::\n\n        input_pos = [\n            [0, 1, 2, 0, 1, 2],\n            [0, 1, 0, 1, 2, 3],\n            ...,\n        ]\n\n    The identity matrix is used in the mask for pad tokens instead of a causal mask.\n    For position ids for pad tokens, we simply continue to increment from the previous\n    sample normally.\n\n    Args:\n        ds (Dataset): dataset to sample pack. This should return a dictionary with field\n            \"tokens\" and \"labels\" containing the tokenized and label samples.\n        max_seq_len (int): Maximum number of tokens to pack\n        padding_idx (int): padding index for the tokenizer. Default is 0.\n        max_packs (Optional[int]): Maximum number of packs. Default is None, which will create as many\n            packs as possible.\n        split_across_pack (bool): if the last sample in a pack does not fit in ``max_seq_len``,\n            split the sample into the next pack, or move it entirely to the beginning of the next pack.\n            For pre-training, typically this is set to True for general text completion. For\n            fine-tuning, typically this is set to False to avoid truncating sentences in instruct\n            tuning. Default is False.\n    \"\"\"\n\n    def __init__(\n        self,\n        ds: Dataset,\n        *,\n        max_seq_len: int,\n        padding_idx: int = 0,\n        max_packs: Optional[int] = None,\n        split_across_pack: bool = False,\n    ) -> None:\n        self.ds = ds\n        self.max_seq_len = max_seq_len\n        self.padding_idx = padding_idx\n        self.max_packs = max_packs\n        self.split_across_pack = split_across_pack\n        # Where final samples will be held\n        self.packs: List[PACK_TYPE] = []\n        self.previous_sample_boundary: int = 0\n        self._pack()\n\n    def _pack(self) -> None:\n        \"\"\"Iterate through the dataset. Use a buffer to hold samples until max_seq_len,\n        then append the buffer to self.packs as a single \"packed\" sample. Continue\n        until max_packs or end of dataset.\"\"\"\n        # Buffer to hold samples until they are long enough to be added to self.packs\n        current_pack = {\n            \"tokens\": [],\n            \"labels\": [],\n            \"input_pos\": [],\n            \"seq_lens\": [],\n        }\n\n        # Only show progress bar on rank 0\n        rank = (\n            torch.distributed.get_rank()\n            if torch.distributed.is_available() and torch.distributed.is_initialized()\n            else 0\n        )\n        if rank == 0:\n            pbar = tqdm(total=len(self.ds), desc=\"Packing dataset\", dynamic_ncols=True)\n\n        for sample in self.ds:\n            tokens, labels = sample[\"tokens\"], sample[\"labels\"]\n\n            # If the dataset outputs samples that are larger than the specified\n            # max_seq_len and we're unable to split it, user needs to modify\n            # one of the two parameters\n            seq_len = len(tokens)\n            if seq_len > self.max_seq_len and not self.split_across_pack:\n                raise ValueError(\n                    f\"Dataset sample is too long ({seq_len} > {self.max_seq_len}). \"\n                    \"Please set `split_across_pack=True` or increase `max_seq_len`.\"\n                )\n\n            # Update the current pack\n            current_pack[\"tokens\"] += tokens\n            current_pack[\"labels\"] += labels\n            current_pack[\"input_pos\"] += list(range(seq_len))\n            current_pack[\"seq_lens\"] += [seq_len]\n\n            # If the current pack is over the max_seq_len, add it to self.packs and\n            # retain any truncated or bumped samples for next pack\n            if len(current_pack[\"tokens\"]) > self.max_seq_len:\n                current_pack = self._split_and_add_pack(current_pack)\n\n            if rank == 0:\n                pbar.update()\n\n            # Keep track of previous sample boundary\n            self.previous_sample_boundary = len(current_pack[\"tokens\"])\n\n            # If max packs is set, stop packing when we reach that number\n            if self.max_packs is not None and len(self.packs) == self.max_packs:\n                break\n\n        # Handle the last pack if there's leftover and we haven't filled up the max packs\n        if len(current_pack[\"tokens\"]) > 0 and (\n            self.max_packs is None or len(self.packs) < self.max_packs\n        ):\n            # No need to handle splitting at this point so we can just add the current pack\n            self._add_pack(current_pack)\n\n    def _split_and_add_pack(self, current_pack: PACK_TYPE) -> PACK_TYPE:\n        \"\"\"Splits the current pack at the boundary, processes it, adds it to ``self.packs`` and\n        returns the start of the next pack.\"\"\"\n\n        if self.split_across_pack:\n            boundary = self.max_seq_len\n            # The last elem in ``seq_lens`` ensures that ``sum(seq_lens) == self.max_seq_len``\n            leftover_seq_len = self.max_seq_len - sum(current_pack[\"seq_lens\"][:-1])\n            seq_len_padding = [leftover_seq_len] if leftover_seq_len > 0 else []\n        else:\n            boundary = self.previous_sample_boundary\n            # If we aren't splitting across packs, we leave out the last sample b/c\n            # it will go into the next pack\n            seq_len_padding = []\n\n        pack = {\n            \"tokens\": current_pack[\"tokens\"][:boundary],\n            \"labels\": current_pack[\"labels\"][:boundary],\n            \"input_pos\": current_pack[\"input_pos\"][:boundary],\n            \"seq_lens\": current_pack[\"seq_lens\"][:-1] + seq_len_padding,\n        }\n\n        # Process and add the pack\n        self._add_pack(pack)\n\n        # Return the length of the first sample in next pack if we are splitting across packs,\n        # otherwise return the length of the last sample in the current pack\n        next_seq_len = (\n            len(current_pack[\"tokens\"][boundary:])\n            if self.split_across_pack\n            else current_pack[\"seq_lens\"][-1]\n        )\n\n        return {\n            \"tokens\": current_pack[\"tokens\"][boundary:],\n            \"labels\": current_pack[\"labels\"][boundary:],\n            \"input_pos\": current_pack[\"input_pos\"][boundary:],\n            \"seq_lens\": [next_seq_len],\n        }\n\n    def _add_pack(self, pack: PACK_TYPE) -> None:\n        \"\"\"Processes, pads and adds a pack to ``self.packs``.\"\"\"\n        pack = self._convert_to_tensors(pack)\n        pack = self._pad_pack(pack, padding_idx=self.padding_idx)\n        self.packs.append(pack)\n\n    def _convert_to_tensors(self, pack: PACK_TYPE) -> PACK_TYPE:\n        \"\"\"Converts a pack into tensors. Pack comes in as a dict of lists and is converted to tensors.\"\"\"\n        return {\n            \"tokens\": torch.tensor(pack[\"tokens\"], dtype=torch.long),\n            \"labels\": torch.tensor(pack[\"labels\"], dtype=torch.long),\n            \"input_pos\": torch.tensor(pack[\"input_pos\"], dtype=torch.long),\n            \"seq_lens\": torch.tensor(pack[\"seq_lens\"], dtype=torch.long),\n        }\n\n    def _pad_pack(self, pack: PACK_TYPE, padding_idx: int) -> PACK_TYPE:\n        \"\"\"Pads a pack to ``self.max_seq_len``.\"\"\"\n        # Pad tokens\n        num_padding_tokens = self.max_seq_len - len(pack[\"tokens\"])\n        padded_tokens = F.pad(\n            pack[\"tokens\"],\n            (0, num_padding_tokens),\n            value=padding_idx,\n        )\n\n        # Pad labels\n        padded_labels = F.pad(\n            pack[\"labels\"],\n            (0, self.max_seq_len - len(pack[\"labels\"])),\n            value=CROSS_ENTROPY_IGNORE_IDX,\n        )\n\n        # Add padding tokens as a last seq len to ensure sum is max_seq_len\n        padded_seq_lens = (\n            torch.cat([pack[\"seq_lens\"], torch.tensor([num_padding_tokens])])\n            if num_padding_tokens > 0\n            else pack[\"seq_lens\"]\n        )\n\n        # Pad input_pos continuing the sequence from last value\n        # in input_pos\n        # e.g. [0 1 2] -> [0 1 2 3 4 5] for self.max_seq_len = 6\n        num_range = torch.arange(\n            pack[\"input_pos\"][-1] + 1,\n            pack[\"input_pos\"][-1] + self.max_seq_len - len(pack[\"input_pos\"]) + 1,\n        )\n        # Clamp to max_seq_len - 1 to avoid out of bounds error\n        clamped_num_range = torch.clamp(num_range, 0, self.max_seq_len - 1)\n        padded_input_pos = torch.cat([pack[\"input_pos\"], clamped_num_range])\n\n        return {\n            \"tokens\": padded_tokens,\n            \"labels\": padded_labels,\n            \"input_pos\": padded_input_pos,\n            \"seq_lens\": padded_seq_lens,\n        }\n\n    def __len__(self) -> int:\n        return len(self.packs)\n\n    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:\n        return self.packs[idx]\n",
+        "truncated": false,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "8d080abf-ae02-40ae-8e46-6be54ddfbe73",
+        "evidence": "exit=Some(0); affected_paths=[\"torchtune/datasets/_packed.py\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "602aa2f6-cc0e-4913-aa30-f1b2e30f3937"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "602aa2f6-cc0e-4913-aa30-f1b2e30f3937",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "34b2b093dde94645dae838b46d9c0a1feed7e2dce5b4ba396eb27fecc1e2faf2",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:37.177985087Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [
+              "tests/torchtune/datasets"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:37.166042699Z",
+          "structured_output": null,
+          "tool_id": "native:list",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "602aa2f6-cc0e-4913-aa30-f1b2e30f3937",
+        "affected_paths": [
+          "tests/torchtune/datasets"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "602aa2f6-cc0e-4913-aa30-f1b2e30f3937",
+        "stderr": "",
+        "stdout": "-     2300 test_text_completion_dataset.py\n-     8679 test_packed_dataset.py\n-     5552 test_alpaca_dataset.py\n-     5024 test_preference_dataset.py\n-     3153 test_samsum_dataset.py\n-     3620 test_instruct_dataset.py\nd     4096 multimodal\n-     3390 test_chat_dataset.py\n-     2344 test_grammar_dataset.py\n-     5688 test_stack_exchange_paired_dataset.py\n-     1523 test_wikitext_dataset.py\n-     3073 test_slimorca_dataset.py\n-     4995 test_sft_dataset.py\n-      208 __init__.py\n-     2236 test_concat_dataset.py\n-     2112 test_cnn_dailymail_dataset.py\n-     3995 test_hh_rlhf_helpful_dataset.py\n",
+        "truncated": false,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "602aa2f6-cc0e-4913-aa30-f1b2e30f3937",
+        "evidence": "exit=Some(0); affected_paths=[\"tests/torchtune/datasets\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "736170ba-aaec-4fbd-b00d-77aa7365f355"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "736170ba-aaec-4fbd-b00d-77aa7365f355",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:37.181350865Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [
+              "tests"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:37.166042699Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "736170ba-aaec-4fbd-b00d-77aa7365f355",
+        "affected_paths": [
+          "tests"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "736170ba-aaec-4fbd-b00d-77aa7365f355",
+        "stderr": "",
+        "stdout": "tests/torchtune/datasets/test_packed_dataset.py:52:        self, max_seq_len, sample_size, split_across_pack\ntests/torchtune/datasets/test_packed_dataset.py:60:        if split_across_pack and remainder > 0:\ntests/torchtune/datasets/test_packed_dataset.py:67:            if not split_across_pack:\ntests/torchtune/datasets/test_packed_dataset.py:74:        self, dataset_size, max_seq_len, sample_size, split_across_pack, max_packs\ntests/torchtune/datasets/test_packed_dataset.py:80:        if split_across_pack and remainder > 0:\ntests/torchtune/datasets/test_packed_dataset.py:96:    @pytest.mark.parametrize(\"split_across_pack\", [True, False])\ntests/torchtune/datasets/test_packed_dataset.py:98:        self, max_seq_len, sample_size, max_packs, split_across_pack\ntests/torchtune/datasets/test_packed_dataset.py:105:            split_across_pack=split_across_pack,\ntests/torchtune/datasets/test_packed_dataset.py:110:            len(dataset), max_seq_len, sample_size, split_across_pack, max_packs\ntests/torchtune/datasets/test_packed_dataset.py:122:        if split_across_pack:\ntests/torchtune/datasets/test_packed_dataset.py:144:            max_seq_len, sample_size, split_across_pack\ntests/torchtune/datasets/test_packed_dataset.py:181:            split_across_pack=True,\n",
+        "truncated": false,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "736170ba-aaec-4fbd-b00d-77aa7365f355",
+        "evidence": "exit=Some(0); affected_paths=[\"tests\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "files": 5,
+        "sensitive_files": 0,
+        "symbols": 10
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:43:37.216309923Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1117,
+              "class": "conversation_tail",
+              "estimated_tokens": 279,
+              "label": "conversation_messages[0..2]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 727,
+              "class": "task_state",
+              "estimated_tokens": 182,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 29954,
+              "class": "task_state",
+              "estimated_tokens": 7488,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 372,
+              "class": "task_state",
+              "estimated_tokens": 93,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 13944,
+              "class": "retrieved_context",
+              "estimated_tokens": 3486,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 9,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 549,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1890,
+              "class": "instructions",
+              "estimated_tokens": 472,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "total_estimated_tokens": 14008,
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 17045,
+          "latency_ms": 2416,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 257,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:43:39.633426140Z",
+          "request_id": "719abff5-ca62-44ff-b770-783e7d2c1152",
+          "search_requests": 0,
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 17045,
+        "output_tokens": 257,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "steps": [
+          "Fix _pack to repeatedly split oversized packs until remainder <= max_seq_len",
+          "Verify with the reported example (121 tokens, max_seq_len=60) plus edge cases"
+        ]
+      },
+      "event": "plan_created"
+    },
+    {
+      "data": {
+        "bundle": {
+          "design_decisions": [],
+          "kind": "direct",
+          "non_goals": [],
+          "requirements": [
+            {
+              "acceptance_criteria": [
+                {
+                  "id": "9d09fecf-9fcb-4979-bd6f-7fee2bd03b47",
+                  "statement": "_pack drains multi-pack-length samples in a loop"
+                },
+                {
+                  "id": "fb91c6a4-dbf3-45ba-be40-3cbf427e7219",
+                  "statement": "_pad_pack never receives a pack longer than max_seq_len"
+                },
+                {
+                  "id": "5b7b77a7-19d5-4c7c-b358-d4fe7733836c",
+                  "statement": "Fix _pack to repeatedly split oversized packs until remainder <= max_seq_len"
+                },
+                {
+                  "id": "aebc0361-5c69-464a-9bd7-5f445ae06c5b",
+                  "statement": "Verify with the reported example (121 tokens, max_seq_len=60) plus edge cases"
+                }
+              ],
+              "id": "7d49473a-4bc8-483d-a25c-d11d8514df81",
+              "priority": "required",
+              "statement": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```"
+            }
+          ],
+          "revision": 1,
+          "title": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = Pack"
+        },
+        "reason": "native-agent plan recorded from the accepted objective and plan criteria"
+      },
+      "event": "spec_bundle_recorded"
+    },
+    {
+      "data": {
+        "graph": {
+          "revision": 1,
+          "tasks": [
+            {
+              "acceptance_criteria": [
+                "9d09fecf-9fcb-4979-bd6f-7fee2bd03b47",
+                "fb91c6a4-dbf3-45ba-be40-3cbf427e7219"
+              ],
+              "dependencies": [],
+              "evidence_obligations": [],
+              "id": "b028f972-d3d0-4b0f-ad4a-f6484b5d47b0",
+              "objective": "Fix _pack to repeatedly split oversized packs until remainder <= max_seq_len",
+              "owner": "native-agent",
+              "priority": "required",
+              "retry_count": 0,
+              "risk": "medium",
+              "scope": [],
+              "status": "ready"
+            },
+            {
+              "acceptance_criteria": [
+                "5b7b77a7-19d5-4c7c-b358-d4fe7733836c",
+                "aebc0361-5c69-464a-9bd7-5f445ae06c5b"
+              ],
+              "dependencies": [],
+              "evidence_obligations": [],
+              "id": "0c9cbda0-0342-4900-8123-078ca3f64219",
+              "objective": "Verify with the reported example (121 tokens, max_seq_len=60) plus edge cases",
+              "owner": "native-agent",
+              "priority": "required",
+              "retry_count": 0,
+              "risk": "medium",
+              "scope": [],
+              "status": "ready"
+            }
+          ]
+        },
+        "reason": "native-agent task graph follows the accepted plan step order"
+      },
+      "event": "task_graph_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 8192,
+          "path": "torchtune/datasets/_packed.py",
+          "type": "repository_read"
+        },
+        "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "a6147d9d76a48762b049e618f66d7462d5ace219372f6dc92a24f0a4e8a8f3ed",
+          "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:39.639814470Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "reason": "native-agent started the current plan task",
+        "status": "running",
+        "task_id": "b028f972-d3d0-4b0f-ad4a-f6484b5d47b0"
+      },
+      "event": "task_status_changed"
+    },
+    {
+      "data": {
+        "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:39.687233565Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": true
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:39.665085562Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35",
+        "affected_paths": [],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": true
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35",
+        "stderr": "",
+        "stdout": "# Copyright (c) Meta Platforms, Inc. and affiliates.\n# All rights reserved.\n#\n# This source code is licensed under the BSD-style license found in the\n# LICENSE file in the root directory of this source tree.\n\nfrom typing import Dict, List, Optional\n\nimport torch\nfrom torch.nn import functional as F\n\nfrom torch.utils.data import Dataset\nfrom torchtune.data._common import CROSS_ENTROPY_IGNORE_IDX, PACK_TYPE\nfrom tqdm import tqdm\n\n\nclass PackedDataset(Dataset):\n    \"\"\"\n    Performs greedy sample packing on a provided dataset. This is done as a single\n    preprocessing step before training begins. Shuffling is done outside of this\n    class on packed samples with a ``Sampler`` as part of the dataloader. Currently,\n    this only supports in-memory map-style datasets.\n\n    The class loads, tokenizes, and packs examples on initialization - no tokenization is done during training.\n\n    The general flow on initialization is: load tokenized sample -> add to buffer ->\n    when buffer is long enough, add to ``self.packs``.\n\n    During training, returns self.packs[idx] as input, label, attention mask, and\n    position ids. The attention mask is a lower triangular block mask to prevent\n    samples from cross-attending within a pack. The position ids indicate the position\n    of each token relative to its sample within a pack. These are all padded to max\n    sequence length, so a batch-wise collator is not needed.\n\n    A packed sample is made up of individual smaller sequence length samples jammed together\n    within ``max_seq_len``. For example, if max_seq_len is 6 and there are varied\n    length samples::\n\n        tokens = [\n            [S1, S1, S1, S2, S2, pad],\n            [S3, S3, S4, S4, pad, pad],\n            ...,\n        ]\n\n    To prevent cross-contamination, the following mask would be returned for the\n    first pack in the example::\n\n        mask = [\n            [1, 0, 0, 0, 0, 0],\n            [1, 1, 0, 0, 0, 0],\n            [1, 1, 1, 0, 0, 0],\n            [0, 0, 0, 1, 0, 0],\n            [0, 0, 0, 1, 1, 0],\n            [0, 0, 0, 0, 0, 1],\n        ]\n\n    The position ids would be::\n\n        input_pos = [\n            [0, 1, 2, 0, 1, 2],\n            [0, 1, 0, 1, 2, 3],\n            ...,\n        ]\n\n    The identity matrix is used in the mask for pad tokens instead of a causal mask.\n    For position ids for pad tokens, we simply continue to increment from the previous\n    sample normally.\n\n    Args:\n        ds (Dataset): dataset to sample pack. This should return a dictionary with field\n            \"tokens\" and \"labels\" containing the tokenized and label samples.\n        max_seq_len (int): Maximum number of tokens to pack\n        padding_idx (int): padding index for the tokenizer. Default is 0.\n        max_packs (Optional[int]): Maximum number of packs. Default is None, which will create as many\n            packs as possible.\n        split_across_pack (bool): if the last sample in a pack does not fit in ``max_seq_len``,\n            split the sample into the next pack, or move it entirely to the beginning of the next pack.\n            For pre-training, typically this is set to True for general text completion. For\n            fine-tuning, typically this is set to False to avoid truncating sentences in instruct\n            tuning. Default is False.\n    \"\"\"\n\n    def __init__(\n        self,\n        ds: Dataset,\n        *,\n        max_seq_len: int,\n        padding_idx: int = 0,\n        max_packs: Optional[int] = None,\n        split_across_pack: bool = False,\n    ) -> None:\n        self.ds = ds\n        self.max_seq_len = max_seq_len\n        self.padding_idx = padding_idx\n        self.max_packs = max_packs\n        self.split_across_pack = split_across_pack\n        # Where final samples will be held\n        self.packs: List[PACK_TYPE] = []\n        self.previous_sample_boundary: int = 0\n        self._pack()\n\n    def _pack(self) -> None:\n        \"\"\"Iterate through the dataset. Use a buffer to hold samples until max_seq_len,\n        then append the buffer to self.packs as a single \"packed\" sample. Continue\n        until max_packs or end of dataset.\"\"\"\n        # Buffer to hold samples until they are long enough to be added to self.packs\n        current_pack = {\n            \"tokens\": [],\n            \"labels\": [],\n            \"input_pos\": [],\n            \"seq_lens\": [],\n        }\n\n        # Only show progress bar on rank 0\n        rank = (\n            torch.distributed.get_rank()\n            if torch.distributed.is_available() and torch.distributed.is_initialized()\n            else 0\n        )\n        if rank == 0:\n            pbar = tqdm(total=len(self.ds), desc=\"Packing dataset\", dynamic_ncols=True)\n\n        for sample in self.ds:\n            tokens, labels = sample[\"tokens\"], sample[\"labels\"]\n\n            # If the dataset outputs samples that are larger than the specified\n            # max_seq_len and we're unable to split it, user needs to modify\n            # one of the two parameters\n            seq_len = len(tokens)\n            if seq_len > self.max_seq_len and not self.split_across_pack:\n                raise ValueError(\n                    f\"Dataset sample is too long ({seq_len} > {self.max_seq_len}). \"\n                    \"Please set `split_across_pack=True` or increase `max_seq_len`.\"\n                )\n\n            # Update the current pack\n            current_pack[\"tokens\"] += tokens\n            current_pack[\"labels\"] += labels\n            current_pack[\"input_pos\"] += list(range(seq_len))\n            current_pack[\"seq_lens\"] += [seq_len]\n\n            # If the current pack is over the max_seq_len, add it to self.packs and\n            # retain any truncated or bumped samples for next pack\n            if len(current_pack[\"tokens\"]) > self.max_seq_len:\n                current_pack = self._split_and_add_pack(current_pack)\n\n            if rank == 0:\n                pbar.update()\n\n            # Keep track of previous sample boundary\n            self.previous_sample_boundary = len(current_pack[\"tokens\"])\n\n            # If max packs is set, stop packing when we reach that number\n            if self.max_packs is not None and len(self.packs) == self.max_packs:\n                break\n\n        # Handle the last pack if there's leftover and we haven't filled up the max packs\n        if len(current_pack[\"tokens\"]) > 0 and (\n            self.max_packs is None or len(self.packs) < self.max_packs\n        ):\n            # No need to handle splitting at this point so we can just add the current pack\n            self._add_pack(current_pack)\n\n    def _split_and_add_pack(self, current_pack: PACK_TYPE) -> PACK_TYPE:\n        \"\"\"Splits the current pack at the boundary, processes it, adds it to ``self.packs`` and\n        returns the start of the next pack.\"\"\"\n\n        if self.split_across_pack:\n            boundary = self.max_seq_len\n            # The last elem in ``seq_lens`` ensures that ``sum(seq_lens) == self.max_seq_len``\n            leftover_seq_len = self.max_seq_len - sum(current_pack[\"seq_lens\"][:-1])\n            seq_len_padding = [leftover_seq_len] if leftover_seq_len > 0 else []\n        else:\n            boundary = self.previous_sample_boundary\n            # If we aren't splitting across packs, we leave out the last sample b/c\n            # it will go into the next pack\n            seq_len_padding = []\n\n        pack = {\n            \"tokens\": current_pack[\"tokens\"][:boundary],\n            \"labels\": current_pack[\"labels\"][:boundary],\n            \"input_pos\": current_pack[\"input_pos\"][:boundary],\n            \"seq_lens\": current_pack[\"seq_lens\"][:-1] + seq_len_padding,\n        }\n\n        # Process and add the pack\n        self._add_pack(pack)\n\n        # Return the length of the first sample in next pack if we are splitting across packs,\n        # otherwise return the length of the last sample in the current pack\n        next_seq_len = (\n            len(current_pack[\"tokens\"][boundary:])\n            if self.split_across_pack\n            else current_pack[\"seq_lens\"][-1]\n        )\n\n        return {\n            \"tokens\": current_pack[\"tokens\"][boundary:],\n            \"labels\": current_pack[\"labels\"][boundary:],\n            \"input_pos\": current_pack[\"input_pos\"][boundary:],",
+        "truncated": true,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35",
+        "evidence": "exit=Some(0); affected_paths=[]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35",
+          "coverage": "not_run",
+          "criterion_id": "9d09fecf-9fcb-4979-bd6f-7fee2bd03b47",
+          "digest": "bede08a2dd8a5e55613326aab9bd6c54c727e3ac7a9c79c058e509bcca9d3278",
+          "id": "b75567e3-22d6-4ae5-911a-4a4588024a5f",
+          "recorded_at": "2026-10-14T19:43:39.692080588Z",
+          "requirement_id": "7d49473a-4bc8-483d-a25c-d11d8514df81",
+          "source": "native-agent execution result",
+          "summary": "agent action exited Some(0)",
+          "task_id": "b028f972-d3d0-4b0f-ad4a-f6484b5d47b0",
+          "validation_status": "passed"
+        }
+      },
+      "event": "evidence_linked"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "83e2eecc-c13f-4a97-99a1-1fd32b1bec35",
+          "coverage": "not_run",
+          "criterion_id": "fb91c6a4-dbf3-45ba-be40-3cbf427e7219",
+          "digest": "bede08a2dd8a5e55613326aab9bd6c54c727e3ac7a9c79c058e509bcca9d3278",
+          "id": "135d182d-4429-434b-a951-466c17227fcf",
+          "recorded_at": "2026-10-14T19:43:39.692821546Z",
+          "requirement_id": "7d49473a-4bc8-483d-a25c-d11d8514df81",
+          "source": "native-agent execution result",
+          "summary": "agent action exited Some(0)",
+          "task_id": "b028f972-d3d0-4b0f-ad4a-f6484b5d47b0",
+          "validation_status": "passed"
+        }
+      },
+      "event": "evidence_linked"
+    },
+    {
+      "data": {
+        "files": 5,
+        "sensitive_files": 0,
+        "symbols": 10
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:43:39.727869392Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1117,
+              "class": "conversation_tail",
+              "estimated_tokens": 279,
+              "label": "conversation_messages[0..2]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 727,
+              "class": "task_state",
+              "estimated_tokens": 182,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 408,
+              "class": "task_state",
+              "estimated_tokens": 102,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 39071,
+              "class": "task_state",
+              "estimated_tokens": 9767,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 404,
+              "class": "task_state",
+              "estimated_tokens": 101,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 13944,
+              "class": "retrieved_context",
+              "estimated_tokens": 3486,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 9,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 549,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1890,
+              "class": "instructions",
+              "estimated_tokens": 472,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "total_estimated_tokens": 16335,
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 19562,
+          "latency_ms": 2623,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 333,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:43:42.352668229Z",
+          "request_id": "10338d24-7388-4e00-b29a-909695bf9632",
+          "search_requests": 0,
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 19562,
+        "output_tokens": 333,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 16384,
+          "path": "tests/torchtune/datasets/test_packed_dataset.py",
+          "type": "repository_read"
+        },
+        "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "46f2c69269879afc4a629ebf4e317ceacc8e5e5ef32315750dabf7dd7486fcbf",
+          "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:42.356370103Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:42.402454611Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:42.381070503Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9",
+        "affected_paths": [],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9",
+        "stderr": "",
+        "stdout": "# Copyright (c) Meta Platforms, Inc. and affiliates.\n# All rights reserved.\n#\n# This source code is licensed under the BSD-style license found in the\n# LICENSE file in the root directory of this source tree.\n\nimport itertools\n\nimport pytest\nimport torch\nfrom tests.test_utils import DummyTokenizer\nfrom torch.utils.data import Dataset\n\nfrom torchtune.datasets import PackedDataset\n\n\nclass DummyDataset(Dataset):\n    def __init__(self, sample_size):\n        self.sample_size = sample_size\n\n    def __getitem__(self, index):\n        if index >= 1000:\n            raise IndexError()\n        return {\n            \"tokens\": [index] * self.sample_size,\n            \"labels\": [index] * self.sample_size,\n        }\n\n    def __len__(self):\n        return 1000\n\n\nclass DummyRealDataset(Dataset):\n    def __init__(self):\n        self.samples_list = [\n            \"This is a packing test\",\n            \"A fantastic test. It should pack two samples.\",\n            \"This one will not be fully packed.\",\n        ]\n        self.tokenizer = DummyTokenizer()\n\n    def __getitem__(self, index):\n        tokens = self.tokenizer.encode(self.samples_list[index])\n        return {\"tokens\": tokens, \"labels\": tokens}\n\n    def __len__(self):\n        return len(self.samples_list)\n\n\nclass TestPackedDataset:\n    def _get_expected_seq_lens_and_input_pos(\n        self, max_seq_len, sample_size, split_across_pack\n    ):\n        \"\"\"\n        Generate expected seq lens and position ids for given max sequence\n        length and sample length\n        \"\"\"\n        num_samples, remainder = divmod(max_seq_len, sample_size)\n        seq_lens = [sample_size] * num_samples\n        if split_across_pack and remainder > 0:\n            num_samples += 1\n        input_pos = [list(range(sample_size)) for i in range(1, num_samples + 1)]\n        input_pos = list(itertools.chain(*input_pos))\n\n        # Emulate seq len and position id padding\n        if remainder > 0:\n            if not split_across_pack:\n                input_pos.extend(list(range(sample_size, sample_size + remainder)))\n            seq_lens.extend([remainder])\n\n        return torch.tensor(seq_lens), torch.tensor(input_pos[:max_seq_len])\n\n    def _calculate_num_packs(\n        self, dataset_size, max_seq_len, sample_size, split_across_pack, max_packs\n    ):\n        # First see how many samples we can fit in a single pack\n        num_samples_per_pack, remainder = divmod(max_seq_len, sample_size)\n\n        # If we split across pack (and the samples don't fit perfectly in max_seq_len), we can fit more\n        if split_across_pack and remainder > 0:\n            # Now we need the fractional to see how many we can partially fit in each pack\n            num_samples_per_pack = max_seq_len / sample_size\n\n        # If we don't split across pack, we will need more packs\n        num_packs, remainder = divmod(dataset_size, num_samples_per_pack)\n\n        # If there's leftover, we need to add one more pack\n        if remainder > 0:\n            num_packs += 1\n\n        return num_packs if num_packs < max_packs else max_packs\n\n    @pytest.mark.parametrize(\"max_seq_len\", [25])\n    @pytest.mark.parametrize(\"sample_size\", [2, 5])\n    @pytest.mark.parametrize(\"max_packs\", [5, 200])\n    @pytest.mark.parametrize(\"split_across_pack\", [True, False])\n    def test_packed_dataset(\n        self, max_seq_len, sample_size, max_packs, split_across_pack\n    ):\n        dataset = DummyDataset(sample_size)\n        packed = PackedDataset(\n            dataset,\n            max_seq_len=max_seq_len,\n            max_packs=max_packs,\n            split_across_pack=split_across_pack,\n        )\n\n        # Check we get right number of packs\n        correct_num_packs = self._calculate_num_packs(\n            len(dataset), max_seq_len, sample_size, split_across_pack, max_packs\n        )\n        assert len(packed) == correct_num_packs\n\n        # Check all fields are same length\n        assert (\n            len(packed[0][\"tokens\"])\n            == len(packed[0][\"labels\"])\n            == len(packed[0][\"input_pos\"])\n        )\n        # Check that samples are packed correctly - very last individual sample\n        # should have index value of the number of times dataset was iterated over\n        if split_across_pack:\n            # If we split samples, we'll know how many samples by taking the\n            # full length and dividing by sample size\n            last_index, remainder = divmod(len(packed) * max_seq_len, sample_size)\n            # Account for remaining sample that didn't fit in window\n            last_index = last_index if remainder > 0 else last_index - 1\n        else:\n            # If we don't split samples, we know how many samples by taking\n            # how much fits in a single window and multiplying by max rows.\n            # If there is a remainder, this will end up being a pad token.\n            last_index = (\n                (max_seq_len // sample_size) * len(packed) - 1\n                if max_seq_len % sample_size == 0\n                else 0\n            )\n\n        assert packed[-1][\"tokens\"][-1].item() == last_index\n\n        (\n            expected_seq_lens,\n            expected_input_pos,\n        ) = self._get_expected_seq_lens_and_input_pos(\n            max_seq_len, sample_size, split_across_pack\n        )\n\n        torch.testing.assert_close(packed[0][\"seq_lens\"], expected_seq_lens)\n        torch.testing.assert_close(packed[0][\"input_pos\"], expected_input_pos)\n\n    def test_packed_dataset_real_data(self):\n        expected_tokenized_prompts = [\n            torch.tensor([0, 4, 2, 1, 7, 4, -1, 0, 1, 9]),\n            torch.tensor([5, 2, 6, 4, 3, 8, -1, 0, 4, 3]),\n            torch.tensor([4, 3, 2, 5, 7, -1, 0, 0, 0, 0]),\n        ]\n        expected_tokenized_labels = [\n            torch.tensor([0, 4, 2, 1, 7, 4, -1, 0, 1, 9]),\n            torch.tensor([5, 2, 6, 4, 3, 8, -1, 0, 4, 3]),\n            torch.tensor([4, 3, 2, 5, 7, -1, -100, -100, -100, -100]),\n        ]\n        expected_seq_lens = [\n            torch.tensor(\n                [7, 3],\n            ),\n            torch.tensor(\n                [7, 3],\n            ),\n            torch.tensor(\n                [6, 4],\n            ),\n        ]\n        expected_input_pos = [\n            torch.tensor([0, 1, 2, 3, 4, 5, 6, 0, 1, 2]),\n            torch.tensor([3, 4, 5, 6, 7, 8, 9, 0, 1, 2]),\n            # Padded position ids cannot go beyond max seq_len - 1\n            torch.tensor([3, 4, 5, 6, 7, 8, 9, 9, 9, 9]),\n        ]\n        packed = PackedDataset(\n            DummyRealDataset(),\n            max_seq_len=10,\n            split_across_pack=True,\n        )\n\n        for i in range(len(packed)):\n            prompt, label, seq_lens, input_pos = (\n                packed[i][\"tokens\"],\n                packed[i][\"labels\"],\n                packed[i][\"seq_lens\"],\n                packed[i][\"input_pos\"],\n            )\n            torch.testing.assert_close(prompt, expected_tokenized_prompts[i])\n            torch.testing.assert_close(label, expected_tokenized_labels[i])\n            torch.testing.assert_close(input_pos, expected_input_pos[i])\n            torch.testing.assert_close(seq_lens, expected_seq_lens[i])\n\n    def test_pad_pack(self):\n        padding_idx = -8\n        ignore_idx = -100  # Same as CROSS_ENTROPY_IGNORE_IDX\n        pack = {\n            \"tokens\": [2, 5],\n            \"labels\": [3, 7],\n            \"seq_lens\": [1, 1],\n            # Let the first token be the end of the previous sample (pos 8),\n            # and the second token the start of the next sample (pos 0). Collate\n            # should continue from 0 -> 1, 2, ...\n            \"input_pos\": [8, 0],\n        }\n\n        dataset = DummyDataset(2)\n        packed = PackedDataset(\n            dataset,\n            max_seq_len=4,\n        )\n\n        pack = packed._convert_to_tensors(pack)\n        padded = packed._pad_pack(pack, padding_idx=padding_idx)\n\n        padded_input = padded[\"tokens\"]\n        padded_label = padded[\"labels\"]\n        padded_input_pos = padded[\"input_pos\"]\n        padded_seq_lens = padded[\"seq_lens\"]\n\n        torch.testing.assert_close(\n            padded_input, torch.tensor([2, 5, padding_idx, padding_idx])\n        )\n        torch.testing.assert_close(\n            padded_label, torch.tensor([3, 7, ignore_idx, ignore_idx])\n        )\n        torch.testing.assert_close(padded_input_pos, torch.tensor([8, 0, 1, 2]))\n        torch.testing.assert_close(padded_seq_lens, torch.tensor([1, 1, 2]))\n\n    def test_pack_errors_if_sample_too_long(self):\n        dataset = DummyDataset(8)\n        with pytest.raises(ValueError, match=\"Dataset sample is too long\"):\n            PackedDataset(\n                dataset,\n                max_seq_len=4,\n            )\n",
+        "truncated": false,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9",
+        "evidence": "exit=Some(0); affected_paths=[]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9",
+          "coverage": "not_run",
+          "criterion_id": "9d09fecf-9fcb-4979-bd6f-7fee2bd03b47",
+          "digest": "bede08a2dd8a5e55613326aab9bd6c54c727e3ac7a9c79c058e509bcca9d3278",
+          "id": "856c3f05-b46d-48f0-a959-6290b00f8a48",
+          "recorded_at": "2026-10-14T19:43:42.407234797Z",
+          "requirement_id": "7d49473a-4bc8-483d-a25c-d11d8514df81",
+          "source": "native-agent execution result",
+          "summary": "agent action exited Some(0)",
+          "task_id": "b028f972-d3d0-4b0f-ad4a-f6484b5d47b0",
+          "validation_status": "passed"
+        }
+      },
+      "event": "evidence_linked"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "21f9f1df-74c2-4289-997d-d9d5d44470b9",
+          "coverage": "not_run",
+          "criterion_id": "fb91c6a4-dbf3-45ba-be40-3cbf427e7219",
+          "digest": "bede08a2dd8a5e55613326aab9bd6c54c727e3ac7a9c79c058e509bcca9d3278",
+          "id": "6fbf349d-e780-4204-969f-399e792ea1cd",
+          "recorded_at": "2026-10-14T19:43:42.408254684Z",
+          "requirement_id": "7d49473a-4bc8-483d-a25c-d11d8514df81",
+          "source": "native-agent execution result",
+          "summary": "agent action exited Some(0)",
+          "task_id": "b028f972-d3d0-4b0f-ad4a-f6484b5d47b0",
+          "validation_status": "passed"
+        }
+      },
+      "event": "evidence_linked"
+    },
+    {
+      "data": {
+        "files": 5,
+        "sensitive_files": 0,
+        "symbols": 10
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:43:42.440857702Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1117,
+              "class": "conversation_tail",
+              "estimated_tokens": 279,
+              "label": "conversation_messages[0..2]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 727,
+              "class": "task_state",
+              "estimated_tokens": 182,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 408,
+              "class": "task_state",
+              "estimated_tokens": 102,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 48711,
+              "class": "task_state",
+              "estimated_tokens": 12177,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 393,
+              "class": "task_state",
+              "estimated_tokens": 99,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 13944,
+              "class": "retrieved_context",
+              "estimated_tokens": 3486,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 8,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 550,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 503,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1890,
+              "class": "instructions",
+              "estimated_tokens": 472,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "total_estimated_tokens": 18742,
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 22358,
+          "latency_ms": 1775,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 218,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:43:44.217768728Z",
+          "request_id": "2558a274-fbe0-4e76-9538-91bcec7d6038",
+          "search_requests": 0,
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 22358,
+        "output_tokens": 218,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 4096,
+          "path": "torchtune/datasets/_packed.py",
+          "type": "repository_read"
+        },
+        "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e",
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          }
+        },
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "e99ee73297797341f0d6c88d1967ed90f769c84078222ad05a1411cc5b7a562e",
+          "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:43:44.221949783Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pytorch__torchtune-1697/.purrcode/worktrees/9316be65-13de-43e3-b6e6-ab68c7e8a3e3"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:43:44.265940108Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+          },
+          "outcome": {
+            "affected_paths": [],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": true
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "started_at": "2026-10-14T19:43:44.245700673Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e",
+        "affected_paths": [],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": true
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e",
+        "stderr": "",
+        "stdout": "# Copyright (c) Meta Platforms, Inc. and affiliates.\n# All rights reserved.\n#\n# This source code is licensed under the BSD-style license found in the\n# LICENSE file in the root directory of this source tree.\n\nfrom typing import Dict, List, Optional\n\nimport torch\nfrom torch.nn import functional as F\n\nfrom torch.utils.data import Dataset\nfrom torchtune.data._common import CROSS_ENTROPY_IGNORE_IDX, PACK_TYPE\nfrom tqdm import tqdm\n\n\nclass PackedDataset(Dataset):\n    \"\"\"\n    Performs greedy sample packing on a provided dataset. This is done as a single\n    preprocessing step before training begins. Shuffling is done outside of this\n    class on packed samples with a ``Sampler`` as part of the dataloader. Currently,\n    this only supports in-memory map-style datasets.\n\n    The class loads, tokenizes, and packs examples on initialization - no tokenization is done during training.\n\n    The general flow on initialization is: load tokenized sample -> add to buffer ->\n    when buffer is long enough, add to ``self.packs``.\n\n    During training, returns self.packs[idx] as input, label, attention mask, and\n    position ids. The attention mask is a lower triangular block mask to prevent\n    samples from cross-attending within a pack. The position ids indicate the position\n    of each token relative to its sample within a pack. These are all padded to max\n    sequence length, so a batch-wise collator is not needed.\n\n    A packed sample is made up of individual smaller sequence length samples jammed together\n    within ``max_seq_len``. For example, if max_seq_len is 6 and there are varied\n    length samples::\n\n        tokens = [\n            [S1, S1, S1, S2, S2, pad],\n            [S3, S3, S4, S4, pad, pad],\n            ...,\n        ]\n\n    To prevent cross-contamination, the following mask would be returned for the\n    first pack in the example::\n\n        mask = [\n            [1, 0, 0, 0, 0, 0],\n            [1, 1, 0, 0, 0, 0],\n            [1, 1, 1, 0, 0, 0],\n            [0, 0, 0, 1, 0, 0],\n            [0, 0, 0, 1, 1, 0],\n            [0, 0, 0, 0, 0, 1],\n        ]\n\n    The position ids would be::\n\n        input_pos = [\n            [0, 1, 2, 0, 1, 2],\n            [0, 1, 0, 1, 2, 3],\n            ...,\n        ]\n\n    The identity matrix is used in the mask for pad tokens instead of a causal mask.\n    For position ids for pad tokens, we simply continue to increment from the previous\n    sample normally.\n\n    Args:\n        ds (Dataset): dataset to sample pack. This should return a dictionary with field\n            \"tokens\" and \"labels\" containing the tokenized and label samples.\n        max_seq_len (int): Maximum number of tokens to pack\n        padding_idx (int): padding index for the tokenizer. Default is 0.\n        max_packs (Optional[int]): Maximum number of packs. Default is None, which will create as many\n            packs as possible.\n        split_across_pack (bool): if the last sample in a pack does not fit in ``max_seq_len``,\n            split the sample into the next pack, or move it entirely to the beginning of the next pack.\n            For pre-training, typically this is set to True for general text completion. For\n            fine-tuning, typically this is set to False to avoid truncating sentences in instruct\n            tuning. Default is False.\n    \"\"\"\n\n    def __init__(\n        self,\n        ds: Dataset,\n        *,\n        max_seq_len: int,\n        padding_idx: int = 0,\n        max_packs: Optional[int] = None,\n        split_across_pack: bool = False,\n    ) -> None:\n        self.ds = ds\n        self.max_seq_len = max_seq_len\n        self.padding_idx = padding_idx\n        self.max_packs = max_packs\n        self.split_across_pack = split_across_pack\n        # Where final samples will be held\n        self.packs: List[PACK_TYPE] = []\n        self.previous_sample_boundary: int = 0\n        self._pack()\n\n    def _pack(self) -> None:\n        \"\"\"Iterate through the dataset. Use a buffer to hold samples until max_seq_len,\n        then append the buffer to self.packs as a single \"packed\" sample. Continue\n        until max_packs or end of da",
+        "truncated": true,
+        "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e",
+        "evidence": "exit=Some(0); affected_paths=[]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e",
+          "coverage": "not_run",
+          "criterion_id": "9d09fecf-9fcb-4979-bd6f-7fee2bd03b47",
+          "digest": "bede08a2dd8a5e55613326aab9bd6c54c727e3ac7a9c79c058e509bcca9d3278",
+          "id": "eab89530-27cc-4570-b1ef-66fe92c479c0",
+          "recorded_at": "2026-10-14T19:43:44.270710640Z",
+          "requirement_id": "7d49473a-4bc8-483d-a25c-d11d8514df81",
+          "source": "native-agent execution result",
+          "summary": "agent action exited Some(0)",
+          "task_id": "b028f972-d3d0-4b0f-ad4a-f6484b5d47b0",
+          "validation_status": "passed"
+        }
+      },
+      "event": "evidence_linked"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "dcb7fb25-2f63-4dbd-bc27-13baf54b852e",
+          "coverage": "not_run",
+          "criterion_id": "fb91c6a4-dbf3-45ba-be40-3cbf427e7219",
+          "digest": "bede08a2dd8a5e55613326aab9bd6c54c727e3ac7a9c79c058e509bcca9d3278",
+          "id": "db2d5351-e11c-4d1b-9317-bdafda700436",
+          "recorded_at": "2026-10-14T19:43:44.271508704Z",
+          "requirement_id": "7d49473a-4bc8-483d-a25c-d11d8514df81",
+          "source": "native-agent execution result",
+          "summary": "agent action exited Some(0)",
+          "task_id": "b028f972-d3d0-4b0f-ad4a-f6484b5d47b0",
+          "validation_status": "passed"
+        }
+      },
+      "event": "evidence_linked"
+    },
+    {
+      "data": {
+        "files": 5,
+        "sensitive_files": 0,
+        "symbols": 10
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:43:44.304551880Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1117,
+              "class": "conversation_tail",
+              "estimated_tokens": 279,
+              "label": "conversation_messages[0..2]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 727,
+              "class": "task_state",
+              "estimated_tokens": 182,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 408,
+              "class": "task_state",
+              "estimated_tokens": 102,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 53562,
+              "class": "task_state",
+              "estimated_tokens": 13390,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 382,
+              "class": "task_state",
+              "estimated_tokens": 96,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 13944,
+              "class": "retrieved_context",
+              "estimated_tokens": 3486,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PackedDataset cannot handle long sequence whose length is larger than 2*max_seq_len when using split_across_pack=True\nAs the title, it reports a runtime error in the self._pad_pack()\r\n```\r\nf = {\"tokens\":list(range(121)),\"labels\":list(range(121))}\r\nx = PackedDataset([f],max_seq_len=60,split_across_pack=True)\r\nfor i in x:\r\n    print(i)\r\n```\r\n```\r\n    num_range = torch.arange(\r\n                ^^^^^^^^^^^^^\r\nRuntimeError: upper bound and larger bound inconsistent with step sign\r\n```\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 8,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 550,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 503,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1890,
+              "class": "instructions",
+              "estimated_tokens": 472,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "total_estimated_tokens": 19952,
+          "turn_id": "f772407c-9588-4ba8-9a11-db1ebd2d3f6a"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 23720,
+          "latency_ms": 11931,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 3636,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:43:56.236864577Z",
+          "request_id": "46456ada-b01f-49e8-b97a-d979fb5bf03a",
+          "search_requests": 0,
+          "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 23720,
+        "output_tokens": 3636,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "reason": "the model proposed a material plan revision after task execution began; review and explicitly revise instead of silently replacing tasks or evidence"
+      },
+      "event": "session_paused"
+    },
+    {
+      "data": {
+        "head": "3fddc56942846220b39945559f4b5e695873bb43",
+        "label": "turn",
+        "patch_digest": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+      },
+      "event": "checkpoint_created"
+    }
+  ],
+  "kind": "agent_events_only_no_hidden_oracle_inputs",
+  "measurement": {
+    "elapsed_ms": 28262,
+    "mid_run_correction_acknowledged": false,
+    "mid_run_correction_message_event_sha256": null,
+    "mid_run_correction_requested": false,
+    "mid_run_correction_trigger_event_sha256": null,
+    "mid_run_correction_triggered": false,
+    "session_id": "9316be65-13de-43e3-b6e6-ab68c7e8a3e3",
+    "session_status": "paused",
+    "timed_out": false
+  },
+  "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

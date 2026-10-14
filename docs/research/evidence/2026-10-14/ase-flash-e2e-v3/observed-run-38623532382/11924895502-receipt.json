@@ -1,0 +1,82 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11924895502,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyNDg5NTUwMg==",
+    "name": "e2e-pytorch__torchtune-1832",
+    "size_in_bytes": 102833,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924895502",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924895502/zip",
+    "expired": false,
+    "digest": "sha256:e2fe212a9ad1733eaa9d3688efec0f58e022e636bc98f78d1a01d435047a1728",
+    "created_at": "2026-10-14T19:52:06Z",
+    "updated_at": "2026-10-14T19:52:06Z",
+    "expires_at": "2026-10-28T19:52:05Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:52:21.224791+00:00",
+  "files": [
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/pytorch__torchtune-1832-correction-B-0.patch",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/pytorch__torchtune-1832-static-B-0.patch",
+      "sha256": "055fbfb1a788175c3ab7d0f67f91965955b08bbe6ef9f08a931f2b31968cf67e"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/pytorch__torchtune-1832-static-C-0.patch",
+      "sha256": "55f84ab14611e10578c26c1892c06406bd8b285b8ebf53e617a987d1fcae216c"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "sha256": "0d5f3d935b1969e92eb4000b01bc3ac62d1ad5b615d47ce0ea78645ea19f28df"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/pytorch__torchtune-1832-correction-B-0.json",
+      "sha256": "5d5e4a9ecf5d70538806d52ee5e0637a93816bd0f5a94b4d0f56bd6f2c8ddb26"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/pytorch__torchtune-1832-static-B-0.json",
+      "sha256": "83a0a392e34407daa971885df5a9cdb7478852d40ee2d536f070917281257059"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/pytorch__torchtune-1832-static-C-0.json",
+      "sha256": "ce819488054017d77e393408819126a62b88085e59477e1dbea144c61e569878"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pytorch__torchtune-1832-correction-B-0.json",
+      "sha256": "63722e59848d68e36dce57bc4a04595e491ef1d11cd6d8c8f521717b3a8773a9"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pytorch__torchtune-1832-correction-C-0.json",
+      "sha256": "5cdc8528e19ed35d0fe59f8ebe3c23c130e62fb21ef5ba7e8950ce42db778909"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pytorch__torchtune-1832-static-B-0.json",
+      "sha256": "dd6c6b4353fe19aa181fe63a66041da915a2e2a8f111bb82e2caa3b060d6c232"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pytorch__torchtune-1832-static-C-0.json",
+      "sha256": "8a136a0a4253f8212e7b082a6eaa0722287ef0e511db6c09c946755a41259a63"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "c7a537852a007cbf1d644dc149bffa42d986c076d6897da97645c2f5a19c6575"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "b8b81183956c93e79f1baf16989a21b4e31d976f069fa007285815a9c83327e0"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}

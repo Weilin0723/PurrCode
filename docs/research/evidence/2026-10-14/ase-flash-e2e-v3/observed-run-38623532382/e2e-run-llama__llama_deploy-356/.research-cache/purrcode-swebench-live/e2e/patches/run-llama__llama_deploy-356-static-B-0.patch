@@ -1,0 +1,118 @@
+diff --git a/llama_deploy/message_queues/apache_kafka.py b/llama_deploy/message_queues/apache_kafka.py
+index e5d1a5f..b02e320 100644
+--- a/llama_deploy/message_queues/apache_kafka.py
++++ b/llama_deploy/message_queues/apache_kafka.py
+@@ -54,6 +54,7 @@ class KafkaMessageQueue(AbstractMessageQueue):
+ 
+     Attributes:
+         url (str): The broker url string to connect to the Kafka server
++        topic_name (str): The name of the Kafka topic used to route messages
+ 
+     Examples:
+         ```python
+@@ -72,18 +73,26 @@ class KafkaMessageQueue(AbstractMessageQueue):
+         cls,
+         host: str,
+         port: int | None = None,
++        topic_name: str | None = None,
+     ) -> "KafkaMessageQueue":
+         """Convenience constructor from url params.
+ 
+         Args:
+             host (str): host for rabbitmq server
+             port (Optional[int], optional): port for rabbitmq server. Defaults to None.
++            topic_name (Optional[str], optional): name of the Kafka topic to use.
++                Defaults to None, in which case `DEFAULT_TOPIC_NAME` is used.
+ 
+         Returns:
+             KafkaMessageQueue: An Apache Kafka MessageQueue integration.
+         """
+         url = f"{host}:{port}" if port else f"{host}"
+-        return cls(KafkaMessageQueueConfig(url=url))
++        return cls(
++            KafkaMessageQueueConfig(
++                url=url,
++                topic_name=topic_name or DEFAULT_TOPIC_NAME,
++            )
++        )
+ 
+     def _create_new_topic(
+         self,
+@@ -235,4 +244,7 @@ class KafkaMessageQueue(AbstractMessageQueue):
+         return start_consuming_callable
+ 
+     def as_config(self) -> BaseModel:
+-        return KafkaMessageQueueConfig(url=self._config.url)
++        return KafkaMessageQueueConfig(
++            url=self._config.url,
++            topic_name=self._config.topic_name,
++        )
+diff --git a/tests/message_queues/test_apache_kafka.py b/tests/message_queues/test_apache_kafka.py
+index 49e200c..7c34eb1 100644
+--- a/tests/message_queues/test_apache_kafka.py
++++ b/tests/message_queues/test_apache_kafka.py
+@@ -5,6 +5,7 @@ import pytest
+ 
+ from llama_deploy import QueueMessage
+ from llama_deploy.message_queues.apache_kafka import (
++    DEFAULT_TOPIC_NAME,
+     KafkaMessageQueue,
+     KafkaMessageQueueConfig,
+ )
+@@ -21,6 +22,7 @@ def test_init() -> None:
+ 
+     # assert
+     assert mq._config.url == "0.0.0.0:5555"
++    assert mq._config.topic_name == DEFAULT_TOPIC_NAME
+ 
+ 
+ def test_from_url_params() -> None:
+@@ -33,6 +35,48 @@ def test_from_url_params() -> None:
+ 
+     # assert
+     assert mq._config.url == f"{host}:{port}"
++    assert mq._config.topic_name == DEFAULT_TOPIC_NAME
++
++
++def test_from_url_params_custom_topic_name() -> None:
++    # arrange
++    host = "mock-host"
++    port = 8080
++    topic_name = "my_custom_topic"
++
++    # act
++    mq = KafkaMessageQueue.from_url_params(
++        host=host, port=port, topic_name=topic_name
++    )
++
++    # assert
++    assert mq._config.url == f"{host}:{port}"
++    assert mq._config.topic_name == topic_name
++
++
++def test_topic_name_configurable() -> None:
++    # arrange/act
++    mq = KafkaMessageQueue(
++        KafkaMessageQueueConfig(url="0.0.0.0:5555", topic_name="another_topic")
++    )
++
++    # assert
++    assert mq._config.topic_name == "another_topic"
++
++
++def test_as_config_preserves_topic_name() -> None:
++    # arrange
++    mq = KafkaMessageQueue(
++        KafkaMessageQueueConfig(url="0.0.0.0:5555", topic_name="another_topic")
++    )
++
++    # act
++    config = mq.as_config()
++
++    # assert
++    assert isinstance(config, KafkaMessageQueueConfig)
++    assert config.url == "0.0.0.0:5555"
++    assert config.topic_name == "another_topic"
+ 
+ 
+ @pytest.mark.asyncio()

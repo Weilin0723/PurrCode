@@ -1,0 +1,42 @@
+diff --git a/control/pzmap.py b/control/pzmap.py
+index 7b0f8d0..a6c732a 100644
+--- a/control/pzmap.py
++++ b/control/pzmap.py
+@@ -170,7 +170,7 @@ def pole_zero_map(sysdata):
+ 
+ # TODO: Implement more elegant cross-style axes. See:
+ #    https://matplotlib.org/2.0.2/examples/axes_grid/demo_axisline_style.html
+-#    https://matplotlib.org/2.0.2/examples/axes_grid/demo_curvelinear_grid.html
++#    https://matplotlib.org/2.0.2/examples/axes_grid/demo_curvelinear_style.html
+ def pole_zero_plot(
+         data, plot=None, grid=None, title=None, color=None, marker_size=None,
+         marker_width=None, xlim=None, ylim=None, interactive=None, ax=None,
+@@ -605,16 +605,23 @@ def _compute_root_locus_limits(response):
+         ylim = max(ylim, locus[0].imag)
+ 
+         # Find the local maxima of root locus curve
++        #
++        # Note: if there is only a single gain, then the locus has a
++        # single point and the differences will be empty, resulting in
++        # empty peak arrays.  Only update the limits if there are peaks
++        # to process (otherwise the reductions below would fail).
+         xpeaks = np.where(
+             np.diff(np.abs(locus.real)) < 0, locus.real[0:-1], 0)
+-        xlim = [
+-            min(xlim[0], np.min(xpeaks) * rho),
+-            max(xlim[1], np.max(xpeaks) * rho)
+-        ]
++        if xpeaks.size > 0:
++            xlim = [
++                min(xlim[0], np.min(xpeaks) * rho),
++                max(xlim[1], np.max(xpeaks) * rho)
++            ]
+ 
+         ypeaks = np.where(
+             np.diff(np.abs(locus.imag)) < 0, locus.imag[0:-1], 0)
+-        ylim = max(ylim, np.max(ypeaks) * rho)
++        if ypeaks.size > 0:
++            ylim = max(ylim, np.max(ypeaks) * rho)
+ 
+     if isctime(dt=response.dt):
+         # Adjust the limits to include some space around features

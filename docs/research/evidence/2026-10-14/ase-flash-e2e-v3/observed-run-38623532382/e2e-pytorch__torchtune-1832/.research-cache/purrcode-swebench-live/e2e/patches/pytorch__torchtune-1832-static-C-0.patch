@@ -1,0 +1,76 @@
+diff --git a/tests/torchtune/_cli/test_download.py b/tests/torchtune/_cli/test_download.py
+index 5dbd6952..1de0ebaa 100644
+--- a/tests/torchtune/_cli/test_download.py
++++ b/tests/torchtune/_cli/test_download.py
+@@ -46,6 +46,9 @@ class TestTuneDownloadCommand:
+         assert (
+             "It looks like you are trying to access a gated repository." in out_err.err
+         )
++        # No token was provided, so the message should suggest providing one.
++        assert "--hf-token" in out_err.err
++        assert "huggingface-cli login" in out_err.err
+ 
+         # Call the second time and get RepositoryNotFoundError
+         with pytest.raises(SystemExit, match="2"):
+@@ -65,3 +68,31 @@ class TestTuneDownloadCommand:
+ 
+         # Make sure it was called twice
+         assert snapshot_download.call_count == 3
++
++    def test_download_with_hf_token_arg_does_not_ask_for_token(
++        self, capsys, monkeypatch, mocker, tmpdir
++    ):
++        from huggingface_hub.utils import GatedRepoError
++
++        mocker.patch(
++            "torchtune._cli.download.snapshot_download",
++            return_value=tmpdir,
++            side_effect=GatedRepoError("test"),
++        )
++
++        model = "meta-llama/Llama-2-7b"
++        testargs = f"tune download {model} --hf-token dummy-token".split()
++        monkeypatch.setattr(sys, "argv", testargs)
++
++        with pytest.raises(SystemExit, match="2"):
++            runpy.run_path(TUNE_PATH, run_name="__main__")
++
++        out_err = capsys.readouterr()
++        assert (
++            "It looks like you are trying to access a gated repository." in out_err.err
++        )
++        # The token was already provided, so we should not ask for it again.
++        assert "--hf-token" not in out_err.err
++        # The message should instead point at other likely causes.
++        assert "access to the repository" in out_err.err
++        assert "token is valid" in out_err.err
+diff --git a/torchtune/_cli/download.py b/torchtune/_cli/download.py
+index b35b81cc..b3d29734 100644
+--- a/torchtune/_cli/download.py
++++ b/torchtune/_cli/download.py
+@@ -131,12 +131,19 @@ class Download(Subcommand):
+                 token=args.hf_token,
+             )
+         except GatedRepoError:
+-            self._parser.error(
+-                "It looks like you are trying to access a gated repository. Please ensure you "
+-                "have access to the repository and have provided the proper Hugging Face API token "
+-                "using the option `--hf-token` or by running `huggingface-cli login`."
+-                "You can find your token by visiting https://huggingface.co/settings/tokens"
+-            )
++            if args.hf_token:
++                self._parser.error(
++                    "It looks like you are trying to access a gated repository. Please ensure you "
++                    "have access to the repository and that your Hugging Face API token is valid. "
++                    "You can find your token by visiting https://huggingface.co/settings/tokens"
++                )
++            else:
++                self._parser.error(
++                    "It looks like you are trying to access a gated repository. Please ensure you "
++                    "have access to the repository and have provided the proper Hugging Face API token "
++                    "using the option `--hf-token` or by running `huggingface-cli login`."
++                    "You can find your token by visiting https://huggingface.co/settings/tokens"
++                )
+         except RepositoryNotFoundError:
+             self._parser.error(
+                 f"Repository '{args.repo_id}' not found on the Hugging Face Hub."

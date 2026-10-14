@@ -1,0 +1,28 @@
+{
+  "workflow_run_id": 38623532382,
+  "terminal_workflow_conclusion": "cancelled",
+  "operator_intervention": "Cancelled after recurring missing public test dependencies were established in Mesa and Loguru; preserves normal behavior failures and all original rows.",
+  "original_rows": 35,
+  "frozen_terminal_label_counts": {
+    "valid": 19,
+    "error": 16
+  },
+  "oracle_counts": {
+    "correct": 4,
+    "unknown": 16,
+    "incorrect": 15
+  },
+  "completed_sessions": 0,
+  "recorded_model_calls": 426,
+  "recorded_tokens_lower_bound": 12887576,
+  "unknown_usage_calls": 0,
+  "incomplete_model_calls": 8,
+  "limitations": [
+    "Frozen valid labels include environmentally blocked paused sessions; do not treat them as audited valid efficacy.",
+    "Interrupted unarchived model requests may be absent from token totals.",
+    "Missing scheduled cells are not fabricated model observations."
+  ],
+  "model_study_not_complete": true,
+  "environment_repair_commit": "7225a3f",
+  "all_task_collection_qualification_run_id": 38627233895
+}

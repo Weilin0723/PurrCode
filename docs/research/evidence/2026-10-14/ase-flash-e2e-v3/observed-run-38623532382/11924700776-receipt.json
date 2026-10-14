@@ -1,0 +1,78 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11924700776,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyNDcwMDc3Ng==",
+    "name": "e2e-pdm-project__pdm-3255",
+    "size_in_bytes": 213965,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924700776",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924700776/zip",
+    "expired": false,
+    "digest": "sha256:baba2dd16bd8742fd167f3daa4b58835a5e7986bbdb29882b7382e18b3bb96fd",
+    "created_at": "2026-10-14T19:52:09Z",
+    "updated_at": "2026-10-14T19:52:09Z",
+    "expires_at": "2026-10-28T19:52:07Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:52:23.521799+00:00",
+  "files": [
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/pdm-project__pdm-3255-correction-B-0.patch",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/pdm-project__pdm-3255-static-B-0.patch",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/pdm-project__pdm-3255-static-C-0.patch",
+      "sha256": "51c1464ada9e9a5f0bf40a46ee4a977e495e4b2195fdee0a0879cf1e56ea46bf"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "sha256": "8e938d770fad93d92c9343046ec9ed36a0a26557396d963812cca3fb41403ce5"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/pdm-project__pdm-3255-correction-B-0.json",
+      "sha256": "772ec8f83baea8bcd110edc23bbcef6adc727532ca94c713de5920ccd8fcc309"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/pdm-project__pdm-3255-static-B-0.json",
+      "sha256": "2d4db657661b0db5e6a9e4bb9816965b1c45f751e6fd7fc4c3738c8e0c28bc0a"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/pdm-project__pdm-3255-static-C-0.json",
+      "sha256": "f00867d9c84f4595f2d169501aa93426e298367456cba6b0891d835a66119d8c"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pdm-project__pdm-3255-correction-B-0.json",
+      "sha256": "baa5a8d86653c9b6e08bd99a485302ce5617328002deb891e54c2d22cde4c0bf"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pdm-project__pdm-3255-static-B-0.json",
+      "sha256": "c927bc0db5f13b8d870f1156b08cfcd88ee331ff0d4885c1447d82fb0f4859d1"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/pdm-project__pdm-3255-static-C-0.json",
+      "sha256": "0cefae7a20ce16dd71a564299b4c8c3a5f4c2d62bca47195bae2cb1b4bf61589"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "3250cb667e89e343278e3399a95c0347103435347fd833cf4d351e36c28ca62a"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "572b4da37c3583a4813a4d54157ada538103b206b81f436776b549a7e54ffa08"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}

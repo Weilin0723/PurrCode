@@ -1,0 +1,46 @@
+{
+  "instance_id": "delgan__loguru-1236",
+  "base_commit": "37f44eda5555ffed3b4c581925650fb939e55b94",
+  "status": "passed",
+  "commands": [
+    [
+      "/opt/hostedtoolcache/Python/3.11.17/x64/bin/python",
+      "-m",
+      "venv",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv"
+    ],
+    [
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "pytest==8.3.5",
+      "ruff==0.11.5",
+      "hypothesis==6.131.9",
+      "pytest-mock==3.14.0"
+    ],
+    [
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/agent-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/delgan__loguru-1236"
+    ]
+  ],
+  "public_test_extras": [],
+  "public_test_group_dependencies": [],
+  "installed_packages": [
+    "attrs==26.1.0",
+    "hypothesis==6.131.9",
+    "iniconfig==2.3.1",
+    "loguru @ file:///home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/delgan__loguru-1236",
+    "packaging==26.3",
+    "pip==24.0",
+    "pluggy==1.6.0",
+    "pytest==8.3.5",
+    "pytest-mock==3.14.0",
+    "ruff==0.11.5",
+    "setuptools==79.0.1",
+    "sortedcontainers==2.4.0"
+  ]
+}

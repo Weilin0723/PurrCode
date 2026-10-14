@@ -1,0 +1,30 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11923874209,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyMzg3NDIwOQ==",
+    "name": "schedule-run-llama__llama_deploy-384",
+    "size_in_bytes": 31647,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923874209",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923874209/zip",
+    "expired": false,
+    "digest": "sha256:337336ec9667e5b340ccd0ea1b89405a9b5a037954edf84a66067fb43b89727a",
+    "created_at": "2026-10-14T19:51:40Z",
+    "updated_at": "2026-10-14T19:51:40Z",
+    "expires_at": "2026-10-28T19:51:39Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:52:34.582754+00:00",
+  "files": [
+    {
+      "path": "run-bundle.json",
+      "sha256": "2ad8136ed47f4502debea357714e77d5be3ab417bcc4f1a3acf8ce7c874e481f"
+    }
+  ]
+}

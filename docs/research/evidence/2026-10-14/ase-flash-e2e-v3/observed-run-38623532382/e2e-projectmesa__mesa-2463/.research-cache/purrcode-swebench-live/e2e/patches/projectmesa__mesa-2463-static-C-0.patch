@@ -1,0 +1,67 @@
+diff --git a/mesa/visualization/solara_viz.py b/mesa/visualization/solara_viz.py
+index 48f64c1..6eddb8e 100644
+--- a/mesa/visualization/solara_viz.py
++++ b/mesa/visualization/solara_viz.py
+@@ -340,13 +340,28 @@ def _check_model_params(init_func, model_params):
+         ValueError: If a parameter is not valid for the model's initialization function
+     """
+     model_parameters = inspect.signature(init_func).parameters
+-    for name in model_parameters:
++    for name, param in model_parameters.items():
++        if param.kind in (
++            inspect.Parameter.VAR_KEYWORD,
++            inspect.Parameter.VAR_POSITIONAL,
++        ):
++            # *args and **kwargs accept any extra arguments, so they are never
++            # required to be passed explicitly and must be ignored here.
++            continue
+         if (
+-            model_parameters[name].default == inspect.Parameter.empty
++            param.default == inspect.Parameter.empty
+             and name not in model_params
+             and name != "self"
+         ):
+             raise ValueError(f"Missing required model parameter: {name}")
++
++    if any(
++        param.kind == inspect.Parameter.VAR_KEYWORD
++        for param in model_parameters.values()
++    ):
++        # The model accepts **kwargs, so any keyword argument is valid.
++        return
++
+     for name in model_params:
+         if name not in model_parameters:
+             raise ValueError(f"Invalid model parameter: {name}")
+diff --git a/tests/test_solara_viz.py b/tests/test_solara_viz.py
+index 6805775..4c8bbd8 100644
+--- a/tests/test_solara_viz.py
++++ b/tests/test_solara_viz.py
+@@ -176,6 +176,10 @@ def test_model_param_checks():  # noqa: D103
+         def __init__(self, param1, param2):
+             pass
+ 
++    class ModelWithKwargs:
++        def __init__(self, required_param, optional_param=10, **kwargs):
++            pass
++
+     # Test that optional params can be omitted
+     _check_model_params(ModelWithOptionalParams.__init__, {"required_param": 1})
+ 
+@@ -203,3 +207,16 @@ def test_model_param_checks():  # noqa: D103
+     # Test empty params dict raises ValueError if required params
+     with pytest.raises(ValueError, match="Missing required model parameter"):
+         _check_model_params(ModelWithOnlyRequired.__init__, {})
++
++    # Test that **kwargs is not treated as a missing required parameter
++    _check_model_params(ModelWithKwargs.__init__, {"required_param": 1})
++
++    # Test that extra parameters are accepted when the model takes **kwargs
++    _check_model_params(
++        ModelWithKwargs.__init__,
++        {"required_param": 1, "optional_param": 5, "extra": 3},
++    )
++
++    # A model taking **kwargs still requires its non-kwargs required params
++    with pytest.raises(ValueError, match="Missing required model parameter: required_param"):
++        _check_model_params(ModelWithKwargs.__init__, {})

@@ -1,0 +1,3514 @@
+{
+  "events": [
+    {
+      "data": {
+        "authority_mode": {
+          "allowed_programs": [],
+          "capabilities": [],
+          "mode": "elevated"
+        },
+        "objective": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n",
+        "repository": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255"
+      },
+      "event": "session_created"
+    },
+    {
+      "data": {
+        "controls": {
+          "alignment": "disabled",
+          "auto_context": true,
+          "budget_profile": "custom",
+          "custom_budget": {
+            "maximum_estimated_cost": null,
+            "maximum_input_tokens": null,
+            "maximum_mcp_calls": null,
+            "maximum_model_calls": null,
+            "maximum_output_tokens": null,
+            "maximum_search_requests": null,
+            "maximum_total_tokens": 1000000,
+            "maximum_wall_time_seconds": null
+          },
+          "execution_style": "autonomous",
+          "permission_mode": "auto",
+          "routing": "auto",
+          "search_policy": null,
+          "task_mode": "build",
+          "workflow": "auto"
+        }
+      },
+      "event": "session_controls_updated"
+    },
+    {
+      "data": {
+        "model": "deepseek/deepseek-flash"
+      },
+      "event": "model_selected"
+    },
+    {
+      "data": {
+        "decision": {
+          "complexity": "complex",
+          "evidence": [
+            {
+              "requested_artifact_count": 2
+            },
+            "migration_required",
+            "external_api_dependency",
+            "multiple_deliverables"
+          ],
+          "selected_budget": "custom",
+          "selected_search_policy": "auto",
+          "selected_workflow": "ultra"
+        },
+        "plan": {
+          "budgets": {
+            "max_active_lanes": 5,
+            "max_depth": 2,
+            "max_parallel_writers_per_scope": 1,
+            "max_repair_cycles": 4
+          },
+          "completion_condition": "all_lanes_done",
+          "dependencies": [
+            {
+              "artifact_kind": "repository_map",
+              "from": "d692c0e0-f8e2-4975-b6dd-9932f6e78f67",
+              "to": "c3a67552-eb16-4d23-a6a2-dd9af3033781"
+            },
+            {
+              "artifact_kind": "patch_summary",
+              "from": "c3a67552-eb16-4d23-a6a2-dd9af3033781",
+              "to": "29b3082e-f42f-460f-8c07-574e19ea6056"
+            },
+            {
+              "artifact_kind": "validation_evidence",
+              "from": "29b3082e-f42f-460f-8c07-574e19ea6056",
+              "to": "f08e7cad-6224-455d-a86b-74f44d5b7f82"
+            },
+            {
+              "artifact_kind": "research_findings",
+              "from": "70bda692-7ae4-4eeb-8576-f4fe4225e7f8",
+              "to": "c3a67552-eb16-4d23-a6a2-dd9af3033781"
+            }
+          ],
+          "lanes": [
+            {
+              "allowed_tools": [
+                "repository_read"
+              ],
+              "completion_condition": "recorded evidence satisfies the lane objective",
+              "dependencies": [],
+              "kind": "repository_analysis",
+              "lane_id": "d692c0e0-f8e2-4975-b6dd-9932f6e78f67",
+              "objective": "Map affected modules, symbols, build systems, and risks",
+              "read_scope": [
+                "repository"
+              ],
+              "token_budget": 32000,
+              "wall_time_budget_seconds": 600,
+              "write_scope": []
+            },
+            {
+              "allowed_tools": [
+                "external_tool"
+              ],
+              "completion_condition": "recorded evidence satisfies the lane objective",
+              "dependencies": [
+                "d692c0e0-f8e2-4975-b6dd-9932f6e78f67"
+              ],
+              "kind": "research",
+              "lane_id": "70bda692-7ae4-4eeb-8576-f4fe4225e7f8",
+              "objective": "Research only evidence-triggered external facts",
+              "read_scope": [
+                "repository"
+              ],
+              "token_budget": 32000,
+              "wall_time_budget_seconds": 600,
+              "write_scope": []
+            },
+            {
+              "allowed_tools": [
+                "repository_read",
+                "write_file",
+                "command"
+              ],
+              "completion_condition": "recorded evidence satisfies the lane objective",
+              "dependencies": [
+                "70bda692-7ae4-4eeb-8576-f4fe4225e7f8"
+              ],
+              "kind": "implementation",
+              "lane_id": "c3a67552-eb16-4d23-a6a2-dd9af3033781",
+              "objective": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n",
+              "read_scope": [
+                "repository"
+              ],
+              "token_budget": 64000,
+              "wall_time_budget_seconds": 600,
+              "write_scope": [
+                "repository"
+              ]
+            },
+            {
+              "allowed_tools": [
+                "repository_read",
+                "command"
+              ],
+              "completion_condition": "recorded evidence satisfies the lane objective",
+              "dependencies": [
+                "c3a67552-eb16-4d23-a6a2-dd9af3033781"
+              ],
+              "kind": "validation",
+              "lane_id": "29b3082e-f42f-460f-8c07-574e19ea6056",
+              "objective": "Run progressive validation and produce failure evidence",
+              "read_scope": [
+                "repository"
+              ],
+              "token_budget": 32000,
+              "wall_time_budget_seconds": 600,
+              "write_scope": []
+            },
+            {
+              "allowed_tools": [
+                "repository_read"
+              ],
+              "completion_condition": "recorded evidence satisfies the lane objective",
+              "dependencies": [
+                "29b3082e-f42f-460f-8c07-574e19ea6056"
+              ],
+              "kind": "review",
+              "lane_id": "f08e7cad-6224-455d-a86b-74f44d5b7f82",
+              "objective": "Independently review the merged diff and validation evidence",
+              "read_scope": [
+                "repository"
+              ],
+              "token_budget": 32000,
+              "wall_time_budget_seconds": 600,
+              "write_scope": []
+            }
+          ],
+          "objective": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n",
+          "plan_id": "0bb23aff-de81-4f75-b73d-767c1335aac8",
+          "profile": "ultra",
+          "search_policy": "auto"
+        }
+      },
+      "event": "workflow_plan_created"
+    },
+    {
+      "data": {
+        "message": {
+          "content": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n",
+          "id": "77f75ad6-fd4e-40f8-9944-ec9d04ae2344",
+          "role": "user",
+          "timestamp": "2026-10-14T19:40:12.732411986Z",
+          "tool_calls": [],
+          "tool_results": [],
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "conversation_message_added"
+    },
+    {
+      "data": {
+        "base_head": "acb40b0713c30466dcbab73e6b98d1add8e5dd98",
+        "path": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+        "source_was_dirty": false
+      },
+      "event": "worktree_created"
+    },
+    {
+      "data": {
+        "initialized": [],
+        "unavailable": []
+      },
+      "event": "submodules_prepared"
+    },
+    {
+      "data": {
+        "head": "acb40b0713c30466dcbab73e6b98d1add8e5dd98",
+        "label": "session-start",
+        "patch_digest": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+      },
+      "event": "checkpoint_created"
+    },
+    {
+      "data": {
+        "files": 91,
+        "sensitive_files": 0,
+        "symbols": 188
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:40:12.960318634Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1730,
+              "class": "conversation_tail",
+              "estimated_tokens": 432,
+              "label": "conversation_messages[0..1]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1970,
+              "class": "task_state",
+              "estimated_tokens": 492,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 24724,
+              "class": "pinned_context",
+              "estimated_tokens": 6180,
+              "label": "reference/##",
+              "why_included": {
+                "reason": "pinned"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 33,
+              "class": "task_state",
+              "estimated_tokens": 9,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 43,
+              "class": "task_state",
+              "estimated_tokens": 10,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 10407,
+              "class": "retrieved_context",
+              "estimated_tokens": 2602,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 9,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 549,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 851,
+              "class": "instructions",
+              "estimated_tokens": 212,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "total_estimated_tokens": 11945,
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 15099,
+          "latency_ms": 1504,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 127,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:14.465858011Z",
+          "request_id": "7d073e87-b540-4aa9-97ef-cead5397400c",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 15099,
+        "output_tokens": 127,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": true,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 1024,
+          "paths": [
+            "src",
+            "tests"
+          ],
+          "pattern": "no_proxy",
+          "type": "repository_read"
+        },
+        "action_id": "66ea694c-5fa4-406c-be0b-a917c490abd0",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "66ea694c-5fa4-406c-be0b-a917c490abd0",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": true,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 1024,
+          "paths": [
+            "src",
+            "tests"
+          ],
+          "pattern": "all_proxy",
+          "type": "repository_read"
+        },
+        "action_id": "2eed8dce-a6d0-4d5c-9ab3-06f1b5f54383",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "2eed8dce-a6d0-4d5c-9ab3-06f1b5f54383",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": true,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 1024,
+          "paths": [
+            "src/pdm/models",
+            "src/pdm/termui.py",
+            "src/pdm/project"
+          ],
+          "pattern": "proxy",
+          "type": "repository_read"
+        },
+        "action_id": "3244ce4f-c3c9-4c93-ab1f-dde05ce6620f",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "3244ce4f-c3c9-4c93-ab1f-dde05ce6620f",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "8e07d818a3955e5923a6aafddd4ec80f022c6e099b41671fb9ec9c571ff7c67e",
+          "action_id": "66ea694c-5fa4-406c-be0b-a917c490abd0",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:14.471898979Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "4b274a156b00d75ebea8594664bcc65eb6e50ff90bc85dd772e23f250a0840ad",
+          "action_id": "2eed8dce-a6d0-4d5c-9ab3-06f1b5f54383",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:14.472451935Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "3c93acc30fc82ed7efacf7edd5c8014f062406c7f3b01cc027183856720f3120",
+          "action_id": "3244ce4f-c3c9-4c93-ab1f-dde05ce6620f",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:14.472998419Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "66ea694c-5fa4-406c-be0b-a917c490abd0"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "66ea694c-5fa4-406c-be0b-a917c490abd0",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:14.501869620Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "src",
+              "tests"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:14.473557947Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "66ea694c-5fa4-406c-be0b-a917c490abd0",
+        "affected_paths": [
+          "src",
+          "tests"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "66ea694c-5fa4-406c-be0b-a917c490abd0",
+        "stderr": "",
+        "stdout": "",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "66ea694c-5fa4-406c-be0b-a917c490abd0",
+        "evidence": "exit=Some(0); affected_paths=[\"src\", \"tests\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "2eed8dce-a6d0-4d5c-9ab3-06f1b5f54383"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "2eed8dce-a6d0-4d5c-9ab3-06f1b5f54383",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:14.505916662Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "src",
+              "tests"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:14.473557947Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "2eed8dce-a6d0-4d5c-9ab3-06f1b5f54383",
+        "affected_paths": [
+          "src",
+          "tests"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "2eed8dce-a6d0-4d5c-9ab3-06f1b5f54383",
+        "stderr": "",
+        "stdout": "",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "2eed8dce-a6d0-4d5c-9ab3-06f1b5f54383",
+        "evidence": "exit=Some(0); affected_paths=[\"src\", \"tests\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "3244ce4f-c3c9-4c93-ab1f-dde05ce6620f"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "3244ce4f-c3c9-4c93-ab1f-dde05ce6620f",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:14.509825105Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "src/pdm/models",
+              "src/pdm/termui.py",
+              "src/pdm/project"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:14.473557947Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "3244ce4f-c3c9-4c93-ab1f-dde05ce6620f",
+        "affected_paths": [
+          "src/pdm/models",
+          "src/pdm/termui.py",
+          "src/pdm/project"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "3244ce4f-c3c9-4c93-ab1f-dde05ce6620f",
+        "stderr": "",
+        "stdout": "src/pdm/models/session.py:55:    proxy: httpx.Proxy | None = None,\nsrc/pdm/models/session.py:57:    return httpx.HTTPTransport(verify=verify, cert=cert, trust_env=True, proxy=proxy, retries=MAX_RETRIES)\nsrc/pdm/models/session.py:154:        self._proxy_map = {\nsrc/pdm/models/session.py:155:            URLPattern(key): proxy for key, proxy in sorted(self._get_proxy_map(None, allow_env_proxies=True).items())\nsrc/pdm/models/session.py:187:        proxy = next((proxy for pattern, proxy in self._proxy_map.items() if pattern.matches(source_url)), None)\nsrc/pdm/models/session.py:188:        return _get_transport(verify=verify, cert=cert, proxy=proxy)\nsrc/pdm/project/core.py:639:            from tomlkit.container import OutOfOrderTableProxy\nsrc/pdm/project/core.py:656:            if isinstance(self.pyproject._data[\"tool\"], OutOfOrderTableProxy):\n",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "3244ce4f-c3c9-4c93-ab1f-dde05ce6620f",
+        "evidence": "exit=Some(0); affected_paths=[\"src/pdm/models\", \"src/pdm/termui.py\", \"src/pdm/project\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "files": 91,
+        "sensitive_files": 0,
+        "symbols": 188
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:40:14.663045356Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1730,
+              "class": "conversation_tail",
+              "estimated_tokens": 432,
+              "label": "conversation_messages[0..1]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1970,
+              "class": "task_state",
+              "estimated_tokens": 492,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 24724,
+              "class": "pinned_context",
+              "estimated_tokens": 6180,
+              "label": "reference/##",
+              "why_included": {
+                "reason": "pinned"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 3101,
+              "class": "task_state",
+              "estimated_tokens": 776,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 222,
+              "class": "task_state",
+              "estimated_tokens": 55,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 10407,
+              "class": "retrieved_context",
+              "estimated_tokens": 2602,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 8,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 550,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 851,
+              "class": "instructions",
+              "estimated_tokens": 211,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "total_estimated_tokens": 12756,
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 16133,
+          "latency_ms": 1696,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 202,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:16.360098919Z",
+          "request_id": "8e3456fb-f3c4-428a-af45-e37e15848118",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 16133,
+        "output_tokens": 202,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 16384,
+          "path": "src/pdm/models/session.py",
+          "type": "repository_read"
+        },
+        "action_id": "5627597a-f5eb-4354-a083-c2e12a414a45",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "5627597a-f5eb-4354-a083-c2e12a414a45",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": false,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 1024,
+          "paths": [
+            "src"
+          ],
+          "pattern": "_get_proxy_map|trust_env|NO_PROXY",
+          "type": "repository_read"
+        },
+        "action_id": "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "find",
+          "max_depth": 2,
+          "max_entries": 200,
+          "paths": [
+            "tests"
+          ],
+          "type": "repository_read"
+        },
+        "action_id": "0e082a57-d359-4bc8-9924-7d9890066234",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "0e082a57-d359-4bc8-9924-7d9890066234",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "e8b6d43b376a27a4d82b4d5f9f2724efff526518404adb2f6907753cde28b65b",
+          "action_id": "5627597a-f5eb-4354-a083-c2e12a414a45",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:16.366312641Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "504ff4a1a8c9605dfedc17df6772c7df87e3415342345ff8dd69ad58f0378cf9",
+          "action_id": "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:16.366975022Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "3d5227a10cc3e293cb1b017d687aa75c0e15621fd61bd4fd782155d02ba3de8e",
+          "action_id": "0e082a57-d359-4bc8-9924-7d9890066234",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:16.367572461Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "5627597a-f5eb-4354-a083-c2e12a414a45"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "5627597a-f5eb-4354-a083-c2e12a414a45",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:16.382133481Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "src/pdm/models/session.py"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:16.368182123Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "5627597a-f5eb-4354-a083-c2e12a414a45",
+        "affected_paths": [
+          "src/pdm/models/session.py"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "5627597a-f5eb-4354-a083-c2e12a414a45",
+        "stderr": "",
+        "stdout": "from __future__ import annotations\n\nimport os\nimport sys\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import TYPE_CHECKING, Any, cast\n\nimport hishel\nimport httpx\nimport msgpack\nfrom hishel._serializers import Metadata\nfrom httpcore import Request, Response\nfrom unearth.fetchers import PyPIClient\n\nfrom pdm.__version__ import __version__\nfrom pdm.termui import logger\n\nif TYPE_CHECKING:\n    from ssl import SSLContext\n\n    from pdm._types import RepositoryConfig\n\n\ndef _create_truststore_ssl_context() -> SSLContext | None:\n    if sys.version_info < (3, 10):\n        return None\n\n    try:\n        import ssl\n    except ImportError:\n        return None\n\n    try:\n        import truststore\n    except ImportError:\n        return None\n\n    import certifi\n\n    ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)\n    ctx.load_verify_locations(certifi.where())\n    return ctx\n\n\n_ssl_context = _create_truststore_ssl_context()\nCACHES_TTL = 7 * 24 * 60 * 60  # 7 days\nMAX_RETRIES = 4\n\n\n@lru_cache(maxsize=None)\ndef _get_transport(\n    verify: bool | SSLContext | str = True,\n    cert: tuple[str, str | None] | None = None,\n    proxy: httpx.Proxy | None = None,\n) -> httpx.BaseTransport:\n    return httpx.HTTPTransport(verify=verify, cert=cert, trust_env=True, proxy=proxy, retries=MAX_RETRIES)\n\n\nclass MsgPackSerializer(hishel.BaseSerializer):\n    KNOWN_REQUEST_EXTENSIONS = (\"timeout\", \"sni_hostname\")\n    KNOWN_RESPONSE_EXTENSIONS = (\"http_version\", \"reason_phrase\")\n    DATETIME_FORMAT = \"%Y-%m-%dT%H:%M:%S.%fZ\"\n\n    def dumps(self, response: Response, request: Request, metadata: Metadata) -> bytes:\n        from hishel._utils import normalized_url\n\n        response_dict = {\n            \"status\": response.status,\n            \"headers\": response.headers,\n            \"content\": response.content,\n            \"extensions\": {\n                key: value for key, value in response.extensions.items() if key in self.KNOWN_RESPONSE_EXTENSIONS\n            },\n        }\n\n        request_dict = {\n            \"method\": request.method.decode(\"ascii\"),\n            \"url\": normalized_url(request.url),\n            \"headers\": request.headers,\n            \"extensions\": {\n                key: value for key, value in request.extensions.items() if key in self.KNOWN_REQUEST_EXTENSIONS\n            },\n        }\n\n        metadata_dict = {\n            \"cache_key\": metadata[\"cache_key\"],\n            \"number_of_uses\": metadata[\"number_of_uses\"],\n            \"created_at\": metadata[\"created_at\"].strftime(self.DATETIME_FORMAT),\n        }\n\n        full_dict = {\n            \"response\": response_dict,\n            \"request\": request_dict,\n            \"metadata\": metadata_dict,\n        }\n        return cast(bytes, msgpack.packb(full_dict, use_bin_type=True))\n\n    def loads(self, data: bytes) -> tuple[Response, Request, Metadata]:\n        from datetime import datetime\n\n        full_dict = cast(\"dict[str, Any]\", msgpack.loads(data, raw=False))\n\n        response_dict = full_dict[\"response\"]\n        request_dict = full_dict[\"request\"]\n        metadata_dict = full_dict[\"metadata\"]\n        metadata_dict[\"created_at\"] = datetime.strptime(metadata_dict[\"created_at\"], self.DATETIME_FORMAT)\n\n        response = Response(\n            status=response_dict[\"status\"],\n            headers=response_dict[\"headers\"],\n            content=response_dict[\"content\"],\n            extensions=response_dict[\"extensions\"],\n        )\n\n        request = Request(\n            method=request_dict[\"method\"],\n            url=request_dict[\"url\"],\n            headers=request_dict[\"headers\"],\n            extensions=request_dict[\"extensions\"],\n        )\n\n        metadata = Metadata(\n            cache_key=metadata_dict[\"cache_key\"],\n            created_at=metadata_dict[\"created_at\"],\n            number_of_uses=metadata_dict[\"number_of_uses\"],\n        )\n\n        return response, request, metadata\n\n    @property\n    def is_binary(self) -> bool:\n        return True\n\n\nclass PDMPyPIClient(PyPIClient):\n    def __init__(self, *, sources: list[RepositoryConfig], cache_dir: Path | None = None, **kwargs: Any) -> None:\n        from httpx._utils import URLPattern\n        from unearth.fetchers.sync import LocalFSTransport\n\n        if cache_dir is None:\n\n            def cache_transport(transport: httpx.BaseTransport) -> httpx.BaseTransport:\n                return transport\n        else:\n            storage = hishel.FileStorage(serializer=MsgPackSerializer(), base_path=cache_dir, ttl=CACHES_TTL)\n            controller = hishel.Controller()\n\n            def cache_transport(transport: httpx.BaseTransport) -> httpx.BaseTransport:\n                return hishel.CacheTransport(transport, storage, controller)\n\n        mounts: dict[str, httpx.BaseTransport] = {\"file://\": LocalFSTransport()}\n        self._trusted_host_ports: set[tuple[str, int | None]] = set()\n        self._proxy_map = {\n            URLPattern(key): proxy for key, proxy in sorted(self._get_proxy_map(None, allow_env_proxies=True).items())\n        }\n        for s in sources:\n            assert s.url is not None\n            url = httpx.URL(s.url)\n            if s.verify_ssl is False:\n                self._trusted_host_ports.add((url.host, url.port))\n            if s.name == \"pypi\":\n                kwargs[\"transport\"] = self._transport_for(s)\n                continue\n            mounts[f\"{url.scheme}://{url.netloc.decode('ascii')}/\"] = cache_transport(self._transport_for(s))\n        mounts.update(kwargs.pop(\"mounts\", None) or {})\n        kwargs.update(follow_redirects=True)\n\n        httpx.Client.__init__(self, mounts=mounts, **kwargs)\n\n        self.headers[\"User-Agent\"] = self._make_user_agent()\n        self.event_hooks[\"response\"].append(self.on_response)\n        self._transport = cache_transport(self._transport)  # type: ignore[has-type]\n\n    def _transport_for(self, source: RepositoryConfig) -> httpx.BaseTransport:\n        if source.verify_ssl is False:\n            verify: str | bool | SSLContext = False\n        elif source.ca_certs:\n            verify = source.ca_certs\n        else:\n            verify = os.getenv(\"REQUESTS_CA_BUNDLE\") or os.getenv(\"CURL_CA_BUNDLE\") or _ssl_context or True\n        if source.client_cert:\n            cert = (source.client_cert, source.client_key)\n        else:\n            cert = None\n        source_url = httpx.URL(cast(str, source.url))\n        proxy = next((proxy for pattern, proxy in self._proxy_map.items() if pattern.matches(source_url)), None)\n        return _get_transport(verify=verify, cert=cert, proxy=proxy)\n\n    def _make_user_agent(self) -> str:\n        import platform\n\n        return f\"pdm/{__version__} {platform.python_implementation()}/{platform.python_version()} {platform.system()}/{platform.release()}\"\n\n    def on_response(self, response: httpx.Response) -> None:\n        from unearth.utils import ARCHIVE_EXTENSIONS\n\n        if response.extensions.get(\"from_cache\") and response.url.path.endswith(ARCHIVE_EXTENSIONS):\n            logger.info(\"Using cached response for %s\", response.url)\n",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "5627597a-f5eb-4354-a083-c2e12a414a45",
+        "evidence": "exit=Some(0); affected_paths=[\"src/pdm/models/session.py\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "80e4bf10-dac2-49a1-8c9a-7a353f68367a"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:16.387014326Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "src"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:16.368182123Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+        "affected_paths": [
+          "src"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+        "stderr": "",
+        "stdout": "",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+        "evidence": "exit=Some(0); affected_paths=[\"src\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "0e082a57-d359-4bc8-9924-7d9890066234"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "0e082a57-d359-4bc8-9924-7d9890066234",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "bb8bb21f022991431f31e4324c704c98085d3ec373fb194c7e4a3cf50ca3ffd9",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:16.390816139Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "tests"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:16.368182123Z",
+          "structured_output": null,
+          "tool_id": "native:find",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "0e082a57-d359-4bc8-9924-7d9890066234",
+        "affected_paths": [
+          "tests"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "0e082a57-d359-4bc8-9924-7d9890066234",
+        "stderr": "",
+        "stdout": "tests\ntests/conftest.py\ntests/fixtures\ntests/fixtures/constraints.txt\ntests/fixtures/artifacts\ntests/fixtures/artifacts/zipp-3.7.0-py3-none-any.whl\ntests/fixtures/artifacts/PyFunctional-1.4.3-py3-none-any.whl\ntests/fixtures/artifacts/typing_extensions-4.4.0-py3-none-any.whl\ntests/fixtures/artifacts/demo-0.0.1-cp36-cp36m-win_amd64.whl\ntests/fixtures/artifacts/pdm_backend-2.1.4-py3-none-any.whl\ntests/fixtures/artifacts/zipp-3.6.0-py3-none-any.whl\ntests/fixtures/artifacts/future_fstrings-1.2.0.tar.gz\ntests/fixtures/artifacts/first-2.0.2-py2.py3-none-any.whl\ntests/fixtures/artifacts/demo-0.0.1.zip\ntests/fixtures/artifacts/pdm_hello-0.1.0-py3-none-any.whl\ntests/fixtures/artifacts/editables-0.2-py3-none-any.whl\ntests/fixtures/artifacts/caj2pdf-restructured-0.1.0a6.tar.gz\ntests/fixtures/artifacts/jmespath-0.10.0-py2.py3-none-any.whl\ntests/fixtures/artifacts/poetry_core-1.3.2-py3-none-any.whl\ntests/fixtures/artifacts/pdm_pep517-1.0.0-py3-none-any.whl\ntests/fixtures/artifacts/demo-0.0.1-py2.py3-none-any.whl\ntests/fixtures/artifacts/setuptools-68.0.0-py3-none-any.whl\ntests/fixtures/artifacts/demo-0.0.1.tar.gz\ntests/fixtures/artifacts/importlib_metadata-4.8.3-py3-none-any.whl\ntests/fixtures/artifacts/future_fstrings-1.2.0-py2.py3-none-any.whl\ntests/fixtures/artifacts/pdm_hello-0.1.0-py3-none-win_amd64.whl\ntests/fixtures/artifacts/wheel-0.37.1-py2.py3-none-any.whl\ntests/fixtures/artifacts/flit_core-3.6.0-py3-none-any.whl\ntests/fixtures/artifacts/celery-4.4.2-py2.py3-none-any.whl\ntests/fixtures/pyproject.toml\ntests/fixtures/json\ntests/fixtures/json/zipp.json\ntests/fixtures/Pipfile\ntests/fixtures/pypi.json\ntests/fixtures/requirements-include.txt\ntests/fixtures/requirements.txt\ntests/fixtures/poetry-error.toml\ntests/fixtures/poetry-new.toml\ntests/fixtures/index\ntests/fixtures/index/demo.html\ntests/fixtures/index/pep345-legacy.html\ntests/fixtures/index/wheel.html\ntests/fixtures/index/future-fstrings.html\ntests/fixtures/__init__.py\ntests/fixtures/projects\ntests/fixtures/projects/test-removal\ntests/fixtures/projects/demo-#-with-hash\ntests/fixtures/projects/test-plugin-pdm\ntests/fixtures/projects/demo-src-package\ntests/fixtures/projects/demo_extras\ntests/fixtures/projects/demo\ntests/fixtures/projects/test-plugin\ntests/fixtures/projects/test-package-type-fixer\ntests/fixtures/projects/poetry-with-circular-dep\ntests/fixtures/projects/demo-package-has-dep-with-extras\ntests/fixtures/projects/demo-prerelease\ntests/fixtures/projects/demo-module\ntests/fixtures/projects/demo-failure\ntests/fixtures/projects/demo-package\ntests/fixtures/projects/demo-failure-no-dep\ntests/fixtures/projects/demo-parent-package\ntests/fixtures/projects/test-monorepo\ntests/fixtures/projects/poetry-demo\ntests/fixtures/projects/__init__.py\ntests/fixtures/projects/demo-combined-extras\ntests/fixtures/projects/test-setuptools\ntests/fixtures/projects/flit-demo\ntests/fixtures/projects/test-hatch-static\ntests/test_formats.py\ntests/test_signals.py\ntests/test_utils.py\ntests/models\ntests/models/test_candidates.py\ntests/models/test_backends.py\ntests/models/test_specifiers.py\ntests/models/test_requirements.py\ntests/models/test_versions.py\ntests/models/test_setup_parsing.py\ntests/models/test_marker.py\ntests/models/__init__.py\ntests/resolver\ntests/resolver/test_uv_resolver.py\ntests/resolver/test_resolve.py\ntests/resolver/__init__.py\ntests/test_installer.py\ntests/test_integration.py\ntests/cli\ntests/cli/test_template.py\ntests/cli/test_python.py\ntests/cli/test_update.py\ntests/cli/test_use.py\ntests/cli/conftest.py\ntests/cli/test_self_command.py\ntests/cli/test_utils.py\ntests/cli/test_cache.py\ntests/cli/test_venv.py\ntests/cli/test_hooks.py\ntests/cli/test_config.py\ntests/cli/test_remove.py\ntests/cli/test_publish.py\ntests/cli/test_run.py\ntests/cli/test_fix.py\ntests/cli/test_install.py\ntests/cli/test_init.py\ntests/cli/test_build.py\ntests/cli/test_lock.py\ntests/cli/__init__.py\ntests/cli/test_list.py\ntests/cli/test_outdated.py\ntests/cli/test_others.py\ntests/cli/test_add.py\ntests/test_plugin.py\ntests/test_project.py\ntests/__init__.py\n",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "0e082a57-d359-4bc8-9924-7d9890066234",
+        "evidence": "exit=Some(0); affected_paths=[\"tests\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "files": 91,
+        "sensitive_files": 0,
+        "symbols": 188
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:40:16.543323647Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1730,
+              "class": "conversation_tail",
+              "estimated_tokens": 432,
+              "label": "conversation_messages[0..1]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1970,
+              "class": "task_state",
+              "estimated_tokens": 492,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 24724,
+              "class": "pinned_context",
+              "estimated_tokens": 6180,
+              "label": "reference/##",
+              "why_included": {
+                "reason": "pinned"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 16577,
+              "class": "task_state",
+              "estimated_tokens": 4145,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 357,
+              "class": "task_state",
+              "estimated_tokens": 89,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 10407,
+              "class": "retrieved_context",
+              "estimated_tokens": 2602,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 8,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 550,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 503,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 851,
+              "class": "instructions",
+              "estimated_tokens": 212,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "total_estimated_tokens": 16159,
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 20326,
+          "latency_ms": 4080,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 636,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:20.626014964Z",
+          "request_id": "bca7bd15-fdf0-4dfb-b8f4-e6e0e09ea7c5",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 20326,
+        "output_tokens": 636,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": true,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 200,
+          "paths": [
+            "tests"
+          ],
+          "pattern": "proxy",
+          "type": "repository_read"
+        },
+        "action_id": "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": false,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 200,
+          "paths": [],
+          "pattern": "_get_proxy_map|get_environment_proxies|URLPattern",
+          "type": "repository_read"
+        },
+        "action_id": "f0194302-85a3-430b-a521-1c9e90bf6028",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "f0194302-85a3-430b-a521-1c9e90bf6028",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 6144,
+          "path": "pyproject.toml",
+          "type": "repository_read"
+        },
+        "action_id": "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "7d64cac2ae376c5a49153cf40cd54e7002a31e1debc82b7e47a3fee161c0d5a9",
+          "action_id": "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:20.633048452Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "2a5e9c5228e8066a7988a9608286438f0d39c1272427cff76550518a77a536ee",
+          "action_id": "f0194302-85a3-430b-a521-1c9e90bf6028",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:20.633834815Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "f7d7f943edfbb0e3adfae2db2a4af9994dd4a1b88bfcdf3b1f7c89f984a8bf68",
+          "action_id": "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:20.635937304Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:20.660564624Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "tests"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:20.636830167Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+        "affected_paths": [
+          "tests"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+        "stderr": "",
+        "stdout": "",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+        "evidence": "exit=Some(0); affected_paths=[\"tests\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "f0194302-85a3-430b-a521-1c9e90bf6028"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "f0194302-85a3-430b-a521-1c9e90bf6028",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:20.664061015Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "."
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:20.636830167Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "f0194302-85a3-430b-a521-1c9e90bf6028",
+        "affected_paths": [
+          "."
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "f0194302-85a3-430b-a521-1c9e90bf6028",
+        "stderr": "",
+        "stdout": "",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "f0194302-85a3-430b-a521-1c9e90bf6028",
+        "evidence": "exit=Some(0); affected_paths=[\".\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "a8cb3909-dc51-46e5-b3b5-f57af0c125ef"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:20.668953911Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "pyproject.toml"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": true
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:20.636830167Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+        "affected_paths": [
+          "pyproject.toml"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": true
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+        "stderr": "",
+        "stdout": "[build-system]\nrequires = [\"pdm-backend\", \"pdm-build-locked\"]\nbuild-backend = \"pdm.backend\"\n\n[project]\n# PEP 621 project metadata\n# See https://www.python.org/dev/peps/pep-0621/\nname = \"pdm\"\ndescription = \"A modern Python package and dependency manager supporting the latest PEP standards\"\nauthors = [\n    {name = \"Frost Ming\", email = \"mianghong@gmail.com\"},\n]\ndynamic = [\"version\"]\nrequires-python = \">=3.8\"\nlicense = {text = \"MIT\"}\ndependencies = [\n    \"blinker\",\n    \"packaging>=20.9,!=22.0\",\n    \"platformdirs\",\n    \"rich>=12.3.0\",\n    \"virtualenv>=20\",\n    \"pyproject-hooks\",\n    \"unearth>=0.17.0\",\n    \"dep-logic>=0.4.4\",\n    \"findpython>=0.6.0,<1.0.0a0\",\n    \"tomlkit>=0.11.1,<1\",\n    \"shellingham>=1.3.2\",\n    \"python-dotenv>=0.15\",\n    \"resolvelib>=1.1\",\n    \"installer<0.8,>=0.7\",\n    \"truststore>=0.9; python_version >= \\\"3.10\\\"\",\n    \"tomli>=1.1.0; python_version < \\\"3.11\\\"\",\n    \"importlib-resources>=5; python_version < \\\"3.9\\\"\",\n    \"importlib-metadata>=3.6; python_version < \\\"3.10\\\"\",\n    \"hishel>=0.0.32,<0.1.0\",\n    \"msgpack>=1.0\",\n    \"pbs-installer>=2024.4.18\",\n    \"httpx[socks]<1,>0.20\",\n    \"filelock>=3.13\",\n    \"httpcore>=1.0.6\",\n    \"certifi>=2024.8.30\",\n]\nreadme = \"README.md\"\nkeywords = [\"packaging\", \"dependency\", \"workflow\"]\nclassifiers = [\n    \"Topic :: Software Development :: Build Tools\",\n    \"Programming Language :: Python :: 3\",\n    \"Programming Language :: Python :: 3.8\",\n    \"Programming Language :: Python :: 3.9\",\n    \"Programming Language :: Python :: 3.10\",\n    \"Programming Language :: Python :: 3.11\",\n    \"Programming Language :: Python :: 3.12\",\n    \"Programming Language :: Python :: 3.13\",\n]\n\n[project.urls]\nHomepage = \"https://pdm-project.org\"\nRepository = \"https://github.com/pdm-project/pdm\"\nDocumentation = \"https://pdm-project.org\"\nChangelog = \"https://pdm-project.org/latest/dev/changelog/\"\n\n[project.optional-dependencies]\npytest = [\n    \"pytest\",\n    \"pytest-mock\",\n]\ncopier = [\"copier>=8.0.0\"]\ncookiecutter = [\"cookiecutter\"]\nkeyring = [\"keyring\"]\ntemplate = [\n    \"pdm[copier,cookiecutter]\",\n]\nall = [\n    \"pdm[keyring,template]\",\n]\n\n[project.scripts]\npdm = \"pdm.core:main\"\n\n[tool.pdm.version]\nsource = \"scm\"\nwrite_to = \"pdm/VERSION\"\n\n[tool.pdm.build]\nexcludes = [\"./**/.git\"]\npackage-dir = \"src\"\nincludes = [\"src/pdm\"]\nsource-includes = [\"tests\", \"typings\", \"CHANGELOG.md\", \"LICENSE\", \"README.md\", \"tox.ini\"]\n# editables backend doesn't work well with namespace packages\neditable-backend = \"path\"\nlocked = true\nlocked-groups = [\"default\", \"all\"]\n\n[tool.pdm.scripts]\npre_release = \"python tasks/max_versions.py\"\nrelease = \"python tasks/release.py\"\ntest = \"pytest\"\ncoverage = {shell = \"\"\"\\\n                    python -m pytest \\\n                              --verbosity=3 \\\n                              --cov=src/pdm \\\n                              --cov-branch \\\n                              --cov-report term-missing \\\n                              tests/\n                    \"\"\"}\ntox = \"tox\"\ndoc = {cmd = \"mkdocs serve\", help = \"Start the dev server for docs preview\"}\nlint = \"pre-commit run --all-files\"\ncomplete = {call = \"tasks.complete:main\", help = \"Create autocomplete files for bash and fish\"}\n\n[dependency-groups]\ntest = [\n    \"pdm[pytest]\",\n    \"pytest-cov\",\n    \"pytest-xdist>=1.31.0\",\n    \"pytest-rerunfailures>=10.2\",\n    \"pytest-httpserver>=1.0.6\",\n]\ntox = [\n    \"tox\",\n    \"tox-pdm>=0.5\",\n]\ndoc = [\n    \"mkdocs>=1.1\",\n    \"mkdocs-material>=7.3\",\n    \"mkdocstrings[python]>=0.18\",\n    \"setuptools>=62.3.3\",\n    \"markdown-exec>=0.7.0\",\n    \"mkdocs-redirects>=1.2.0\",\n    \"mkdocs-version-annotations>=1.0.0\",\n]\nworkflow = [\n    \"parver>=0.3.1\",\n    \"towncrier>=20\",\n    \"pycomplete~=0.3\",\n]\n\n[tool.ruff]\nline-length = 120\nexclude = [\"tests/fixtures\"]\ntarget-version = \"py38\"\nsrc = [\"src\"]\n\n[tool.ruff.lint]\nextend-select = [\n  \"I\",    # isort\n  \"B\",    # flake8-bugbear\n  \"C4\",   # flake8-comprehensions\n  \"FA\",   # flake8-future-annotations\n  \"PGH\",  # pygrep-hooks\n  \"RUF\",  # ruff\n  \"W\",    # pycodestyle\n  \"UP\",   # pyupgrade\n  \"YTT\",  # flake8-2020\n]\nextend-ignore = [\"B018\", \"B019\", \"RUF018\"]\n\n[tool.ruff.lint.mccabe]\nmax-complexity = 10\n\n[tool.ruff.lint.isort]\nknown-first-party = [\"pdm\"]\n\n[tool.towncrier]\npackage = \"pdm\"\nfilename = \"CHANGELOG.md\"\nissue_format = \"[#{issue}](https://github.com/pdm-project/pdm/issues/{issue})\"\ndirectory = \"news/\"\ntitle_format = \"## Release v{version} ({project_date})\"\nunderlines = [\"\", \"\", \"\"]\n\n  [[tool.towncrier.type]]\n  directory = \"break\"\n  name = \"Breaking Changes\"\n  showcontent = true\n\n  [[tool.towncrier.type]]\n  directory = \"feature\"\n  name = \"Features & Improvements\"\n  showcontent = true\n\n  [[tool.towncrier.type]]\n  directory = \"bugfix\"\n  name = \"Bug Fixes\"\n  showcontent = true\n\n  [[tool.towncrier.type]]\n  directory = \"doc\"\n  name = \"Documentation\"\n  showcontent = true\n\n  [[tool.towncrier.type]]\n  directory = \"dep\"\n  name = \"Dependencies\"\n  showcontent = true\n\n  [[tool.towncrier.type]]\n  directory = \"removal\"\n  name = \"Removals and Deprecations\"\n  showcontent = true\n\n  [[tool.towncrier.type]]\n  directory = \"misc\"\n  name = \"Miscellany\"\n  showcontent = true\n\n[tool.pytest.ini_options]\nfilterwarnings = [\n  \"ignore::DeprecationWarning\"\n]\nmarkers = [\n    \"network: Tests that require network\",\n    \"integration: Run with all Python versions\",\n    \"path: Tests that compare with the system paths\",\n    \"deprecated: Tests about deprecated features\",\n]\naddopts = \"-r aR\"\ntestpaths = [\n    \"tests/\",\n]\n\n[tool.codespell]\nignore-words-list = \"ba,overriden,te\"\n\n[tool.coverage.run]\nbranch = true\nsource = [\"pdm\"]\nomit = [\n    \"*/pdm/__main__.py\",\n    \"*/pdm/pep582/sitecustomize.py\",\n    \"*/pdm/models/in_process/*.py\",\n    \"*/pdm/models/setup.py\",\n    \"*/pdm-test-*-env/*\",\n]\n\n[tool.coverage.report]\n# Regexes for lines to exclude from consideration\nexclude_lines = [\n    \"pragma: no cover\",\n    # Don't complain about missing debug-only code:\n    \"def __repr__\",\n    \"if self.debug\",\n    # Don't complain if tests don't hit defensive assertion code:\n    \"raise AssertionError\",\n    \"raise NotImplementedError\",\n    # Don't complain if non-runnable code isn't run:\n    \"if __name__ == .__main__.:\",\n    \"if TYPE_",
+        "truncated": true,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+        "evidence": "exit=Some(0); affected_paths=[\"pyproject.toml\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "files": 91,
+        "sensitive_files": 0,
+        "symbols": 188
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:40:20.824991684Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1730,
+              "class": "conversation_tail",
+              "estimated_tokens": 432,
+              "label": "conversation_messages[0..1]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1970,
+              "class": "task_state",
+              "estimated_tokens": 492,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 24724,
+              "class": "pinned_context",
+              "estimated_tokens": 6180,
+              "label": "reference/##",
+              "why_included": {
+                "reason": "pinned"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 25362,
+              "class": "task_state",
+              "estimated_tokens": 6341,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 433,
+              "class": "task_state",
+              "estimated_tokens": 108,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 10407,
+              "class": "retrieved_context",
+              "estimated_tokens": 2602,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 8,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 550,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 851,
+              "class": "instructions",
+              "estimated_tokens": 211,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "total_estimated_tokens": 18374,
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 23415,
+          "latency_ms": 2724,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 368,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:23.551000003Z",
+          "request_id": "cd0f288c-f499-4e39-8dd6-c2e46b922612",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 23511,
+          "latency_ms": 1505,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 218,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:25.058163996Z",
+          "request_id": "966bf18b-c977-4e6b-bd7d-c7b135745b22",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 23511,
+          "latency_ms": 1743,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 150,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:26.802922480Z",
+          "request_id": "488d8ac5-bd7c-411c-9094-4a6e82349b0c",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 23511,
+        "output_tokens": 150,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 16384,
+          "path": "src/pdm/models/session.py",
+          "type": "repository_read"
+        },
+        "action_id": "5ef7f88d-071d-4390-8151-c587d2ced3db",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "5ef7f88d-071d-4390-8151-c587d2ced3db",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": false,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 1024,
+          "paths": [
+            "tests"
+          ],
+          "pattern": "session|PDMPyPIClient",
+          "type": "repository_read"
+        },
+        "action_id": "8f4c6415-e871-4051-b6cc-22a423098cb4",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "8f4c6415-e871-4051-b6cc-22a423098cb4",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 2048,
+          "path": "news/3255.bugfix.md",
+          "type": "repository_read"
+        },
+        "action_id": "2e3f09ee-28b2-4062-8515-033fedf51420",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "2e3f09ee-28b2-4062-8515-033fedf51420",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "e8b6d43b376a27a4d82b4d5f9f2724efff526518404adb2f6907753cde28b65b",
+          "action_id": "5ef7f88d-071d-4390-8151-c587d2ced3db",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:26.810298008Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "9f79637be8ef1cb4d650bf3a5ed4acca510ed5c689251617e9f10fc8f47a9ea4",
+          "action_id": "8f4c6415-e871-4051-b6cc-22a423098cb4",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:26.811067800Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "25c55c933bb964404a8a0eb41f6bff614ba7474dd6ed85e91f0ef708cf309eb9",
+          "action_id": "2e3f09ee-28b2-4062-8515-033fedf51420",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:26.811871366Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "5ef7f88d-071d-4390-8151-c587d2ced3db"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "5ef7f88d-071d-4390-8151-c587d2ced3db",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:26.818778266Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "src/pdm/models/session.py"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:26.812404344Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "5ef7f88d-071d-4390-8151-c587d2ced3db",
+        "affected_paths": [
+          "src/pdm/models/session.py"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "5ef7f88d-071d-4390-8151-c587d2ced3db",
+        "stderr": "",
+        "stdout": "from __future__ import annotations\n\nimport os\nimport sys\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import TYPE_CHECKING, Any, cast\n\nimport hishel\nimport httpx\nimport msgpack\nfrom hishel._serializers import Metadata\nfrom httpcore import Request, Response\nfrom unearth.fetchers import PyPIClient\n\nfrom pdm.__version__ import __version__\nfrom pdm.termui import logger\n\nif TYPE_CHECKING:\n    from ssl import SSLContext\n\n    from pdm._types import RepositoryConfig\n\n\ndef _create_truststore_ssl_context() -> SSLContext | None:\n    if sys.version_info < (3, 10):\n        return None\n\n    try:\n        import ssl\n    except ImportError:\n        return None\n\n    try:\n        import truststore\n    except ImportError:\n        return None\n\n    import certifi\n\n    ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)\n    ctx.load_verify_locations(certifi.where())\n    return ctx\n\n\n_ssl_context = _create_truststore_ssl_context()\nCACHES_TTL = 7 * 24 * 60 * 60  # 7 days\nMAX_RETRIES = 4\n\n\n@lru_cache(maxsize=None)\ndef _get_transport(\n    verify: bool | SSLContext | str = True,\n    cert: tuple[str, str | None] | None = None,\n    proxy: httpx.Proxy | None = None,\n) -> httpx.BaseTransport:\n    return httpx.HTTPTransport(verify=verify, cert=cert, trust_env=True, proxy=proxy, retries=MAX_RETRIES)\n\n\nclass MsgPackSerializer(hishel.BaseSerializer):\n    KNOWN_REQUEST_EXTENSIONS = (\"timeout\", \"sni_hostname\")\n    KNOWN_RESPONSE_EXTENSIONS = (\"http_version\", \"reason_phrase\")\n    DATETIME_FORMAT = \"%Y-%m-%dT%H:%M:%S.%fZ\"\n\n    def dumps(self, response: Response, request: Request, metadata: Metadata) -> bytes:\n        from hishel._utils import normalized_url\n\n        response_dict = {\n            \"status\": response.status,\n            \"headers\": response.headers,\n            \"content\": response.content,\n            \"extensions\": {\n                key: value for key, value in response.extensions.items() if key in self.KNOWN_RESPONSE_EXTENSIONS\n            },\n        }\n\n        request_dict = {\n            \"method\": request.method.decode(\"ascii\"),\n            \"url\": normalized_url(request.url),\n            \"headers\": request.headers,\n            \"extensions\": {\n                key: value for key, value in request.extensions.items() if key in self.KNOWN_REQUEST_EXTENSIONS\n            },\n        }\n\n        metadata_dict = {\n            \"cache_key\": metadata[\"cache_key\"],\n            \"number_of_uses\": metadata[\"number_of_uses\"],\n            \"created_at\": metadata[\"created_at\"].strftime(self.DATETIME_FORMAT),\n        }\n\n        full_dict = {\n            \"response\": response_dict,\n            \"request\": request_dict,\n            \"metadata\": metadata_dict,\n        }\n        return cast(bytes, msgpack.packb(full_dict, use_bin_type=True))\n\n    def loads(self, data: bytes) -> tuple[Response, Request, Metadata]:\n        from datetime import datetime\n\n        full_dict = cast(\"dict[str, Any]\", msgpack.loads(data, raw=False))\n\n        response_dict = full_dict[\"response\"]\n        request_dict = full_dict[\"request\"]\n        metadata_dict = full_dict[\"metadata\"]\n        metadata_dict[\"created_at\"] = datetime.strptime(metadata_dict[\"created_at\"], self.DATETIME_FORMAT)\n\n        response = Response(\n            status=response_dict[\"status\"],\n            headers=response_dict[\"headers\"],\n            content=response_dict[\"content\"],\n            extensions=response_dict[\"extensions\"],\n        )\n\n        request = Request(\n            method=request_dict[\"method\"],\n            url=request_dict[\"url\"],\n            headers=request_dict[\"headers\"],\n            extensions=request_dict[\"extensions\"],\n        )\n\n        metadata = Metadata(\n            cache_key=metadata_dict[\"cache_key\"],\n            created_at=metadata_dict[\"created_at\"],\n            number_of_uses=metadata_dict[\"number_of_uses\"],\n        )\n\n        return response, request, metadata\n\n    @property\n    def is_binary(self) -> bool:\n        return True\n\n\nclass PDMPyPIClient(PyPIClient):\n    def __init__(self, *, sources: list[RepositoryConfig], cache_dir: Path | None = None, **kwargs: Any) -> None:\n        from httpx._utils import URLPattern\n        from unearth.fetchers.sync import LocalFSTransport\n\n        if cache_dir is None:\n\n            def cache_transport(transport: httpx.BaseTransport) -> httpx.BaseTransport:\n                return transport\n        else:\n            storage = hishel.FileStorage(serializer=MsgPackSerializer(), base_path=cache_dir, ttl=CACHES_TTL)\n            controller = hishel.Controller()\n\n            def cache_transport(transport: httpx.BaseTransport) -> httpx.BaseTransport:\n                return hishel.CacheTransport(transport, storage, controller)\n\n        mounts: dict[str, httpx.BaseTransport] = {\"file://\": LocalFSTransport()}\n        self._trusted_host_ports: set[tuple[str, int | None]] = set()\n        self._proxy_map = {\n            URLPattern(key): proxy for key, proxy in sorted(self._get_proxy_map(None, allow_env_proxies=True).items())\n        }\n        for s in sources:\n            assert s.url is not None\n            url = httpx.URL(s.url)\n            if s.verify_ssl is False:\n                self._trusted_host_ports.add((url.host, url.port))\n            if s.name == \"pypi\":\n                kwargs[\"transport\"] = self._transport_for(s)\n                continue\n            mounts[f\"{url.scheme}://{url.netloc.decode('ascii')}/\"] = cache_transport(self._transport_for(s))\n        mounts.update(kwargs.pop(\"mounts\", None) or {})\n        kwargs.update(follow_redirects=True)\n\n        httpx.Client.__init__(self, mounts=mounts, **kwargs)\n\n        self.headers[\"User-Agent\"] = self._make_user_agent()\n        self.event_hooks[\"response\"].append(self.on_response)\n        self._transport = cache_transport(self._transport)  # type: ignore[has-type]\n\n    def _transport_for(self, source: RepositoryConfig) -> httpx.BaseTransport:\n        if source.verify_ssl is False:\n            verify: str | bool | SSLContext = False\n        elif source.ca_certs:\n            verify = source.ca_certs\n        else:\n            verify = os.getenv(\"REQUESTS_CA_BUNDLE\") or os.getenv(\"CURL_CA_BUNDLE\") or _ssl_context or True\n        if source.client_cert:\n            cert = (source.client_cert, source.client_key)\n        else:\n            cert = None\n        source_url = httpx.URL(cast(str, source.url))\n        proxy = next((proxy for pattern, proxy in self._proxy_map.items() if pattern.matches(source_url)), None)\n        return _get_transport(verify=verify, cert=cert, proxy=proxy)\n\n    def _make_user_agent(self) -> str:\n        import platform\n\n        return f\"pdm/{__version__} {platform.python_implementation()}/{platform.python_version()} {platform.system()}/{platform.release()}\"\n\n    def on_response(self, response: httpx.Response) -> None:\n        from unearth.utils import ARCHIVE_EXTENSIONS\n\n        if response.extensions.get(\"from_cache\") and response.url.path.endswith(ARCHIVE_EXTENSIONS):\n            logger.info(\"Using cached response for %s\", response.url)\n",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "5ef7f88d-071d-4390-8151-c587d2ced3db",
+        "evidence": "exit=Some(0); affected_paths=[\"src/pdm/models/session.py\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "8f4c6415-e871-4051-b6cc-22a423098cb4"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "8f4c6415-e871-4051-b6cc-22a423098cb4",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:26.823254184Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "tests"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:26.812404344Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "8f4c6415-e871-4051-b6cc-22a423098cb4",
+        "affected_paths": [
+          "tests"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "8f4c6415-e871-4051-b6cc-22a423098cb4",
+        "stderr": "",
+        "stdout": "",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "8f4c6415-e871-4051-b6cc-22a423098cb4",
+        "evidence": "exit=Some(0); affected_paths=[\"tests\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "2e3f09ee-28b2-4062-8515-033fedf51420"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "2e3f09ee-28b2-4062-8515-033fedf51420",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:26.827558769Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "exit_code": 1,
+            "reason": "the tool exited with status 1",
+            "status": "failed"
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:26.812404344Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "2e3f09ee-28b2-4062-8515-033fedf51420",
+        "affected_paths": [],
+        "exit_code": 1,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "2e3f09ee-28b2-4062-8515-033fedf51420",
+        "stderr": "process I/O failed: No such file or directory (os error 2)",
+        "stdout": "",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "2e3f09ee-28b2-4062-8515-033fedf51420",
+        "evidence": "exit=Some(1); affected_paths=[]",
+        "status": "failed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "files": 91,
+        "sensitive_files": 0,
+        "symbols": 188
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:40:26.990803393Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1730,
+              "class": "conversation_tail",
+              "estimated_tokens": 432,
+              "label": "conversation_messages[0..1]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1970,
+              "class": "task_state",
+              "estimated_tokens": 492,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 24724,
+              "class": "pinned_context",
+              "estimated_tokens": 6180,
+              "label": "reference/##",
+              "why_included": {
+                "reason": "pinned"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 34734,
+              "class": "task_state",
+              "estimated_tokens": 8684,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 370,
+              "class": "task_state",
+              "estimated_tokens": 92,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 10407,
+              "class": "retrieved_context",
+              "estimated_tokens": 2602,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 34,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 9,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 549,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 851,
+              "class": "instructions",
+              "estimated_tokens": 212,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "total_estimated_tokens": 20702,
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 26021,
+          "latency_ms": 3091,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 315,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:30.083167739Z",
+          "request_id": "93c559c0-c4a6-46a8-a7f0-4871473e6039",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "input_tokens": 26021,
+        "output_tokens": 315,
+        "role": "coding_worker"
+      },
+      "event": "model_request_finished"
+    },
+    {
+      "data": {
+        "action": {
+          "kind": "read_file",
+          "max_bytes": 16384,
+          "path": "src/pdm/models/session.py",
+          "type": "repository_read"
+        },
+        "action_id": "54ea4371-4d82-428d-b66c-630da34cd61b",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "54ea4371-4d82-428d-b66c-630da34cd61b",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "action": {
+          "case_insensitive": false,
+          "kind": "repository_grep",
+          "max_bytes": 1048576,
+          "max_results": 1024,
+          "paths": [
+            "src"
+          ],
+          "pattern": "_get_proxy_map|get_environment_proxies|URLPattern",
+          "type": "repository_read"
+        },
+        "action_id": "0ec80306-1dc4-492c-9ec0-b20c821bc159",
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_proposed"
+    },
+    {
+      "data": {
+        "action_id": "0ec80306-1dc4-492c-9ec0-b20c821bc159",
+        "decision": {
+          "decision": "allow_with_constraints",
+          "details": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          }
+        },
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "judgment_recorded"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "e8b6d43b376a27a4d82b4d5f9f2724efff526518404adb2f6907753cde28b65b",
+          "action_id": "54ea4371-4d82-428d-b66c-630da34cd61b",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:30.089143314Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "authorization": {
+          "action_digest": "14e1292c879c5170f7611d8767eee899a6cb101cf9777e2963eaecc45a1f196f",
+          "action_id": "0ec80306-1dc4-492c-9ec0-b20c821bc159",
+          "approved_by": "deterministic_policy",
+          "authorized_at": "2026-10-14T19:40:30.089983228Z",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+        }
+      },
+      "event": "authorization_persisted"
+    },
+    {
+      "data": {
+        "action_id": "54ea4371-4d82-428d-b66c-630da34cd61b"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "54ea4371-4d82-428d-b66c-630da34cd61b",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "6e05f4daea206b6c5be67b2dc379550b97a2e6da576f10d9ab3764f7a4851b71",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:30.098702023Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "src/pdm/models/session.py"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:30.090872544Z",
+          "structured_output": null,
+          "tool_id": "native:read_file",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "54ea4371-4d82-428d-b66c-630da34cd61b",
+        "affected_paths": [
+          "src/pdm/models/session.py"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "54ea4371-4d82-428d-b66c-630da34cd61b",
+        "stderr": "",
+        "stdout": "from __future__ import annotations\n\nimport os\nimport sys\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import TYPE_CHECKING, Any, cast\n\nimport hishel\nimport httpx\nimport msgpack\nfrom hishel._serializers import Metadata\nfrom httpcore import Request, Response\nfrom unearth.fetchers import PyPIClient\n\nfrom pdm.__version__ import __version__\nfrom pdm.termui import logger\n\nif TYPE_CHECKING:\n    from ssl import SSLContext\n\n    from pdm._types import RepositoryConfig\n\n\ndef _create_truststore_ssl_context() -> SSLContext | None:\n    if sys.version_info < (3, 10):\n        return None\n\n    try:\n        import ssl\n    except ImportError:\n        return None\n\n    try:\n        import truststore\n    except ImportError:\n        return None\n\n    import certifi\n\n    ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)\n    ctx.load_verify_locations(certifi.where())\n    return ctx\n\n\n_ssl_context = _create_truststore_ssl_context()\nCACHES_TTL = 7 * 24 * 60 * 60  # 7 days\nMAX_RETRIES = 4\n\n\n@lru_cache(maxsize=None)\ndef _get_transport(\n    verify: bool | SSLContext | str = True,\n    cert: tuple[str, str | None] | None = None,\n    proxy: httpx.Proxy | None = None,\n) -> httpx.BaseTransport:\n    return httpx.HTTPTransport(verify=verify, cert=cert, trust_env=True, proxy=proxy, retries=MAX_RETRIES)\n\n\nclass MsgPackSerializer(hishel.BaseSerializer):\n    KNOWN_REQUEST_EXTENSIONS = (\"timeout\", \"sni_hostname\")\n    KNOWN_RESPONSE_EXTENSIONS = (\"http_version\", \"reason_phrase\")\n    DATETIME_FORMAT = \"%Y-%m-%dT%H:%M:%S.%fZ\"\n\n    def dumps(self, response: Response, request: Request, metadata: Metadata) -> bytes:\n        from hishel._utils import normalized_url\n\n        response_dict = {\n            \"status\": response.status,\n            \"headers\": response.headers,\n            \"content\": response.content,\n            \"extensions\": {\n                key: value for key, value in response.extensions.items() if key in self.KNOWN_RESPONSE_EXTENSIONS\n            },\n        }\n\n        request_dict = {\n            \"method\": request.method.decode(\"ascii\"),\n            \"url\": normalized_url(request.url),\n            \"headers\": request.headers,\n            \"extensions\": {\n                key: value for key, value in request.extensions.items() if key in self.KNOWN_REQUEST_EXTENSIONS\n            },\n        }\n\n        metadata_dict = {\n            \"cache_key\": metadata[\"cache_key\"],\n            \"number_of_uses\": metadata[\"number_of_uses\"],\n            \"created_at\": metadata[\"created_at\"].strftime(self.DATETIME_FORMAT),\n        }\n\n        full_dict = {\n            \"response\": response_dict,\n            \"request\": request_dict,\n            \"metadata\": metadata_dict,\n        }\n        return cast(bytes, msgpack.packb(full_dict, use_bin_type=True))\n\n    def loads(self, data: bytes) -> tuple[Response, Request, Metadata]:\n        from datetime import datetime\n\n        full_dict = cast(\"dict[str, Any]\", msgpack.loads(data, raw=False))\n\n        response_dict = full_dict[\"response\"]\n        request_dict = full_dict[\"request\"]\n        metadata_dict = full_dict[\"metadata\"]\n        metadata_dict[\"created_at\"] = datetime.strptime(metadata_dict[\"created_at\"], self.DATETIME_FORMAT)\n\n        response = Response(\n            status=response_dict[\"status\"],\n            headers=response_dict[\"headers\"],\n            content=response_dict[\"content\"],\n            extensions=response_dict[\"extensions\"],\n        )\n\n        request = Request(\n            method=request_dict[\"method\"],\n            url=request_dict[\"url\"],\n            headers=request_dict[\"headers\"],\n            extensions=request_dict[\"extensions\"],\n        )\n\n        metadata = Metadata(\n            cache_key=metadata_dict[\"cache_key\"],\n            created_at=metadata_dict[\"created_at\"],\n            number_of_uses=metadata_dict[\"number_of_uses\"],\n        )\n\n        return response, request, metadata\n\n    @property\n    def is_binary(self) -> bool:\n        return True\n\n\nclass PDMPyPIClient(PyPIClient):\n    def __init__(self, *, sources: list[RepositoryConfig], cache_dir: Path | None = None, **kwargs: Any) -> None:\n        from httpx._utils import URLPattern\n        from unearth.fetchers.sync import LocalFSTransport\n\n        if cache_dir is None:\n\n            def cache_transport(transport: httpx.BaseTransport) -> httpx.BaseTransport:\n                return transport\n        else:\n            storage = hishel.FileStorage(serializer=MsgPackSerializer(), base_path=cache_dir, ttl=CACHES_TTL)\n            controller = hishel.Controller()\n\n            def cache_transport(transport: httpx.BaseTransport) -> httpx.BaseTransport:\n                return hishel.CacheTransport(transport, storage, controller)\n\n        mounts: dict[str, httpx.BaseTransport] = {\"file://\": LocalFSTransport()}\n        self._trusted_host_ports: set[tuple[str, int | None]] = set()\n        self._proxy_map = {\n            URLPattern(key): proxy for key, proxy in sorted(self._get_proxy_map(None, allow_env_proxies=True).items())\n        }\n        for s in sources:\n            assert s.url is not None\n            url = httpx.URL(s.url)\n            if s.verify_ssl is False:\n                self._trusted_host_ports.add((url.host, url.port))\n            if s.name == \"pypi\":\n                kwargs[\"transport\"] = self._transport_for(s)\n                continue\n            mounts[f\"{url.scheme}://{url.netloc.decode('ascii')}/\"] = cache_transport(self._transport_for(s))\n        mounts.update(kwargs.pop(\"mounts\", None) or {})\n        kwargs.update(follow_redirects=True)\n\n        httpx.Client.__init__(self, mounts=mounts, **kwargs)\n\n        self.headers[\"User-Agent\"] = self._make_user_agent()\n        self.event_hooks[\"response\"].append(self.on_response)\n        self._transport = cache_transport(self._transport)  # type: ignore[has-type]\n\n    def _transport_for(self, source: RepositoryConfig) -> httpx.BaseTransport:\n        if source.verify_ssl is False:\n            verify: str | bool | SSLContext = False\n        elif source.ca_certs:\n            verify = source.ca_certs\n        else:\n            verify = os.getenv(\"REQUESTS_CA_BUNDLE\") or os.getenv(\"CURL_CA_BUNDLE\") or _ssl_context or True\n        if source.client_cert:\n            cert = (source.client_cert, source.client_key)\n        else:\n            cert = None\n        source_url = httpx.URL(cast(str, source.url))\n        proxy = next((proxy for pattern, proxy in self._proxy_map.items() if pattern.matches(source_url)), None)\n        return _get_transport(verify=verify, cert=cert, proxy=proxy)\n\n    def _make_user_agent(self) -> str:\n        import platform\n\n        return f\"pdm/{__version__} {platform.python_implementation()}/{platform.python_version()} {platform.system()}/{platform.release()}\"\n\n    def on_response(self, response: httpx.Response) -> None:\n        from unearth.utils import ARCHIVE_EXTENSIONS\n\n        if response.extensions.get(\"from_cache\") and response.url.path.endswith(ARCHIVE_EXTENSIONS):\n            logger.info(\"Using cached response for %s\", response.url)\n",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "54ea4371-4d82-428d-b66c-630da34cd61b",
+        "evidence": "exit=Some(0); affected_paths=[\"src/pdm/models/session.py\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "action_id": "0ec80306-1dc4-492c-9ec0-b20c821bc159"
+      },
+      "event": "execution_started"
+    },
+    {
+      "data": {
+        "evidence": {
+          "action_id": "0ec80306-1dc4-492c-9ec0-b20c821bc159",
+          "approved_by": "deterministic_policy",
+          "constraints": {
+            "allowed_write_globs": [],
+            "maximum_changed_files": 0,
+            "maximum_output_bytes": 1048576,
+            "network": false,
+            "timeout_seconds": 120,
+            "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+          },
+          "decision": {
+            "decision": "allow_with_constraints",
+            "details": {
+              "allowed_write_globs": [],
+              "maximum_changed_files": 0,
+              "maximum_output_bytes": 1048576,
+              "network": false,
+              "timeout_seconds": 120,
+              "working_directory": "/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf"
+            }
+          },
+          "descriptor_digest": "adc96803c0c868926c1a20369e92bca4c603480e297c0ee261838840ed7b7718",
+          "effective_filesystem_scope": {
+            "kind": "worktree_read"
+          },
+          "effective_network_scope": {
+            "kind": "none"
+          },
+          "finished_at": "2026-10-14T19:40:30.103771741Z",
+          "initiator": {
+            "kind": "model",
+            "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+          },
+          "outcome": {
+            "affected_paths": [
+              "src"
+            ],
+            "exit_code": 0,
+            "status": "succeeded",
+            "truncated": false
+          },
+          "provider": "native",
+          "redaction_class": "public",
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "started_at": "2026-10-14T19:40:30.090872544Z",
+          "structured_output": null,
+          "tool_id": "native:repository_grep",
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "tool_evidence_recorded"
+    },
+    {
+      "data": {
+        "action_id": "0ec80306-1dc4-492c-9ec0-b20c821bc159",
+        "affected_paths": [
+          "src"
+        ],
+        "exit_code": 0,
+        "sandbox_backend": "cap-std",
+        "sandbox_level": "WorktreeWriteNoShell",
+        "truncated": false
+      },
+      "event": "execution_finished"
+    },
+    {
+      "data": {
+        "action_id": "0ec80306-1dc4-492c-9ec0-b20c821bc159",
+        "stderr": "",
+        "stdout": "",
+        "truncated": false,
+        "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+      },
+      "event": "action_output_recorded"
+    },
+    {
+      "data": {
+        "action_id": "0ec80306-1dc4-492c-9ec0-b20c821bc159",
+        "evidence": "exit=Some(0); affected_paths=[\"src\"]",
+        "status": "passed"
+      },
+      "event": "validation_recorded"
+    },
+    {
+      "data": {
+        "retained_action_ids": [
+          "f0194302-85a3-430b-a521-1c9e90bf6028",
+          "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+          "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+          "8f4c6415-e871-4051-b6cc-22a423098cb4",
+          "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+          "66ea694c-5fa4-406c-be0b-a917c490abd0"
+        ],
+        "summary": "Compacted 8 older actions. Across the pre-compaction window, 14 actions had allow-class deterministic/effective judgments. The durable event log remains authoritative."
+      },
+      "event": "context_compacted"
+    },
+    {
+      "data": {
+        "checkpoint": {
+          "accepted_requirements": [],
+          "checkpoint_id": "7048a25a-101a-443d-938e-4d3824de2c22",
+          "current_hypothesis": null,
+          "decisions": [
+            {
+              "action_id": "66ea694c-5fa4-406c-be0b-a917c490abd0",
+              "summary": "RepositoryRead(RepositoryGrep { pattern: \"no_proxy\", paths: [\"src\", \"tests\"], case_insensitive: true, max_results: 1024, max_bytes: 1048576 })"
+            },
+            {
+              "action_id": "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+              "summary": "RepositoryRead(RepositoryGrep { pattern: \"_get_proxy_map|trust_env|NO_PROXY\", paths: [\"src\"], case_insensitive: false, max_results: 1024, max_bytes: 1048576 })"
+            },
+            {
+              "action_id": "8f4c6415-e871-4051-b6cc-22a423098cb4",
+              "summary": "RepositoryRead(RepositoryGrep { pattern: \"session|PDMPyPIClient\", paths: [\"tests\"], case_insensitive: false, max_results: 1024, max_bytes: 1048576 })"
+            },
+            {
+              "action_id": "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+              "summary": "RepositoryRead(ReadFile { path: \"pyproject.toml\", max_bytes: 6144 })"
+            },
+            {
+              "action_id": "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+              "summary": "RepositoryRead(RepositoryGrep { pattern: \"proxy\", paths: [\"tests\"], case_insensitive: true, max_results: 200, max_bytes: 1048576 })"
+            },
+            {
+              "action_id": "f0194302-85a3-430b-a521-1c9e90bf6028",
+              "summary": "RepositoryRead(RepositoryGrep { pattern: \"_get_proxy_map|get_environment_proxies|URLPattern\", paths: [], case_insensitive: false, max_results: 200, max_bytes: 1048576 })"
+            }
+          ],
+          "failed_attempts": [
+            {
+              "action_id": "2e3f09ee-28b2-4062-8515-033fedf51420",
+              "action_summary": "RepositoryRead(ReadFile { path: \"news/3255.bugfix.md\", max_bytes: 2048 })",
+              "judgment": "AllowWithConstraints(ActionConstraints { working_directory: \"/home/runner/work/PurrCode/PurrCode/.research-cache/purrcode-swebench-live/checkouts/pdm-project__pdm-3255/.purrcode/worktrees/56e84150-f4cc-42c5-a258-3ef51dca9fcf\", network: false, timeout_seconds: 120, maximum_output_bytes: 1048576, allowed_write_globs: [], maximum_changed_files: 0 })",
+              "reason": "validation failed: exit=Some(1); affected_paths=[]"
+            }
+          ],
+          "files_inspected": [
+            "news/3255.bugfix.md",
+            "pyproject.toml",
+            "src",
+            "src/pdm/models",
+            "src/pdm/models/session.py",
+            "tests"
+          ],
+          "files_modified": [],
+          "important_symbols": [
+            "3255.bugfix.md",
+            "pyproject.toml",
+            "session.py"
+          ],
+          "next_actions": [],
+          "objective": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n",
+          "pinned_context": [],
+          "superseded_checkpoint_id": null,
+          "test_results": [],
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b",
+          "unresolved_questions": [],
+          "user_constraints": [
+            "task_mode=Build",
+            "execution_style=Autonomous",
+            "workflow=Auto",
+            "search_policy=Auto"
+          ],
+          "validated_facts": []
+        },
+        "conversation_messages_retained_from": 0,
+        "retained_action_ids": [
+          "66ea694c-5fa4-406c-be0b-a917c490abd0",
+          "80e4bf10-dac2-49a1-8c9a-7a353f68367a",
+          "8f4c6415-e871-4051-b6cc-22a423098cb4",
+          "a8cb3909-dc51-46e5-b3b5-f57af0c125ef",
+          "dc9b5d94-0648-4ce5-a41d-9c9b1453bd37",
+          "f0194302-85a3-430b-a521-1c9e90bf6028"
+        ]
+      },
+      "event": "checkpoint_compacted"
+    },
+    {
+      "data": {
+        "files": 91,
+        "sensitive_files": 0,
+        "symbols": 188
+      },
+      "event": "context_indexed"
+    },
+    {
+      "data": {
+        "model": "deepseek-flash",
+        "provider": "deepseek",
+        "role": "coding_worker"
+      },
+      "event": "model_request_started"
+    },
+    {
+      "data": {
+        "entry": {
+          "estimator": "CharDiv4",
+          "recorded_at": "2026-10-14T19:40:30.259784899Z",
+          "sections": [
+            {
+              "byte_len": 3559,
+              "class": "instructions",
+              "estimated_tokens": 884,
+              "label": "developer_instructions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1730,
+              "class": "conversation_tail",
+              "estimated_tokens": 432,
+              "label": "conversation_messages[0..1]",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 1970,
+              "class": "task_state",
+              "estimated_tokens": 492,
+              "label": "current_request",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 24724,
+              "class": "pinned_context",
+              "estimated_tokens": 6180,
+              "label": "reference/##",
+              "why_included": {
+                "reason": "pinned"
+              }
+            },
+            {
+              "byte_len": 249,
+              "class": "task_state",
+              "estimated_tokens": 62,
+              "label": "plan",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 10952,
+              "class": "task_state",
+              "estimated_tokens": 2738,
+              "label": "recent_actions",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 390,
+              "class": "task_state",
+              "estimated_tokens": 98,
+              "label": "validation",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 10407,
+              "class": "retrieved_context",
+              "estimated_tokens": 2602,
+              "label": "retrieved_context",
+              "why_included": {
+                "detail": {
+                  "term": "PDM ignores no_proxy when all_proxy is set\n- [x] I have searched the issue tracker and believe that this is not a duplicate.\r\n\r\n## Steps to reproduce\r\n\r\n```bash\r\n$ export all_proxy=http://localhost:8888 # does not exist\r\n$ export no_proxy=pypi.org\r\n$ mkdir proj && cd proj\r\n$ pdm init -n\r\nCreating a pyproject.toml for PDM...\r\nINFO: Using the first matched interpreter.\r\nVirtualenv is created successfully at /home/elt/tmp/proj/.venv\r\nProject is initialized successfully\r\nWARNING: Failed to get latest version: [Errno 111] Connection refused\r\n$ pdm add bitarray\r\nAdding packages to default dependencies: bitarray\r\n⠋ 0:00:00 Resolve for environment (==3.12.*) None\r\nSee /home/elt/.local/state/pdm/log/pdm-lock-h4xxhla8.log for detailed debug log.\r\n[ConnectError]: [Errno 111] Connection refused\r\nWARNING: Add '-v' to see the detailed traceback\r\n```\r\n\r\n## Actual behavior\r\n\r\nPDM attempts to use proxy for pypi.org even though it is listed in `no_proxy`.\r\n\r\n## Expected behavior\r\n\r\nPDM should not use proxy for pypi.org when it is listed in `no_proxy`.\r\n\r\n## Environment Information\r\n\r\n```bash\r\n$ pdm info\r\nPDM version:\r\n  2.20.0.post2.dev3+gacb40b07\r\nPython Interpreter:\r\n  /home/elt/tmp/proj/.venv/bin/python (3.12)\r\nProject Root:\r\n  /home/elt/tmp/proj\r\nLocal Packages:\r\n\r\n$ pdm info --env\r\n{\r\n  \"implementation_name\": \"cpython\",\r\n  \"implementation_version\": \"3.12.3\",\r\n  \"os_name\": \"posix\",\r\n  \"platform_machine\": \"x86_64\",\r\n  \"platform_release\": \"5.15.153.1-microsoft-standard-WSL2\",\r\n  \"platform_system\": \"Linux\",\r\n  \"platform_version\": \"#1 SMP Fri Mar 29 23:14:13 UTC 2024\",\r\n  \"python_full_version\": \"3.12.3\",\r\n  \"platform_python_implementation\": \"CPython\",\r\n  \"python_version\": \"3.12\",\r\n  \"sys_platform\": \"linux\"\r\n}\r\n```\r\n\n"
+                },
+                "reason": "matched_query"
+              }
+            },
+            {
+              "byte_len": 1234,
+              "class": "compacted_checkpoint",
+              "estimated_tokens": 308,
+              "label": "compacted_checkpoint",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2206,
+              "class": "instructions",
+              "estimated_tokens": 549,
+              "label": "output_format_and_schema",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 2015,
+              "class": "instructions",
+              "estimated_tokens": 504,
+              "label": "available_tools",
+              "why_included": {
+                "reason": "always_present"
+              }
+            },
+            {
+              "byte_len": 851,
+              "class": "instructions",
+              "estimated_tokens": 212,
+              "label": "daemon_contract",
+              "why_included": {
+                "reason": "always_present"
+              }
+            }
+          ],
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "total_estimated_tokens": 15061,
+          "turn_id": "256fcbf4-e5b2-4a13-82d4-93fb50f5f47b"
+        }
+      },
+      "event": "context_assembled"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 19363,
+          "latency_ms": 1371,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 100,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:31.632671899Z",
+          "request_id": "f7bb2f0f-ef5d-41ae-aec5-696a2162712c",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 19459,
+          "latency_ms": 1190,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 120,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:32.824932828Z",
+          "request_id": "f7e6b3c0-fbb1-45b5-9a15-0628e115089b",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "record": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "credential_id": "daemon-managed",
+          "estimated_cost": null,
+          "input_tokens": 19459,
+          "latency_ms": 1471,
+          "mcp_calls": 0,
+          "model_id": "deepseek-flash",
+          "output_tokens": 108,
+          "provider_id": "deepseek",
+          "recorded_at": "2026-10-14T19:40:34.299044327Z",
+          "request_id": "e07c0846-bff8-4be0-b350-2e48bce3cd75",
+          "search_requests": 0,
+          "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+          "tool_result_tokens": 0,
+          "workflow_lane_id": null
+        }
+      },
+      "event": "usage_recorded"
+    },
+    {
+      "data": {
+        "reason": "agent execution failed: model returned invalid structured data: missing field `type` at line 1 column 85"
+      },
+      "event": "session_failed"
+    }
+  ],
+  "kind": "agent_events_only_no_hidden_oracle_inputs",
+  "measurement": {
+    "elapsed_ms": 21699,
+    "mid_run_correction_acknowledged": false,
+    "mid_run_correction_message_event_sha256": null,
+    "mid_run_correction_requested": false,
+    "mid_run_correction_trigger_event_sha256": null,
+    "mid_run_correction_triggered": false,
+    "session_id": "56e84150-f4cc-42c5-a258-3ef51dca9fcf",
+    "session_status": "failed",
+    "timed_out": false
+  },
+  "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

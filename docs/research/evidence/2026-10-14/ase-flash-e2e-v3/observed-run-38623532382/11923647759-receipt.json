@@ -1,0 +1,90 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11923647759,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyMzY0Nzc1OQ==",
+    "name": "e2e-projectmesa__mesa-2463",
+    "size_in_bytes": 264496,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923647759",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923647759/zip",
+    "expired": false,
+    "digest": "sha256:3c5306c3d237ad49db625a829783f3a76047dcea56709d370a4015b87bab2de8",
+    "created_at": "2026-10-14T19:42:19Z",
+    "updated_at": "2026-10-14T19:42:19Z",
+    "expires_at": "2026-10-28T19:42:19Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:42:54.394001+00:00",
+  "files": [
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/projectmesa__mesa-2463-correction-B-0.patch",
+      "sha256": "d0faccc4dde0d1add309c59f45afab33a5f2228bc7100fdce3d29fe7b70bee92"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/projectmesa__mesa-2463-correction-C-0.patch",
+      "sha256": "02c343875007a31bcd4e39d7a40ab6b505910710cb86fb97966f8049010d32ff"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/projectmesa__mesa-2463-static-B-0.patch",
+      "sha256": "d921aabe42827bf196dbfaa473d20ede2c8a2834418f9099e53c99b63ccf6349"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/projectmesa__mesa-2463-static-C-0.patch",
+      "sha256": "add5178217baa8a5a2f76835072f528455b784be20e08f707a63703f89e4b7cc"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "sha256": "42197b976da1b4b9ae7aee2f8a8df51a06bef4503a59b8cf9dc4de9e8fec68fa"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/projectmesa__mesa-2463-correction-B-0.json",
+      "sha256": "a57c3bb23a39a0b3373159c74df8df05f297f4c5e786db95c9a8a2e34f5f6106"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/projectmesa__mesa-2463-correction-C-0.json",
+      "sha256": "698c1b352578bc3c5814d0ac58538c69e4d959474fb956b9a9b4e3d4943d3cdb"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/projectmesa__mesa-2463-static-B-0.json",
+      "sha256": "bb514cd221e87feabf2d1a99ca8074f99b6e3c1ff475ee446171505acbb27446"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/projectmesa__mesa-2463-static-C-0.json",
+      "sha256": "97be8159e1f72858624447c2599f9d90a6b5f84824bf02ae6426387e519c02e9"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/projectmesa__mesa-2463-correction-B-0.json",
+      "sha256": "b307d41598fde4a9badba8dd6e9e51861a6f284193d7d3dc8ee37857cb8ccaab"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/projectmesa__mesa-2463-correction-C-0.json",
+      "sha256": "6421146793d6618e8665d2a0b0ce542e80faa40a137b72bbcac1c70a168db8a1"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/projectmesa__mesa-2463-static-B-0.json",
+      "sha256": "a3bbac95db47e29959166d85631cee786610fda0e989edc2ec580f28b1bde5ff"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/projectmesa__mesa-2463-static-C-0.json",
+      "sha256": "b0fbee0d31dd0536fdd4246a94db509e767d9e8c1e9e77fce9d44341ad6bfcbb"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "e709735bf14d28321812fed0aa4cda2b3f1694ba95805d4d2c578b98348f1711"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "eecd912b371258a753fb74593afa9bce1de486ec3029762cf57afbdc0adff30b"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}

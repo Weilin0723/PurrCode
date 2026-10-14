@@ -1,0 +1,70 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11923679373,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyMzY3OTM3Mw==",
+    "name": "e2e-run-llama__llama_deploy-356",
+    "size_in_bytes": 218236,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923679373",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923679373/zip",
+    "expired": false,
+    "digest": "sha256:d6ab3aa25ea42538515c373f3fb39d1d6d939e4bde24a93ad002824a903960c4",
+    "created_at": "2026-10-14T19:52:04Z",
+    "updated_at": "2026-10-14T19:52:04Z",
+    "expires_at": "2026-10-28T19:52:04Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:52:37.559242+00:00",
+  "files": [
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/run-llama__llama_deploy-356-static-B-0.patch",
+      "sha256": "e90623f918570e8f8ca684defa0f74dcfa9b65960338108823a29d59e7b42fc7"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/run-llama__llama_deploy-356-static-C-0.patch",
+      "sha256": "ca8e111d7a15a8de6d8913908314a2989ec6acc0eeea6e6d6541e8396f28e666"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "sha256": "57a35794c07f10577846bd1b4b89c2b22e57aeb8d7f1a70d59d1d801049d0d0d"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/run-llama__llama_deploy-356-static-B-0.json",
+      "sha256": "f508e749389fe389d735e76aefe8b123b2011fc175ddf18d66f73438e7c6df1d"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/run-llama__llama_deploy-356-static-C-0.json",
+      "sha256": "c0a5110ff2cefa4a26b73b35fe597b97c2c441f920fe68e98871eae69594b650"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/run-llama__llama_deploy-356-correction-B-0.json",
+      "sha256": "04d55aa50f678fe99c26675c0bf16e3d57f840d58547d615b84c146f8b1ec4fa"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/run-llama__llama_deploy-356-static-B-0.json",
+      "sha256": "20f9d631a9f295a3a27c0d143589913ca5b71a43d31f4bc8ac15afb5a35802e1"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/run-llama__llama_deploy-356-static-C-0.json",
+      "sha256": "478a4e100012bd15d4a38221f3b6776a02af97f18033fee1f358ff1ef2fefc2c"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "4e52a8004d99048714a6cd932d2eea7cc713bdb9b0d079d9e392a66a60d7fd22"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "97001cf35307cff0999205c29f7c04aa06a6cf798700b0ac201212fa7849a173"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}

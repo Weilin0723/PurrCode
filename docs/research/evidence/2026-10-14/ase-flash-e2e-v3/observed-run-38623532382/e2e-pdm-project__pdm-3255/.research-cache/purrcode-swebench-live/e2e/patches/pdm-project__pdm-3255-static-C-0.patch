@@ -1,0 +1,2370 @@
+diff --git a/.config/pdm/global-project/pyproject.toml b/.config/pdm/global-project/pyproject.toml
+new file mode 100644
+index 00000000..9629f775
+--- /dev/null
++++ b/.config/pdm/global-project/pyproject.toml
+@@ -0,0 +1,2 @@
++[project]
++dependencies = ["pip", "setuptools", "wheel"]
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/LICENSE-APACHE b/.rustup/tmp/2cj011y49wshu5t8_dir/LICENSE-APACHE
+new file mode 100644
+index 00000000..9990a0ce
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/LICENSE-APACHE
+@@ -0,0 +1,201 @@
++                              Apache License
++                        Version 2.0, January 2004
++                     http://www.apache.org/licenses/
++
++TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++1. Definitions.
++
++   "License" shall mean the terms and conditions for use, reproduction,
++   and distribution as defined by Sections 1 through 9 of this document.
++
++   "Licensor" shall mean the copyright owner or entity authorized by
++   the copyright owner that is granting the License.
++
++   "Legal Entity" shall mean the union of the acting entity and all
++   other entities that control, are controlled by, or are under common
++   control with that entity. For the purposes of this definition,
++   "control" means (i) the power, direct or indirect, to cause the
++   direction or management of such entity, whether by contract or
++   otherwise, or (ii) ownership of fifty percent (50%) or more of the
++   outstanding shares, or (iii) beneficial ownership of such entity.
++
++   "You" (or "Your") shall mean an individual or Legal Entity
++   exercising permissions granted by this License.
++
++   "Source" form shall mean the preferred form for making modifications,
++   including but not limited to software source code, documentation
++   source, and configuration files.
++
++   "Object" form shall mean any form resulting from mechanical
++   transformation or translation of a Source form, including but
++   not limited to compiled object code, generated documentation,
++   and conversions to other media types.
++
++   "Work" shall mean the work of authorship, whether in Source or
++   Object form, made available under the License, as indicated by a
++   copyright notice that is included in or attached to the work
++   (an example is provided in the Appendix below).
++
++   "Derivative Works" shall mean any work, whether in Source or Object
++   form, that is based on (or derived from) the Work and for which the
++   editorial revisions, annotations, elaborations, or other modifications
++   represent, as a whole, an original work of authorship. For the purposes
++   of this License, Derivative Works shall not include works that remain
++   separable from, or merely link (or bind by name) to the interfaces of,
++   the Work and Derivative Works thereof.
++
++   "Contribution" shall mean any work of authorship, including
++   the original version of the Work and any modifications or additions
++   to that Work or Derivative Works thereof, that is intentionally
++   submitted to Licensor for inclusion in the Work by the copyright owner
++   or by an individual or Legal Entity authorized to submit on behalf of
++   the copyright owner. For the purposes of this definition, "submitted"
++   means any form of electronic, verbal, or written communication sent
++   to the Licensor or its representatives, including but not limited to
++   communication on electronic mailing lists, source code control systems,
++   and issue tracking systems that are managed by, or on behalf of, the
++   Licensor for the purpose of discussing and improving the Work, but
++   excluding communication that is conspicuously marked or otherwise
++   designated in writing by the copyright owner as "Not a Contribution."
++
++   "Contributor" shall mean Licensor and any individual or Legal Entity
++   on behalf of whom a Contribution has been received by Licensor and
++   subsequently incorporated within the Work.
++
++2. Grant of Copyright License. Subject to the terms and conditions of
++   this License, each Contributor hereby grants to You a perpetual,
++   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++   copyright license to reproduce, prepare Derivative Works of,
++   publicly display, publicly perform, sublicense, and distribute the
++   Work and such Derivative Works in Source or Object form.
++
++3. Grant of Patent License. Subject to the terms and conditions of
++   this License, each Contributor hereby grants to You a perpetual,
++   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++   (except as stated in this section) patent license to make, have made,
++   use, offer to sell, sell, import, and otherwise transfer the Work,
++   where such license applies only to those patent claims licensable
++   by such Contributor that are necessarily infringed by their
++   Contribution(s) alone or by combination of their Contribution(s)
++   with the Work to which such Contribution(s) was submitted. If You
++   institute patent litigation against any entity (including a
++   cross-claim or counterclaim in a lawsuit) alleging that the Work
++   or a Contribution incorporated within the Work constitutes direct
++   or contributory patent infringement, then any patent licenses
++   granted to You under this License for that Work shall terminate
++   as of the date such litigation is filed.
++
++4. Redistribution. You may reproduce and distribute copies of the
++   Work or Derivative Works thereof in any medium, with or without
++   modifications, and in Source or Object form, provided that You
++   meet the following conditions:
++
++   (a) You must give any other recipients of the Work or
++       Derivative Works a copy of this License; and
++
++   (b) You must cause any modified files to carry prominent notices
++       stating that You changed the files; and
++
++   (c) You must retain, in the Source form of any Derivative Works
++       that You distribute, all copyright, patent, trademark, and
++       attribution notices from the Source form of the Work,
++       excluding those notices that do not pertain to any part of
++       the Derivative Works; and
++
++   (d) If the Work includes a "NOTICE" text file as part of its
++       distribution, then any Derivative Works that You distribute must
++       include a readable copy of the attribution notices contained
++       within such NOTICE file, excluding those notices that do not
++       pertain to any part of the Derivative Works, in at least one
++       of the following places: within a NOTICE text file distributed
++       as part of the Derivative Works; within the Source form or
++       documentation, if provided along with the Derivative Works; or,
++       within a display generated by the Derivative Works, if and
++       wherever such third-party notices normally appear. The contents
++       of the NOTICE file are for informational purposes only and
++       do not modify the License. You may add Your own attribution
++       notices within Derivative Works that You distribute, alongside
++       or as an addendum to the NOTICE text from the Work, provided
++       that such additional attribution notices cannot be construed
++       as modifying the License.
++
++   You may add Your own copyright statement to Your modifications and
++   may provide additional or different license terms and conditions
++   for use, reproduction, or distribution of Your modifications, or
++   for any such Derivative Works as a whole, provided Your use,
++   reproduction, and distribution of the Work otherwise complies with
++   the conditions stated in this License.
++
++5. Submission of Contributions. Unless You explicitly state otherwise,
++   any Contribution intentionally submitted for inclusion in the Work
++   by You to the Licensor shall be under the terms and conditions of
++   this License, without any additional terms or conditions.
++   Notwithstanding the above, nothing herein shall supersede or modify
++   the terms of any separate license agreement you may have executed
++   with Licensor regarding such Contributions.
++
++6. Trademarks. This License does not grant permission to use the trade
++   names, trademarks, service marks, or product names of the Licensor,
++   except as required for reasonable and customary use in describing the
++   origin of the Work and reproducing the content of the NOTICE file.
++
++7. Disclaimer of Warranty. Unless required by applicable law or
++   agreed to in writing, Licensor provides the Work (and each
++   Contributor provides its Contributions) on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++   implied, including, without limitation, any warranties or conditions
++   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++   PARTICULAR PURPOSE. You are solely responsible for determining the
++   appropriateness of using or redistributing the Work and assume any
++   risks associated with Your exercise of permissions under this License.
++
++8. Limitation of Liability. In no event and under no legal theory,
++   whether in tort (including negligence), contract, or otherwise,
++   unless required by applicable law (such as deliberate and grossly
++   negligent acts) or agreed to in writing, shall any Contributor be
++   liable to You for damages, including any direct, indirect, special,
++   incidental, or consequential damages of any character arising as a
++   result of this License or out of the use or inability to use the
++   Work (including but not limited to damages for loss of goodwill,
++   work stoppage, computer failure or malfunction, or any and all
++   other commercial damages or losses), even if such Contributor
++   has been advised of the possibility of such damages.
++
++9. Accepting Warranty or Additional Liability. While redistributing
++   the Work or Derivative Works thereof, You may choose to offer,
++   and charge a fee for, acceptance of support, warranty, indemnity,
++   or other liability obligations and/or rights consistent with this
++   License. However, in accepting such obligations, You may act only
++   on Your own behalf and on Your sole responsibility, not on behalf
++   of any other Contributor, and only if You agree to indemnify,
++   defend, and hold each Contributor harmless for any liability
++   incurred by, or claims asserted against, such Contributor by reason
++   of your accepting any such warranty or additional liability.
++
++END OF TERMS AND CONDITIONS
++
++APPENDIX: How to apply the Apache License to your work.
++
++   To apply the Apache License to your work, attach the following
++   boilerplate notice, with the fields enclosed by brackets "[]"
++   replaced with your own identifying information. (Don't include
++   the brackets!)  The text should be enclosed in the appropriate
++   comment syntax for the file format. We also recommend that a
++   file or class name and description of purpose be included on the
++   same "printed page" as the copyright notice for easier
++   identification within third-party archives.
++
++Copyright 2014-2025 The Rust Project Developers
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++	http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/LICENSE-MIT b/.rustup/tmp/2cj011y49wshu5t8_dir/LICENSE-MIT
+new file mode 100644
+index 00000000..5d6e36ef
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/LICENSE-MIT
+@@ -0,0 +1,27 @@
++MIT License
++
++Copyright (c) 2014-2025 The Rust Project Developers
++
++Permission is hereby granted, free of charge, to any
++person obtaining a copy of this software and associated
++documentation files (the "Software"), to deal in the
++Software without restriction, including without
++limitation the rights to use, copy, modify, merge,
++publish, distribute, sublicense, and/or sell copies of
++the Software, and to permit persons to whom the Software
++is furnished to do so, subject to the following
++conditions:
++
++The above copyright notice and this permission notice
++shall be included in all copies or substantial portions
++of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
++ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
++TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
++PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
++SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
++CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
++OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
++IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++DEALINGS IN THE SOFTWARE.
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/README.md b/.rustup/tmp/2cj011y49wshu5t8_dir/README.md
+new file mode 100644
+index 00000000..20a5e997
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/README.md
+@@ -0,0 +1,288 @@
++# Clippy
++
++[![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/clippy.svg)](#license)
++
++A collection of lints to catch common mistakes and improve your [Rust](https://github.com/rust-lang/rust) code.
++
++[There are over 750 lints included in this crate!](https://rust-lang.github.io/rust-clippy/master/index.html)
++
++Lints are divided into categories, each with a default [lint level](https://doc.rust-lang.org/rustc/lints/levels.html).
++You can choose how much Clippy is supposed to ~~annoy~~ help you by changing the lint level by category.
++
++| Category              | Description                                                                         | Default level |
++|-----------------------|-------------------------------------------------------------------------------------|---------------|
++| `clippy::all`         | all lints that are on by default (correctness, suspicious, style, complexity, perf) | **warn/deny** |
++| `clippy::correctness` | code that is outright wrong or useless                                              | **deny**      |
++| `clippy::suspicious`  | code that is most likely wrong or useless                                           | **warn**      |
++| `clippy::style`       | code that should be written in a more idiomatic way                                 | **warn**      |
++| `clippy::complexity`  | code that does something simple but in a complex way                                | **warn**      |
++| `clippy::perf`        | code that can be written to run faster                                              | **warn**      |
++| `clippy::pedantic`    | lints which are rather strict or have occasional false positives                    | allow         |
++| `clippy::restriction` | lints which prevent the use of language and library features[^restrict]             | allow         |
++| `clippy::nursery`     | new lints that are still under development                                          | allow         |
++| `clippy::cargo`       | lints for the cargo manifest                                                        | allow         |
++
++More to come, please [file an issue](https://github.com/rust-lang/rust-clippy/issues) if you have ideas!
++
++The `restriction` category should, *emphatically*, not be enabled as a whole. The contained
++lints may lint against perfectly reasonable code, may not have an alternative suggestion,
++and may contradict any other lints (including other categories). Lints should be considered
++on a case-by-case basis before enabling.
++
++[^restrict]: Some use cases for `restriction` lints include:
++    - Strict coding styles (e.g. [`clippy::else_if_without_else`]).
++    - Additional restrictions on CI (e.g. [`clippy::todo`]).
++    - Preventing panicking in certain functions (e.g. [`clippy::unwrap_used`]).
++    - Running a lint only on a subset of code (e.g. `#[forbid(clippy::float_arithmetic)]` on a module).
++
++[`clippy::else_if_without_else`]: https://rust-lang.github.io/rust-clippy/master/index.html#else_if_without_else
++[`clippy::todo`]: https://rust-lang.github.io/rust-clippy/master/index.html#todo
++[`clippy::unwrap_used`]: https://rust-lang.github.io/rust-clippy/master/index.html#unwrap_used
++
++---
++
++Table of contents:
++
++* [Usage instructions](#usage)
++* [Configuration](#configuration)
++* [Contributing](#contributing)
++* [License](#license)
++
++## Usage
++
++Below are instructions on how to use Clippy as a cargo subcommand,
++in projects that do not use cargo, or in Travis CI.
++
++### As a cargo subcommand (`cargo clippy`)
++
++One way to use Clippy is by installing Clippy through rustup as a cargo
++subcommand.
++
++#### Step 1: Install Rustup
++
++You can install [Rustup](https://rustup.rs/) on supported platforms. This will help
++us install Clippy and its dependencies.
++
++If you already have Rustup installed, update to ensure you have the latest
++Rustup and compiler:
++
++```terminal
++rustup update
++```
++
++#### Step 2: Install Clippy
++
++Once you have rustup and the latest stable release (at least Rust 1.29) installed, run the following command:
++
++```terminal
++rustup component add clippy
++```
++
++If it says that it can't find the `clippy` component, please run `rustup self update`.
++
++#### Step 3: Run Clippy
++
++Now you can run Clippy by invoking the following command:
++
++```terminal
++cargo clippy
++```
++
++#### Automatically applying Clippy suggestions
++
++Clippy can automatically apply some lint suggestions, just like the compiler. Note that `--fix` implies
++`--all-targets`, so it can fix as much code as it can.
++
++```terminal
++cargo clippy --fix
++```
++
++#### Workspaces
++
++All the usual workspace options should work with Clippy. For example the following command
++will run Clippy on the `example` crate:
++
++```terminal
++cargo clippy -p example
++```
++
++As with `cargo check`, this includes dependencies that are members of the workspace, like path dependencies.
++If you want to run Clippy **only** on the given crate, use the `--no-deps` option like this:
++
++```terminal
++cargo clippy -p example -- --no-deps
++```
++
++### Using `clippy-driver`
++
++Clippy can also be used in projects that do not use cargo. To do so, run `clippy-driver`
++with the same arguments you use for `rustc`. For example:
++
++```terminal
++clippy-driver --edition 2018 -Cpanic=abort foo.rs
++```
++
++Note that `clippy-driver` is designed for running Clippy only and should not be used as a general
++replacement for `rustc`. `clippy-driver` may produce artifacts that are not optimized as expected,
++for example.
++
++### Travis CI
++
++You can add Clippy to Travis CI in the same way you use it locally:
++
++```yaml
++language: rust
++rust:
++  - stable
++  - beta
++before_script:
++  - rustup component add clippy
++script:
++  - cargo clippy
++  # if you want the build job to fail when encountering warnings, use
++  - cargo clippy -- -D warnings
++  # in order to also check tests and non-default crate features, use
++  - cargo clippy --all-targets --all-features -- -D warnings
++  - cargo test
++  # etc.
++```
++
++Note that adding `-D warnings` will cause your build to fail if **any** warnings are found in your code.
++That includes warnings found by rustc (e.g. `dead_code`, etc.). If you want to avoid this and only cause
++an error for Clippy warnings, use `#![deny(clippy::all)]` in your code or `-D clippy::all` on the command
++line. (You can swap `clippy::all` with the specific lint category you are targeting.)
++
++## Configuration
++
++### Allowing/denying lints
++
++You can add options to your code to `allow`/`warn`/`deny` Clippy lints:
++
++* the whole set of `Warn` lints using the `clippy` lint group (`#![deny(clippy::all)]`).
++  Note that `rustc` has additional [lint groups](https://doc.rust-lang.org/rustc/lints/groups.html).
++
++* all lints using both the `clippy` and `clippy::pedantic` lint groups (`#![deny(clippy::all)]`,
++  `#![deny(clippy::pedantic)]`). Note that `clippy::pedantic` contains some very aggressive
++  lints prone to false positives.
++
++* only some lints (`#![deny(clippy::single_match, clippy::box_vec)]`, etc.)
++
++* `allow`/`warn`/`deny` can be limited to a single function or module using `#[allow(...)]`, etc.
++
++Note: `allow` means to suppress the lint for your code. With `warn` the lint
++will only emit a warning, while with `deny` the lint will emit an error, when
++triggering for your code. An error causes Clippy to exit with an error code, so
++is useful in scripts like CI/CD.
++
++If you do not want to include your lint levels in your code, you can globally
++enable/disable lints by passing extra flags to Clippy during the run:
++
++To allow `lint_name`, run
++
++```terminal
++cargo clippy -- -A clippy::lint_name
++```
++
++And to warn on `lint_name`, run
++
++```terminal
++cargo clippy -- -W clippy::lint_name
++```
++
++This also works with lint groups. For example, you
++can run Clippy with warnings for all lints enabled:
++
++```terminal
++cargo clippy -- -W clippy::pedantic
++```
++
++If you care only about a single lint, you can allow all others and then explicitly warn on
++the lint(s) you are interested in:
++
++```terminal
++cargo clippy -- -A clippy::all -W clippy::useless_format -W clippy::...
++```
++
++### Configure the behavior of some lints
++
++Some lints can be configured in a TOML file named `clippy.toml` or `.clippy.toml`. It contains a basic `variable =
++value` mapping e.g.
++
++```toml
++avoid-breaking-exported-api = false
++disallowed-names = ["toto", "tata", "titi"]
++```
++
++The [table of configurations](https://doc.rust-lang.org/nightly/clippy/lint_configuration.html)
++contains all config values, their default, and a list of lints they affect.
++Each [configurable lint](https://rust-lang.github.io/rust-clippy/master/index.html#Configuration)
++, also contains information about these values.
++
++For configurations that are a list type with default values such as
++[disallowed-names](https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_names),
++you can use the unique value `".."` to extend the default values instead of replacing them.
++
++```toml
++# default of disallowed-names is ["foo", "baz", "quux"]
++disallowed-names = ["bar", ".."] # -> ["bar", "foo", "baz", "quux"]
++```
++
++> **Note**
++>
++> `clippy.toml` or `.clippy.toml` cannot be used to allow/deny lints.
++
++To deactivate the “for further information visit *lint-link*” message you can
++define the `CLIPPY_DISABLE_DOCS_LINKS` environment variable.
++
++### Specifying the minimum supported Rust version
++
++Projects that intend to support old versions of Rust can disable lints pertaining to newer features by
++specifying the minimum supported Rust version (MSRV) in the Clippy configuration file.
++
++```toml
++msrv = "1.30.0"
++```
++
++Alternatively, the [`rust-version` field](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field)
++in the `Cargo.toml` can be used.
++
++```toml
++# Cargo.toml
++rust-version = "1.30"
++```
++
++The MSRV can also be specified as an attribute, like below.
++
++```rust,ignore
++#![feature(custom_inner_attributes)]
++#![clippy::msrv = "1.30.0"]
++
++fn main() {
++  ...
++}
++```
++
++You can also omit the patch version when specifying the MSRV, so `msrv = 1.30`
++is equivalent to `msrv = 1.30.0`.
++
++Note: `custom_inner_attributes` is an unstable feature, so it has to be enabled explicitly.
++
++Lints that recognize this configuration option can be found [here](https://rust-lang.github.io/rust-clippy/master/index.html#msrv)
++
++## Contributing
++
++If you want to contribute to Clippy, you can find more information in [CONTRIBUTING.md](https://github.com/rust-lang/rust-clippy/blob/master/CONTRIBUTING.md).
++
++## License
++
++<!-- REUSE-IgnoreStart -->
++
++Copyright 2014-2025 The Rust Project Developers
++
++Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
++[https://www.apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0)> or the MIT license
++<LICENSE-MIT or [https://opensource.org/licenses/MIT](https://opensource.org/licenses/MIT)>, at your
++option. Files in the project may not be
++copied, modified, or distributed except according to those terms.
++
++<!-- REUSE-IgnoreEnd -->
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/builder-config b/.rustup/tmp/2cj011y49wshu5t8_dir/builder-config
+new file mode 100644
+index 00000000..61ff54ab
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/builder-config
+@@ -0,0 +1,202 @@
++# Use different pre-set defaults than the global defaults.
++#
++# See `src/bootstrap/defaults` for more information.
++# Note that this has no default value (x.py uses the defaults in `bootstrap.example.toml`).
++profile = 'dist'
++
++[llvm]
++
++# Indicates whether LLVM should be built with ThinLTO. Note that this will
++# only succeed if you use clang, lld, llvm-ar, and llvm-ranlib in your C/C++
++# toolchain (see the `cc`, `cxx`, `linker`, `ar`, and `ranlib` options below).
++# More info at: https://clang.llvm.org/docs/ThinLTO.html#clang-bootstrap
++thin-lto = true
++
++# When true, link libstdc++ statically into the rustc_llvm.
++# This is useful if you don't want to use the dynamic version of that
++# library provided by LLVM.
++static-libstdcpp = true
++
++# Enable LLVM to use zstd for compression.
++libzstd = true
++
++# Whether to use Ninja to build LLVM. This runs much faster than make.
++ninja = false
++
++[gcc]
++# Download GCC from CI instead of building it locally.
++# Note that this will attempt to download GCC even if there are local
++# modifications to the `src/gcc` submodule.
++# Currently, this is only supported for the `x86_64-unknown-linux-gnu` target.
++#download-ci-gcc = false
++
++[build]
++
++# Indicate whether to build compiler documentation by default.
++# You can still build documentation when this is disabled by explicitly passing a path: `x doc compiler`.
++compiler-docs = true
++
++# Indicate whether git submodules are managed and updated automatically.
++submodules = false
++
++# Force Cargo to check that Cargo.lock describes the precise dependency
++# set that all the Cargo.toml files create, instead of updating it.
++locked-deps = true
++
++# Enable a build of the extended Rust tool set which is not only the compiler
++# but also tools such as Cargo. This will also produce "combined installers"
++# which are used to install Rust and Cargo together.
++# The `tools` (check `bootstrap.example.toml` to see its default value) option specifies
++# which tools should be built if `extended = true`.
++#
++# This is disabled by default.
++extended = true
++
++# Build the sanitizer runtimes
++sanitizers = true
++
++# Build the profiler runtime (required when compiling with options that depend
++# on this runtime, such as `-C profile-generate` or `-C instrument-coverage`).
++profiler = true
++
++# Use the optimized LLVM C intrinsics for `compiler_builtins`, rather than Rust intrinsics.
++# Requires the LLVM submodule to be managed by bootstrap (i.e. not external) so that `compiler-rt`
++# sources are available.
++#
++# Setting this to `false` generates slower code, but removes the requirement for a C toolchain in
++# order to run `x check`.
++optimized-compiler-builtins = true
++
++# Indicates whether the native libraries linked into Cargo will be statically
++# linked or not.
++cargo-native-static = true
++
++# Arguments passed to the `./configure` script, used during distcheck. You
++# probably won't fill this in but rather it's filled in by the `./configure`
++# script. Useful for debugging.
++configure-args = ['--enable-full-tools', '--enable-sanitizers', '--enable-profiler', '--enable-compiler-docs', '--set', 'target.x86_64-unknown-linux-gnu.linker=clang', '--set', 'target.x86_64-unknown-linux-gnu.ar=/rustroot/bin/llvm-ar', '--set', 'target.x86_64-unknown-linux-gnu.ranlib=/rustroot/bin/llvm-ranlib', '--set', 'llvm.thin-lto=true', '--set', 'llvm.ninja=false', '--set', 'llvm.libzstd=true', '--set', 'rust.jemalloc', '--set', 'rust.use-lld=true', '--set', 'rust.lto=thin', '--set', 'rust.codegen-units=1', '--set', 'build.print-step-timings', '--enable-verbose-tests', '--set', 'build.metrics', '--enable-verbose-configure', '--enable-sccache', '--disable-manage-submodules', '--enable-locked-deps', '--enable-cargo-native-static', '--set', 'rust.codegen-units-std=1', '--set', 'dist.compression-profile=balanced', '--dist-compression-formats=xz', '--set', 'build.optimized-compiler-builtins', '--release-channel=stable', '--enable-llvm-static-stdcpp', '--set', 'rust.remap-debuginfo', '--debuginfo-level-std=1', '--set', 'rust.codegen-backends=llvm,cranelift']
++
++# Print out how long each bootstrap step took (mostly intended for CI and
++# tracking over time)
++print-step-timings = true
++
++# Collect information and statistics about the current build, and write it to
++# disk. Enabling this has no impact on the resulting build output. The
++# schema of the file generated by the build metrics feature is unstable, and
++# this is not intended to be used during local development.
++metrics = true
++
++# Indicates whether ccache is used when building certain artifacts (e.g. LLVM).
++# Set to `true` to use the first `ccache` in PATH, or set an absolute path to use
++# a specific version.
++ccache = 'sccache'
++
++[install]
++
++[rust]
++
++# Number of codegen units to use for each compiler invocation. A value of 0
++# means "the number of cores on this machine", and 1+ is passed through to the
++# compiler.
++#
++# Uses the rustc defaults: https://doc.rust-lang.org/rustc/codegen-options/index.html#codegen-units
++codegen-units = 1
++
++# Sets the number of codegen units to build the standard library with,
++# regardless of what the codegen-unit setting for the rest of the compiler is.
++# NOTE: building with anything other than 1 is known to occasionally have bugs.
++codegen-units-std = 1
++
++# Debuginfo level for the standard library.
++debuginfo-level-std = 1
++
++# The "channel" for the Rust build to produce. The stable/beta channels only
++# allow using stable features, whereas the nightly and dev channels allow using
++# nightly features.
++#
++# You can set the channel to "auto-detect" to load the channel name from `src/ci/channel`.
++#
++# If using tarball sources, default value is "auto-detect", otherwise, it's "dev".
++channel = 'stable'
++
++# Prints each test name as it is executed, to help debug issues in the test harness itself.
++verbose-tests = true
++
++# This is an array of the codegen backends that will be compiled for the rustc
++# that's being compiled. The default is to only build the LLVM codegen backend,
++# and currently the only standard options supported are `"llvm"`, `"cranelift"`
++# and `"gcc"`. The first backend in this list will be used as default by rustc
++# when no explicit backend is specified.
++codegen-backends = ['llvm', 'cranelift']
++
++# Indicates whether LLD will be compiled and made available in the sysroot for rustc to execute, and
++# whether to set it as rustc's default linker on `x86_64-unknown-linux-gnu`. This will also only be
++# when *not* building an external LLVM (so only when using `download-ci-llvm` or building LLVM from
++# the in-tree source): setting `llvm-config` in the `[target.x86_64-unknown-linux-gnu]` section will
++# make this default to false.
++lld = true
++
++# Indicates whether LLD will be used to link Rust crates during bootstrap on
++# supported platforms.
++# If set to `true` or `"external"`, a global `lld` binary that has to be in $PATH
++# will be used.
++# If set to `"self-contained"`, rust-lld from the snapshot compiler will be used.
++#
++# On MSVC, LLD will not be used if we're cross linking.
++#
++# Explicitly setting the linker for a target will override this option when targeting MSVC.
++use-lld = true
++
++# Indicates whether some LLVM tools, like llvm-objdump, will be made available in the
++# sysroot.
++llvm-tools = true
++
++# Indicates whether the `self-contained` llvm-bitcode-linker, will be made available
++# in the sysroot. It is required for running nvptx tests.
++llvm-bitcode-linker = true
++
++# Map debuginfo paths to `/rust/$sha/...`.
++# Useful for reproducible builds. Generally only set for releases
++remap-debuginfo = true
++
++# Link the compiler and LLVM against `jemalloc` instead of the default libc allocator.
++# This option is only tested on Linux and OSX. It can also be configured per-target in the
++# [target.<tuple>] section.
++jemalloc = true
++
++# Select LTO mode that will be used for compiling rustc. By default, thin local LTO
++# (LTO within a single crate) is used (like for any Rust crate). You can also select
++# "thin" or "fat" to apply Thin/Fat LTO to the `rustc_driver` dylib, or "off" to disable
++# LTO entirely.
++lto = 'thin'
++
++[target.x86_64-unknown-linux-gnu]
++
++# Archiver to be used to assemble static libraries compiled from C/C++ code.
++# Note: an absolute path should be used, otherwise LLVM build will break.
++ar = '/rustroot/bin/llvm-ar'
++
++# Ranlib to be used to assemble static libraries compiled from C/C++ code.
++# Note: an absolute path should be used, otherwise LLVM build will break.
++ranlib = '/rustroot/bin/llvm-ranlib'
++
++# Linker to be used to bootstrap Rust code. Note that the
++# default value is platform specific, and if not specified it may also depend on
++# what platform is crossing to what platform.
++# Setting this will override the `use-lld` option for Rust code when targeting MSVC.
++linker = 'clang'
++
++[dist]
++
++# List of compression formats to use when generating dist tarballs. The list of
++# formats is provided to rust-installer, which must support all of them.
++#
++# This list must be non-empty.
++compression-formats = ['xz']
++
++# How much time should be spent compressing the tarballs. The better the
++# compression profile, the longer compression will take.
++#
++# Available options: fast, balanced, best
++compression-profile = 'balanced'
++
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/manifest.in b/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/manifest.in
+new file mode 100644
+index 00000000..9e04d494
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/manifest.in
+@@ -0,0 +1,5 @@
++file:bin/cargo-clippy
++file:bin/clippy-driver
++file:share/doc/clippy/LICENSE-APACHE
++file:share/doc/clippy/LICENSE-MIT
++file:share/doc/clippy/README.md
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/share/doc/clippy/LICENSE-APACHE b/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/share/doc/clippy/LICENSE-APACHE
+new file mode 100644
+index 00000000..9990a0ce
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/share/doc/clippy/LICENSE-APACHE
+@@ -0,0 +1,201 @@
++                              Apache License
++                        Version 2.0, January 2004
++                     http://www.apache.org/licenses/
++
++TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++1. Definitions.
++
++   "License" shall mean the terms and conditions for use, reproduction,
++   and distribution as defined by Sections 1 through 9 of this document.
++
++   "Licensor" shall mean the copyright owner or entity authorized by
++   the copyright owner that is granting the License.
++
++   "Legal Entity" shall mean the union of the acting entity and all
++   other entities that control, are controlled by, or are under common
++   control with that entity. For the purposes of this definition,
++   "control" means (i) the power, direct or indirect, to cause the
++   direction or management of such entity, whether by contract or
++   otherwise, or (ii) ownership of fifty percent (50%) or more of the
++   outstanding shares, or (iii) beneficial ownership of such entity.
++
++   "You" (or "Your") shall mean an individual or Legal Entity
++   exercising permissions granted by this License.
++
++   "Source" form shall mean the preferred form for making modifications,
++   including but not limited to software source code, documentation
++   source, and configuration files.
++
++   "Object" form shall mean any form resulting from mechanical
++   transformation or translation of a Source form, including but
++   not limited to compiled object code, generated documentation,
++   and conversions to other media types.
++
++   "Work" shall mean the work of authorship, whether in Source or
++   Object form, made available under the License, as indicated by a
++   copyright notice that is included in or attached to the work
++   (an example is provided in the Appendix below).
++
++   "Derivative Works" shall mean any work, whether in Source or Object
++   form, that is based on (or derived from) the Work and for which the
++   editorial revisions, annotations, elaborations, or other modifications
++   represent, as a whole, an original work of authorship. For the purposes
++   of this License, Derivative Works shall not include works that remain
++   separable from, or merely link (or bind by name) to the interfaces of,
++   the Work and Derivative Works thereof.
++
++   "Contribution" shall mean any work of authorship, including
++   the original version of the Work and any modifications or additions
++   to that Work or Derivative Works thereof, that is intentionally
++   submitted to Licensor for inclusion in the Work by the copyright owner
++   or by an individual or Legal Entity authorized to submit on behalf of
++   the copyright owner. For the purposes of this definition, "submitted"
++   means any form of electronic, verbal, or written communication sent
++   to the Licensor or its representatives, including but not limited to
++   communication on electronic mailing lists, source code control systems,
++   and issue tracking systems that are managed by, or on behalf of, the
++   Licensor for the purpose of discussing and improving the Work, but
++   excluding communication that is conspicuously marked or otherwise
++   designated in writing by the copyright owner as "Not a Contribution."
++
++   "Contributor" shall mean Licensor and any individual or Legal Entity
++   on behalf of whom a Contribution has been received by Licensor and
++   subsequently incorporated within the Work.
++
++2. Grant of Copyright License. Subject to the terms and conditions of
++   this License, each Contributor hereby grants to You a perpetual,
++   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++   copyright license to reproduce, prepare Derivative Works of,
++   publicly display, publicly perform, sublicense, and distribute the
++   Work and such Derivative Works in Source or Object form.
++
++3. Grant of Patent License. Subject to the terms and conditions of
++   this License, each Contributor hereby grants to You a perpetual,
++   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++   (except as stated in this section) patent license to make, have made,
++   use, offer to sell, sell, import, and otherwise transfer the Work,
++   where such license applies only to those patent claims licensable
++   by such Contributor that are necessarily infringed by their
++   Contribution(s) alone or by combination of their Contribution(s)
++   with the Work to which such Contribution(s) was submitted. If You
++   institute patent litigation against any entity (including a
++   cross-claim or counterclaim in a lawsuit) alleging that the Work
++   or a Contribution incorporated within the Work constitutes direct
++   or contributory patent infringement, then any patent licenses
++   granted to You under this License for that Work shall terminate
++   as of the date such litigation is filed.
++
++4. Redistribution. You may reproduce and distribute copies of the
++   Work or Derivative Works thereof in any medium, with or without
++   modifications, and in Source or Object form, provided that You
++   meet the following conditions:
++
++   (a) You must give any other recipients of the Work or
++       Derivative Works a copy of this License; and
++
++   (b) You must cause any modified files to carry prominent notices
++       stating that You changed the files; and
++
++   (c) You must retain, in the Source form of any Derivative Works
++       that You distribute, all copyright, patent, trademark, and
++       attribution notices from the Source form of the Work,
++       excluding those notices that do not pertain to any part of
++       the Derivative Works; and
++
++   (d) If the Work includes a "NOTICE" text file as part of its
++       distribution, then any Derivative Works that You distribute must
++       include a readable copy of the attribution notices contained
++       within such NOTICE file, excluding those notices that do not
++       pertain to any part of the Derivative Works, in at least one
++       of the following places: within a NOTICE text file distributed
++       as part of the Derivative Works; within the Source form or
++       documentation, if provided along with the Derivative Works; or,
++       within a display generated by the Derivative Works, if and
++       wherever such third-party notices normally appear. The contents
++       of the NOTICE file are for informational purposes only and
++       do not modify the License. You may add Your own attribution
++       notices within Derivative Works that You distribute, alongside
++       or as an addendum to the NOTICE text from the Work, provided
++       that such additional attribution notices cannot be construed
++       as modifying the License.
++
++   You may add Your own copyright statement to Your modifications and
++   may provide additional or different license terms and conditions
++   for use, reproduction, or distribution of Your modifications, or
++   for any such Derivative Works as a whole, provided Your use,
++   reproduction, and distribution of the Work otherwise complies with
++   the conditions stated in this License.
++
++5. Submission of Contributions. Unless You explicitly state otherwise,
++   any Contribution intentionally submitted for inclusion in the Work
++   by You to the Licensor shall be under the terms and conditions of
++   this License, without any additional terms or conditions.
++   Notwithstanding the above, nothing herein shall supersede or modify
++   the terms of any separate license agreement you may have executed
++   with Licensor regarding such Contributions.
++
++6. Trademarks. This License does not grant permission to use the trade
++   names, trademarks, service marks, or product names of the Licensor,
++   except as required for reasonable and customary use in describing the
++   origin of the Work and reproducing the content of the NOTICE file.
++
++7. Disclaimer of Warranty. Unless required by applicable law or
++   agreed to in writing, Licensor provides the Work (and each
++   Contributor provides its Contributions) on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++   implied, including, without limitation, any warranties or conditions
++   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++   PARTICULAR PURPOSE. You are solely responsible for determining the
++   appropriateness of using or redistributing the Work and assume any
++   risks associated with Your exercise of permissions under this License.
++
++8. Limitation of Liability. In no event and under no legal theory,
++   whether in tort (including negligence), contract, or otherwise,
++   unless required by applicable law (such as deliberate and grossly
++   negligent acts) or agreed to in writing, shall any Contributor be
++   liable to You for damages, including any direct, indirect, special,
++   incidental, or consequential damages of any character arising as a
++   result of this License or out of the use or inability to use the
++   Work (including but not limited to damages for loss of goodwill,
++   work stoppage, computer failure or malfunction, or any and all
++   other commercial damages or losses), even if such Contributor
++   has been advised of the possibility of such damages.
++
++9. Accepting Warranty or Additional Liability. While redistributing
++   the Work or Derivative Works thereof, You may choose to offer,
++   and charge a fee for, acceptance of support, warranty, indemnity,
++   or other liability obligations and/or rights consistent with this
++   License. However, in accepting such obligations, You may act only
++   on Your own behalf and on Your sole responsibility, not on behalf
++   of any other Contributor, and only if You agree to indemnify,
++   defend, and hold each Contributor harmless for any liability
++   incurred by, or claims asserted against, such Contributor by reason
++   of your accepting any such warranty or additional liability.
++
++END OF TERMS AND CONDITIONS
++
++APPENDIX: How to apply the Apache License to your work.
++
++   To apply the Apache License to your work, attach the following
++   boilerplate notice, with the fields enclosed by brackets "[]"
++   replaced with your own identifying information. (Don't include
++   the brackets!)  The text should be enclosed in the appropriate
++   comment syntax for the file format. We also recommend that a
++   file or class name and description of purpose be included on the
++   same "printed page" as the copyright notice for easier
++   identification within third-party archives.
++
++Copyright 2014-2025 The Rust Project Developers
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++	http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/share/doc/clippy/LICENSE-MIT b/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/share/doc/clippy/LICENSE-MIT
+new file mode 100644
+index 00000000..5d6e36ef
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/share/doc/clippy/LICENSE-MIT
+@@ -0,0 +1,27 @@
++MIT License
++
++Copyright (c) 2014-2025 The Rust Project Developers
++
++Permission is hereby granted, free of charge, to any
++person obtaining a copy of this software and associated
++documentation files (the "Software"), to deal in the
++Software without restriction, including without
++limitation the rights to use, copy, modify, merge,
++publish, distribute, sublicense, and/or sell copies of
++the Software, and to permit persons to whom the Software
++is furnished to do so, subject to the following
++conditions:
++
++The above copyright notice and this permission notice
++shall be included in all copies or substantial portions
++of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
++ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
++TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
++PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
++SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
++CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
++OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
++IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++DEALINGS IN THE SOFTWARE.
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/share/doc/clippy/README.md b/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/share/doc/clippy/README.md
+new file mode 100644
+index 00000000..20a5e997
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/clippy-preview/share/doc/clippy/README.md
+@@ -0,0 +1,288 @@
++# Clippy
++
++[![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/clippy.svg)](#license)
++
++A collection of lints to catch common mistakes and improve your [Rust](https://github.com/rust-lang/rust) code.
++
++[There are over 750 lints included in this crate!](https://rust-lang.github.io/rust-clippy/master/index.html)
++
++Lints are divided into categories, each with a default [lint level](https://doc.rust-lang.org/rustc/lints/levels.html).
++You can choose how much Clippy is supposed to ~~annoy~~ help you by changing the lint level by category.
++
++| Category              | Description                                                                         | Default level |
++|-----------------------|-------------------------------------------------------------------------------------|---------------|
++| `clippy::all`         | all lints that are on by default (correctness, suspicious, style, complexity, perf) | **warn/deny** |
++| `clippy::correctness` | code that is outright wrong or useless                                              | **deny**      |
++| `clippy::suspicious`  | code that is most likely wrong or useless                                           | **warn**      |
++| `clippy::style`       | code that should be written in a more idiomatic way                                 | **warn**      |
++| `clippy::complexity`  | code that does something simple but in a complex way                                | **warn**      |
++| `clippy::perf`        | code that can be written to run faster                                              | **warn**      |
++| `clippy::pedantic`    | lints which are rather strict or have occasional false positives                    | allow         |
++| `clippy::restriction` | lints which prevent the use of language and library features[^restrict]             | allow         |
++| `clippy::nursery`     | new lints that are still under development                                          | allow         |
++| `clippy::cargo`       | lints for the cargo manifest                                                        | allow         |
++
++More to come, please [file an issue](https://github.com/rust-lang/rust-clippy/issues) if you have ideas!
++
++The `restriction` category should, *emphatically*, not be enabled as a whole. The contained
++lints may lint against perfectly reasonable code, may not have an alternative suggestion,
++and may contradict any other lints (including other categories). Lints should be considered
++on a case-by-case basis before enabling.
++
++[^restrict]: Some use cases for `restriction` lints include:
++    - Strict coding styles (e.g. [`clippy::else_if_without_else`]).
++    - Additional restrictions on CI (e.g. [`clippy::todo`]).
++    - Preventing panicking in certain functions (e.g. [`clippy::unwrap_used`]).
++    - Running a lint only on a subset of code (e.g. `#[forbid(clippy::float_arithmetic)]` on a module).
++
++[`clippy::else_if_without_else`]: https://rust-lang.github.io/rust-clippy/master/index.html#else_if_without_else
++[`clippy::todo`]: https://rust-lang.github.io/rust-clippy/master/index.html#todo
++[`clippy::unwrap_used`]: https://rust-lang.github.io/rust-clippy/master/index.html#unwrap_used
++
++---
++
++Table of contents:
++
++* [Usage instructions](#usage)
++* [Configuration](#configuration)
++* [Contributing](#contributing)
++* [License](#license)
++
++## Usage
++
++Below are instructions on how to use Clippy as a cargo subcommand,
++in projects that do not use cargo, or in Travis CI.
++
++### As a cargo subcommand (`cargo clippy`)
++
++One way to use Clippy is by installing Clippy through rustup as a cargo
++subcommand.
++
++#### Step 1: Install Rustup
++
++You can install [Rustup](https://rustup.rs/) on supported platforms. This will help
++us install Clippy and its dependencies.
++
++If you already have Rustup installed, update to ensure you have the latest
++Rustup and compiler:
++
++```terminal
++rustup update
++```
++
++#### Step 2: Install Clippy
++
++Once you have rustup and the latest stable release (at least Rust 1.29) installed, run the following command:
++
++```terminal
++rustup component add clippy
++```
++
++If it says that it can't find the `clippy` component, please run `rustup self update`.
++
++#### Step 3: Run Clippy
++
++Now you can run Clippy by invoking the following command:
++
++```terminal
++cargo clippy
++```
++
++#### Automatically applying Clippy suggestions
++
++Clippy can automatically apply some lint suggestions, just like the compiler. Note that `--fix` implies
++`--all-targets`, so it can fix as much code as it can.
++
++```terminal
++cargo clippy --fix
++```
++
++#### Workspaces
++
++All the usual workspace options should work with Clippy. For example the following command
++will run Clippy on the `example` crate:
++
++```terminal
++cargo clippy -p example
++```
++
++As with `cargo check`, this includes dependencies that are members of the workspace, like path dependencies.
++If you want to run Clippy **only** on the given crate, use the `--no-deps` option like this:
++
++```terminal
++cargo clippy -p example -- --no-deps
++```
++
++### Using `clippy-driver`
++
++Clippy can also be used in projects that do not use cargo. To do so, run `clippy-driver`
++with the same arguments you use for `rustc`. For example:
++
++```terminal
++clippy-driver --edition 2018 -Cpanic=abort foo.rs
++```
++
++Note that `clippy-driver` is designed for running Clippy only and should not be used as a general
++replacement for `rustc`. `clippy-driver` may produce artifacts that are not optimized as expected,
++for example.
++
++### Travis CI
++
++You can add Clippy to Travis CI in the same way you use it locally:
++
++```yaml
++language: rust
++rust:
++  - stable
++  - beta
++before_script:
++  - rustup component add clippy
++script:
++  - cargo clippy
++  # if you want the build job to fail when encountering warnings, use
++  - cargo clippy -- -D warnings
++  # in order to also check tests and non-default crate features, use
++  - cargo clippy --all-targets --all-features -- -D warnings
++  - cargo test
++  # etc.
++```
++
++Note that adding `-D warnings` will cause your build to fail if **any** warnings are found in your code.
++That includes warnings found by rustc (e.g. `dead_code`, etc.). If you want to avoid this and only cause
++an error for Clippy warnings, use `#![deny(clippy::all)]` in your code or `-D clippy::all` on the command
++line. (You can swap `clippy::all` with the specific lint category you are targeting.)
++
++## Configuration
++
++### Allowing/denying lints
++
++You can add options to your code to `allow`/`warn`/`deny` Clippy lints:
++
++* the whole set of `Warn` lints using the `clippy` lint group (`#![deny(clippy::all)]`).
++  Note that `rustc` has additional [lint groups](https://doc.rust-lang.org/rustc/lints/groups.html).
++
++* all lints using both the `clippy` and `clippy::pedantic` lint groups (`#![deny(clippy::all)]`,
++  `#![deny(clippy::pedantic)]`). Note that `clippy::pedantic` contains some very aggressive
++  lints prone to false positives.
++
++* only some lints (`#![deny(clippy::single_match, clippy::box_vec)]`, etc.)
++
++* `allow`/`warn`/`deny` can be limited to a single function or module using `#[allow(...)]`, etc.
++
++Note: `allow` means to suppress the lint for your code. With `warn` the lint
++will only emit a warning, while with `deny` the lint will emit an error, when
++triggering for your code. An error causes Clippy to exit with an error code, so
++is useful in scripts like CI/CD.
++
++If you do not want to include your lint levels in your code, you can globally
++enable/disable lints by passing extra flags to Clippy during the run:
++
++To allow `lint_name`, run
++
++```terminal
++cargo clippy -- -A clippy::lint_name
++```
++
++And to warn on `lint_name`, run
++
++```terminal
++cargo clippy -- -W clippy::lint_name
++```
++
++This also works with lint groups. For example, you
++can run Clippy with warnings for all lints enabled:
++
++```terminal
++cargo clippy -- -W clippy::pedantic
++```
++
++If you care only about a single lint, you can allow all others and then explicitly warn on
++the lint(s) you are interested in:
++
++```terminal
++cargo clippy -- -A clippy::all -W clippy::useless_format -W clippy::...
++```
++
++### Configure the behavior of some lints
++
++Some lints can be configured in a TOML file named `clippy.toml` or `.clippy.toml`. It contains a basic `variable =
++value` mapping e.g.
++
++```toml
++avoid-breaking-exported-api = false
++disallowed-names = ["toto", "tata", "titi"]
++```
++
++The [table of configurations](https://doc.rust-lang.org/nightly/clippy/lint_configuration.html)
++contains all config values, their default, and a list of lints they affect.
++Each [configurable lint](https://rust-lang.github.io/rust-clippy/master/index.html#Configuration)
++, also contains information about these values.
++
++For configurations that are a list type with default values such as
++[disallowed-names](https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_names),
++you can use the unique value `".."` to extend the default values instead of replacing them.
++
++```toml
++# default of disallowed-names is ["foo", "baz", "quux"]
++disallowed-names = ["bar", ".."] # -> ["bar", "foo", "baz", "quux"]
++```
++
++> **Note**
++>
++> `clippy.toml` or `.clippy.toml` cannot be used to allow/deny lints.
++
++To deactivate the “for further information visit *lint-link*” message you can
++define the `CLIPPY_DISABLE_DOCS_LINKS` environment variable.
++
++### Specifying the minimum supported Rust version
++
++Projects that intend to support old versions of Rust can disable lints pertaining to newer features by
++specifying the minimum supported Rust version (MSRV) in the Clippy configuration file.
++
++```toml
++msrv = "1.30.0"
++```
++
++Alternatively, the [`rust-version` field](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field)
++in the `Cargo.toml` can be used.
++
++```toml
++# Cargo.toml
++rust-version = "1.30"
++```
++
++The MSRV can also be specified as an attribute, like below.
++
++```rust,ignore
++#![feature(custom_inner_attributes)]
++#![clippy::msrv = "1.30.0"]
++
++fn main() {
++  ...
++}
++```
++
++You can also omit the patch version when specifying the MSRV, so `msrv = 1.30`
++is equivalent to `msrv = 1.30.0`.
++
++Note: `custom_inner_attributes` is an unstable feature, so it has to be enabled explicitly.
++
++Lints that recognize this configuration option can be found [here](https://rust-lang.github.io/rust-clippy/master/index.html#msrv)
++
++## Contributing
++
++If you want to contribute to Clippy, you can find more information in [CONTRIBUTING.md](https://github.com/rust-lang/rust-clippy/blob/master/CONTRIBUTING.md).
++
++## License
++
++<!-- REUSE-IgnoreStart -->
++
++Copyright 2014-2025 The Rust Project Developers
++
++Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
++[https://www.apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0)> or the MIT license
++<LICENSE-MIT or [https://opensource.org/licenses/MIT](https://opensource.org/licenses/MIT)>, at your
++option. Files in the project may not be
++copied, modified, or distributed except according to those terms.
++
++<!-- REUSE-IgnoreEnd -->
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/git-commit-hash b/.rustup/tmp/2cj011y49wshu5t8_dir/git-commit-hash
+new file mode 100644
+index 00000000..0804f634
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/git-commit-hash
+@@ -0,0 +1 @@
++6b00bc3880198600130e1cf62b8f8a93494488cc
+\ No newline at end of file
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/git-commit-info b/.rustup/tmp/2cj011y49wshu5t8_dir/git-commit-info
+new file mode 100644
+index 00000000..7cad2793
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/git-commit-info
+@@ -0,0 +1,3 @@
++6b00bc3880198600130e1cf62b8f8a93494488cc
++6b00bc388
++2025-06-23
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/install.sh b/.rustup/tmp/2cj011y49wshu5t8_dir/install.sh
+new file mode 100755
+index 00000000..ef8c3366
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/install.sh
+@@ -0,0 +1,999 @@
++#!/usr/bin/env bash
++
++# No undefined variables
++set -u
++
++init_logging() {
++    local _abs_libdir="$1"
++    local _logfile="$_abs_libdir/$TEMPLATE_REL_MANIFEST_DIR/install.log"
++    rm -f "$_logfile"
++    need_ok "failed to remove old installation log"
++    touch "$_logfile"
++    need_ok "failed to create installation log"
++    LOGFILE="$_logfile"
++}
++
++log_line() {
++    local _line="$1"
++
++    if [ -n "${LOGFILE-}" -a -e "${LOGFILE-}" ]; then
++    echo "$_line" >> "$LOGFILE"
++    # Ignore errors, which may happen e.g. after the manifest dir is deleted
++    fi
++}
++
++msg() {
++    local _line="install: ${1-}"
++    echo "$_line"
++    log_line "$_line"
++}
++
++verbose_msg() {
++    if [ -n "${CFG_VERBOSE-}" ]; then
++    msg "${1-}"
++    else
++    log_line "install: ${1-}"
++    fi
++}
++
++step_msg() {
++    msg
++    msg "$1"
++    msg
++}
++
++verbose_step_msg() {
++    if [ -n "${CFG_VERBOSE-}" ]; then
++    msg
++    msg "$1"
++    msg
++    else
++    log_line ""
++    log_line "install: $1"
++    log_line ""
++    fi
++}
++
++warn() {
++    local _line="install: WARNING: $1"
++    echo "$_line" >&2
++    log_line "$_line"
++}
++
++err() {
++    local _line="install: error: $1"
++    echo "$_line" >&2
++    log_line "$_line"
++    exit 1
++}
++
++# A non-user error that is likely to result in a corrupted install
++critical_err() {
++    local _line="install: error: $1. see logs at '${LOGFILE-}'"
++    echo "$_line" >&2
++    log_line "$_line"
++    exit 1
++}
++
++need_ok() {
++    if [ $? -ne 0 ]
++    then
++        err "$1"
++    fi
++}
++
++critical_need_ok() {
++    if [ $? -ne 0 ]
++    then
++        critical_err "$1"
++    fi
++}
++
++want_ok() {
++    if [ $? -ne 0 ]; then
++    warn "$1"
++    fi
++}
++
++assert_nz() {
++    if [ -z "$1" ]; then err "assert_nz $2"; fi
++}
++
++need_cmd() {
++    if command -v $1 >/dev/null 2>&1
++    then verbose_msg "found $1"
++    else err "need $1"
++    fi
++}
++
++run() {
++    local _line="\$ $*"
++    "$@"
++    local _retval=$?
++    log_line "$_line"
++    return $_retval
++}
++
++write_to_file() {
++    local _msg="$1"
++    local _file="$2"
++    local _line="$ echo \"$_msg\" > \"$_file\""
++    echo "$_msg" > "$_file"
++    local _retval=$?
++    log_line "$_line"
++    return $_retval
++}
++
++append_to_file() {
++    local _msg="$1"
++    local _file="$2"
++    local _line="$ echo \"$_msg\" >> \"$_file\""
++    echo "$_msg" >> "$_file"
++    local _retval=$?
++    log_line "$_line"
++    return $_retval
++}
++
++make_dir_recursive() {
++    local _dir="$1"
++    local _line="$ umask 022 && mkdir -p \"$_dir\""
++    umask 022 && mkdir -p "$_dir"
++    local _retval=$?
++    log_line "$_line"
++    return $_retval
++}
++
++putvar() {
++    local t
++    local tlen
++    eval t=\$$1
++    eval tlen=\${#$1}
++}
++
++valopt() {
++    VAL_OPTIONS="$VAL_OPTIONS $1"
++
++    local op=$1
++    local default=$2
++    shift
++    shift
++    local doc="$*"
++    if [ $HELP -eq 0 ]
++    then
++        local uop=$(echo $op | tr 'a-z-' 'A-Z_')
++        local v="CFG_${uop}"
++        eval $v="$default"
++        for arg in $CFG_ARGS
++        do
++            if echo "$arg" | grep -q -- "--$op="
++            then
++                local val=$(echo "$arg" | cut -f2 -d=)
++                eval $v=$val
++            fi
++        done
++        putvar $v
++    else
++        if [ -z "$default" ]
++        then
++            default="<none>"
++        fi
++        op="${op}=[${default}]"
++        printf "    --%-30s %s\n" "$op" "$doc"
++    fi
++}
++
++opt() {
++    BOOL_OPTIONS="$BOOL_OPTIONS $1"
++
++    local op=$1
++    local default=$2
++    shift
++    shift
++    local doc="$*"
++    local flag=""
++
++    if [ $default -eq 0 ]
++    then
++        flag="enable"
++    else
++        flag="disable"
++        doc="don't $doc"
++    fi
++
++    if [ $HELP -eq 0 ]
++    then
++        for arg in $CFG_ARGS
++        do
++            if [ "$arg" = "--${flag}-${op}" ]
++            then
++                op=$(echo $op | tr 'a-z-' 'A-Z_')
++                flag=$(echo $flag | tr 'a-z' 'A-Z')
++                local v="CFG_${flag}_${op}"
++                eval $v=1
++                putvar $v
++            fi
++        done
++    else
++        if [ ! -z "${META-}" ]
++        then
++            op="$op=<$META>"
++        fi
++        printf "    --%-30s %s\n" "$flag-$op" "$doc"
++     fi
++}
++
++flag() {
++    BOOL_OPTIONS="$BOOL_OPTIONS $1"
++
++    local op=$1
++    shift
++    local doc="$*"
++
++    if [ $HELP -eq 0 ]
++    then
++        for arg in $CFG_ARGS
++        do
++            if [ "$arg" = "--${op}" ]
++            then
++                op=$(echo $op | tr 'a-z-' 'A-Z_')
++                local v="CFG_${op}"
++                eval $v=1
++                putvar $v
++            fi
++        done
++    else
++        if [ ! -z "${META-}" ]
++        then
++            op="$op=<$META>"
++        fi
++        printf "    --%-30s %s\n" "$op" "$doc"
++     fi
++}
++
++validate_opt () {
++    for arg in $CFG_ARGS
++    do
++        local is_arg_valid=0
++        for option in $BOOL_OPTIONS
++        do
++            if test --disable-$option = $arg
++            then
++                is_arg_valid=1
++            fi
++            if test --enable-$option = $arg
++            then
++                is_arg_valid=1
++            fi
++            if test --$option = $arg
++            then
++                is_arg_valid=1
++            fi
++        done
++        for option in $VAL_OPTIONS
++        do
++            if echo "$arg" | grep -q -- "--$option="
++            then
++                is_arg_valid=1
++            fi
++        done
++        if [ "$arg" = "--help" ]
++        then
++            echo
++            echo "No more help available for Configure options,"
++            echo "check the Wiki or join our IRC channel"
++            break
++        else
++            if test $is_arg_valid -eq 0
++            then
++                err "Option '$arg' is not recognized"
++            fi
++        fi
++    done
++}
++
++absolutify() {
++    local file_path="$1"
++    local file_path_dirname="$(dirname "$file_path")"
++    local file_path_basename="$(basename "$file_path")"
++    local file_abs_path="$(abs_path "$file_path_dirname")"
++    local file_path="$file_abs_path/$file_path_basename"
++    # This is the return value
++    RETVAL="$file_path"
++}
++
++# Prints the absolute path of a directory to stdout
++abs_path() {
++    local path="$1"
++    # Unset CDPATH because it causes havok: it makes the destination unpredictable
++    # and triggers 'cd' to print the path to stdout. Route `cd`'s output to /dev/null
++    # for good measure.
++    (unset CDPATH && cd "$path" > /dev/null && pwd)
++}
++
++uninstall_legacy() {
++    local _abs_libdir="$1"
++
++    local _uninstalled_something=false
++
++    # Replace commas in legacy manifest list with spaces
++    _legacy_manifest_dirs=`echo "$TEMPLATE_LEGACY_MANIFEST_DIRS" | sed "s/,/ /g"`
++
++    # Uninstall from legacy manifests
++    local _md
++    for _md in $_legacy_manifest_dirs; do
++    # First, uninstall from the installation prefix.
++    # Errors are warnings - try to rm everything in the manifest even if some fail.
++    if [ -f "$_abs_libdir/$_md/manifest" ]
++    then
++
++        # iterate through installed manifest and remove files
++        local _p;
++        while read _p; do
++        # the installed manifest contains absolute paths
++        msg "removing legacy file $_p"
++        if [ -f "$_p" ]
++        then
++            run rm -f "$_p"
++            want_ok "failed to remove $_p"
++        else
++            warn "supposedly installed file $_p does not exist!"
++        fi
++        done < "$_abs_libdir/$_md/manifest"
++
++        # If we fail to remove $md below, then the
++        # installed manifest will still be full; the installed manifest
++        # needs to be empty before install.
++        msg "removing legacy manifest $_abs_libdir/$_md/manifest"
++        run rm -f "$_abs_libdir/$_md/manifest"
++        # For the above reason, this is a hard error
++        need_ok "failed to remove installed manifest"
++
++        # Remove $template_rel_manifest_dir directory
++        msg "removing legacy manifest dir $_abs_libdir/$_md"
++        run rm -R "$_abs_libdir/$_md"
++        want_ok "failed to remove $_md"
++
++        _uninstalled_something=true
++    fi
++    done
++
++    RETVAL="$_uninstalled_something"
++}
++
++uninstall_components() {
++    local _abs_libdir="$1"
++    local _dest_prefix="$2"
++    local _components="$3"
++
++    # We're going to start by uninstalling existing components. This
++    local _uninstalled_something=false
++
++    # First, try removing any 'legacy' manifests from before
++    # rust-installer
++    uninstall_legacy "$_abs_libdir"
++    assert_nz "$RETVAL", "RETVAL"
++    if [ "$RETVAL" = true ]; then
++    _uninstalled_something=true;
++    fi
++
++    # Load the version of the installed installer
++    local _installed_version=
++    if [ -f "$abs_libdir/$TEMPLATE_REL_MANIFEST_DIR/rust-installer-version" ]; then
++    _installed_version=`cat "$_abs_libdir/$TEMPLATE_REL_MANIFEST_DIR/rust-installer-version"`
++
++    # Sanity check
++    if [ ! -n "$_installed_version" ]; then critical_err "rust installer version is empty"; fi
++    fi
++
++    # If there's something installed, then uninstall
++    if [ -n "$_installed_version" ]; then
++    # Check the version of the installed installer
++    case "$_installed_version" in
++
++        # If this is a previous version, then upgrade in place to the
++        # current version before uninstalling.
++        2 )
++        # The only change between version 2 -> 3 is that components are placed
++        # in subdirectories of the installer tarball. There are no changes
++        # to the installed data format, so nothing to do.
++        ;;
++
++        # This is the current version. Nothing need to be done except uninstall.
++        "$TEMPLATE_RUST_INSTALLER_VERSION")
++        ;;
++
++        # If this is an unknown (future) version then bail.
++        * )
++        echo "The copy of $TEMPLATE_PRODUCT_NAME at $_dest_prefix was installed using an"
++        echo "unknown version ($_installed_version) of rust-installer."
++        echo "Uninstall it first with the installer used for the original installation"
++        echo "before continuing."
++        exit 1
++        ;;
++    esac
++
++    local _md="$_abs_libdir/$TEMPLATE_REL_MANIFEST_DIR"
++    local _installed_components="$(cat "$_md/components")"
++
++    # Uninstall (our components only) before reinstalling
++    local _available_component
++    for _available_component in $_components; do
++        local _installed_component
++        for _installed_component in $_installed_components; do
++        if [ "$_available_component" = "$_installed_component" ]; then
++            msg "uninstalling component '$_available_component'"
++            local _component_manifest="$_md/manifest-$_installed_component"
++
++            # Sanity check: there should be a component manifest
++            if [ ! -f "$_component_manifest" ]; then
++            critical_err "installed component '$_installed_component' has no manifest"
++            fi
++
++            # Iterate through installed component manifest and remove files
++            local _directive
++            while read _directive; do
++
++            local _command=`echo $_directive | cut -f1 -d:`
++            local _file=`echo $_directive | cut -f2 -d:`
++
++            # Sanity checks
++            if [ ! -n "$_command" ]; then critical_err "malformed installation directive"; fi
++            if [ ! -n "$_file" ]; then critical_err "malformed installation directive"; fi
++
++            case "$_command" in
++                file)
++                verbose_msg "removing file $_file"
++                if [ -f "$_file" ]; then
++                    run rm -f "$_file"
++                    want_ok "failed to remove $_file"
++                else
++                    warn "supposedly installed file $_file does not exist!"
++                fi
++                ;;
++
++                dir)
++                verbose_msg "removing directory $_file"
++                run rm -r "$_file"
++                want_ok "unable to remove directory $_file"
++                ;;
++
++                *)
++                critical_err "unknown installation directive"
++                ;;
++            esac
++
++            done < "$_component_manifest"
++
++            # Remove the installed component manifest
++            verbose_msg "removing component manifest $_component_manifest"
++            run rm "$_component_manifest"
++            # This is a hard error because the installation is unrecoverable
++            local _err_cant_r_manifest="failed to remove installed manifest for component"
++            critical_need_ok "$_err_cant_r_manifest '$_installed_component'"
++
++            # Update the installed component list
++            local _modified_components="$(sed "/^$_installed_component\$/d" "$_md/components")"
++            write_to_file "$_modified_components" "$_md/components"
++            critical_need_ok "failed to update installed component list"
++        fi
++        done
++    done
++
++    # If there are no remaining components delete the manifest directory,
++    # but only if we're doing an uninstall - if we're doing an install,
++    # then leave the manifest directory around to hang onto the logs,
++    # and any files not managed by the installer.
++    if [ -n "${CFG_UNINSTALL-}" ]; then
++        local _remaining_components="$(cat "$_md/components")"
++        if [ ! -n "$_remaining_components" ]; then
++        verbose_msg "removing manifest directory $_md"
++        run rm -r "$_md"
++        want_ok "failed to remove $_md"
++
++        maybe_unconfigure_ld
++        fi
++    fi
++
++    _uninstalled_something=true
++    fi
++
++    # There's no installed version. If we were asked to uninstall, then that's a problem.
++    if [ -n "${CFG_UNINSTALL-}" -a "$_uninstalled_something" = false ]
++    then
++    err "unable to find installation manifest at $CFG_LIBDIR/$TEMPLATE_REL_MANIFEST_DIR"
++    fi
++}
++
++install_components() {
++    local _src_dir="$1"
++    local _abs_libdir="$2"
++    local _dest_prefix="$3"
++    local _components="$4"
++
++    local _component
++    for _component in $_components; do
++
++    msg "installing component '$_component'"
++
++    # The file name of the manifest we're installing from
++    local _input_manifest="$_src_dir/$_component/manifest.in"
++
++    # Sanity check: do we have our input manifests?
++    if [ ! -f "$_input_manifest" ]; then
++        critical_err "manifest for $_component does not exist at $_input_manifest"
++    fi
++
++    # The installed manifest directory
++    local _md="$_abs_libdir/$TEMPLATE_REL_MANIFEST_DIR"
++
++    # The file name of the manifest we're going to create during install
++    local _installed_manifest="$_md/manifest-$_component"
++
++    # Create the installed manifest, which we will fill in with absolute file paths
++    touch "$_installed_manifest"
++    critical_need_ok "failed to create installed manifest"
++
++    # Add this component to the installed component list
++    append_to_file "$_component" "$_md/components"
++    critical_need_ok "failed to update components list for $_component"
++
++    # Now install, iterate through the new manifest and copy files
++    local _directive
++    while read _directive; do
++
++        local _command=`echo $_directive | cut -f1 -d:`
++        local _file=`echo $_directive | cut -f2 -d:`
++
++        # Sanity checks
++        if [ ! -n "$_command" ]; then critical_err "malformed installation directive"; fi
++        if [ ! -n "$_file" ]; then critical_err "malformed installation directive"; fi
++
++        # Decide the destination of the file
++        local _file_install_path="$_dest_prefix/$_file"
++
++        if echo "$_file" | grep "^etc/" > /dev/null
++        then
++        local _f="$(echo "$_file" | sed 's/^etc\///')"
++        _file_install_path="$CFG_SYSCONFDIR/$_f"
++        fi
++
++        if echo "$_file" | grep "^bin/" > /dev/null
++        then
++        local _f="$(echo "$_file" | sed 's/^bin\///')"
++        _file_install_path="$CFG_BINDIR/$_f"
++        fi
++
++        if echo "$_file" | grep "^lib/" > /dev/null
++        then
++        local _f="$(echo "$_file" | sed 's/^lib\///')"
++        _file_install_path="$CFG_LIBDIR/$_f"
++        fi
++
++        if echo "$_file" | grep "^share" > /dev/null
++        then
++        local _f="$(echo "$_file" | sed 's/^share\///')"
++        _file_install_path="$CFG_DATADIR/$_f"
++        fi
++
++        if echo "$_file" | grep "^share/man/" > /dev/null
++        then
++        local _f="$(echo "$_file" | sed 's/^share\/man\///')"
++        _file_install_path="$CFG_MANDIR/$_f"
++        fi
++
++            # HACK: Try to support overriding --docdir.  Paths with the form
++            # "share/doc/$product/" can be redirected to a single --docdir
++            # path. If the following detects that --docdir has been specified
++            # then it will replace everything preceding the "$product" path
++            # component. The problem here is that the combined rust installer
++            # contains two "products": rust and cargo; so the contents of those
++            # directories will both be dumped into the same directory; and the
++            # contents of those directories are _not_ disjoint. Since this feature
++            # is almost entirely to support 'make install' anyway I don't expect
++            # this problem to be a big deal in practice.
++            if [ "$CFG_DOCDIR" != "<default>" ]
++            then
++            if echo "$_file" | grep "^share/doc/" > /dev/null
++            then
++            local _f="$(echo "$_file" | sed 's/^share\/doc\/[^/]*\///')"
++            _file_install_path="$CFG_DOCDIR/$_f"
++            fi
++            fi
++
++        # Make sure there's a directory for it
++        make_dir_recursive "$(dirname "$_file_install_path")"
++        critical_need_ok "directory creation failed"
++
++        # Make the path absolute so we can uninstall it later without
++        # starting from the installation cwd
++        absolutify "$_file_install_path"
++        _file_install_path="$RETVAL"
++        assert_nz "$_file_install_path" "file_install_path"
++
++        case "$_command" in
++        file )
++
++            verbose_msg "copying file $_file_install_path"
++
++            maybe_backup_path "$_file_install_path"
++
++            if echo "$_file" | grep "^bin/" > /dev/null || test -x "$_src_dir/$_component/$_file"
++            then
++            run cp "$_src_dir/$_component/$_file" "$_file_install_path"
++            run chmod 755 "$_file_install_path"
++            else
++            run cp "$_src_dir/$_component/$_file" "$_file_install_path"
++            run chmod 644 "$_file_install_path"
++            fi
++            critical_need_ok "file creation failed"
++
++            # Update the manifest
++            append_to_file "file:$_file_install_path" "$_installed_manifest"
++            critical_need_ok "failed to update manifest"
++
++            ;;
++
++        dir )
++
++            verbose_msg "copying directory $_file_install_path"
++
++            maybe_backup_path "$_file_install_path"
++
++            run cp -R "$_src_dir/$_component/$_file" "$_file_install_path"
++            critical_need_ok "failed to copy directory"
++
++                    # Set permissions. 0755 for dirs, 644 for files
++                    run chmod -R u+rwX,go+rX,go-w "$_file_install_path"
++                    critical_need_ok "failed to set permissions on directory"
++
++            # Update the manifest
++            append_to_file "dir:$_file_install_path" "$_installed_manifest"
++            critical_need_ok "failed to update manifest"
++            ;;
++
++        *)
++            critical_err "unknown installation directive"
++            ;;
++        esac
++    done < "$_input_manifest"
++
++    done
++}
++
++maybe_configure_ld() {
++    local _abs_libdir="$1"
++
++    local _ostype="$(uname -s)"
++    assert_nz "$_ostype"  "ostype"
++
++    if [ "$_ostype" = "Linux" -a ! -n "${CFG_DISABLE_LDCONFIG-}" ]; then
++
++    # Fedora-based systems do not configure the dynamic linker to look
++    # /usr/local/lib, which is our default installation directory. To
++    # make things just work, try to put that directory in
++    # /etc/ld.so.conf.d/rust-installer-v1 so ldconfig picks it up.
++    # Issue #30.
++    #
++    # This will get rm'd when the last component is uninstalled in
++    # maybe_unconfigure_ld.
++    if [ "$_abs_libdir" = "/usr/local/lib" -a -d "/etc/ld.so.conf.d" ]; then
++        echo "$_abs_libdir" > "/etc/ld.so.conf.d/rust-installer-v1-$TEMPLATE_REL_MANIFEST_DIR.conf"
++        if [ $? -ne 0 ]; then
++        # This shouldn't happen if we've gotten this far
++        # installing to /usr/local
++        warn "failed to update /etc/ld.so.conf.d. this is unexpected"
++        fi
++    fi
++
++    verbose_msg "running ldconfig"
++    if [ -n "${CFG_VERBOSE-}" ]; then
++        ldconfig
++    else
++        ldconfig 2> /dev/null
++    fi
++    if [ $? -ne 0 ]
++    then
++            local _warn_s="failed to run ldconfig. this may happen when \
++not installing as root. run with --verbose to see the error"
++            warn "$_warn_s"
++    fi
++    fi
++}
++
++maybe_unconfigure_ld() {
++    local _ostype="$(uname -s)"
++    assert_nz "$_ostype"  "ostype"
++
++    if [ "$_ostype" != "Linux" ]; then
++    return 0
++    fi
++
++    rm "/etc/ld.so.conf.d/rust-installer-v1-$TEMPLATE_REL_MANIFEST_DIR.conf" 2> /dev/null
++    # Above may fail since that file may not have been created on install
++}
++
++# Doing our own 'install'-like backup that is consistent across platforms
++maybe_backup_path() {
++    local _file_install_path="$1"
++
++    if [ -e "$_file_install_path" ]; then
++    msg "backing up existing file at $_file_install_path"
++    run mv -f "$_file_install_path" "$_file_install_path.old"
++    critical_need_ok "failed to back up $_file_install_path"
++    fi
++}
++
++install_uninstaller() {
++    local _src_dir="$1"
++    local _src_basename="$2"
++    local _abs_libdir="$3"
++
++    local _uninstaller="$_abs_libdir/$TEMPLATE_REL_MANIFEST_DIR/uninstall.sh"
++    msg "creating uninstall script at $_uninstaller"
++    run cp "$_src_dir/$_src_basename" "$_uninstaller"
++    critical_need_ok "unable to install uninstaller"
++}
++
++do_preflight_sanity_checks() {
++    local _src_dir="$1"
++    local _dest_prefix="$2"
++
++    # Sanity check: can we can write to the destination?
++    verbose_msg "verifying destination is writable"
++    make_dir_recursive "$CFG_LIBDIR"
++    need_ok "can't write to destination. consider \`sudo\`."
++    touch "$CFG_LIBDIR/rust-install-probe" > /dev/null
++    if [ $? -ne 0 ]
++    then
++    err "can't write to destination. consider \`sudo\`."
++    fi
++    rm "$CFG_LIBDIR/rust-install-probe"
++    need_ok "failed to remove install probe"
++
++    # Sanity check: don't install to the directory containing the installer.
++    # That would surely cause chaos.
++    verbose_msg "verifying destination is not the same as source"
++    local _prefix_dir="$(abs_path "$dest_prefix")"
++    if [ "$_src_dir" = "$_dest_prefix" -a "${CFG_UNINSTALL-}" != 1 ]; then
++    err "cannot install to same directory as installer"
++    fi
++}
++
++verbose_msg "looking for install programs"
++verbose_msg
++
++need_cmd mkdir
++need_cmd printf
++need_cmd cut
++need_cmd grep
++need_cmd uname
++need_cmd tr
++need_cmd sed
++need_cmd chmod
++need_cmd env
++need_cmd pwd
++
++CFG_ARGS="${@:-}"
++
++HELP=0
++if [ "${1-}" = "--help" ]
++then
++    HELP=1
++    shift
++    echo
++    echo "Usage: $0 [options]"
++    echo
++    echo "Options:"
++    echo
++else
++    verbose_step_msg "processing arguments"
++fi
++
++OPTIONS=""
++BOOL_OPTIONS=""
++VAL_OPTIONS=""
++
++flag uninstall "only uninstall from the installation prefix"
++valopt destdir "" "set installation root"
++valopt prefix "/usr/local" "set installation prefix"
++
++# Avoid prepending an extra / to the prefix path if there's no destdir
++# NB: CFG vars here are undefined when passing --help
++if [ -z "${CFG_DESTDIR-}" ]; then
++    CFG_DESTDIR_PREFIX="${CFG_PREFIX-}"
++else
++    CFG_DESTDIR_PREFIX="$CFG_DESTDIR/$CFG_PREFIX"
++fi
++
++# NB This isn't quite the same definition as in `configure`.
++# just using 'lib' instead of configure's CFG_LIBDIR_RELATIVE
++valopt without "" "comma-separated list of components to not install"
++valopt components "" "comma-separated list of components to install"
++flag list-components "list available components"
++valopt sysconfdir "$CFG_DESTDIR_PREFIX/etc" "install system configuration files"
++valopt bindir "$CFG_DESTDIR_PREFIX/bin" "install binaries"
++valopt libdir "$CFG_DESTDIR_PREFIX/lib" "install libraries"
++valopt datadir "$CFG_DESTDIR_PREFIX/share" "install data"
++# NB We repeat datadir default value because we don't set CFG_DATADIR in --help
++valopt mandir "${CFG_DATADIR-"$CFG_DESTDIR_PREFIX/share"}/man" "install man pages in PATH"
++# NB See the docdir handling in install_components for an explanation of this
++# weird <default> string
++valopt docdir "\<default\>" "install documentation in PATH"
++opt ldconfig 1 "run ldconfig after installation (Linux only)"
++opt verify 1 "obsolete"
++flag verbose "run with verbose output"
++
++if [ $HELP -eq 1 ]
++then
++    echo
++    exit 0
++fi
++
++verbose_step_msg "validating arguments"
++validate_opt
++
++# Template configuration.
++# These names surrounded by '%%` are replaced by sed when generating install.sh
++# FIXME: Might want to consider loading this from a file and not generating install.sh
++
++# Rust or Cargo
++TEMPLATE_PRODUCT_NAME='Rust'
++# rustlib or cargo
++TEMPLATE_REL_MANIFEST_DIR=rustlib
++# 'Rust is ready to roll.' or 'Cargo is cool to cruise.'
++TEMPLATE_SUCCESS_MESSAGE='clippy installed.'
++# Locations to look for directories containing legacy, pre-versioned manifests
++TEMPLATE_LEGACY_MANIFEST_DIRS='rustlib,cargo'
++# The installer version
++TEMPLATE_RUST_INSTALLER_VERSION='3'
++
++# OK, let's get installing ...
++
++# This is where we are installing from
++src_dir="$(abs_path $(dirname "$0"))"
++
++# The name of the script
++src_basename="$(basename "$0")"
++
++# If we've been run as 'uninstall.sh' (from the existing installation)
++# then we're doing a full uninstall, as opposed to the --uninstall flag
++# which just means 'uninstall my components'.
++if [ "$src_basename" = "uninstall.sh" ]; then
++    if [ "${*:-}" != "" ]; then
++    # Currently don't know what to do with arguments in this mode
++    err "uninstall.sh does not take any arguments"
++    fi
++    CFG_UNINSTALL=1
++    CFG_DESTDIR_PREFIX="$(abs_path "$src_dir/../../")"
++    CFG_LIBDIR="$(abs_path "$src_dir/../")"
++fi
++
++# This is where we are installing to
++dest_prefix="$CFG_DESTDIR_PREFIX"
++
++# Open the components file to get the list of components to install.
++# NB: During install this components file is read from the installer's
++# source dir, during a full uninstall it's read from the manifest dir,
++# and thus contains all installed components.
++components=`cat "$src_dir/components"`
++
++# Sanity check: do we have components?
++if [ ! -n "$components" ]; then
++    err "unable to find installation components"
++fi
++
++# If the user asked for a component list, do that and exit
++if [ -n "${CFG_LIST_COMPONENTS-}" ]; then
++    echo
++    echo "# Available components"
++    echo
++    for component in $components; do
++    echo "* $component"
++    done
++    echo
++    exit 0
++fi
++
++# If the user specified which components to install/uninstall,
++# then validate that they exist and select them for installation
++if [ -n "$CFG_COMPONENTS" ]; then
++    # Remove commas
++    user_components="$(echo "$CFG_COMPONENTS" | sed "s/,/ /g")"
++    for user_component in $user_components; do
++    found=false
++    for my_component in $components; do
++        if [ "$user_component" = "$my_component" ]; then
++        found=true
++        fi
++    done
++    if [ "$found" = false ]; then
++        err "unknown component: $user_component"
++    fi
++    done
++    components="$user_components"
++fi
++
++if [ -n "$CFG_WITHOUT" ]; then
++    without_components="$(echo "$CFG_WITHOUT" | sed "s/,/ /g")"
++
++    # This does **not** check that all components in without_components are
++    # actually present in the list of available components.
++    #
++    # Currently that's considered good as it makes it easier to be compatible
++    # with multiple Rust versions (which may change the exact list of
++    # components) when writing install scripts.
++    new_comp=""
++    for component in $components; do
++        found=false
++        for my_component in $without_components; do
++            if [ "$component" = "$my_component" ]; then
++                found=true
++            fi
++        done
++        if [ "$found" = false ]; then
++            # If we didn't find the component in without, then add it to new list.
++            new_comp="$new_comp $component"
++        fi
++    done
++    components="$new_comp"
++fi
++
++if [ -z "$components" ]; then
++    if [ -z "${CFG_UNINSTALL-}" ]; then
++    err "no components selected for installation"
++    else
++    err "no components selected for uninstallation"
++    fi
++fi
++
++do_preflight_sanity_checks "$src_dir" "$dest_prefix"
++
++# Using an absolute path to libdir in a few places so that the status
++# messages are consistently using absolute paths.
++absolutify "$CFG_LIBDIR"
++abs_libdir="$RETVAL"
++assert_nz "$abs_libdir" "abs_libdir"
++
++# Create the manifest directory, where we will put our logs
++make_dir_recursive "$abs_libdir/$TEMPLATE_REL_MANIFEST_DIR"
++need_ok "failed to create $TEMPLATE_REL_MANIFEST_DIR"
++
++# Log messages and commands
++init_logging "$abs_libdir"
++
++# First do any uninstallation, including from legacy manifests. This
++# will also upgrade the metadata of existing installs.
++uninstall_components "$abs_libdir" "$dest_prefix" "$components"
++
++# If we're only uninstalling then exit
++if [ -n "${CFG_UNINSTALL-}" ]
++then
++    echo
++    echo "    $TEMPLATE_PRODUCT_NAME is uninstalled."
++    echo
++    exit 0
++fi
++
++# Create the manifest directory again! uninstall_legacy
++# may have deleted it.
++make_dir_recursive "$abs_libdir/$TEMPLATE_REL_MANIFEST_DIR"
++need_ok "failed to create $TEMPLATE_REL_MANIFEST_DIR"
++
++# Drop the version number into the manifest dir
++write_to_file "$TEMPLATE_RUST_INSTALLER_VERSION" \
++"$abs_libdir/$TEMPLATE_REL_MANIFEST_DIR/rust-installer-version"
++
++critical_need_ok "failed to write installer version"
++
++# Install the uninstaller
++install_uninstaller "$src_dir" "$src_basename" "$abs_libdir"
++
++# Install each component
++install_components "$src_dir" "$abs_libdir" "$dest_prefix" "$components"
++
++# Make dynamic libraries available to the linker
++maybe_configure_ld "$abs_libdir"
++
++echo
++echo "    $TEMPLATE_SUCCESS_MESSAGE"
++echo
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/rust-installer-version b/.rustup/tmp/2cj011y49wshu5t8_dir/rust-installer-version
+new file mode 100644
+index 00000000..00750edc
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/rust-installer-version
+@@ -0,0 +1 @@
++3
+diff --git a/.rustup/tmp/2cj011y49wshu5t8_dir/version b/.rustup/tmp/2cj011y49wshu5t8_dir/version
+new file mode 100644
+index 00000000..32844913
+--- /dev/null
++++ b/.rustup/tmp/2cj011y49wshu5t8_dir/version
+@@ -0,0 +1 @@
++0.1.88
+\ No newline at end of file
+diff --git a/src/pdm/models/session.py b/src/pdm/models/session.py
+index b9a6c551..0c6cff59 100644
+--- a/src/pdm/models/session.py
++++ b/src/pdm/models/session.py
+@@ -154,6 +154,11 @@ class PDMPyPIClient(PyPIClient):
+         self._proxy_map = {
+             URLPattern(key): proxy for key, proxy in sorted(self._get_proxy_map(None, allow_env_proxies=True).items())
+         }
++        self._no_proxy_patterns = [
++            URLPattern(pattern)
++            for pattern in (os.getenv("no_proxy") or os.getenv("NO_PROXY") or "").split(",")
++            if pattern.strip()
++        ]
+         for s in sources:
+             assert s.url is not None
+             url = httpx.URL(s.url)
+@@ -184,9 +189,20 @@ class PDMPyPIClient(PyPIClient):
+         else:
+             cert = None
+         source_url = httpx.URL(cast(str, source.url))
+-        proxy = next((proxy for pattern, proxy in self._proxy_map.items() if pattern.matches(source_url)), None)
++        proxy = self._get_proxy_for_url(source_url)
+         return _get_transport(verify=verify, cert=cert, proxy=proxy)
+ 
++    def _get_proxy_for_url(self, url: httpx.URL) -> httpx.Proxy | None:
++        """Return the proxy to use for the given URL, honoring ``no_proxy``.
++
++        ``all_proxy`` (and the other ``*_proxy`` env vars) shouldn't be applied
++        unconditionally: if the target host matches an entry in ``no_proxy``,
++        the request must bypass the proxy. See pdm-project/pdm#3255.
++        """
++        if any(pattern.matches(url) for pattern in self._no_proxy_patterns):
++            return None
++        return next((proxy for pattern, proxy in self._proxy_map.items() if pattern.matches(url)), None)
++
+     def _make_user_agent(self) -> str:
+         import platform
+ 

@@ -1,0 +1,30 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11924314120,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyNDMxNDEyMA==",
+    "name": "schedule-delgan__loguru-1240",
+    "size_in_bytes": 31647,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924314120",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924314120/zip",
+    "expired": false,
+    "digest": "sha256:92a5b68f61f1fe1005c8d67443e755a7c9cd1f62536c718be8ff080a671424e4",
+    "created_at": "2026-10-14T19:52:04Z",
+    "updated_at": "2026-10-14T19:52:04Z",
+    "expires_at": "2026-10-28T19:52:03Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:52:29.802209+00:00",
+  "files": [
+    {
+      "path": "run-bundle.json",
+      "sha256": "2ad8136ed47f4502debea357714e77d5be3ab417bcc4f1a3acf8ce7c874e481f"
+    }
+  ]
+}

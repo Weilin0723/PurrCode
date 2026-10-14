@@ -6,9 +6,9 @@ submission work, not a claim about acceptance probability.
 | Required result | Current evidence | Remaining work |
 | --- | --- | --- |
 | Defensible research question | Freshness/correctness counterexamples; structural conjunction limitation disclosed | Evaluate live evidence refresh separately |
-| Qualified affordable provider | Fresh official `deepseek-flash` 7/7; 16,384-token context probe; v26 B/C correction smokes completed; 30/30 public environments provisioned with package receipts | Verify behavior in the running real-task study |
+| Qualified affordable provider | Fresh official `deepseek-flash` 7/7; v26 B/C correction smokes completed; provisioning alone missed public test dependencies; repaired Mesa collection/gold 3/3 passed | Complete real public-test collection qualification before further model generation |
 | Independent real repositories | Final v4 has 30 passing reference patches; full visible-environment plus gold qualification 38604737010 passed before model calls; originals and checksums archived | Preserve final study's task and image provenance |
-| Complete live observations | Earlier failures and Flash v2 retained; repaired 120-cell workflow 38623532382 running from published freeze c4fe105 | Complete schedule, diagnose operational anomalies, retain normal incorrect outcomes |
+| Complete live observations | Flash v3 was cancelled for systemic environment faults; 35 original rows retained, four correct oracle patches, zero completed sessions | Repair environment gaps exposed by zero-model-call workflow 38627233895; resume with versioned records and retain normal incorrect outcomes |
 | Useful comparative finding | Static gate guardrail failed and remains reported | Assess safety, correct delivery, latency and token cost using frozen inference |
 | Audited inference | Valid-paired population frozen prospectively; full analysis regression verifies exclusions, insufficient-evidence suppression and delivery guardrail | Recompute actual results independently, audit differential exclusions and conditional interpretation |
 | Anonymous reproducibility | Existing component archive validated earlier | Rebuild with final study and recheck identities, credentials and checksums |

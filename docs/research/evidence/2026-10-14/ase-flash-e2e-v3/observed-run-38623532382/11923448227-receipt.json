@@ -1,0 +1,90 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11923448227,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyMzQ0ODIyNw==",
+    "name": "e2e-yt-dlp__yt-dlp-11425",
+    "size_in_bytes": 469125,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923448227",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11923448227/zip",
+    "expired": false,
+    "digest": "sha256:ca896753dcae5876d7e6a510de936e607ce4a2756146e4a66922f6a056bfcbb3",
+    "created_at": "2026-10-14T19:45:23Z",
+    "updated_at": "2026-10-14T19:45:23Z",
+    "expires_at": "2026-10-28T19:45:21Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:46:07.588781+00:00",
+  "files": [
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/yt-dlp__yt-dlp-11425-correction-B-0.patch",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/yt-dlp__yt-dlp-11425-correction-C-0.patch",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/yt-dlp__yt-dlp-11425-static-B-0.patch",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/patches/yt-dlp__yt-dlp-11425-static-C-0.patch",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/results.jsonl",
+      "sha256": "c975163404c00e1f9dc2762b23c770a9e63eae4f3d040d8d07fd6118ff392839"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/yt-dlp__yt-dlp-11425-correction-B-0.json",
+      "sha256": "84d70c5e05afd523c124882816d11c8d1b30b1f3ee881c9a20a8f0d44ac7d57a"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/yt-dlp__yt-dlp-11425-correction-C-0.json",
+      "sha256": "a89acfe67e8836e62cef6ea9a9d57987838fe8d0e8c19c4be011cd30b5e82feb"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/yt-dlp__yt-dlp-11425-static-B-0.json",
+      "sha256": "037e4b6d1e3c3bf6fd47cb28f2c329369ba98a97f73f2308eba2c40d78518266"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/session-audit/yt-dlp__yt-dlp-11425-static-C-0.json",
+      "sha256": "134cbaa4345bb0485eb7538723b3a8b4c4a1c824fa0db77147f77a72e8d82444"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/yt-dlp__yt-dlp-11425-correction-B-0.json",
+      "sha256": "1be6c91d6570fc7e385492ff9b928a65084623aed70df0666238717cf1f7046e"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/yt-dlp__yt-dlp-11425-correction-C-0.json",
+      "sha256": "b37b8408da444d23dc38151cd3146636e827f1b0184364cb346ada22af5a3afa"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/yt-dlp__yt-dlp-11425-static-B-0.json",
+      "sha256": "ddf70d9ee96491c2b0f8f80868adf0f63707b8bf323ebf56e792e067b72b49bc"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/e2e/started/yt-dlp__yt-dlp-11425-static-C-0.json",
+      "sha256": "b8cdbead20f31ba109c658fd466e3add7eb99e6a6f243392f3e17ee2a0b70ca9"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/oracle/gold-oracle-results.jsonl",
+      "sha256": "011c6c3fa540fa434683cd9fa02d854e1de02b487299b3f425f04a1051497ae6"
+    },
+    {
+      "path": ".research-cache/purrcode-swebench-live/visible-environment.json",
+      "sha256": "2877c57ad887e366f0085ed3f379bafb06dae6b798904a4c3d74f3687b0a1216"
+    },
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}

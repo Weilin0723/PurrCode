@@ -1,0 +1,30 @@
+{
+  "run_id": "38623532382",
+  "artifact": {
+    "id": 11924506372,
+    "node_id": "MDg6QXJ0aWZhY3QxMTkyNDUwNjM3Mg==",
+    "name": "e2e-projectmesa__mesa-2523",
+    "size_in_bytes": 8576,
+    "url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924506372",
+    "archive_download_url": "https://api.github.com/repos/Weilin0723/PurrCode/actions/artifacts/11924506372/zip",
+    "expired": false,
+    "digest": "sha256:c3a7ec132579f552576245156da1538186f1dbd1e0598f0a11a125ef190c5dee",
+    "created_at": "2026-10-14T19:51:49Z",
+    "updated_at": "2026-10-14T19:51:49Z",
+    "expires_at": "2026-10-28T19:51:48Z",
+    "workflow_run": {
+      "id": 38623532382,
+      "repository_id": 1312375880,
+      "head_repository_id": 1312375880,
+      "head_branch": "codex/ase-submission-ready",
+      "head_sha": "c4fe105a0979f88b1d99a17534b85a16ce650304"
+    }
+  },
+  "downloaded_at": "2026-10-14T19:52:27.362424+00:00",
+  "files": [
+    {
+      "path": "benchmarks/research/swebench-live-flash-v4/manifest.json",
+      "sha256": "dfd6ee1488cf2552f42db62fcf2f68998647cad7a4f2b8c46389d80c4a2b64e1"
+    }
+  ]
+}
