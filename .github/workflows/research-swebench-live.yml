@@ -110,7 +110,9 @@ jobs:
             > "$RESEARCH_ROOT/state/daemon.log" 2>&1 &
           echo $! > "$RESEARCH_ROOT/state/daemon.pid"
           for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:7477/health >/dev/null; then
+            if curl --fail --silent \
+              --header "Authorization: Bearer $(cat "$RESEARCH_ROOT/state/daemon.token")" \
+              http://127.0.0.1:7477/v1/health >/dev/null; then
               exit 0
             fi
             sleep 1
