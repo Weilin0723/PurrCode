@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -118,6 +119,25 @@ def run_gold(task: Mapping[str, Any], *, out: Path, args: argparse.Namespace) ->
         report_error = "report.json was not written"
     image, digest = image_digest(instance_id)
     resolved = report.get("resolved") if isinstance(report, Mapping) else None
+    exception = re.findall(
+        r"^(TypeError|ValueError|ImportError|ModuleNotFoundError|FileNotFoundError|DatasetNotFoundError|RevisionNotFoundError): (.*)$",
+        completed.stderr,
+        re.MULTILINE,
+    )
+    error_type = exception[-1][0] if exception else None
+    error_category = None
+    if exception:
+        message = exception[-1][1]
+        if "not JSON serializable" in message:
+            error_category = "dataset_value_not_json_serializable"
+        elif "unexpected keyword argument" in message:
+            error_category = "unsupported_harness_argument"
+        elif "No module named" in message:
+            error_category = "missing_operator_dependency"
+        elif "predictions" in message.lower():
+            error_category = "oracle_prediction_input"
+        else:
+            error_category = "operator_exception"
     passed = completed.returncode == 0 and resolved is True
     return {
         "selection_index": index,
@@ -130,6 +150,8 @@ def run_gold(task: Mapping[str, Any], *, out: Path, args: argparse.Namespace) ->
         "patch_successfully_applied": report.get("patch_successfully_applied") if isinstance(report, Mapping) else None,
         "report_error": report_error,
         "oracle_exit_code": completed.returncode,
+        "oracle_error_type": error_type,
+        "oracle_error_category": error_category,
         "report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest() if report_path.is_file() else None,
         "image": image,
         "image_digest": digest,
