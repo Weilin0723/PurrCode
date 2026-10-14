@@ -9,6 +9,22 @@ import ase_visible_environment as module
 
 
 class VisibleEnvironmentTests(unittest.TestCase):
+    def test_hatch_poetry_and_unambiguous_public_lock_constraints(self):
+        metadata = {"tool": {"hatch": {"envs": {"test": {"extra-dependencies": ["arrow", "pytest"]},
+                                                   "docs": {"dependencies": ["not-a-test-dependency"]}}},
+                             "poetry": {"group": {"dev": {"dependencies": {"pytest-asyncio": "^0.23.7"}},
+                                                   "docs": {"dependencies": {"sphinx": "*"}}}}}}
+        self.assertEqual(module.public_test_dependencies(metadata), ["arrow", "pytest"])
+        self.assertEqual(module.poetry_test_groups(metadata), {"pytest-asyncio": "^0.23.7"})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "pdm.lock").write_text(
+                '[[package]]\nname="hishel"\nversion="0.0.33"\n'
+                '[[package]]\nname="PDM"\nversion="2.0.0"\n'
+                '[[package]]\nname="ambiguous"\nversion="1.0.0"\n'
+                '[[package]]\nname="ambiguous"\nversion="2.0.0"\n')
+            self.assertEqual(module.public_lock_constraints(root, "pdm"), ["hishel==0.0.33"])
+
     def test_failed_collection_is_preserved_and_blocks_qualification(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -44,7 +44,41 @@ def public_test_dependencies(metadata):
                     raise ValueError("unsupported public test dependency declaration")
         for name in sorted(set(table) & PUBLIC_TEST_GROUPS):
             expand(name, [])
+    for name, configuration in metadata.get("tool", {}).get("hatch", {}).get("envs", {}).items():
+        if name in PUBLIC_TEST_GROUPS or name == "default":
+            for key in ("dependencies", "extra-dependencies"):
+                for dependency in configuration.get(key, []):
+                    if not isinstance(dependency, str) or not dependency or dependency.startswith("-"):
+                        raise ValueError("unsupported public Hatch dependency")
+                    dependencies.append(dependency)
     return list(dict.fromkeys(dependencies))
+
+
+def public_lock_constraints(checkout, project_name):
+    versions = {}
+    normalize = lambda name: re.sub(r"[-_.]+", "-", name).lower()
+    for name in ("pdm.lock", "poetry.lock", "uv.lock"):
+        path = checkout / name
+        if not path.exists():
+            continue
+        for package in tomllib.loads(path.read_text()).get("package", []):
+            package_name, version = package.get("name", ""), package.get("version", "")
+            if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", package_name)
+                    or not re.fullmatch(r"[0-9][A-Za-z0-9.!+_-]*", version)
+                    or normalize(package_name) == normalize(project_name)):
+                continue
+            versions.setdefault(normalize(package_name), set()).add(version)
+    return [name + "==" + next(iter(values)) for name, values in sorted(versions.items()) if len(values) == 1]
+
+
+def poetry_test_groups(metadata):
+    poetry = metadata.get("tool", {}).get("poetry", {})
+    result = dict(poetry.get("dev-dependencies", {}))
+    for name, configuration in poetry.get("group", {}).items():
+        if name in PUBLIC_TEST_GROUPS:
+            result.update(configuration.get("dependencies", {}))
+    result.pop("python", None)
+    return result
 
 
 def provision(manifest, instance_id, cache, root):
@@ -67,25 +101,36 @@ def provision(manifest, instance_id, cache, root):
             execute([os.sys.executable, "-m", "venv", str(venv)])
             python = str(venv / "bin/python")
             ruff_version = public_ruff_version(checkout)
-            constraints = root / "public-tool-constraints.txt"
-            constraints.write_text("ruff==" + ruff_version + "\n")
-            receipt["ruff_version"] = ruff_version
-            execute([python, "-m", "pip", "install", "-c", str(constraints), "pytest==8.3.5", "ruff==" + ruff_version,
+            receipt["initial_ruff_version"] = ruff_version
+            execute([python, "-m", "pip", "install", "pytest==8.3.5", "ruff==" + ruff_version,
                      "hypothesis==6.131.9", "pytest-mock==3.14.0"])
             project = checkout / "pyproject.toml"
             metadata = tomllib.loads(project.read_text()) if project.exists() else {}
+            project_name = metadata.get("project", {}).get("name", metadata.get("tool", {}).get("poetry", {}).get("name", ""))
+            constraints = root / "public-lock-constraints.txt"
+            locked = public_lock_constraints(checkout, project_name)
+            constraints.write_text("\n".join(locked) + "\n")
+            receipt["public_lock_constraints"] = locked
             extras = metadata.get("project", {}).get("optional-dependencies", {})
             selected = sorted(set(extras) & PUBLIC_TEST_GROUPS)
             if project.exists() or (checkout / "setup.py").exists():
                 package = str(checkout) + ("[" + ",".join(selected) + "]" if selected else "")
                 execute([python, "-m", "pip", "install", "-c", str(constraints), package])
             test_dependencies = public_test_dependencies(metadata)
+            poetry_groups = poetry_test_groups(metadata)
+            if poetry_groups:
+                execute([python, "-m", "pip", "install", "poetry-core==2.1.3"])
+                conversion = "import json, sys; from pathlib import Path; from poetry.core.factory import Factory; data=json.load(sys.stdin); print(json.dumps([Factory.create_dependency(name, value, root_dir=Path.cwd()).to_pep_508() for name,value in data.items()]))"
+                requirements = subprocess.check_output([python, "-c", conversion], cwd=checkout,
+                    input=json.dumps(poetry_groups), env=environment, text=True)
+                test_dependencies.extend(json.loads(requirements))
             if test_dependencies:
                 execute([python, "-m", "pip", "install", "-c", str(constraints), *test_dependencies])
             receipt["public_test_extras"] = selected
             receipt["public_test_group_dependencies"] = test_dependencies
             receipt["installed_packages"] = subprocess.check_output(
                 [python, "-m", "pip", "freeze", "--all"], env=environment, text=True).splitlines()
+            receipt["ruff_version"] = next((item.split("==", 1)[1] for item in receipt["installed_packages"] if item.startswith("ruff==")), None)
             collection_environment = dict(environment)
             collection_environment["PYTHONPATH"] = str(checkout / "src") + os.pathsep + str(checkout)
             collection_environment["PYTHONDONTWRITEBYTECODE"] = "1"
