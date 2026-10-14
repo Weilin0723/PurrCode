@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "source_and_freeze_commit": "caf912c",
+  "captured_at": "2026-10-14T19:38:14.986368+00:00",
+  "logs": [
+    {
+      "command": "RUST_TEST_THREADS=2 cargo test --workspace",
+      "path": "purrcode-runtime-v26-workspace-tests.log.gz",
+      "source_log_sha256": "6b4671646dfe8d6d1403c4db3d0677c6fe118a74e1bbc8d3280ecc49ae9aedcf",
+      "archive_sha256": "bc389be1b5c6e0f9cb1d7f0cb528685aba4e2f57e7c2276451f93135d64516ec"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "path": "purrcode-runtime-v26-clippy.log.gz",
+      "source_log_sha256": "1699dffef97ff7d102742aeb65eb65434340920c2f44f6826654ae992fa55703",
+      "archive_sha256": "0976889ad78d3d516931cc308f7a9f4896d796396a447897e558bc35a6be7912"
+    },
+    {
+      "command": "cargo check -p purrcode-skill-store -p purrcode-skill-registry -p purrcode-web-research",
+      "path": "purrcode-trio-v26-check.log.gz",
+      "source_log_sha256": "0e086b7e8e5953b7c8f807981497d20c2a15e5b371cd4ba2716fda0786891678",
+      "archive_sha256": "f04bfb435a60655711aa2783629663e303ce06a39b3687b0322464eefcce632e"
+    }
+  ],
+  "workspace_tests": {
+    "passed": 1981,
+    "failed": 0,
+    "ignored": 1,
+    "ignored_case": "live_ollama_connect_and_provider_backed_multiturn_streaming",
+    "ignored_reason": "requires a running local Ollama provider"
+  },
+  "scope": "Local current repaired Rust runtime; not a claim about scientific model-task outcomes."
+}

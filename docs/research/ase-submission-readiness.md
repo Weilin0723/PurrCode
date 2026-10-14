@@ -6,14 +6,14 @@ submission work, not a claim about acceptance probability.
 | Required result | Current evidence | Remaining work |
 | --- | --- | --- |
 | Defensible research question | Freshness/correctness counterexamples; structural conjunction limitation disclosed | Evaluate live evidence refresh separately |
-| Qualified affordable provider | Fresh official `deepseek-flash` 7/7; 16,384-token context probe; same-binary v26 B/C correction preflights completed with exact files and fully recorded usage | Verify visible dependency environment on real repository tasks |
-| Independent real repositories | v3 has 27 reference passes and one whole rejected group; v4 replaces that group before scientific model generation | Finish three replacement qualifications and archive every original row before new model-study freeze |
-| Complete live observations | Earlier failures and frozen Flash v2 (116 attempted, four not started, no completed delivery) retained; no efficacy pooling | Complete newly frozen schedule without selective retries |
+| Qualified affordable provider | Fresh official `deepseek-flash` 7/7; 16,384-token context probe; v26 B/C correction smokes completed; 30/30 public environments provisioned with package receipts | Verify behavior in the running real-task study |
+| Independent real repositories | Final v4 has 30 passing reference patches; full visible-environment plus gold qualification 38604737010 passed before model calls; originals and checksums archived | Preserve final study's task and image provenance |
+| Complete live observations | Earlier failures and Flash v2 retained; repaired 120-cell workflow 38623532382 running from published freeze c4fe105 | Complete schedule, diagnose operational anomalies, retain normal incorrect outcomes |
 | Useful comparative finding | Static gate guardrail failed and remains reported | Assess safety, correct delivery, latency and token cost using frozen inference |
-| Audited inference | Existing offline analysis tests pass; unknown outcomes retained | Recompute new results independently and assess attrition/minimum competence gates |
+| Audited inference | Valid-paired population frozen prospectively; full analysis regression verifies exclusions, insufficient-evidence suppression and delivery guardrail | Recompute actual results independently, audit differential exclusions and conditional interpretation |
 | Anonymous reproducibility | Existing component archive validated earlier | Rebuild with final study and recheck identities, credentials and checksums |
 | Submission manuscript | English/Chinese live audits updated; verified bibliography; six-page anonymous working PDF typeset | Finish live results, final contribution assessment and final PDF QA |
-| Repository validation | Current targeted Rust tests, Clippy, Python regressions and actionlint pass; full workspace run in progress | Finish final-snapshot workspace tests; retain explicit ignored/external checks |
+| Repository validation | Current runtime: workspace 1,981 passed / one explicitly ignored; fmt, Clippy and required trio check passed; Python 101 passed before two additional passing analysis regressions | Revalidate changes needed after experiments; retain explicit ignored/external checks |
 
 The current component p-values remain in the audited historical evidence. For the paired static
 conjunction, positive C-minus-B risk differences are structurally impossible; sign symmetry does

@@ -41,8 +41,9 @@ revision calls are billed even when their semantic result is rejected; a follow-
 against the current user instruction while preserving the prior durable plan; duplicate writes
 cannot leave a phantom approval state. The context index's SQLite scratch is excluded from
 repository changes, while project settings remain visible. Native action authorization and
-adapter revalidation still apply independently. Full current-snapshot workspace validation
-remains open; synthetic failures are retained alongside operational qualifications.
+adapter revalidation still apply independently. Current repaired-runtime workspace validation
+passed: 1,981 tests passed and one live-Ollama test was explicitly ignored; synthetic failures
+are retained alongside operational qualifications.
 
 Further operational repairs are under validation: contextual judges now record their
 actual streamed token usage, citations are constrained to supplied evidence IDs, and
@@ -54,7 +55,8 @@ native-action approval still requires its separate authorization. The research w
 provisions public base-revision dependencies before materializing provider credentials,
 with pinned test tools, an isolated environment, and a package receipt. Targeted agent
 (113), alignment (29), Claw (12), contextual judgment (5), and validation (15) tests pass
-for their respective current source checks; the full final-snapshot workspace check remains open.
+for their respective current source checks. The current workspace test run, formatting,
+Clippy with warnings denied, and explicit skill-store/skill-registry/web-research check passed.
 The v21 real-API C correction preflight completed with exact required files, a durable
 correction acknowledgement, and alignment enabled (15 calls, 41,450 recorded tokens;
 one call has unknown usage). The corresponding B preflight preserved both exact files
@@ -73,13 +75,25 @@ revalidation are unchanged.
 Candidate acquisition v3 qualified 27 reference patches and rejected all three in the
 geopandas repository group (workflow 38595587391). Before any scientific model generation,
 v4 retains the 27 tasks and replaces that whole group with the next eligible repository,
-privacyidea; its three reference qualifications are running in workflow 38601307024.
+privacyidea; its three reference qualifications passed in workflow 38601307024.
+The subsequent visible-environment and gold qualification workflow 38604737010 passed
+all 30 tasks, with zero model calls and original artifacts plus checksums preserved.
 Public projection caching preserves task order, eligibility counts and solution/test hashes
 without exporting solution code, test bodies, or hidden test names. All 500 pinned source
 rows were read, and v3 task identities and input hashes were independently reproduced.
 This evidence must not be pooled with failed Flash v2 efficacy observations. A six-page
 anonymous working manuscript PDF has been typeset, with the live audit included; final
 results, anonymous package extension, and final PDF QA still remain open.
+
+The repaired 120-cell B/C × static/correction study was frozen in commit caf912c and
+published before dispatch in c4fe105. Workflow 38623532382 is running that fixed version.
+Its primary population is prospectively defined as valid evaluable B/C pairs; no-output,
+budget, provider, runtime, timeout, and unknown-oracle observations are separately audited.
+Incorrect but evaluable outcomes remain included. Conditional method support also requires
+at least 24 correction pairs across eight repositories and the frozen correct-delivery
+guardrail. Failed historical studies are not pooled into this comparison. The operator
+requested experiment monitoring and intervention for operational failures, with normal
+behavioral failures recorded rather than selectively rerun. Scientific results remain pending.
 
 
 Full design in [`v1.5-architecture.md`](v1.5-architecture.md).
