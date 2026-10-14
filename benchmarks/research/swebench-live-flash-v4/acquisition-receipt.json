@@ -1,0 +1,43 @@
+{
+  "kind": "pre_model_repository_group_replacement",
+  "model_calls": 0,
+  "prior_qualification_run": 38595587391,
+  "rejected_repository": "geopandas/geopandas",
+  "reason": "all three reference-patch qualifications failed; whole group excluded before model generation",
+  "retained_task_count": 27,
+  "new_task_ids": [
+    "privacyidea__privacyidea-4206",
+    "privacyidea__privacyidea-4226",
+    "privacyidea__privacyidea-4233"
+  ],
+  "v3_task_and_input_hash_reproduction": "identical",
+  "public_source_rows": 500,
+  "public_projection_hashes": {
+    "0-20.json": "3853380987fcc35ac98bccd4e0a7c94ae3f5ddcca8e6de4dcfb7a883d2cf8583",
+    "100-20.json": "ac25d19fa8fffda11d225d7e73191e1d6fd356e0fa1d11962682bb6fa1911857",
+    "120-20.json": "716faa2d0a7ceb62cfed1f3576fe771ed8fe98ae212a901a97fb65b81a629fc2",
+    "140-20.json": "46c676afd8ae77fbd2a95c0dd60aa10ad9242952667170d2ff4c3d3d6e5167f5",
+    "160-20.json": "51e8498e9ba1c32f77426bc7c4f042c1ddb86e88710fbdbc1fe6ef61e3b2b0d4",
+    "180-20.json": "c6a0635b0d203e9aff62bf404dcee8efe5986375a8dd0b5a722a847e11829f3d",
+    "20-20.json": "0fed9394a6432296eaa42f2881fd25f538a472690d97b0aff76e5eaaca8d7f04",
+    "200-20.json": "b2b31bb3d8df70a06e1eb4709fa37d3e8017d4ab826def3f550dc38f969081c0",
+    "220-20.json": "81522472a57eb70ef56bbeecb17cd60ba14863ef0a5a5a73f741a7a2e00c8081",
+    "240-20.json": "7a5f36c59c11078b0393e4f48d361262cb83958dd1271f1675d224ed988cfbc4",
+    "260-20.json": "c0c77add9adee5850abbc06307778e2dfcf75a115818e3c42548e64df65576f1",
+    "280-20.json": "dfa89fcc4baf69ea6b91e193dc3312ea54a1660ef78917624c109b4cc9fb627d",
+    "300-20.json": "b53a66668caaa0df88f75f02ff9fcc1ab4e9fd5b1c3ecde7ff5aeca9f5720327",
+    "320-20.json": "abf58169b2d978e16a999767e01bb26206dfe7b7a748fad47823dd394509bed5",
+    "340-20.json": "8ce3dcd0475b0614888f630c6ed6164efb90079e1d95473ab24a185576975f57",
+    "360-20.json": "d1162987da713b8072cb978cbe626f11b5cb5d181f6e87c93f59aa80918bdcbb",
+    "380-20.json": "82425d7b8bbb47231a4006fdfdc37621550a201bdfbb19054756ea75192924a2",
+    "40-20.json": "270fc059fd77b66f4dd0ec935e68062b6a52681ffa212f6e8a24511023dfc626",
+    "400-20.json": "0e9e3d114a928a1ece22fad17ac663df21106eb48f8a0e6cc99644f8ef3a4ed8",
+    "420-20.json": "944fb5caca1c8a1332165f5392116e8c1cf5c583e0604960f70a533d553c7b8e",
+    "440-20.json": "3814444ec8b653fd339701f5261173892fd725e4647daf2655d648aa83111111",
+    "460-20.json": "cdbf22df906642fbdf16e2c0a98bc01eada9b2be851cbbc9a998027bd0154ce5",
+    "480-20.json": "0ad474a1e81b7f389f0a0d8164c382665994fcbaebc0d2d7d6ec4ea0bcb3246c",
+    "60-20.json": "87dacb18650abeb1cdeddfdab91dee15d46d9bf588ae323a6e2f033d70b8dcd5",
+    "80-20.json": "e848b6f4f58d0c182e12ec628ca3a1a16f108e9914d074af11f01ed173af4f2e"
+  },
+  "visibility": "projection includes public issue text, public metadata, opaque solution/test hashes and test counts; no solution, test bodies or hidden test names"
+}

@@ -38,6 +38,16 @@ on:
         required: true
         default: true
         type: boolean
+      arms:
+        description: Whitespace-separated arms (B C for the complete study)
+        required: true
+        default: B C
+        type: string
+      variants:
+        description: Whitespace-separated variants (static correction for the complete study)
+        required: true
+        default: static correction
+        type: string
 
 permissions:
   contents: read
@@ -107,6 +117,7 @@ jobs:
         with:
           python-version: "3.11"
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: ${{ !inputs.oracle_only }}
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           cache: true
@@ -180,6 +191,9 @@ jobs:
             --max-tasks 1
       - name: Run scheduled B/C x static/correction cells
         if: ${{ !inputs.oracle_only }}
+        env:
+          REQUESTED_ARMS: ${{ inputs.arms }}
+          REQUESTED_VARIANTS: ${{ inputs.variants }}
         run: |
           "$RESEARCH_ROOT/venv/bin/python" scripts/swebench_live_e2e.py run \
             --bundle "$RUN_BUNDLE" \
@@ -193,7 +207,9 @@ jobs:
             --oracle-python "$RESEARCH_ROOT/venv/bin/python" \
             --oracle-runner "$PWD/scripts/run_swebench_live_oracle.py" \
             --hf-home "$HF_HOME" \
-            --instance-ids "$TASK_ID"
+            --instance-ids "$TASK_ID" \
+            --arms $REQUESTED_ARMS \
+            --variants $REQUESTED_VARIANTS
       - name: Stop daemon
         if: always()
         run: |
