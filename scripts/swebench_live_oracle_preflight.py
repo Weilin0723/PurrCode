@@ -49,7 +49,7 @@ def clean_environment(hf_home: Path) -> dict[str, str]:
 
 
 def image_digest(instance_id: str) -> tuple[str | None, str | None]:
-    image = f"starryzhang/sweb.eval.x86_64.{instance_id.lower()}:latest"
+    image = f"starryzhang/sweb.eval.x86_64.{instance_id.lower()}:latest".replace("__", "_1776_")
     result = subprocess.run(
         ["docker", "image", "inspect", "--format", "{{.Id}}", image],
         capture_output=True,
@@ -147,6 +147,10 @@ def run_gold(task: Mapping[str, Any], *, out: Path, args: argparse.Namespace) ->
         "run_id": run_id,
         "status": "passed" if passed else "failed",
         "resolved": resolved,
+        "failed_required_test_counts": {
+            kind: len(report.get("tests_status", {}).get(kind, {}).get("failure", []))
+            for kind in ("FAIL_TO_PASS", "PASS_TO_PASS")
+        } if isinstance(report, Mapping) else None,
         "patch_successfully_applied": report.get("patch_successfully_applied") if isinstance(report, Mapping) else None,
         "report_error": report_error,
         "oracle_exit_code": completed.returncode,
