@@ -3,12 +3,28 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
 import tomllib
 
 from swebench_live_e2e import clean_environment, verify_checkout
+
+PUBLIC_TEST_GROUPS = {"test", "tests", "testing", "dev", "development", "examples"}
+
+
+def public_ruff_version(checkout):
+    configuration = checkout / ".pre-commit-config.yaml"
+    if configuration.exists():
+        for block in re.split(r"(?m)^\s*-\s*repo:\s*", configuration.read_text())[1:]:
+            repository = block.splitlines()[0].strip().strip("\"'")
+            if repository in {"https://github.com/astral-sh/ruff-pre-commit",
+                              "https://github.com/charliermarsh/ruff-pre-commit"}:
+                revision = re.search(r"(?m)^\s*rev:\s*[\"']?v?(\d+\.\d+\.\d+)[\"']?\s*(?:#.*)?$", block)
+                if revision:
+                    return revision.group(1)
+    return "0.11.5"
 
 
 def public_test_dependencies(metadata):
@@ -26,7 +42,7 @@ def public_test_dependencies(metadata):
                     expand(item["include-group"], ancestors + [name])
                 else:
                     raise ValueError("unsupported public test dependency declaration")
-        for name in sorted(set(table) & {"test", "tests", "testing"}):
+        for name in sorted(set(table) & PUBLIC_TEST_GROUPS):
             expand(name, [])
     return list(dict.fromkeys(dependencies))
 
@@ -47,24 +63,40 @@ def provision(manifest, instance_id, cache, root):
             receipt["commands"].append(arguments)
             subprocess.run(arguments, cwd=checkout, env=environment, check=True)
         try:
+            root.mkdir(parents=True, exist_ok=True)
             execute([os.sys.executable, "-m", "venv", str(venv)])
             python = str(venv / "bin/python")
-            execute([python, "-m", "pip", "install", "pytest==8.3.5", "ruff==0.11.5",
+            ruff_version = public_ruff_version(checkout)
+            constraints = root / "public-tool-constraints.txt"
+            constraints.write_text("ruff==" + ruff_version + "\n")
+            receipt["ruff_version"] = ruff_version
+            execute([python, "-m", "pip", "install", "-c", str(constraints), "pytest==8.3.5", "ruff==" + ruff_version,
                      "hypothesis==6.131.9", "pytest-mock==3.14.0"])
             project = checkout / "pyproject.toml"
             metadata = tomllib.loads(project.read_text()) if project.exists() else {}
             extras = metadata.get("project", {}).get("optional-dependencies", {})
-            selected = sorted(set(extras) & {"test", "tests", "testing"})
+            selected = sorted(set(extras) & PUBLIC_TEST_GROUPS)
             if project.exists() or (checkout / "setup.py").exists():
                 package = str(checkout) + ("[" + ",".join(selected) + "]" if selected else "")
-                execute([python, "-m", "pip", "install", package])
+                execute([python, "-m", "pip", "install", "-c", str(constraints), package])
             test_dependencies = public_test_dependencies(metadata)
             if test_dependencies:
-                execute([python, "-m", "pip", "install", *test_dependencies])
+                execute([python, "-m", "pip", "install", "-c", str(constraints), *test_dependencies])
             receipt["public_test_extras"] = selected
             receipt["public_test_group_dependencies"] = test_dependencies
             receipt["installed_packages"] = subprocess.check_output(
                 [python, "-m", "pip", "freeze", "--all"], env=environment, text=True).splitlines()
+            collection_environment = dict(environment)
+            collection_environment["PYTHONPATH"] = str(checkout / "src") + os.pathsep + str(checkout)
+            collection_environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            arguments = [python, "-m", "pytest", "--collect-only", "-q"]
+            receipt["commands"].append(arguments)
+            collection = subprocess.run(arguments, cwd=checkout, env=collection_environment,
+                                        capture_output=True, text=True, timeout=180)
+            receipt["public_test_collection"] = {"exit_code": collection.returncode,
+                "stdout": collection.stdout[-65536:], "stderr": collection.stderr[-65536:]}
+            if collection.returncode != 0:
+                raise RuntimeError("public base-revision pytest collection failed before model execution")
             receipt["status"] = "passed"
         finally:
             root.mkdir(parents=True, exist_ok=True)
