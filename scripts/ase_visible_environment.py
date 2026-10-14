@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Provision public base-revision dependencies before any provider credential exists."""
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -126,6 +127,13 @@ def provision(manifest, instance_id, cache, root):
                 test_dependencies.extend(json.loads(requirements))
             if test_dependencies:
                 execute([python, "-m", "pip", "install", "-c", str(constraints), *test_dependencies])
+            public_requirements = next((checkout / name for name in
+                ("tests/requirements.txt", "test/requirements.txt", "requirements-test.txt",
+                 "test-requirements.txt", "requirements-dev.txt") if (checkout / name).is_file()), None)
+            if public_requirements is not None:
+                execute([python, "-m", "pip", "install", "-c", str(constraints), "-r", str(public_requirements)])
+                receipt["public_test_requirements"] = {"path": str(public_requirements.relative_to(checkout)),
+                    "sha256": hashlib.sha256(public_requirements.read_bytes()).hexdigest()}
             receipt["public_test_extras"] = selected
             receipt["public_test_group_dependencies"] = test_dependencies
             receipt["installed_packages"] = subprocess.check_output(
