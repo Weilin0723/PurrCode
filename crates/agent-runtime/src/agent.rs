@@ -274,6 +274,15 @@ impl<'a> NativeAgent<'a> {
             ));
         }
 
+        if budget.maximum_estimated_cost.is_some() {
+            let model = &request.model.model;
+            if !llm_budget::PriceTable::builtin().contains(model) {
+                return Err(AgentError::InvalidModelTurn(format!(
+                    "estimated-cost budget cannot be enforced: no price for model {model}"
+                )));
+            }
+        }
+
         let estimate = match provider.count_tokens(&request).await {
             Ok(estimate) => Some(estimate.tokens),
             Err(error)
@@ -288,6 +297,14 @@ impl<'a> NativeAgent<'a> {
             .usage_ledger
             .lock()
             .map_err(|_| AgentError::CorruptSession("usage ledger lock poisoned".into()))?;
+        if budget
+            .maximum_estimated_cost
+            .is_some_and(|limit| completed.estimated_cost().unwrap_or_default() >= limit)
+        {
+            return Err(AgentError::InvalidModelTurn(
+                "estimated-cost budget exhausted".into(),
+            ));
+        }
         let input_so_far = completed.input_tokens();
         let output_so_far = completed.output_tokens();
         let total_so_far = input_so_far.saturating_add(output_so_far);
@@ -347,7 +364,12 @@ impl<'a> NativeAgent<'a> {
             tool_result_tokens: 0,
             search_requests: 0,
             mcp_calls: 0,
-            estimated_cost: None,
+            estimated_cost: llm_budget::PriceTable::builtin()
+                .cost_usage(
+                    &self.model_for(role).1.model,
+                    &llm_budget::Usage::new(input_tokens, output_tokens),
+                )
+                .ok(),
             latency_ms,
             recorded_at: Utc::now(),
         };
