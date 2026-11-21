@@ -1752,3 +1752,58 @@ async fn zero_wall_time_budget_fails_before_provider_call() {
         .expect_err("zero wall-time budget must fail closed");
     assert!(error.to_string().contains("wall-time budget"));
 }
+
+#[tokio::test]
+async fn cost_budget_fails_closed_for_an_unpriced_model() {
+    let provider = MockProvider {
+        responses: Arc::new(Mutex::new(vec![
+            serde_json::from_str(&observed_turn_json()).unwrap(),
+        ])),
+    };
+    let controls = SessionControls {
+        budget_profile: BudgetProfileKind::Custom,
+        custom_budget: Some(BudgetConstraints {
+            maximum_estimated_cost: Some(1.0),
+            ..BudgetConstraints::default()
+        }),
+        ..SessionControls::default()
+    };
+    let agent = NativeAgent::new(role_map(provider), Policy::default()).with_controls(controls);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let error = agent
+        .start(&mut store, repository.path(), "inspect only")
+        .await
+        .expect_err("a USD cap with no price for local/test must fail closed");
+    assert!(error.to_string().contains("estimated-cost budget"));
+}
+
+#[tokio::test]
+async fn cost_budget_stops_a_priced_model_once_spend_crosses_the_cap() {
+    let provider: Arc<dyn ModelProvider> = Arc::new(MockProvider {
+        responses: Arc::new(Mutex::new(vec![
+            serde_json::from_str(&observed_turn_json()).unwrap(),
+        ])),
+    });
+    let model = ModelId::parse("openai/gpt-4o").unwrap();
+    let mut models = BTreeMap::new();
+    for role in ["coding_worker", "planner", "judge"] {
+        models.insert(role.to_owned(), (provider.clone(), model.clone()));
+    }
+    let controls = SessionControls {
+        budget_profile: BudgetProfileKind::Custom,
+        custom_budget: Some(BudgetConstraints {
+            maximum_estimated_cost: Some(0.000_000_001),
+            ..BudgetConstraints::default()
+        }),
+        ..SessionControls::default()
+    };
+    let agent = NativeAgent::new(models, Policy::default()).with_controls(controls);
+    let repository = repository();
+    let mut store = SessionStore::in_memory().unwrap();
+    let error = agent
+        .start(&mut store, repository.path(), "inspect only")
+        .await
+        .expect_err("the first priced call must exhaust a one-nanodollar cap");
+    assert!(error.to_string().contains("budget exhausted"), "{error}");
+}

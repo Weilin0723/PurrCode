@@ -9,6 +9,7 @@ async-trait.workspace = true
 blake3.workspace = true
 chrono.workspace = true
 futures.workspace = true
+llm-budget = { version = "0.10.0", default-features = false }
 purrcode-whisker = { path = "../whisker-context-engine" }
 purrcode-contextual-judgment = { path = "../contextual-judgment" }
 purrcode-pawgate = { path = "../pawgate-runtime" }
